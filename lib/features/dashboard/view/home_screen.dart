@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/widgets/board_card.dart';
-import '../core/constants/app_colors.dart';
-import '../features/theme/bloc/theme_bloc.dart';
+import 'package:inklink/features/dashboard/view/widgets/board_card.dart';
+import 'package:inklink/features/dashboard/view/widgets/quick_action_button.dart';
+import '../../../core/constants/app_colors.dart';
+import '../../theme/bloc/theme_bloc.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -73,13 +74,13 @@ class HomeScreen extends StatelessWidget {
               // Quick Actions
               const Row(
                 children: [
-                  QuickActionBtn(
+                  QuickActionButton(
                     title: "New Board",
                     icon: Icons.add,
                     color: AppColors.actionBlue,
                   ),
                   SizedBox(width: 16),
-                  QuickActionBtn(
+                  QuickActionButton(
                     title: "Join Board",
                     icon: Icons.group_add,
                     color: AppColors.actionOrange,
@@ -111,62 +112,8 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 0,
-        selectedItemColor: AppColors.primary,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home_filled), label: "Home"),
-          BottomNavigationBarItem(icon: Icon(Icons.people), label: "Friends"),
-          BottomNavigationBarItem(icon: Icon(Icons.settings), label: "Settings"),
-        ],
-      ),
     );
   }
 }
 
-/// --- REUSABLE SUB-WIDGETS TO REDUCE REPETITION ---
-
-class QuickActionBtn extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final Color color;
-
-  const QuickActionBtn({
-    super.key,
-    required this.title,
-    required this.icon,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: InkWell(
-        onTap: () {}, // Add logic later
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 20),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: color.withOpacity(0.2)),
-          ),
-          child: Column(
-            children: [
-              Icon(icon, color: color, size: 32),
-              const SizedBox(height: 8),
-              Text(
-                title,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
