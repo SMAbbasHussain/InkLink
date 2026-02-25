@@ -1,21 +1,40 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:inklink/widgets/board_card.dart';
+import '../core/constants/app_colors.dart';
+import '../features/theme/bloc/theme_bloc.dart';
 
 class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
+
   @override
   Widget build(BuildContext context) {
+    // Standard way to check if dark mode is active
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: Color(0xFFF8F9FA), // Clean "Paper" background
       appBar: AppBar(
-        title: Text("InkLink", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text("InkLink"),
         actions: [
-          IconButton(icon: Icon(Icons.notifications_none), onPressed: () {}),
-          Padding(
-            padding: const EdgeInsets.only(right: 16.0),
-            child: CircleAvatar(backgroundColor: Colors.blueAccent, child: Icon(Icons.person, color: Colors.white)),
+          // Theme Toggle Button
+          IconButton(
+            icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+            onPressed: () {
+              context.read<ThemeBloc>().add(ToggleTheme());
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.notifications_none),
+            onPressed: () {},
+          ),
+          const Padding(
+            padding: EdgeInsets.only(right: 16.0),
+            child: CircleAvatar(
+              backgroundColor: AppColors.primary,
+              child: Icon(Icons.person, color: Colors.white),
+            ),
           ),
         ],
-        elevation: 0,
-        backgroundColor: Colors.transparent,
       ),
       body: SingleChildScrollView(
         child: Padding(
@@ -25,115 +44,129 @@ class HomeScreen extends StatelessWidget {
             children: [
               // AI Prompt Bar
               Container(
-                padding: EdgeInsets.symmetric(horizontal: 16),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: isDark ? AppColors.surfaceDark : Colors.white,
                   borderRadius: BorderRadius.circular(30),
-                  boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)],
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5),
+                    )
+                  ],
                 ),
-                child: TextField(
+                child: const TextField(
                   decoration: InputDecoration(
                     hintText: "Ask AI to generate a template...",
+                    prefixIcon: Icon(Icons.search, color: Colors.grey),
+                    suffixIcon: Icon(
+                      Icons.auto_awesome,
+                      color: AppColors.accent,
+                    ),
                     border: InputBorder.none,
-                    suffixIcon: Icon(Icons.auto_awesome, color: Colors.deepPurple),
+                    contentPadding: EdgeInsets.symmetric(vertical: 12),
                   ),
                 ),
               ),
-              SizedBox(height: 30),
+              const SizedBox(height: 30),
 
               // Quick Actions
-              Row(
+              const Row(
                 children: [
-                  _buildQuickAction(context, "New Board", Icons.add, Colors.blue),
+                  QuickActionBtn(
+                    title: "New Board",
+                    icon: Icons.add,
+                    color: AppColors.actionBlue,
+                  ),
                   SizedBox(width: 16),
-                  _buildQuickAction(context, "Join Board", Icons.group_add, Colors.orange),
+                  QuickActionBtn(
+                    title: "Join Board",
+                    icon: Icons.group_add,
+                    color: AppColors.actionOrange,
+                  ),
                 ],
               ),
-              SizedBox(height: 30),
+              const SizedBox(height: 30),
 
               // Recent Boards Section
-              Text("Recent Boards", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              SizedBox(height: 16),
+              const Text(
+                "Recent Boards",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              
               GridView.builder(
                 shrinkWrap: true,
-                physics: NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
                   crossAxisSpacing: 16,
                   mainAxisSpacing: 16,
-                  childAspectRatio: 0.8,
+                  childAspectRatio: 0.85,
                 ),
                 itemCount: 4,
-                itemBuilder: (context, index) => _buildBoardCard(index),
+                itemBuilder: (context, index) => BoardCard(index: index),
               ),
             ],
           ),
         ),
       ),
       bottomNavigationBar: BottomNavigationBar(
-        items: [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
+        currentIndex: 0,
+        selectedItemColor: AppColors.primary,
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.home_filled), label: "Home"),
           BottomNavigationBarItem(icon: Icon(Icons.people), label: "Friends"),
           BottomNavigationBarItem(icon: Icon(Icons.settings), label: "Settings"),
         ],
       ),
     );
   }
+}
 
-  Widget _buildQuickAction(BuildContext context, String title, IconData icon, Color color) {
+/// --- REUSABLE SUB-WIDGETS TO REDUCE REPETITION ---
+
+class QuickActionBtn extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color color;
+
+  const QuickActionBtn({
+    super.key,
+    required this.title,
+    required this.icon,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Expanded(
-      child: Container(
-        padding: EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withOpacity(0.3)),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 30),
-            SizedBox(height: 8),
-            Text(title, style: TextStyle(fontWeight: FontWeight.w600, color: color)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBoardCard(int index) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(15)),
-                image: DecorationImage(
-                  image: NetworkImage("https://via.placeholder.com/150"), // Preview of the canvas
-                  fit: BoxFit.cover,
+      child: InkWell(
+        onTap: () {}, // Add logic later
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 20),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: color.withOpacity(0.2)),
+          ),
+          child: Column(
+            children: [
+              Icon(icon, color: color, size: 32),
+              const SizedBox(height: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: color,
                 ),
               ),
-            ),
+            ],
           ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text("Project Alpha $index", style: TextStyle(fontWeight: FontWeight.bold)),
-                Text("Edited 2h ago", style: TextStyle(fontSize: 12, color: Colors.grey)),
-              ],
-            ),
-          )
-        ],
+        ),
       ),
     );
   }
 }
+
