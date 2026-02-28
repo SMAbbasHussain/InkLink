@@ -30,15 +30,45 @@ class _FriendsScreenState extends State<FriendsScreen> {
   ];
 
   final List<Friend> _allFriends = [
-    Friend(name: "Abbas Hussain", lastActive: "2m ago", isOnline: true, gradientIndex: 0),
-    Friend(name: "Fahad Javed", lastActive: "1h ago", isOnline: false, gradientIndex: 1),
-    Friend(name: "Faha Ahmed", lastActive: "Just now", isOnline: true, gradientIndex: 2),
-    Friend(name: "Aamer Mehmood", lastActive: "5h ago", isOnline: false, gradientIndex: 0),
-    Friend(name: "Syed Hussain", lastActive: "10m ago", isOnline: true, gradientIndex: 1),
-    Friend(name: "Haider Ali", lastActive: "3d ago", isOnline: false, gradientIndex: 2),
+    Friend(
+      name: "Abbas Hussain",
+      lastActive: "2m ago",
+      isOnline: true,
+      gradientIndex: 0,
+    ),
+    Friend(
+      name: "Fahad Javed",
+      lastActive: "1h ago",
+      isOnline: false,
+      gradientIndex: 1,
+    ),
+    Friend(
+      name: "Faha Ahmed",
+      lastActive: "Just now",
+      isOnline: true,
+      gradientIndex: 2,
+    ),
+    Friend(
+      name: "Aamer Mehmood",
+      lastActive: "5h ago",
+      isOnline: false,
+      gradientIndex: 0,
+    ),
+    Friend(
+      name: "Syed Hussain",
+      lastActive: "10m ago",
+      isOnline: true,
+      gradientIndex: 1,
+    ),
+    Friend(
+      name: "Haider Ali",
+      lastActive: "3d ago",
+      isOnline: false,
+      gradientIndex: 2,
+    ),
   ];
 
-  List<Friend> get _recentFriends => _allFriends.take(4).toList();
+  List<Friend> get _recentFriends => _allFriends.take(7).toList();
   List<Friend> _filteredFriends = [];
   final TextEditingController _searchController = TextEditingController();
 
@@ -53,8 +83,12 @@ class _FriendsScreenState extends State<FriendsScreen> {
       _filteredFriends = enteredKeyword.isEmpty
           ? _allFriends
           : _allFriends
-              .where((user) => user.name.toLowerCase().contains(enteredKeyword.toLowerCase()))
-              .toList();
+                .where(
+                  (user) => user.name.toLowerCase().contains(
+                    enteredKeyword.toLowerCase(),
+                  ),
+                )
+                .toList();
     });
   }
 
@@ -64,7 +98,8 @@ class _FriendsScreenState extends State<FriendsScreen> {
     final bool isSearching = _searchController.text.isNotEmpty;
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Friends")),
+      appBar: AppBar(
+        title: const Text("Friends"),),
       // CustomScrollView allows the headers and the list to scroll together
       body: CustomScrollView(
         slivers: [
@@ -84,8 +119,13 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 children: [
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 18.0),
-                    child: Text("Recent Contacts",
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    child: Text(
+                      "Recent Contacts",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 12),
                   SizedBox(
@@ -106,10 +146,16 @@ class _FriendsScreenState extends State<FriendsScreen> {
           // 3. Section Header (Sliver)
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 12),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 18.0,
+                vertical: 12,
+              ),
               child: Text(
                 isSearching ? "Search Results" : "All Collaborators",
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
               ),
             ),
           ),
@@ -120,8 +166,11 @@ class _FriendsScreenState extends State<FriendsScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   sliver: SliverList(
                     delegate: SliverChildBuilderDelegate(
-                      (context, index) =>
-                          _buildFriendCard(context, _filteredFriends[index], isDark),
+                      (context, index) => _buildFriendCard(
+                        context,
+                        _filteredFriends[index],
+                        isDark,
+                      ),
                       childCount: _filteredFriends.length,
                     ),
                   ),
@@ -130,7 +179,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                   hasScrollBody: false,
                   child: _buildEmptyState(),
                 ),
-          
+
           // Add some bottom padding so the last item isn't covered by Nav Bar
           const SliverToBoxAdapter(child: SizedBox(height: 20)),
         ],
@@ -150,12 +199,13 @@ class _FriendsScreenState extends State<FriendsScreen> {
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: (_avatarGradients[friend.gradientIndex] as LinearGradient)
-                    .colors[0]
-                    .withOpacity(0.3),
+                color:
+                    (_avatarGradients[friend.gradientIndex] as LinearGradient)
+                        .colors[0]
+                        .withOpacity(0.3),
                 blurRadius: 8,
                 offset: const Offset(0, 4),
-              )
+              ),
             ],
           ),
           child: Center(
@@ -206,7 +256,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
               overflow: TextOverflow.ellipsis,
             ),
-          )
+          ),
         ],
       ),
     );
@@ -220,12 +270,15 @@ class _FriendsScreenState extends State<FriendsScreen> {
       decoration: BoxDecoration(
         color: isDark ? AppColors.surfaceDark : Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: isDark ? Colors.white10 : Colors.grey.shade100),
+        border: Border.all(
+          color: isDark ? Colors.white10 : Colors.grey.shade100,
+        ),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withOpacity(isDark ? 0.1 : 0.02),
-              blurRadius: 10,
-              offset: const Offset(0, 4)),
+            color: Colors.black.withOpacity(isDark ? 0.1 : 0.02),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
         ],
       ),
       child: Row(
@@ -236,14 +289,20 @@ class _FriendsScreenState extends State<FriendsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(friend.name,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                Text(
+                  friend.name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
                 const SizedBox(height: 2),
                 Text(
                   "Last active ${friend.lastActive}",
                   style: TextStyle(
-                      fontSize: 12,
-                      color: isDark ? Colors.grey.shade400 : Colors.grey.shade500),
+                    fontSize: 12,
+                    color: isDark ? Colors.grey.shade400 : Colors.grey.shade500,
+                  ),
                 ),
               ],
             ),
@@ -255,10 +314,15 @@ class _FriendsScreenState extends State<FriendsScreen> {
               foregroundColor: AppColors.primary,
               elevation: 0,
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
-            child: const Text("Invite", style: TextStyle(fontWeight: FontWeight.bold)),
-          )
+            child: const Text(
+              "Invite",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
         ],
       ),
     );
@@ -269,7 +333,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
       decoration: BoxDecoration(
         color: isDark ? AppColors.surfaceDark : Colors.white,
         borderRadius: BorderRadius.circular(15),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10)],
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10),
+        ],
       ),
       child: TextField(
         controller: _searchController,
@@ -283,7 +349,8 @@ class _FriendsScreenState extends State<FriendsScreen> {
                   onPressed: () {
                     _searchController.clear();
                     _runFilter('');
-                  })
+                  },
+                )
               : null,
           border: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(vertical: 12),

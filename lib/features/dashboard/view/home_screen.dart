@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/features/dashboard/view/widgets/board_card.dart';
@@ -10,29 +11,37 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Standard way to check if dark mode is active
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // 1. Get current user data from Firebase
+    final user = FirebaseAuth.instance.currentUser;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("InkLink"),
+        title: const Text(
+          "InkLink",
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 26),
+        ),
         actions: [
-          // Theme Toggle Button
           IconButton(
             icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
-            onPressed: () {
-              context.read<ThemeBloc>().add(ToggleTheme());
-            },
+            onPressed: () => context.read<ThemeBloc>().add(ToggleTheme()),
           ),
           IconButton(
             icon: const Icon(Icons.notifications_none),
             onPressed: () {},
           ),
-          const Padding(
-            padding: EdgeInsets.only(right: 16.0),
+          // 2. Dynamic Profile Picture
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
             child: CircleAvatar(
-              backgroundColor: AppColors.primary,
-              child: Icon(Icons.person, color: Colors.white),
+              backgroundColor: AppColors.primary.withOpacity(0.2),
+              backgroundImage: user?.photoURL != null
+                  ? NetworkImage(user!.photoURL!)
+                  : null,
+              child: user?.photoURL == null
+                  ? const Icon(Icons.person, color: AppColors.primary)
+                  : null,
             ),
           ),
         ],
@@ -43,32 +52,23 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // AI Prompt Bar
-              Container(
-                decoration: BoxDecoration(
-                  color: isDark ? AppColors.surfaceDark : Colors.white,
-                  borderRadius: BorderRadius.circular(30),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
-                      offset: const Offset(0, 5),
-                    )
-                  ],
-                ),
-                child: const TextField(
-                  decoration: InputDecoration(
-                    hintText: "Ask AI to generate a template...",
-                    prefixIcon: Icon(Icons.search, color: Colors.grey),
-                    suffixIcon: Icon(
-                      Icons.auto_awesome,
-                      color: AppColors.accent,
-                    ),
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(vertical: 12),
-                  ),
+              // 3. Personalized Greeting
+              Text(
+                "Hello, ${user?.displayName?.split(' ')[0] ?? 'Creator'}! 👋",
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
+              const SizedBox(height: 8),
+              Text(
+                "Ready to bring your ideas to life?",
+                style: TextStyle(color: Colors.grey.shade500),
+              ),
+              const SizedBox(height: 24),
+
+              // AI Prompt Bar
+              _buildSearchBar(isDark),
               const SizedBox(height: 30),
 
               // Quick Actions
@@ -95,7 +95,7 @@ class HomeScreen extends StatelessWidget {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 16),
-              
+
               GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -114,6 +114,29 @@ class HomeScreen extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildSearchBar(bool isDark) {
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.surfaceDark : Colors.white,
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: const TextField(
+        decoration: InputDecoration(
+          hintText: "Ask AI to generate a template...",
+          prefixIcon: Icon(Icons.search, color: Colors.grey),
+          suffixIcon: Icon(Icons.auto_awesome, color: AppColors.accent),
+          border: InputBorder.none,
+          contentPadding: EdgeInsets.symmetric(vertical: 12),
+        ),
+      ),
+    );
+  }
 }
-
-
