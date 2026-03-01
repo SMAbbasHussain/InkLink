@@ -31,6 +31,14 @@ class _FriendsScreenState extends State<FriendsScreen> {
   }
 
   @override
+  void dispose() {
+    // FIX: Properly cleaning up listeners
+    _searchController.dispose();
+    _globalSearchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 

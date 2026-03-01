@@ -9,9 +9,8 @@ import 'package:inklink/features/auth/view/login_screen.dart';
 import 'package:inklink/features/friends/bloc/friends_bloc.dart';
 import 'package:inklink/features/navigation/bloc/nav_bloc.dart';
 import 'package:inklink/features/theme/bloc/theme_bloc.dart';
+import 'firebase_options.dart'; 
 
-// Import generated file (Run 'flutterfire configure' to get this)
-// import 'firebase_options.dart'; 
 
 void main() async {
   // 1. Required for any async setup before runApp
@@ -20,10 +19,10 @@ void main() async {
   // 2. Initialize Firebase
   try {
     await Firebase.initializeApp(
-      // options: DefaultFirebaseOptions.currentPlatform, 
+      options: DefaultFirebaseOptions.currentPlatform, 
     );
   } catch (e) {
-    debugPrint("Firebase Initialization Error: $e");
+    runApp(InitializationErrorApp(error: e.toString()));
   }
 
   runApp(
@@ -60,6 +59,36 @@ class MyApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
         );
       },
+    );
+  }
+}
+
+class InitializationErrorApp extends StatelessWidget {
+  final String error;
+  const InitializationErrorApp({super.key, required this.error});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red, size: 60),
+                const SizedBox(height: 16),
+                const Text("Failed to initialize app", 
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text(error, textAlign: TextAlign.center, 
+                  style: const TextStyle(color: Colors.grey)),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

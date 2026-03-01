@@ -2,10 +2,12 @@ import 'package:cloud_firestore/cloud_firestore.dart'; // Ensure this is importe
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../../domain/repositories/auth_repository.dart';
+import 'dart:developer' as developer;
 
 class FirebaseAuthRepository implements AuthRepository {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance; // Add Firestore instance
+  final FirebaseFirestore _firestore =
+      FirebaseFirestore.instance; // Add Firestore instance
   final GoogleSignIn _googleSignIn = GoogleSignIn();
 
   @override
@@ -17,20 +19,26 @@ class FirebaseAuthRepository implements AuthRepository {
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
       if (googleUser == null) return null;
 
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
       final AuthCredential credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
-      final UserCredential userCredential = await _auth.signInWithCredential(credential);
+      final UserCredential userCredential = await _auth.signInWithCredential(
+        credential,
+      );
       final User? user = userCredential.user;
 
       if (user != null) {
         // --- THIS PART SAVES TO FIRESTORE ---
         print("Checking Firestore for user: ${user.uid}");
-        final userDoc = await _firestore.collection('users').doc(user.uid).get();
-        
+        final userDoc = await _firestore
+            .collection('users')
+            .doc(user.uid)
+            .get();
+
         if (!userDoc.exists) {
           print("New user detected. Registering in Firestore...");
           await registerUserInFirestore(user);
@@ -42,9 +50,21 @@ class FirebaseAuthRepository implements AuthRepository {
         }
       }
       return user;
-    } catch (e) {
-      print("Error in signInWithGoogle: $e");
-      throw Exception("Google Sign-In failed: $e");
+    } on FirebaseAuthException catch (e, stackTrace) {
+      developer.log(
+        "Google Sign-In Auth Error",
+        error: e,
+        stackTrace: stackTrace,
+      );
+      // Return a clean, user-facing string
+      throw _mapFirebaseAuthError(e);
+    } catch (e, stackTrace) {
+      developer.log(
+        "Google Sign-In Unknown Error",
+        error: e,
+        stackTrace: stackTrace,
+      );
+      throw "An unexpected error occurred. Please try again.";
     }
   }
 
@@ -84,8 +104,9 @@ class FirebaseAuthRepository implements AuthRepository {
   // --- SIGN IN WITH EMAIL (Don't forget to add Firestore here too!) ---
   @override
   Future<User?> signUp(String name, String email, String password) async {
-     final credential = await _auth.createUserWithEmailAndPassword(
-      email: email, password: password,
+    final credential = await _auth.createUserWithEmailAndPassword(
+      email: email,
+      password: password,
     );
     final user = credential.user;
     if (user != null) {
@@ -96,11 +117,30 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<User?> signIn(String email, String password) async => (await _auth.signInWithEmailAndPassword(email: email, password: password)).user;
+  Future<User?> signIn(String email, String password) async =>
+      (await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      )).user;
 
   @override
   Future<void> signOut() async {
     await _googleSignIn.signOut();
     await _auth.signOut();
+  }
+
+  String _mapFirebaseAuthError(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'user-disabled':
+        return "This account has been disabled.";
+      case 'user-not-found':
+        return "No account found with this email.";
+      case 'wrong-password':
+        return "Incorrect password.";
+      case 'network-request-failed':
+        return "Check your internet connection.";
+      default:
+        return "Authentication failed. Please try again.";
+    }
   }
 }
