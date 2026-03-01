@@ -67,28 +67,31 @@ class FirebaseAuthRepository implements AuthRepository {
       throw "An unexpected error occurred. Please try again.";
     }
   }
-
-  @override
-  Future<void> registerUserInFirestore(User user) async {
+@override
+  Future<void> registerUserInFirestore(User user, {String? displayName}) async {
     try {
+      // Use the passed displayName if available, otherwise fallback to user.displayName, 
+      // otherwise fallback to the default string.
+      final String finalName = displayName ?? user.displayName ?? "InkLink Creator";
+      
       final userData = {
         'uid': user.uid,
         'email': user.email,
-        'displayName': user.displayName ?? "InkLink Creator",
+        'displayName': finalName,
         'photoURL': user.photoURL ?? '',
         'isOnline': true,
         'createdAt': FieldValue.serverTimestamp(),
         'lastActive': FieldValue.serverTimestamp(),
-        // Add search keywords for your Friends search bar
-        'searchKeywords': _generateSearchKeywords(user.displayName ?? ""),
+        'searchKeywords': _generateSearchKeywords(finalName),
       };
 
       await _firestore.collection('users').doc(user.uid).set(userData);
-      print("User successfully saved to Firestore!");
+      developer.log("User successfully saved to Firestore with name: $finalName");
     } catch (e) {
-      print("Firestore Save Error: $e");
+      developer.log("Firestore Save Error", error: e);
     }
   }
+
 
   // Helper to make the Friends search bar work later
   List<String> _generateSearchKeywords(String name) {
@@ -102,18 +105,29 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   // --- SIGN IN WITH EMAIL (Don't forget to add Firestore here too!) ---
-  @override
+   @override
   Future<User?> signUp(String name, String email, String password) async {
-    final credential = await _auth.createUserWithEmailAndPassword(
-      email: email,
-      password: password,
-    );
-    final user = credential.user;
-    if (user != null) {
-      await user.updateDisplayName(name);
-      await registerUserInFirestore(user); // Save email user to Firestore
+    try {
+      final credential = await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      final user = credential.user;
+      
+      if (user != null) {
+        // 1. Update Auth Profile
+        await user.updateDisplayName(name);
+        
+        // 2. PASS THE NAME MANUALLY HERE 
+        // This bypasses the null check on the stale 'user' object
+        await registerUserInFirestore(user, displayName: name); 
+      }
+      return user;
+    } on FirebaseAuthException catch (e) {
+      throw _mapFirebaseAuthError(e);
+    } catch (e) {
+      throw "An unexpected error occurred during sign up.";
     }
-    return user;
   }
 
   @override

@@ -6,5 +6,5 @@ abstract class AuthRepository {
   Future<User?> signInWithGoogle();
   Future<void> signOut();
   Stream<User?> get user;
-  Future<void> registerUserInFirestore(User user);
+  Future<void> registerUserInFirestore(User user, {String? displayName});
 }
