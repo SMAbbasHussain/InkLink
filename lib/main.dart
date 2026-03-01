@@ -3,8 +3,10 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart'; // Add this
 import 'package:inklink/core/theme/app_theme.dart';
 import 'package:inklink/domain/repositories/auth_repository_impl.dart'; // Ensure path is correct
+import 'package:inklink/domain/repositories/social_repository_impl.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/view/login_screen.dart';
+import 'package:inklink/features/friends/bloc/friends_bloc.dart';
 import 'package:inklink/features/navigation/bloc/nav_bloc.dart';
 import 'package:inklink/features/theme/bloc/theme_bloc.dart';
 
@@ -29,6 +31,7 @@ void main() async {
       providers: [
         BlocProvider(create: (context) => ThemeBloc()),
         BlocProvider(create: (context) => NavBloc()),
+        BlocProvider(create: (context) => FriendsBloc(socialRepo: SocialRepositoryImpl())),
         // Inject the Repository into the BLoC
         BlocProvider(
           create: (context) => AuthBloc(
