@@ -6,6 +6,9 @@ module.exports = async (request) => {
   if (!auth) throw new HttpsError('unauthenticated', 'User must be logged in.');
 
   const { requestId } = data;
+  if (typeof requestId !== 'string' || requestId.trim().length === 0) {
+    throw new HttpsError('invalid-argument', 'A valid requestId is required.');
+  }
   const firestore = admin.firestore();
 
   try {
@@ -34,6 +37,9 @@ module.exports = async (request) => {
       return { success: true };
     });
   } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error;
+    }
     throw new HttpsError('internal', error.message);
   }
 };

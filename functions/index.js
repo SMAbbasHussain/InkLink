@@ -1,5 +1,4 @@
 const path = require('path');
-const admin = require('./server/firebase-admin');
 const { onCall } = require("firebase-functions/v2/https");
 const glob = require("glob");
 
