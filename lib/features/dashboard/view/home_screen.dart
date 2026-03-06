@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/features/dashboard/view/widgets/board_card.dart';
 import 'package:inklink/features/dashboard/view/widgets/quick_action_button.dart';
+import 'package:inklink/features/profile/view/profile_screen.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../theme/bloc/theme_bloc.dart';
 
@@ -34,14 +35,33 @@ class HomeScreen extends StatelessWidget {
           // 2. Dynamic Profile Picture
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
-            child: CircleAvatar(
-              backgroundColor: AppColors.primary.withOpacity(0.2),
-              backgroundImage: user?.photoURL != null
-                  ? NetworkImage(user!.photoURL!)
-                  : null,
-              child: user?.photoURL == null
-                  ? const Icon(Icons.person, color: AppColors.primary)
-                  : null,
+            child: InkWell(
+              onTap: () {
+                if (user != null) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ProfileScreen(userId: user.uid),
+                    ),
+                  );
+                }
+              },
+              customBorder:
+                  const CircleBorder(), // Keeps the ripple effect circular
+              child: CircleAvatar(
+                radius: 18, // Adjusted size
+                backgroundColor: AppColors.primary.withOpacity(0.2),
+                backgroundImage: user?.photoURL != null
+                    ? NetworkImage(user!.photoURL!)
+                    : null,
+                child: user?.photoURL == null
+                    ? const Icon(
+                        Icons.person,
+                        size: 20,
+                        color: AppColors.primary,
+                      )
+                    : null,
+              ),
             ),
           ),
         ],

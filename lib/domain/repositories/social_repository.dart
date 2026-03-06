@@ -10,4 +10,9 @@ abstract class SocialRepository {
   // Streams for UI Reactivity
   Stream<List<Map<String, dynamic>>> watchIncomingRequests();
   Stream<List<Map<String, dynamic>>> watchFriendsList();
+
+  //Methods for profile screen
+  Future<Map<String, dynamic>?> getUserById(String uid);
+  Future<bool> checkFriendshipStatus(String targetUid);
+  Future<void> updateUserProfile({required String name, required String bio});
 }

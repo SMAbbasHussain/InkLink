@@ -86,31 +86,76 @@ class SocialRepositoryImpl implements SocialRepository {
         );
   }
 
-@override
-Stream<List<Map<String, dynamic>>> watchFriendsList() {
-  final currentUid = _auth.currentUser!.uid;
-
-  return _db
-      .collection('users')
-      .doc(currentUid)
-      .collection('friends')
-      .snapshots()
-      .switchMap((snapshot) {
-    // Get the IDs
-    final friendUids = snapshot.docs.map((doc) => doc.id).toList();
-
-    // IMPORTANT: If no friends, return empty list immediately 
-    // to avoid Firestore 'whereIn' error with empty array.
-    if (friendUids.isEmpty) {
-      return Stream.value([]);
-    }
+  @override
+  Stream<List<Map<String, dynamic>>> watchFriendsList() {
+    final currentUid = _auth.currentUser!.uid;
 
     return _db
         .collection('users')
-        .where(FieldPath.documentId, whereIn: friendUids)
+        .doc(currentUid)
+        .collection('friends')
         .snapshots()
-        .map((userSnap) => userSnap.docs.map((doc) => doc.data()).toList());
-  });
-}
+        .switchMap((snapshot) {
+          // Get the IDs
+          final friendUids = snapshot.docs.map((doc) => doc.id).toList();
 
+          // IMPORTANT: If no friends, return empty list immediately
+          // to avoid Firestore 'whereIn' error with empty array.
+          if (friendUids.isEmpty) {
+            return Stream.value([]);
+          }
+
+          return _db
+              .collection('users')
+              .where(FieldPath.documentId, whereIn: friendUids)
+              .snapshots()
+              .map(
+                (userSnap) => userSnap.docs.map((doc) => doc.data()).toList(),
+              );
+        });
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getUserById(String uid) async {
+    final doc = await _db.collection('users').doc(uid).get();
+    return doc.data();
+  }
+
+  @override
+  Future<bool> checkFriendshipStatus(String targetUid) async {
+    final doc = await _db
+        .collection('users')
+        .doc(_auth.currentUser!.uid)
+        .collection('friends')
+        .doc(targetUid)
+        .get();
+    return doc.exists;
+  }
+
+  @override
+  Future<void> updateUserProfile({
+    required String name,
+    required String bio,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    // 1. Update Firebase Auth (for local app instance)
+    await user.updateDisplayName(name);
+
+    // 2. Generate new search keywords for the new name
+    List<String> keywords = [];
+    String temp = "";
+    for (int i = 0; i < name.length; i++) {
+      temp = temp + name[i].toLowerCase();
+      keywords.add(temp);
+    }
+
+    // 3. Update Firestore (Source of truth for friends)
+    await _db.collection('users').doc(user.uid).update({
+      'displayName': name,
+      'bio': bio,
+      'searchKeywords': keywords,
+    });
+  }
 }

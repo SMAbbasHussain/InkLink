@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:inklink/features/profile/view/profile_screen.dart';
 import '../bloc/friends_bloc.dart';
 import '../bloc/friends_event.dart';
 import '../bloc/friends_state.dart';
@@ -23,13 +24,21 @@ class FriendRequestsScreen extends StatelessWidget {
               itemCount: state.incomingRequests.length,
               itemBuilder: (context, index) {
                 final req = state.incomingRequests[index];
-                return RequestCard(
-                  request: req,
-                  onAccept: () => context.read<FriendsBloc>().add(
-                    AcceptFriendRequestRequested(req['id'], req['fromUid'])
+                return GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ProfileScreen(userId: req['fromUid']),
+                    ),
                   ),
-                  onDecline: () => context.read<FriendsBloc>().add(
-                    DeclineFriendRequestRequested(req['id'])
+                  child: RequestCard(
+                    request: req,
+                    onAccept: () => context.read<FriendsBloc>().add(
+                      AcceptFriendRequestRequested(req['id'], req['fromUid'])
+                    ),
+                    onDecline: () => context.read<FriendsBloc>().add(
+                      DeclineFriendRequestRequested(req['id'])
+                    ),
                   ),
                 );
               },

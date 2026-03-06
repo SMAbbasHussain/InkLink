@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:inklink/core/theme/app_theme.dart';
+import 'package:inklink/domain/repositories/auth_repository.dart';
 import 'package:inklink/domain/repositories/auth_repository_impl.dart';
+import 'package:inklink/domain/repositories/social_repository.dart';
 import 'package:inklink/domain/repositories/social_repository_impl.dart';
 import 'package:inklink/domain/repositories/theme_repository.dart'; // Add this
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
@@ -14,42 +16,41 @@ import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // 1. Initialize Firebase
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-  } catch (e) {
-    runApp(InitializationErrorApp(error: e.toString()));
-    return; // Stop execution if Firebase fails
-  }
-
-  // 2. Initialize Theme Repository and Load Saved Theme
   final themeRepository = ThemeRepository();
   final initialThemeMode = await themeRepository.getThemeMode();
 
   runApp(
-    MultiBlocProvider(
+    // 1. Repositories first
+    MultiRepositoryProvider(
       providers: [
-        // Pass the loaded theme to the Bloc
-        BlocProvider(
-          create: (context) => ThemeBloc(
-            themeRepository: themeRepository,
-            initialMode: initialThemeMode,
-          ),
-        ),
-        BlocProvider(create: (context) => NavBloc()),
-        BlocProvider(
-          create: (context) => FriendsBloc(socialRepo: SocialRepositoryImpl()),
-        ),
-        BlocProvider(
-          create: (context) => AuthBloc(
-            authRepository: FirebaseAuthRepository(),
-          ),
-        ),
+        RepositoryProvider<AuthRepository>(create: (context) => FirebaseAuthRepository()),
+        RepositoryProvider<SocialRepository>(create: (context) => SocialRepositoryImpl()),
       ],
-      child: const MyApp(),
+      // 2. Blocs second
+      child: MultiBlocProvider(
+        providers: [
+          BlocProvider(
+            create: (context) => ThemeBloc(
+              themeRepository: themeRepository,
+              initialMode: initialThemeMode,
+            ),
+          ),
+          BlocProvider(create: (context) => NavBloc()),
+          BlocProvider(
+            create: (context) => AuthBloc(
+              authRepository: context.read<AuthRepository>(), // Reads from RepoProvider
+            ),
+          ),
+          BlocProvider(
+            create: (context) => FriendsBloc(
+              socialRepo: context.read<SocialRepository>(), // Reads from RepoProvider
+            ),
+          ),
+        ],
+        child: const MyApp(),
+      ),
     ),
   );
 }
