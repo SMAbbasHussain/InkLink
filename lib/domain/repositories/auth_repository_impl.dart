@@ -14,6 +14,9 @@ class FirebaseAuthRepository implements AuthRepository {
   Stream<User?> get user => _auth.authStateChanges();
 
   @override
+  User? get currentUser => _auth.currentUser;
+
+  @override
   Future<User?> signInWithGoogle() async {
     try {
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
@@ -32,23 +35,26 @@ class FirebaseAuthRepository implements AuthRepository {
       final User? user = userCredential.user;
 
       if (user != null) {
-        // --- THIS PART SAVES TO FIRESTORE ---
-        print("Checking Firestore for user: ${user.uid}");
+        // 1. CHECK IF USER EXISTS FIRST
         final userDoc = await _firestore
             .collection('users')
             .doc(user.uid)
             .get();
 
         if (!userDoc.exists) {
-          print("New user detected. Registering in Firestore...");
-          await registerUserInFirestore(user);
+          // 2. Only register if they are a NEW user
+          developer.log("New Google user. Registering...");
+          await registerUserInFirestore(user, displayName: user.displayName);
         } else {
-          print("Existing user logged in. Updating last active...");
+          // 3. If they exist, ONLY update presence/activity, NOT the whole profile
+          developer.log("Existing Google user. Updating activity...");
           await _firestore.collection('users').doc(user.uid).update({
             'lastActive': FieldValue.serverTimestamp(),
+            'isOnline': true,
           });
         }
       }
+
       return user;
     } on FirebaseAuthException catch (e, stackTrace) {
       developer.log(
@@ -56,7 +62,6 @@ class FirebaseAuthRepository implements AuthRepository {
         error: e,
         stackTrace: stackTrace,
       );
-      // Return a clean, user-facing string
       throw _mapFirebaseAuthError(e);
     } catch (e, stackTrace) {
       developer.log(
@@ -67,13 +72,13 @@ class FirebaseAuthRepository implements AuthRepository {
       throw "An unexpected error occurred. Please try again.";
     }
   }
-@override
+
+  @override
   Future<void> registerUserInFirestore(User user, {String? displayName}) async {
     try {
-      // Use the passed displayName if available, otherwise fallback to user.displayName, 
-      // otherwise fallback to the default string.
-      final String finalName = displayName ?? user.displayName ?? "InkLink Creator";
-      
+      final String finalName =
+          displayName ?? user.displayName ?? "InkLink Creator";
+
       final userData = {
         'uid': user.uid,
         'email': user.email,
@@ -83,15 +88,20 @@ class FirebaseAuthRepository implements AuthRepository {
         'createdAt': FieldValue.serverTimestamp(),
         'lastActive': FieldValue.serverTimestamp(),
         'searchKeywords': _generateSearchKeywords(finalName),
+        // No 'bio' here, so we MUST use merge: true
       };
 
-      await _firestore.collection('users').doc(user.uid).set(userData);
-      developer.log("User successfully saved to Firestore with name: $finalName");
+      // FIX: Use SetOptions(merge: true) to prevent wiping existing fields like 'bio'
+      await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .set(userData, SetOptions(merge: true));
+
+      developer.log("User doc processed with merge: true");
     } catch (e) {
       developer.log("Firestore Save Error", error: e);
     }
   }
-
 
   // Helper to make the Friends search bar work later
   List<String> _generateSearchKeywords(String name) {
@@ -105,7 +115,7 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   // --- SIGN IN WITH EMAIL (Don't forget to add Firestore here too!) ---
-   @override
+  @override
   Future<User?> signUp(String name, String email, String password) async {
     try {
       final credential = await _auth.createUserWithEmailAndPassword(
@@ -113,14 +123,14 @@ class FirebaseAuthRepository implements AuthRepository {
         password: password,
       );
       final user = credential.user;
-      
+
       if (user != null) {
         // 1. Update Auth Profile
         await user.updateDisplayName(name);
-        
-        // 2. PASS THE NAME MANUALLY HERE 
+
+        // 2. PASS THE NAME MANUALLY HERE
         // This bypasses the null check on the stale 'user' object
-        await registerUserInFirestore(user, displayName: name); 
+        await registerUserInFirestore(user, displayName: name);
       }
       return user;
     } on FirebaseAuthException catch (e) {

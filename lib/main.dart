@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:inklink/app_view.dart';
 import 'package:inklink/core/theme/app_theme.dart';
 import 'package:inklink/domain/repositories/auth_repository.dart';
 import 'package:inklink/domain/repositories/auth_repository_impl.dart';
@@ -8,7 +9,7 @@ import 'package:inklink/domain/repositories/social_repository.dart';
 import 'package:inklink/domain/repositories/social_repository_impl.dart';
 import 'package:inklink/domain/repositories/theme_repository.dart'; // Add this
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
-import 'package:inklink/features/auth/view/login_screen.dart';
+import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/friends/bloc/friends_bloc.dart';
 import 'package:inklink/features/navigation/bloc/nav_bloc.dart';
 import 'package:inklink/features/theme/bloc/theme_bloc.dart';
@@ -25,8 +26,12 @@ void main() async {
     // 1. Repositories first
     MultiRepositoryProvider(
       providers: [
-        RepositoryProvider<AuthRepository>(create: (context) => FirebaseAuthRepository()),
-        RepositoryProvider<SocialRepository>(create: (context) => SocialRepositoryImpl()),
+        RepositoryProvider<AuthRepository>(
+          create: (context) => FirebaseAuthRepository(),
+        ),
+        RepositoryProvider<SocialRepository>(
+          create: (context) => SocialRepositoryImpl(),
+        ),
       ],
       // 2. Blocs second
       child: MultiBlocProvider(
@@ -39,13 +44,15 @@ void main() async {
           ),
           BlocProvider(create: (context) => NavBloc()),
           BlocProvider(
-            create: (context) => AuthBloc(
-              authRepository: context.read<AuthRepository>(), // Reads from RepoProvider
-            ),
+            create: (context) =>
+                AuthBloc(authRepository: context.read<AuthRepository>())..add(
+                  AuthCheckRequested(),
+                ), // <--- Add this line to trigger check on start
           ),
           BlocProvider(
             create: (context) => FriendsBloc(
-              socialRepo: context.read<SocialRepository>(), // Reads from RepoProvider
+              socialRepo: context
+                  .read<SocialRepository>(), // Reads from RepoProvider
             ),
           ),
         ],
@@ -67,8 +74,8 @@ class MyApp extends StatelessWidget {
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,
           // This allows the app to respect System, Light, or Dark mode
-          themeMode: themeMode, 
-          home: const LoginScreen(),
+          themeMode: themeMode,
+          home: const AppView(),
           debugShowCheckedModeBanner: false,
         );
       },
@@ -92,12 +99,16 @@ class InitializationErrorApp extends StatelessWidget {
               children: [
                 const Icon(Icons.error_outline, color: Colors.red, size: 60),
                 const SizedBox(height: 16),
-                const Text("Failed to initialize app",
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const Text(
+                  "Failed to initialize app",
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 8),
-                Text(error,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.grey)),
+                Text(
+                  error,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.grey),
+                ),
               ],
             ),
           ),

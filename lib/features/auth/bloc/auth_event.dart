@@ -13,6 +13,8 @@ class RegisterRequested extends AuthEvent {
   RegisterRequested(this.name, this.email, this.password);
 }
 
+class AuthCheckRequested extends AuthEvent {}
+
 class GoogleSignInRequested extends AuthEvent {}
 
 class LogoutRequested extends AuthEvent {}

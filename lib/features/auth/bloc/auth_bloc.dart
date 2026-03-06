@@ -7,7 +7,16 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   final AuthRepository authRepository;
 
   AuthBloc({required this.authRepository}) : super(AuthInitial()) {
-    
+    on<AuthCheckRequested>((event, emit) async {
+      // We ask the repository for the current stream/user status
+      final user = authRepository.currentUser; // Add this getter to your repo
+      if (user != null) {
+        emit(Authenticated(user.displayName ?? "User"));
+      } else {
+        emit(Unauthenticated());
+      }
+    });
+
     on<LoginRequested>((event, emit) async {
       emit(AuthLoading());
       try {
@@ -21,7 +30,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<RegisterRequested>((event, emit) async {
       emit(AuthLoading());
       try {
-        final user = await authRepository.signUp(event.name, event.email, event.password);
+        final user = await authRepository.signUp(
+          event.name,
+          event.email,
+          event.password,
+        );
         emit(Authenticated(user?.displayName ?? event.name));
       } catch (e) {
         emit(AuthError(e.toString()));
@@ -29,12 +42,20 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     });
 
     on<GoogleSignInRequested>((event, emit) async {
-      emit(AuthLoading());
+      emit(AuthLoading()); // AppView will show spinner/splash
       try {
         final user = await authRepository.signInWithGoogle();
-        emit(Authenticated(user?.displayName ?? "Google User"));
+
+        if (user != null) {
+          // Success: User picked an account and Firebase authed
+          emit(Authenticated(user.displayName ?? "Creator"));
+        } else {
+          // Cancelled: User closed the selector
+          emit(Unauthenticated());
+        }
       } catch (e) {
-        emit(AuthError(e.toString()));
+        emit(AuthError("Login failed: ${e.toString()}"));
+        emit(Unauthenticated());
       }
     });
 
