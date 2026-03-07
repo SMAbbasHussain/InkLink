@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/constants/app_colors.dart';
+import '../../../core/utils/helpers.dart'; // FIX: Import validation helpers
 import '../../navigation/view/main_wrapper.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
@@ -190,9 +191,12 @@ class _LoginScreenState extends State<LoginScreen> {
       onTap: isLoading
           ? null
           : () {
-              // Validate basic inputs before sending to BLoC
-              if (_emailController.text.trim().isEmpty ||
-                  _passwordController.text.trim().isEmpty) {
+              final email = _emailController.text.trim();
+              final password = _passwordController.text.trim();
+
+              // FIX: Added comprehensive validation with helpful error messages
+              // Check if fields are not empty
+              if (email.isEmpty || password.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text("Please enter email and password"),
@@ -201,13 +205,18 @@ class _LoginScreenState extends State<LoginScreen> {
                 return;
               }
 
+              // Validate email format
+              if (!isValidEmail(email)) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("Please enter a valid email address"),
+                  ),
+                );
+                return;
+              }
+
               // 3. Dispatch the event to our AuthBloc
-              context.read<AuthBloc>().add(
-                LoginRequested(
-                  _emailController.text.trim(),
-                  _passwordController.text.trim(),
-                ),
-              );
+              context.read<AuthBloc>().add(LoginRequested(email, password));
             },
       borderRadius: BorderRadius.circular(18),
       child: AnimatedContainer(

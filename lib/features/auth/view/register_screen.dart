@@ -4,6 +4,7 @@ import '../../navigation/view/main_wrapper.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
+import '../../../core/utils/helpers.dart'; // FIX: Import validation helpers
 import './widgets/auth_text_field.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -18,7 +19,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  final TextEditingController _confirmPasswordController = TextEditingController();
+  final TextEditingController _confirmPasswordController =
+      TextEditingController();
 
   @override
   void dispose() {
@@ -45,7 +47,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
           }
           if (state is AuthError) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(state.message), backgroundColor: Colors.red),
+              SnackBar(
+                content: Text(state.message),
+                backgroundColor: Colors.red,
+              ),
             );
           }
         },
@@ -61,45 +66,52 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text("Create Account",
-                            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-                        Text("Start your collaborative journey today",
-                            style: TextStyle(color: Colors.grey.shade500)),
-                        
+                        const Text(
+                          "Create Account",
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          "Start your collaborative journey today",
+                          style: TextStyle(color: Colors.grey.shade500),
+                        ),
+
                         const SizedBox(height: 40),
-                        
+
                         // 3. Input Fields linked to controllers
                         AuthTextField(
                           controller: _nameController,
-                          hintText: "Full Name", 
-                          icon: Icons.person_outline
+                          hintText: "Full Name",
+                          icon: Icons.person_outline,
                         ),
                         const SizedBox(height: 16),
                         AuthTextField(
                           controller: _emailController,
-                          hintText: "Email Address", 
-                          icon: Icons.email_outlined
+                          hintText: "Email Address",
+                          icon: Icons.email_outlined,
                         ),
                         const SizedBox(height: 16),
                         AuthTextField(
                           controller: _passwordController,
-                          hintText: "Password", 
-                          icon: Icons.lock_outline, 
-                          isPassword: true
+                          hintText: "Password",
+                          icon: Icons.lock_outline,
+                          isPassword: true,
                         ),
                         const SizedBox(height: 16),
                         AuthTextField(
                           controller: _confirmPasswordController,
-                          hintText: "Confirm Password", 
-                          icon: Icons.lock_reset, 
-                          isPassword: true
+                          hintText: "Confirm Password",
+                          icon: Icons.lock_reset,
+                          isPassword: true,
                         ),
-                        
+
                         const SizedBox(height: 40),
 
                         // 4. Functional Sign Up Button
                         _buildSignUpButton(context, isLoading),
-                        
+
                         const SizedBox(height: 30),
                         const Center(
                           child: Text(
@@ -108,7 +120,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             style: TextStyle(fontSize: 12, color: Colors.grey),
                           ),
                         ),
-                        
+
                         const SizedBox(height: 40),
                         _buildFooter(context),
                       ],
@@ -119,7 +131,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 if (isLoading)
                   Container(
                     color: Colors.black.withOpacity(0.2),
-                    child: const Center(child: CircularProgressIndicator(color: Colors.orange)),
+                    child: const Center(
+                      child: CircularProgressIndicator(color: Colors.orange),
+                    ),
                   ),
               ],
             );
@@ -137,14 +151,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
         width: double.infinity,
         height: 55,
         decoration: BoxDecoration(
-          gradient: const LinearGradient(colors: [Color(0xFFFF5F6D), Color(0xFFFFC371)]),
+          gradient: const LinearGradient(
+            colors: [Color(0xFFFF5F6D), Color(0xFFFFC371)],
+          ),
           borderRadius: BorderRadius.circular(15),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFFFF5F6D).withOpacity(0.3), 
-              blurRadius: 10, 
-              offset: const Offset(0, 5)
-            )
+              color: const Color(0xFFFF5F6D).withOpacity(0.3),
+              blurRadius: 10,
+              offset: const Offset(0, 5),
+            ),
           ],
         ),
         child: Center(
@@ -152,7 +168,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ? const CircularProgressIndicator(color: Colors.white)
               : const Text(
                   "Sign Up",
-                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
         ),
       ),
@@ -160,29 +180,57 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   void _handleSignUp() {
-    // Basic Validation logic
-    if (_passwordController.text != _confirmPasswordController.text) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Passwords do not match!")),
-      );
-      return;
-    }
+    final name = _nameController.text.trim();
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+    final confirmPassword = _confirmPasswordController.text.trim();
 
-    if (_nameController.text.isEmpty || _emailController.text.isEmpty) {
+    // FIX: Added comprehensive validation with helpful error messages
+    // 1. Check if all fields are filled
+    if (name.isEmpty ||
+        email.isEmpty ||
+        password.isEmpty ||
+        confirmPassword.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Please fill in all fields")),
       );
       return;
     }
 
-    // Trigger BLoC
-    context.read<AuthBloc>().add(
-      RegisterRequested(
-        _nameController.text.trim(),
-        _emailController.text.trim(),
-        _passwordController.text.trim(),
-      ),
-    );
+    // 2. Validate name length
+    if (name.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Name must be at least 2 characters")),
+      );
+      return;
+    }
+
+    // 3. Validate email format
+    if (!isValidEmail(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please enter a valid email address")),
+      );
+      return;
+    }
+
+    // 4. Validate password strength
+    if (!isValidPassword(password)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Password must be at least 6 characters")),
+      );
+      return;
+    }
+
+    // 5. Validate password confirmation
+    if (password != confirmPassword) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Passwords do not match")));
+      return;
+    }
+
+    // All validations passed - trigger registration
+    context.read<AuthBloc>().add(RegisterRequested(name, email, password));
   }
 
   Widget _buildFooter(BuildContext context) {
@@ -192,7 +240,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         const Text("Already have an account?"),
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text("Login", style: TextStyle(fontWeight: FontWeight.bold)),
+          child: const Text(
+            "Login",
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
         ),
       ],
     );

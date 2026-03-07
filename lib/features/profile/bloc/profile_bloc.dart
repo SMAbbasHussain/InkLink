@@ -73,8 +73,22 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
         try {
           await socialRepo.updateUserProfile(name: event.name, bio: event.bio);
 
-          // Refresh the local state with new data
-          add(LoadProfile(FirebaseAuth.instance.currentUser!.uid));
+          // IMPROVEMENT: Instead of reloading the entire profile from Firestore,
+          // update the local state immediately with the new values.
+          // This is more efficient and provides instant UI feedback.
+          // Current approach: add(LoadProfile(...)) - causes unnecessary Firestore read
+          // Better approach: emit(ProfileLoaded(...)) with updated userData directly
+          final updatedUserData = {...currentState.userData};
+          updatedUserData['displayName'] = event.name;
+          updatedUserData['bio'] = event.bio;
+
+          emit(
+            ProfileLoaded(
+              userData: updatedUserData,
+              isSelf: currentState.isSelf,
+              isFriend: currentState.isFriend,
+            ),
+          );
         } catch (e) {
           emit(ProfileError("Failed to update profile"));
           // Restore previous state if error occurs

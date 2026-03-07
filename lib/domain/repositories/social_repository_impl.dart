@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../domain/repositories/social_repository.dart';
+import '../../core/utils/helpers.dart'; // FIX: Use centralized helper for search keywords
 import 'package:rxdart/rxdart.dart';
 
 class SocialRepositoryImpl implements SocialRepository {
@@ -15,6 +16,9 @@ class SocialRepositoryImpl implements SocialRepository {
 
   @override
   Future<List<Map<String, dynamic>>> searchUsersByEmail(String email) async {
+    // FIX: Ensure consistent email lookup by converting to lowercase
+    // Important: Make sure emails are always stored lowercase in Firestore
+    // to prevent case sensitivity issues in search
     final snap = await _db
         .collection('users')
         .where('email', isEqualTo: email.trim().toLowerCase())
@@ -30,7 +34,10 @@ class SocialRepositoryImpl implements SocialRepository {
     final List<String> ids = [_currentUid, targetUid]..sort();
     final String requestId = ids.join('_');
 
-    // Check if friendship already exists
+    // NOTE: There is a potential race condition between checking if friendship exists
+    // and creating a request. Consider moving this logic to a Cloud Function with
+    // a transaction to ensure atomicity: another user could accept a request or
+    // send a request between these two operations.
     final friendCheck = await _db
         .collection('users')
         .doc(_currentUid)
@@ -54,7 +61,7 @@ class SocialRepositoryImpl implements SocialRepository {
     try {
       // Ensure this string matches the filename in functions/src/ EXACTLY (without .js)
       final result = await _functions
-          .httpsCallable('accept_friend_request')
+          .httpsCallable('acceptFriendRequest')
           .call({'requestId': requestId});
 
       if (result.data['success'] != true) {
@@ -71,7 +78,23 @@ class SocialRepositoryImpl implements SocialRepository {
 
   @override
   Future<void> declineFriendRequest(String requestId) async {
-    await _db.collection('friend_requests').doc(requestId).delete();
+    // FIX: Use Cloud Function instead of direct Firestore delete
+    // This ensures server-side validation (permission checks, logging)
+    // and matches the decline_friend_request Cloud Function
+    try {
+      final result = await _functions
+          .httpsCallable('declineFriendRequest')
+          .call({'requestId': requestId});
+
+      if (result.data['success'] != true) {
+        throw Exception("Server failed to decline request");
+      }
+    } on FirebaseFunctionsException catch (e) {
+      print("Cloud Function Error: ${e.code} - ${e.message}");
+      throw Exception(e.message);
+    } catch (e) {
+      throw Exception("Connection error");
+    }
   }
 
   @override
@@ -144,12 +167,8 @@ class SocialRepositoryImpl implements SocialRepository {
     await user.updateDisplayName(name);
 
     // 2. Generate new search keywords for the new name
-    List<String> keywords = [];
-    String temp = "";
-    for (int i = 0; i < name.length; i++) {
-      temp = temp + name[i].toLowerCase();
-      keywords.add(temp);
-    }
+    // FIX: Use centralized helper instead of duplicated code
+    final keywords = generateSearchKeywords(name);
 
     // 3. Update Firestore (Source of truth for friends)
     await _db.collection('users').doc(user.uid).update({

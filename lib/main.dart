@@ -37,10 +37,13 @@ void main() async {
       child: MultiBlocProvider(
         providers: [
           BlocProvider(
-            create: (context) => ThemeBloc(
-              themeRepository: themeRepository,
-              initialMode: initialThemeMode,
-            ),
+            create: (context) =>
+                ThemeBloc(
+                  themeRepository: themeRepository,
+                  initialMode: initialThemeMode,
+                )..add(
+                  LoadTheme(),
+                ), // FIX: Trigger LoadTheme to sync theme state properly
           ),
           BlocProvider(create: (context) => NavBloc()),
           BlocProvider(

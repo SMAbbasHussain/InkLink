@@ -1,2 +1,10 @@
 node_modules/
 *.local
+# FIX: Added .env files (should not be committed for security)
+.env
+.env.local
+.env.*.local
+# FIX: Added log files and OS files
+*.log
+npm-debug.log*
+.DS_Store

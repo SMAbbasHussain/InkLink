@@ -1,7 +1,8 @@
-import 'package:cloud_firestore/cloud_firestore.dart'; // Ensure this is imported
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../../domain/repositories/auth_repository.dart';
+import '../../core/utils/helpers.dart'; // FIX: Use centralized helper for search keywords
 import 'dart:developer' as developer;
 
 class FirebaseAuthRepository implements AuthRepository {
@@ -87,7 +88,9 @@ class FirebaseAuthRepository implements AuthRepository {
         'isOnline': true,
         'createdAt': FieldValue.serverTimestamp(),
         'lastActive': FieldValue.serverTimestamp(),
-        'searchKeywords': _generateSearchKeywords(finalName),
+        'searchKeywords': generateSearchKeywords(
+          finalName,
+        ), // FIX: Use centralized helper
         // No 'bio' here, so we MUST use merge: true
       };
 
@@ -103,16 +106,8 @@ class FirebaseAuthRepository implements AuthRepository {
     }
   }
 
-  // Helper to make the Friends search bar work later
-  List<String> _generateSearchKeywords(String name) {
-    List<String> keywords = [];
-    String temp = "";
-    for (int i = 0; i < name.length; i++) {
-      temp = temp + name[i].toLowerCase();
-      keywords.add(temp);
-    }
-    return keywords;
-  }
+  // FIX: Removed duplicate _generateSearchKeywords - now using centralized helper
+  // from lib/core/utils/helpers.dart to avoid duplication
 
   // --- SIGN IN WITH EMAIL (Don't forget to add Firestore here too!) ---
   @override

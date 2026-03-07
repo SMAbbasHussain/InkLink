@@ -1,4 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../../domain/repositories/auth_repository.dart';
 import 'auth_event.dart';
 import 'auth_state.dart';
@@ -8,13 +9,21 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
   AuthBloc({required this.authRepository}) : super(AuthInitial()) {
     on<AuthCheckRequested>((event, emit) async {
-      // We ask the repository for the current stream/user status
-      final user = authRepository.currentUser; // Add this getter to your repo
-      if (user != null) {
-        emit(Authenticated(user.displayName ?? "User"));
-      } else {
-        emit(Unauthenticated());
-      }
+      // FIX: Listen to the user stream instead of single snapshot
+      // This ensures app updates when user logs in from another device/tab
+      await emit.forEach<User?>(
+        authRepository.user,
+        onData: (user) {
+          if (user != null) {
+            return Authenticated(user.displayName ?? "User");
+          } else {
+            return Unauthenticated();
+          }
+        },
+        onError: (error, stackTrace) {
+          return AuthError(error.toString());
+        },
+      );
     });
 
     on<LoginRequested>((event, emit) async {

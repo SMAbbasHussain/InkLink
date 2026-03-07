@@ -69,7 +69,7 @@ class RequestCard extends StatelessWidget {
               request['senderName'] ?? "Collaborator",
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
             ),
-            subtitle: const Text("Sent you a collaboration request"),
+            subtitle: const Text("Sent you a friend request"),
           ),
           Padding(
             padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
