@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/domain/repositories/social_repository.dart';
+import 'package:inklink/domain/repositories/profile_repository.dart';
 import 'package:inklink/features/profile/bloc/profile_bloc.dart';
 import 'package:inklink/features/profile/view/widgets/edit_profile_sheet.dart';
 import '../../../core/constants/app_colors.dart';
@@ -22,7 +23,7 @@ class ProfileScreen extends StatelessWidget {
 
     return BlocProvider(
       create: (context) => ProfileBloc(
-        // Use context.read for cleaner code
+        profileRepo: context.read<ProfileRepository>(),
         socialRepo: context.read<SocialRepository>(),
       )..add(LoadProfile(userId)),
       child: Scaffold(

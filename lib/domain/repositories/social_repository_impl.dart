@@ -2,7 +2,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../domain/repositories/social_repository.dart';
-import '../../core/utils/helpers.dart'; // FIX: Use centralized helper for search keywords
 import 'package:rxdart/rxdart.dart';
 
 class SocialRepositoryImpl implements SocialRepository {
@@ -60,9 +59,9 @@ class SocialRepositoryImpl implements SocialRepository {
   Future<void> acceptFriendRequest(String requestId, String senderUid) async {
     try {
       // Ensure this string matches the filename in functions/src/ EXACTLY (without .js)
-      final result = await _functions
-          .httpsCallable('acceptFriendRequest')
-          .call({'requestId': requestId});
+      final result = await _functions.httpsCallable('acceptFriendRequest').call(
+        {'requestId': requestId},
+      );
 
       if (result.data['success'] != true) {
         throw Exception("Server failed to establish friendship");
@@ -136,45 +135,5 @@ class SocialRepositoryImpl implements SocialRepository {
                 (userSnap) => userSnap.docs.map((doc) => doc.data()).toList(),
               );
         });
-  }
-
-  @override
-  Future<Map<String, dynamic>?> getUserById(String uid) async {
-    final doc = await _db.collection('users').doc(uid).get();
-    return doc.data();
-  }
-
-  @override
-  Future<bool> checkFriendshipStatus(String targetUid) async {
-    final doc = await _db
-        .collection('users')
-        .doc(_auth.currentUser!.uid)
-        .collection('friends')
-        .doc(targetUid)
-        .get();
-    return doc.exists;
-  }
-
-  @override
-  Future<void> updateUserProfile({
-    required String name,
-    required String bio,
-  }) async {
-    final user = _auth.currentUser;
-    if (user == null) return;
-
-    // 1. Update Firebase Auth (for local app instance)
-    await user.updateDisplayName(name);
-
-    // 2. Generate new search keywords for the new name
-    // FIX: Use centralized helper instead of duplicated code
-    final keywords = generateSearchKeywords(name);
-
-    // 3. Update Firestore (Source of truth for friends)
-    await _db.collection('users').doc(user.uid).update({
-      'displayName': name,
-      'bio': bio,
-      'searchKeywords': keywords,
-    });
   }
 }

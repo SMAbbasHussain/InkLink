@@ -7,6 +7,8 @@ import 'package:inklink/domain/repositories/auth_repository.dart';
 import 'package:inklink/domain/repositories/auth_repository_impl.dart';
 import 'package:inklink/domain/repositories/social_repository.dart';
 import 'package:inklink/domain/repositories/social_repository_impl.dart';
+import 'package:inklink/domain/repositories/profile_repository.dart';
+import 'package:inklink/domain/repositories/profile_repository_impl.dart';
 import 'package:inklink/domain/repositories/theme_repository.dart'; // Add this
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
@@ -31,6 +33,9 @@ void main() async {
         ),
         RepositoryProvider<SocialRepository>(
           create: (context) => SocialRepositoryImpl(),
+        ),
+        RepositoryProvider<ProfileRepository>(
+          create: (context) => ProfileRepositoryImpl(),
         ),
       ],
       // 2. Blocs second

@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../domain/repositories/social_repository.dart';
+import '../../../domain/repositories/profile_repository.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 // States
@@ -40,13 +41,16 @@ class UpdateProfileRequested extends ProfileEvent {
 }
 
 class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
+  final ProfileRepository profileRepo;
   final SocialRepository socialRepo;
-  ProfileBloc({required this.socialRepo}) : super(ProfileInitial()) {
+
+  ProfileBloc({required this.profileRepo, required this.socialRepo})
+    : super(ProfileInitial()) {
     on<LoadProfile>((event, emit) async {
       emit(ProfileLoading());
       try {
         final currentUid = FirebaseAuth.instance.currentUser!.uid;
-        final userData = await socialRepo.getUserById(event.userId);
+        final userData = await profileRepo.getUserById(event.userId);
 
         if (userData == null) {
           emit(ProfileError("User not found"));
@@ -56,7 +60,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
         final bool isSelf = currentUid == event.userId;
         bool isFriend = false;
         if (!isSelf) {
-          isFriend = await socialRepo.checkFriendshipStatus(event.userId);
+          isFriend = await profileRepo.checkFriendshipStatus(event.userId);
         }
 
         emit(
@@ -71,7 +75,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
       if (currentState is ProfileLoaded) {
         emit(ProfileLoading()); // Show spinner
         try {
-          await socialRepo.updateUserProfile(name: event.name, bio: event.bio);
+          await profileRepo.updateUserProfile(name: event.name, bio: event.bio);
 
           // IMPROVEMENT: Instead of reloading the entire profile from Firestore,
           // update the local state immediately with the new values.
