@@ -5,6 +5,7 @@ import 'package:inklink/app_view.dart';
 import 'package:inklink/core/theme/app_theme.dart';
 import 'package:inklink/domain/repositories/auth_repository.dart';
 import 'package:inklink/domain/repositories/auth_repository_impl.dart';
+import 'package:inklink/domain/repositories/board_repository.dart';
 import 'package:inklink/domain/repositories/social_repository.dart';
 import 'package:inklink/domain/repositories/social_repository_impl.dart';
 import 'package:inklink/domain/repositories/profile_repository.dart';
@@ -12,6 +13,7 @@ import 'package:inklink/domain/repositories/profile_repository_impl.dart';
 import 'package:inklink/domain/repositories/theme_repository.dart'; // Add this
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
+import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
 import 'package:inklink/features/friends/bloc/friends_bloc.dart';
 import 'package:inklink/features/navigation/bloc/nav_bloc.dart';
 import 'package:inklink/features/theme/bloc/theme_bloc.dart';
@@ -36,6 +38,9 @@ void main() async {
         ),
         RepositoryProvider<ProfileRepository>(
           create: (context) => ProfileRepositoryImpl(),
+        ),
+        RepositoryProvider<BoardRepository>(
+          create: (context) => BoardRepository(),
         ),
       ],
       // 2. Blocs second
@@ -62,6 +67,10 @@ void main() async {
               socialRepo: context
                   .read<SocialRepository>(), // Reads from RepoProvider
             ),
+          ),
+          BlocProvider(
+            create: (context) =>
+                CanvasBloc(boardRepo: context.read<BoardRepository>()),
           ),
         ],
         child: const MyApp(),

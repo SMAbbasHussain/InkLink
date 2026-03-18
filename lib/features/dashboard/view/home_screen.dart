@@ -1,6 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
+import 'package:inklink/features/canvas/view/canvas_screen.dart';
 import 'package:inklink/features/dashboard/view/widgets/board_card.dart';
 import 'package:inklink/features/dashboard/view/widgets/quick_action_button.dart';
 import 'package:inklink/features/profile/view/profile_screen.dart';
@@ -17,118 +19,142 @@ class HomeScreen extends StatelessWidget {
     // 1. Get current user data from Firebase
     final user = FirebaseAuth.instance.currentUser;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          "InkLink",
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 26),
-        ),
-        actions: [
-          IconButton(
-            icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
-            onPressed: () => context.read<ThemeBloc>().add(ToggleTheme()),
+    return BlocListener<CanvasBloc, CanvasState>(
+      listener: (context, state) {
+        if (state is CanvasReady) {
+          // Navigate to the newly created board
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => CanvasScreen(boardId: state.boardId),
+            ),
+          );
+        }
+        if (state is CanvasError) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(state.message)));
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text(
+            "InkLink",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 26),
           ),
-          IconButton(
-            icon: const Icon(Icons.notifications_none),
-            onPressed: () {},
-          ),
-          // 2. Dynamic Profile Picture
-          Padding(
-            padding: const EdgeInsets.only(right: 16.0),
-            child: InkWell(
-              onTap: () {
-                if (user != null) {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => ProfileScreen(userId: user.uid),
-                    ),
-                  );
-                }
-              },
-              customBorder:
-                  const CircleBorder(), // Keeps the ripple effect circular
-              child: CircleAvatar(
-                radius: 18, // Adjusted size
-                backgroundColor: AppColors.primary.withOpacity(0.2),
-                backgroundImage: user?.photoURL != null
-                    ? NetworkImage(user!.photoURL!)
-                    : null,
-                child: user?.photoURL == null
-                    ? const Icon(
-                        Icons.person,
-                        size: 20,
-                        color: AppColors.primary,
-                      )
-                    : null,
+          actions: [
+            IconButton(
+              icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+              onPressed: () => context.read<ThemeBloc>().add(ToggleTheme()),
+            ),
+            IconButton(
+              icon: const Icon(Icons.notifications_none),
+              onPressed: () {},
+            ),
+            // 2. Dynamic Profile Picture
+            Padding(
+              padding: const EdgeInsets.only(right: 16.0),
+              child: InkWell(
+                onTap: () {
+                  if (user != null) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ProfileScreen(userId: user.uid),
+                      ),
+                    );
+                  }
+                },
+                customBorder:
+                    const CircleBorder(), // Keeps the ripple effect circular
+                child: CircleAvatar(
+                  radius: 18, // Adjusted size
+                  backgroundColor: AppColors.primary.withOpacity(0.2),
+                  backgroundImage: user?.photoURL != null
+                      ? NetworkImage(user!.photoURL!)
+                      : null,
+                  child: user?.photoURL == null
+                      ? const Icon(
+                          Icons.person,
+                          size: 20,
+                          color: AppColors.primary,
+                        )
+                      : null,
+                ),
               ),
             ),
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 3. Personalized Greeting
-              Text(
-                "Hello, ${user?.displayName?.split(' ')[0] ?? 'Creator'}! 👋",
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                "Ready to bring your ideas to life?",
-                style: TextStyle(color: Colors.grey.shade500),
-              ),
-              const SizedBox(height: 24),
-
-              // AI Prompt Bar
-              _buildSearchBar(isDark),
-              const SizedBox(height: 30),
-
-              // Quick Actions
-              const Row(
-                children: [
-                  QuickActionButton(
-                    title: "New Board",
-                    icon: Icons.add,
-                    color: AppColors.actionBlue,
+          ],
+        ),
+        body: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 3. Personalized Greeting
+                Text(
+                  "Hello, ${user?.displayName?.split(' ')[0] ?? 'Creator'}! 👋",
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
                   ),
-                  SizedBox(width: 16),
-                  QuickActionButton(
-                    title: "Join Board",
-                    icon: Icons.group_add,
-                    color: AppColors.actionOrange,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 30),
-
-              // Recent Boards Section
-              const Text(
-                "Recent Boards",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-
-              GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
-                  childAspectRatio: 0.85,
                 ),
-                itemCount: 4,
-                itemBuilder: (context, index) => BoardCard(index: index),
-              ),
-            ],
+                const SizedBox(height: 8),
+                Text(
+                  "Ready to bring your ideas to life?",
+                  style: TextStyle(color: Colors.grey.shade500),
+                ),
+                const SizedBox(height: 24),
+
+                // AI Prompt Bar
+                _buildSearchBar(isDark),
+                const SizedBox(height: 30),
+
+                // Quick Actions
+                Row(
+                  children: [
+                    QuickActionButton(
+                      title: "New Board",
+                      icon: Icons.add,
+                      color: AppColors.actionBlue,
+                      onTap: () => context.read<CanvasBloc>().add(
+                        CreateBoardRequested(),
+                      ),
+                    ),
+                    SizedBox(width: 16),
+                    QuickActionButton(
+                      title: "Join Board",
+                      icon: Icons.group_add,
+                      color: AppColors.actionOrange,
+                      onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Join Board tapped!")),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 30),
+
+                // Recent Boards Section
+                const Text(
+                  "Recent Boards",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 16,
+                    mainAxisSpacing: 16,
+                    childAspectRatio: 0.85,
+                  ),
+                  itemCount: 4,
+                  itemBuilder: (context, index) => BoardCard(index: index),
+                ),
+              ],
+            ),
           ),
         ),
       ),
