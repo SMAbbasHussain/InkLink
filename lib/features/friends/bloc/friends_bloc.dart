@@ -16,15 +16,22 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
 
       // In a full implementation, you'd combine streams.
       // For now, let's fix the syntax error.
-        _friendsSubscription = Rx.combineLatest2(
-        socialRepo.watchFriendsList(),
-        socialRepo.watchIncomingRequests(),
-        (List<Map<String, dynamic>> friends, List<Map<String, dynamic>> requests) {
-          return UpdateFriendsLists(friends: friends, incomingRequests: requests);
-        },
-      ).listen((updateEvent) {
-        add(updateEvent); 
-      });
+      _friendsSubscription =
+          Rx.combineLatest2(
+            socialRepo.watchFriendsList(),
+            socialRepo.watchIncomingRequests(),
+            (
+              List<Map<String, dynamic>> friends,
+              List<Map<String, dynamic>> requests,
+            ) {
+              return UpdateFriendsLists(
+                friends: friends,
+                incomingRequests: requests,
+              );
+            },
+          ).listen((updateEvent) {
+            add(updateEvent);
+          });
     });
 
     on<UpdateFriendsLists>((event, emit) {

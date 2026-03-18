@@ -12,10 +12,7 @@ class FriendRequestsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Pending Requests"),
-        elevation: 0,
-      ),
+      appBar: AppBar(title: const Text("Pending Requests"), elevation: 0),
       body: BlocBuilder<FriendsBloc, FriendsState>(
         builder: (context, state) {
           if (state is FriendsLoaded && state.incomingRequests.isNotEmpty) {
@@ -34,10 +31,10 @@ class FriendRequestsScreen extends StatelessWidget {
                   child: RequestCard(
                     request: req,
                     onAccept: () => context.read<FriendsBloc>().add(
-                      AcceptFriendRequestRequested(req['id'], req['fromUid'])
+                      AcceptFriendRequestRequested(req['id'], req['fromUid']),
                     ),
                     onDecline: () => context.read<FriendsBloc>().add(
-                      DeclineFriendRequestRequested(req['id'])
+                      DeclineFriendRequestRequested(req['id']),
                     ),
                   ),
                 );
@@ -50,13 +47,24 @@ class FriendRequestsScreen extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.mark_email_read_outlined, size: 80, color: Colors.grey.withOpacity(0.3)),
+                Icon(
+                  Icons.mark_email_read_outlined,
+                  size: 80,
+                  color: Colors.grey.withOpacity(0.3),
+                ),
                 const SizedBox(height: 16),
                 const Text(
-                  "All caught up!", 
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey)
+                  "All caught up!",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
                 ),
-                const Text("No pending requests.", style: TextStyle(color: Colors.grey)),
+                const Text(
+                  "No pending requests.",
+                  style: TextStyle(color: Colors.grey),
+                ),
               ],
             ),
           );

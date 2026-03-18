@@ -14,7 +14,7 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     // 1. Get real user data
     final user = FirebaseAuth.instance.currentUser;
 
@@ -33,10 +33,10 @@ class SettingsScreen extends StatelessWidget {
         body: ListView(
           children: [
             const SizedBox(height: 20),
-            
+
             // 3. Dynamic Profile Header
             _buildProfileHeader(user),
-            
+
             const SizedBox(height: 30),
 
             _buildSectionHeader("Appearance"),
@@ -61,7 +61,13 @@ class SettingsScreen extends StatelessWidget {
             _buildSectionHeader("Account"),
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.red),
-              title: const Text("Logout", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+              title: const Text(
+                "Logout",
+                style: TextStyle(
+                  color: Colors.red,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               onTap: () => _showLogoutDialog(context), // 4. Proper Logout flow
             ),
           ],
@@ -76,9 +82,11 @@ class SettingsScreen extends StatelessWidget {
         CircleAvatar(
           radius: 50,
           backgroundColor: AppColors.primary.withOpacity(0.1),
-          backgroundImage: user?.photoURL != null ? NetworkImage(user!.photoURL!) : null,
-          child: user?.photoURL == null 
-              ? const Icon(Icons.person, size: 50, color: AppColors.primary) 
+          backgroundImage: user?.photoURL != null
+              ? NetworkImage(user!.photoURL!)
+              : null,
+          child: user?.photoURL == null
+              ? const Icon(Icons.person, size: 50, color: AppColors.primary)
               : null,
         ),
         const SizedBox(height: 12),

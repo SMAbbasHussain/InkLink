@@ -24,8 +24,8 @@ class AuthTextField extends StatelessWidget {
         color: isDark ? AppColors.surfaceDark : Colors.grey.shade100,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: isDark ? Colors.white.withOpacity(0.05) : Colors.transparent
-        )
+          color: isDark ? Colors.white.withOpacity(0.05) : Colors.transparent,
+        ),
       ),
       child: TextField(
         controller: controller,

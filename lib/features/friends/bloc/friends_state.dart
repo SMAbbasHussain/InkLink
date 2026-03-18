@@ -10,11 +10,8 @@ class FriendsLoading extends FriendsState {}
 class FriendsLoaded extends FriendsState {
   final List<Map<String, dynamic>> friends;
   final List<Map<String, dynamic>> incomingRequests;
-  
-  FriendsLoaded({
-    required this.friends, 
-    required this.incomingRequests,
-  });
+
+  FriendsLoaded({required this.friends, required this.incomingRequests});
 }
 
 /// Specifically used to display the results of a global email search.

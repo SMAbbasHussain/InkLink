@@ -6,6 +6,8 @@ import 'package:inklink/core/theme/app_theme.dart';
 import 'package:inklink/domain/repositories/auth_repository.dart';
 import 'package:inklink/domain/repositories/auth_repository_impl.dart';
 import 'package:inklink/domain/repositories/board_repository.dart';
+import 'package:inklink/domain/repositories/canvas_sync_repository.dart';
+import 'package:inklink/core/database/database_service.dart';
 import 'package:inklink/domain/repositories/social_repository.dart';
 import 'package:inklink/domain/repositories/social_repository_impl.dart';
 import 'package:inklink/domain/repositories/profile_repository.dart';
@@ -14,6 +16,7 @@ import 'package:inklink/domain/repositories/theme_repository.dart'; // Add this
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
+import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:inklink/features/friends/bloc/friends_bloc.dart';
 import 'package:inklink/features/navigation/bloc/nav_bloc.dart';
 import 'package:inklink/features/theme/bloc/theme_bloc.dart';
@@ -26,10 +29,15 @@ void main() async {
   final themeRepository = ThemeRepository();
   final initialThemeMode = await themeRepository.getThemeMode();
 
+  final databaseService = DatabaseService();
+  // Ensure DB drops tables or is initialized
+  await databaseService.database;
+
   runApp(
     // 1. Repositories first
     MultiRepositoryProvider(
       providers: [
+        RepositoryProvider<DatabaseService>.value(value: databaseService),
         RepositoryProvider<AuthRepository>(
           create: (context) => FirebaseAuthRepository(),
         ),
@@ -40,7 +48,12 @@ void main() async {
           create: (context) => ProfileRepositoryImpl(),
         ),
         RepositoryProvider<BoardRepository>(
-          create: (context) => BoardRepository(),
+          create: (context) =>
+              BoardRepository(dbService: context.read<DatabaseService>()),
+        ),
+        RepositoryProvider<CanvasSyncRepository>(
+          create: (context) =>
+              CanvasSyncRepository(dbService: context.read<DatabaseService>()),
         ),
       ],
       // 2. Blocs second
@@ -56,6 +69,10 @@ void main() async {
                 ), // FIX: Trigger LoadTheme to sync theme state properly
           ),
           BlocProvider(create: (context) => NavBloc()),
+          BlocProvider(
+            create: (context) =>
+                DashboardBloc(boardRepo: context.read<BoardRepository>()),
+          ),
           BlocProvider(
             create: (context) =>
                 AuthBloc(authRepository: context.read<AuthRepository>())..add(

@@ -1,6 +1,24 @@
+import 'dart:convert';
+import 'dart:math' as math;
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import './widgets/sliding_tray.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:inklink/domain/models/board.dart';
+import 'package:inklink/domain/models/canvas_operation.dart';
+import 'package:inklink/domain/repositories/board_repository.dart';
+import 'package:inklink/domain/repositories/canvas_sync_repository.dart';
+import 'package:uuid/uuid.dart';
+
 import '../../../core/constants/app_colors.dart';
+import 'trays/ai_tray.dart';
+import 'trays/brush_tray.dart';
+import 'trays/canvas_shape_type.dart';
+import 'trays/members_tray.dart';
+import 'trays/shapes_tray.dart';
+import 'trays/tools_tray.dart';
 
 class CanvasScreen extends StatefulWidget {
   final String boardId;
@@ -11,201 +29,440 @@ class CanvasScreen extends StatefulWidget {
 }
 
 class _CanvasScreenState extends State<CanvasScreen> {
-  // State to track which tray is open
   String? activeTray;
+  final TextEditingController _aiPromptController = TextEditingController();
+  final Uuid _uuid = const Uuid();
+  final math.Random _random = math.Random();
+  StreamSubscription<List<CanvasOperation>>? _operationsSub;
 
-  // Standard method to handle opening/closing trays
+  final List<_CanvasElement> _elements = [];
+  final List<_CanvasElement> _redoStack = [];
+  List<Offset> _currentStrokePoints = [];
+
+  Color _selectedColor = Colors.black;
+  double _strokeWidth = 5;
+
+  @override
+  void initState() {
+    super.initState();
+    context.read<BoardRepository>().startBoardsSync();
+    _startOperationListener();
+  }
+
+  void _startOperationListener() {
+    final syncRepo = context.read<CanvasSyncRepository>();
+    _operationsSub = syncRepo.listenToOperations(widget.boardId).listen((ops) {
+      final sortedOps = List<CanvasOperation>.from(ops)
+        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+      final rebuilt = _rebuildElementsFromOps(sortedOps);
+      if (!mounted) return;
+      setState(() {
+        _elements
+          ..clear()
+          ..addAll(rebuilt);
+      });
+    });
+  }
+
+  List<_CanvasElement> _rebuildElementsFromOps(List<CanvasOperation> ops) {
+    final Map<String, _CanvasElement> byObjectId = {};
+
+    for (final op in ops) {
+      Map<String, dynamic> payload;
+      try {
+        final decoded = jsonDecode(op.data);
+        payload = decoded is Map<String, dynamic> ? decoded : {};
+      } catch (_) {
+        payload = {};
+      }
+
+      if (op.action == 'delete') {
+        if (op.type == 'board') {
+          byObjectId.clear();
+        } else {
+          byObjectId.remove(op.objectId);
+        }
+        continue;
+      }
+
+      if (op.action != 'create' && op.action != 'update') {
+        continue;
+      }
+
+      if (op.type == 'stroke') {
+        final pointMaps = (payload['points'] as List?) ?? [];
+        final points = pointMaps
+            .whereType<Map>()
+            .map(
+              (p) => Offset(
+                (p['x'] as num?)?.toDouble() ?? 0,
+                (p['y'] as num?)?.toDouble() ?? 0,
+              ),
+            )
+            .toList();
+        final color = Color(
+          (payload['color'] as num?)?.toInt() ?? Colors.black.value,
+        );
+        final strokeWidth = (payload['strokeWidth'] as num?)?.toDouble() ?? 5;
+
+        byObjectId[op.objectId] = _CanvasElement.stroke(
+          id: op.objectId,
+          points: points,
+          color: color,
+          strokeWidth: strokeWidth,
+        );
+        continue;
+      }
+
+      if (op.type == 'shape') {
+        final shapeName = (payload['shapeType'] as String?) ?? 'square';
+        final shapeType = CanvasShapeType.values.firstWhere(
+          (s) => s.name == shapeName,
+          orElse: () => CanvasShapeType.square,
+        );
+        final color = Color(
+          (payload['color'] as num?)?.toInt() ?? Colors.black.value,
+        );
+
+        byObjectId[op.objectId] = _CanvasElement.shape(
+          id: op.objectId,
+          shapeType: shapeType,
+          center: Offset(
+            (payload['cx'] as num?)?.toDouble() ?? 0,
+            (payload['cy'] as num?)?.toDouble() ?? 0,
+          ),
+          size: (payload['size'] as num?)?.toDouble() ?? 64,
+          color: color,
+          strokeWidth: 3,
+        );
+        continue;
+      }
+
+      if (op.type == 'text') {
+        final color = Color(
+          (payload['color'] as num?)?.toInt() ?? Colors.black.value,
+        );
+        byObjectId[op.objectId] = _CanvasElement.text(
+          id: op.objectId,
+          center: Offset(
+            (payload['cx'] as num?)?.toDouble() ?? 0,
+            (payload['cy'] as num?)?.toDouble() ?? 0,
+          ),
+          text: (payload['text'] as String?) ?? '',
+          color: color,
+        );
+      }
+    }
+
+    return byObjectId.values.toList();
+  }
+
   void _openTray(String tray) {
     setState(() {
       activeTray = (activeTray == tray) ? null : tray;
     });
   }
 
+  Future<void> _saveOperation({
+    required String action,
+    required String type,
+    required String objectId,
+    required Map<String, dynamic> data,
+  }) async {
+    final syncRepo = context.read<CanvasSyncRepository>();
+    final userId = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
+
+    await syncRepo.pushOperation(
+      CanvasOperation(
+        opId: _uuid.v4(),
+        boardId: widget.boardId,
+        objectId: objectId,
+        type: type,
+        action: action,
+        data: jsonEncode(data),
+        timestamp: DateTime.now().toIso8601String(),
+        clientId: userId,
+      ),
+    );
+  }
+
+  void _startStroke(Offset point) {
+    setState(() {
+      _currentStrokePoints = [point];
+    });
+  }
+
+  void _appendStroke(Offset point) {
+    setState(() {
+      _currentStrokePoints.add(point);
+    });
+  }
+
+  void _endStroke() {
+    if (_currentStrokePoints.length < 2) {
+      setState(() {
+        _currentStrokePoints = [];
+      });
+      return;
+    }
+
+    final stroke = _CanvasElement.stroke(
+      id: _uuid.v4(),
+      points: List<Offset>.from(_currentStrokePoints),
+      color: _selectedColor,
+      strokeWidth: _strokeWidth,
+    );
+
+    setState(() {
+      _elements.add(stroke);
+      _redoStack.clear();
+      _currentStrokePoints = [];
+    });
+
+    _saveOperation(
+      action: 'create',
+      type: 'stroke',
+      objectId: stroke.id,
+      data: {
+        'color': stroke.color.value,
+        'strokeWidth': stroke.strokeWidth,
+        'points': stroke.points
+            .map((p) => {'x': p.dx, 'y': p.dy})
+            .toList(growable: false),
+      },
+    );
+  }
+
+  void _addShape(CanvasShapeType shapeType) {
+    final shape = _CanvasElement.shape(
+      id: _uuid.v4(),
+      shapeType: shapeType,
+      center: Offset(
+        180 + _random.nextDouble() * 40,
+        220 + _random.nextDouble() * 80,
+      ),
+      size: 64,
+      color: _selectedColor,
+      strokeWidth: 3,
+    );
+
+    setState(() {
+      _elements.add(shape);
+      _redoStack.clear();
+      activeTray = null;
+    });
+
+    _saveOperation(
+      action: 'create',
+      type: 'shape',
+      objectId: shape.id,
+      data: {
+        'shapeType': shapeType.name,
+        'cx': shape.center.dx,
+        'cy': shape.center.dy,
+        'size': shape.size,
+        'color': shape.color.value,
+      },
+    );
+  }
+
+  void _addAiTextElement() {
+    final prompt = _aiPromptController.text.trim();
+    if (prompt.isEmpty) return;
+
+    final note = _CanvasElement.text(
+      id: _uuid.v4(),
+      center: Offset(
+        200 + _random.nextDouble() * 40,
+        240 + _random.nextDouble() * 60,
+      ),
+      text: prompt,
+      color: _selectedColor,
+    );
+
+    setState(() {
+      _elements.add(note);
+      _redoStack.clear();
+      _aiPromptController.clear();
+      activeTray = null;
+    });
+
+    _saveOperation(
+      action: 'create',
+      type: 'text',
+      objectId: note.id,
+      data: {
+        'text': note.text,
+        'cx': note.center.dx,
+        'cy': note.center.dy,
+        'color': note.color.value,
+      },
+    );
+  }
+
+  void _undo() {
+    if (_elements.isEmpty) return;
+    final removed = _elements.last;
+    setState(() {
+      _elements.removeLast();
+      _redoStack.add(removed);
+      activeTray = null;
+    });
+
+    _saveOperation(
+      action: 'delete',
+      type: removed.kind.name,
+      objectId: removed.id,
+      data: {'reason': 'undo'},
+    );
+  }
+
+  void _redo() {
+    if (_redoStack.isEmpty) return;
+    final restored = _redoStack.last;
+    setState(() {
+      _redoStack.removeLast();
+      _elements.add(restored);
+      activeTray = null;
+    });
+
+    _saveOperation(
+      action: 'create',
+      type: restored.kind.name,
+      objectId: restored.id,
+      data: {'reason': 'redo'},
+    );
+  }
+
+  void _clearAll() {
+    if (_elements.isEmpty) return;
+    setState(() {
+      _redoStack
+        ..clear()
+        ..addAll(_elements);
+      _elements.clear();
+      activeTray = null;
+    });
+
+    _saveOperation(
+      action: 'delete',
+      type: 'board',
+      objectId: widget.boardId,
+      data: {'reason': 'clear_all'},
+    );
+  }
+
+  void _showRenameDialog(BoardRepository repo) {
+    final controller = TextEditingController();
+    final navigator = Navigator.of(context);
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rename Board'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(hintText: "Enter new name"),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              if (controller.text.isNotEmpty) {
+                await repo.renameBoard(widget.boardId, controller.text);
+                if (!mounted) return;
+                navigator.pop();
+              }
+            },
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final repo = context.read<BoardRepository>();
 
     return Scaffold(
       backgroundColor: isDark ? AppColors.bgDark : const Color(0xFFF5F5F5),
       resizeToAvoidBottomInset: false,
-      body: Stack(
-        children: [
-          // 1. MAIN CANVAS AREA (Background)
-          GestureDetector(
-            onTap: () => setState(() => activeTray = null),
-            behavior: HitTestBehavior.translucent,
-            child: Container(
-              width: double.infinity,
-              height: double.infinity,
-              color: Colors.transparent,
-              child: const Center(
-                child: Text(
-                  "InkLink Drawing Surface\n(Tap to close trays)",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ),
-            ),
-          ),
-
-          // 2. THE FUNCTIONAL TRAYS (Visuals)
-          _buildAllTrays(),
-
-          // 3. EDGE TRIGGER HOTSPOTS (Gestures)
-          // We put these last in the stack so they are on top
-          _buildEdgeTriggers(),
-        ],
-      ),
-    );
-  }
-
-  // --- CONTENT BUILDERS ---
-
-  Widget _buildMembersContent() {
-    return Column(
-      children: [
-        const ListTile(
-          leading: CircleAvatar(child: Icon(Icons.person)),
-          title: Text("Abbas (You)"),
-          trailing: Icon(Icons.mic, color: Colors.green, size: 20),
+      appBar: AppBar(
+        title: StreamBuilder<Board?>(
+          stream: repo.getBoardById(widget.boardId),
+          builder: (context, snapshot) {
+            return Text(
+              snapshot.data?.title ??
+                  'Board ${widget.boardId.substring(0, math.min(6, widget.boardId.length))}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            );
+          },
         ),
-        const Spacer(),
-        Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: ElevatedButton.icon(
-            onPressed: () {},
-            icon: const Icon(Icons.person_add, size: 18),
-            label: const Text("Invite"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(double.infinity, 45),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBrushContent() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.line_weight, size: 18, color: Colors.grey),
-              Expanded(
-                child: Slider(
-                  value: 5,
-                  min: 1,
-                  max: 20,
-                  activeColor: AppColors.primary,
-                  onChanged: (v) {},
-                ),
+        centerTitle: true,
+        elevation: 0,
+        backgroundColor: Colors.transparent,
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              if (value == 'rename') {
+                _showRenameDialog(repo);
+              } else if (value == 'copy') {
+                Clipboard.setData(ClipboardData(text: widget.boardId));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Join Code copied to clipboard!'),
+                  ),
+                );
+              } else if (value == 'exit') {
+                Navigator.pop(context);
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(value: 'rename', child: Text('Rename Board')),
+              const PopupMenuItem(value: 'copy', child: Text('Copy Join Code')),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'exit',
+                child: Text('Exit Canvas', style: TextStyle(color: Colors.red)),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children:
-                [
-                      Colors.black,
-                      Colors.red,
-                      Colors.blue,
-                      Colors.green,
-                      Colors.purple,
-                    ]
-                    .map(
-                      (c) => InkWell(
-                        onTap: () {},
-                        child: CircleAvatar(backgroundColor: c, radius: 14),
-                      ),
-                    )
-                    .toList(),
-          ),
         ],
       ),
-    );
-  }
-
-  Widget _buildAIContent() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
+      body: Stack(
         children: [
-          TextField(
-            decoration: InputDecoration(
-              hintText: "Describe an object...",
-              hintStyle: const TextStyle(fontSize: 13),
-              suffixIcon: const Icon(
-                Icons.auto_awesome,
-                color: Colors.purple,
-                size: 20,
-              ),
-              fillColor: Colors.black.withOpacity(0.05),
-              filled: true,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(15),
-                borderSide: BorderSide.none,
+          GestureDetector(
+            onTap: () => setState(() => activeTray = null),
+            onPanStart: (details) => _startStroke(details.localPosition),
+            onPanUpdate: (details) => _appendStroke(details.localPosition),
+            onPanEnd: (_) => _endStroke(),
+            behavior: HitTestBehavior.translucent,
+            child: SizedBox.expand(
+              child: CustomPaint(
+                painter: _CanvasPainter(
+                  elements: _elements,
+                  currentPoints: _currentStrokePoints,
+                  currentColor: _selectedColor,
+                  currentStrokeWidth: _strokeWidth,
+                ),
               ),
             ),
           ),
-          const SizedBox(height: 12),
-          const Text(
-            "AI will generate a vector object for your canvas",
-            style: TextStyle(fontSize: 10, color: Colors.grey),
-            textAlign: TextAlign.center,
-          ),
+
+          // 2. TRAYS
+          _buildAllTrays(),
+
+          // 3. EDGE TRIGGERS
+          _buildEdgeTriggers(),
         ],
       ),
-    );
-  }
-
-  Widget _buildShapesContent() {
-    final List<IconData> shapes = [
-      Icons.square_outlined,
-      Icons.circle_outlined,
-      Icons.change_history,
-      Icons.star_border,
-      Icons.pentagon_outlined,
-      Icons.horizontal_rule,
-    ];
-    return GridView.builder(
-      padding: const EdgeInsets.all(12),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-      ),
-      itemCount: shapes.length,
-      itemBuilder: (context, i) =>
-          Icon(shapes[i], color: AppColors.primary, size: 30),
-    );
-  }
-
-  Widget _buildToolsContent() {
-    return Column(
-      children: [
-        ListTile(
-          leading: const Icon(Icons.undo, color: Colors.blue),
-          title: const Text("Undo", style: TextStyle(fontSize: 14)),
-          onTap: () {},
-        ),
-        ListTile(
-          leading: const Icon(Icons.redo, color: Colors.blue),
-          title: const Text("Redo", style: TextStyle(fontSize: 14)),
-          onTap: () {},
-        ),
-        ListTile(
-          leading: const Icon(Icons.delete_outline, color: Colors.red),
-          title: const Text("Clear All", style: TextStyle(fontSize: 14)),
-          onTap: () {},
-        ),
-      ],
     );
   }
 
@@ -214,42 +471,25 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Widget _buildAllTrays() {
     return Stack(
       children: [
-        SlidingTray(
-          isOpen: activeTray == 'members',
-          direction: TrayDirection.left,
-          title: "Members & Calls",
-          child: _buildMembersContent(),
-        ),
-        SlidingTray(
+        MembersTray(isOpen: activeTray == 'members', boardId: widget.boardId),
+        AITray(
           isOpen: activeTray == 'ai',
-          direction: TrayDirection.right,
-          title: "AI Generation",
-          child: _buildAIContent(),
+          controller: _aiPromptController,
+          onAddText: _addAiTextElement,
         ),
-        SlidingTray(
+        ToolsTray(
           isOpen: activeTray == 'tools',
-          direction: TrayDirection.left,
-          title: "Editing Tools",
-          height: 230,
-          width: 200,
-          bottomOffset: 60,
-          child: _buildToolsContent(),
+          onUndo: _undo,
+          onRedo: _redo,
+          onClearAll: _clearAll,
         ),
-        SlidingTray(
-          isOpen: activeTray == 'shapes',
-          direction: TrayDirection.right,
-          title: "Shapes",
-          height: 220,
-          width: 200,
-          bottomOffset: 60,
-          child: _buildShapesContent(),
-        ),
-        SlidingTray(
+        ShapesTray(isOpen: activeTray == 'shapes', onAddShape: _addShape),
+        BrushTray(
           isOpen: activeTray == 'brushes',
-          direction: TrayDirection.bottom,
-          title: "Brush & Color",
-          height: 180,
-          child: _buildBrushContent(),
+          strokeWidth: _strokeWidth,
+          selectedColor: _selectedColor,
+          onStrokeWidthChanged: (v) => setState(() => _strokeWidth = v),
+          onColorSelected: (c) => setState(() => _selectedColor = c),
         ),
       ],
     );
@@ -339,5 +579,246 @@ class _CanvasScreenState extends State<CanvasScreen> {
         ),
       ],
     );
+  }
+
+  @override
+  void dispose() {
+    _operationsSub?.cancel();
+    context.read<CanvasSyncRepository>().stopRemoteSync(widget.boardId);
+    _aiPromptController.dispose();
+    super.dispose();
+  }
+}
+
+enum _ElementKind { stroke, shape, text }
+
+class _CanvasElement {
+  final String id;
+  final _ElementKind kind;
+  final List<Offset> points;
+  final Color color;
+  final double strokeWidth;
+  final CanvasShapeType? shapeType;
+  final Offset center;
+  final double size;
+  final String text;
+
+  const _CanvasElement._({
+    required this.id,
+    required this.kind,
+    this.points = const [],
+    required this.color,
+    this.strokeWidth = 2,
+    this.shapeType,
+    this.center = Offset.zero,
+    this.size = 0,
+    this.text = '',
+  });
+
+  factory _CanvasElement.stroke({
+    required String id,
+    required List<Offset> points,
+    required Color color,
+    required double strokeWidth,
+  }) {
+    return _CanvasElement._(
+      id: id,
+      kind: _ElementKind.stroke,
+      points: points,
+      color: color,
+      strokeWidth: strokeWidth,
+    );
+  }
+
+  factory _CanvasElement.shape({
+    required String id,
+    required CanvasShapeType shapeType,
+    required Offset center,
+    required double size,
+    required Color color,
+    required double strokeWidth,
+  }) {
+    return _CanvasElement._(
+      id: id,
+      kind: _ElementKind.shape,
+      shapeType: shapeType,
+      center: center,
+      size: size,
+      color: color,
+      strokeWidth: strokeWidth,
+    );
+  }
+
+  factory _CanvasElement.text({
+    required String id,
+    required Offset center,
+    required String text,
+    required Color color,
+  }) {
+    return _CanvasElement._(
+      id: id,
+      kind: _ElementKind.text,
+      center: center,
+      text: text,
+      color: color,
+    );
+  }
+}
+
+class _CanvasPainter extends CustomPainter {
+  final List<_CanvasElement> elements;
+  final List<Offset> currentPoints;
+  final Color currentColor;
+  final double currentStrokeWidth;
+
+  const _CanvasPainter({
+    required this.elements,
+    required this.currentPoints,
+    required this.currentColor,
+    required this.currentStrokeWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final element in elements) {
+      switch (element.kind) {
+        case _ElementKind.stroke:
+          _paintStroke(
+            canvas,
+            element.points,
+            element.color,
+            element.strokeWidth,
+          );
+          break;
+        case _ElementKind.shape:
+          _paintShape(canvas, element);
+          break;
+        case _ElementKind.text:
+          _paintText(canvas, element);
+          break;
+      }
+    }
+
+    if (currentPoints.length > 1) {
+      _paintStroke(canvas, currentPoints, currentColor, currentStrokeWidth);
+    }
+  }
+
+  void _paintStroke(
+    Canvas canvas,
+    List<Offset> points,
+    Color color,
+    double width,
+  ) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = width
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+
+    for (int i = 0; i < points.length - 1; i++) {
+      canvas.drawLine(points[i], points[i + 1], paint);
+    }
+  }
+
+  void _paintShape(Canvas canvas, _CanvasElement element) {
+    final paint = Paint()
+      ..color = element.color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = element.strokeWidth;
+
+    final c = element.center;
+    final s = element.size;
+
+    switch (element.shapeType!) {
+      case CanvasShapeType.square:
+        canvas.drawRect(Rect.fromCenter(center: c, width: s, height: s), paint);
+        break;
+      case CanvasShapeType.circle:
+        canvas.drawCircle(c, s / 2, paint);
+        break;
+      case CanvasShapeType.triangle:
+        final p = Path()
+          ..moveTo(c.dx, c.dy - s / 2)
+          ..lineTo(c.dx - s / 2, c.dy + s / 2)
+          ..lineTo(c.dx + s / 2, c.dy + s / 2)
+          ..close();
+        canvas.drawPath(p, paint);
+        break;
+      case CanvasShapeType.star:
+        final p = Path();
+        for (int i = 0; i < 5; i++) {
+          final outerAngle = (math.pi / 2) + i * (2 * math.pi / 5);
+          final innerAngle = outerAngle + (math.pi / 5);
+          final outer = Offset(
+            c.dx + math.cos(outerAngle) * (s / 2),
+            c.dy - math.sin(outerAngle) * (s / 2),
+          );
+          final inner = Offset(
+            c.dx + math.cos(innerAngle) * (s / 4),
+            c.dy - math.sin(innerAngle) * (s / 4),
+          );
+          if (i == 0) {
+            p.moveTo(outer.dx, outer.dy);
+          } else {
+            p.lineTo(outer.dx, outer.dy);
+          }
+          p.lineTo(inner.dx, inner.dy);
+        }
+        p.close();
+        canvas.drawPath(p, paint);
+        break;
+      case CanvasShapeType.pentagon:
+        final p = Path();
+        for (int i = 0; i < 5; i++) {
+          final angle = (math.pi / 2) + i * (2 * math.pi / 5);
+          final point = Offset(
+            c.dx + math.cos(angle) * (s / 2),
+            c.dy - math.sin(angle) * (s / 2),
+          );
+          if (i == 0) {
+            p.moveTo(point.dx, point.dy);
+          } else {
+            p.lineTo(point.dx, point.dy);
+          }
+        }
+        p.close();
+        canvas.drawPath(p, paint);
+        break;
+      case CanvasShapeType.line:
+        canvas.drawLine(
+          Offset(c.dx - s / 2, c.dy),
+          Offset(c.dx + s / 2, c.dy),
+          paint,
+        );
+        break;
+    }
+  }
+
+  void _paintText(Canvas canvas, _CanvasElement element) {
+    final textSpan = TextSpan(
+      text: element.text,
+      style: TextStyle(
+        color: element.color,
+        fontSize: 16,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+      maxLines: 2,
+      ellipsis: '...',
+    )..layout(maxWidth: 220);
+
+    textPainter.paint(canvas, Offset(element.center.dx, element.center.dy));
+  }
+
+  @override
+  bool shouldRepaint(covariant _CanvasPainter oldDelegate) {
+    return oldDelegate.elements != elements ||
+        oldDelegate.currentPoints != currentPoints ||
+        oldDelegate.currentColor != currentColor ||
+        oldDelegate.currentStrokeWidth != currentStrokeWidth;
   }
 }

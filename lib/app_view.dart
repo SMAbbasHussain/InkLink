@@ -15,8 +15,11 @@ class AppView extends StatelessWidget {
         if (state is Authenticated) {
           return const MainWrapper();
         }
-        
-        if (state is Unauthenticated || state is AuthInitial || state is AuthError || state is AuthLoading) {
+
+        if (state is Unauthenticated ||
+            state is AuthInitial ||
+            state is AuthError ||
+            state is AuthLoading) {
           return const LoginScreen();
         }
         // While checking session or loading
