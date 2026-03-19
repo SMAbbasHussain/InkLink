@@ -120,4 +120,3 @@ app.*.map.json
 lib/firebase_options.dart
 android/app/google-services.json
 firestore.rules
-firebase.json

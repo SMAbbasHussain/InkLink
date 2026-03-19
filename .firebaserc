@@ -1,7 +1,6 @@
 {
   "projects": {
-    "default": "ai-therapist-5b12b",
-    "InkLink": "inklink-f0308"
+    "default": "inklink-f0308"
   },
   "targets": {},
   "etags": {}
