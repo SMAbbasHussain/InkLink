@@ -1,7 +1,6 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/domain/repositories/board_repository.dart';
+import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
 import 'package:inklink/features/canvas/view/canvas_screen.dart';
 import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
@@ -30,8 +29,6 @@ class _HomeScreenState extends State<HomeScreen>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
 
-    // Initialize data flow: Firebase -> Isar -> Bloc -> UI
-    context.read<BoardRepository>().startBoardsSync();
     context.read<DashboardBloc>().add(LoadDashboardRequested());
   }
 
@@ -62,27 +59,11 @@ class _HomeScreenState extends State<HomeScreen>
           TextButton(
             onPressed: () async {
               if (controller.text.isNotEmpty) {
-                try {
-                  final boardId = controller.text.trim();
-                  await context.read<BoardRepository>().joinBoard(boardId);
-                  if (!mounted) return;
-                  Navigator.pop(dialogContext);
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => CanvasScreen(
-                        boardId: boardId,
-                        showTrayTipsOnEntry: true,
-                      ),
-                    ),
-                  );
-                  _tabController.animateTo(1);
-                } catch (e) {
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text('Failed to join: $e')));
-                }
+                final boardId = controller.text.trim();
+                context.read<DashboardBloc>().add(
+                  DashboardJoinBoardRequested(boardId),
+                );
+                Navigator.pop(dialogContext);
               }
             },
             child: const Text('Join'),
@@ -96,10 +77,45 @@ class _HomeScreenState extends State<HomeScreen>
   Widget build(BuildContext context) {
     super.build(context); // Required by AutomaticKeepAliveClientMixin
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final user = FirebaseAuth.instance.currentUser;
+    final user = context.read<AuthService>().getCurrentUser();
 
     return MultiBlocListener(
       listeners: [
+        BlocListener<DashboardBloc, DashboardState>(
+          listenWhen: (previous, current) =>
+              current is DashboardLoaded &&
+              (current.joinedBoardId != null || current.actionError != null),
+          listener: (context, state) async {
+            if (state is! DashboardLoaded) return;
+            final dashboardBloc = this.context.read<DashboardBloc>();
+            final scaffoldMessenger = ScaffoldMessenger.of(this.context);
+            final navigator = Navigator.of(this.context);
+
+            if (state.actionError != null) {
+              scaffoldMessenger.showSnackBar(
+                SnackBar(
+                  content: Text(state.actionError!),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              dashboardBloc.add(DashboardConsumeEffects());
+              return;
+            }
+
+            final boardId = state.joinedBoardId;
+            if (boardId == null) return;
+
+            await navigator.push(
+              MaterialPageRoute(
+                builder: (_) =>
+                    CanvasScreen(boardId: boardId, showTrayTipsOnEntry: true),
+              ),
+            );
+            if (!mounted) return;
+            _tabController.animateTo(1);
+            dashboardBloc.add(DashboardConsumeEffects());
+          },
+        ),
         // Listen for Canvas creation success to navigate
         BlocListener<CanvasBloc, CanvasState>(
           listener: (context, state) {
@@ -114,7 +130,7 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               );
             }
-            if (state is CanvasError) {
+            if (state is CanvasErrorState) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(state.message),
@@ -286,9 +302,12 @@ class _HomeScreenState extends State<HomeScreen>
           return BoardCard(
             board: board,
             isOwner: isOwner,
-            onRename: (id, newName) =>
-                context.read<BoardRepository>().renameBoard(id, newName),
-            onDelete: (id) => context.read<BoardRepository>().deleteBoard(id),
+            onRename: (id, newName) => context.read<DashboardBloc>().add(
+              DashboardRenameBoardRequested(id, newName),
+            ),
+            onDelete: (id) => context.read<DashboardBloc>().add(
+              DashboardDeleteBoardRequested(id),
+            ),
           );
         },
       );

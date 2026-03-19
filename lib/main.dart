@@ -3,6 +3,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:inklink/app_view.dart';
 import 'package:inklink/core/theme/app_theme.dart';
+import 'package:inklink/core/services/firestore_service.dart';
+import 'package:inklink/core/services/auth_service.dart';
+import 'package:inklink/core/services/cloud_functions_service.dart';
 import 'package:inklink/domain/repositories/auth_repository.dart';
 import 'package:inklink/domain/repositories/auth_repository_impl.dart';
 import 'package:inklink/domain/repositories/board_repository.dart';
@@ -34,29 +37,55 @@ void main() async {
   await databaseService.database;
 
   runApp(
-    // 1. Repositories first
+    // 0. Firebase Services (provide first, before repositories)
     MultiRepositoryProvider(
       providers: [
+        // Firebase service abstractions
+        RepositoryProvider<FirestoreService>(
+          create: (context) => FirestoreServiceImpl(),
+        ),
+        RepositoryProvider<AuthService>(create: (context) => AuthServiceImpl()),
+        RepositoryProvider<CloudFunctionsService>(
+          create: (context) => CloudFunctionsServiceImpl(),
+        ),
+        // Other services
         RepositoryProvider<DatabaseService>.value(value: databaseService),
+        // 1. Repositories (depend on Firebase services)
         RepositoryProvider<AuthRepository>(
-          create: (context) => FirebaseAuthRepository(),
+          create: (context) => FirebaseAuthRepository(
+            authService: context.read<AuthService>(),
+            firestoreService: context.read<FirestoreService>(),
+          ),
         ),
         RepositoryProvider<SocialRepository>(
-          create: (context) => SocialRepositoryImpl(),
+          create: (context) => SocialRepositoryImpl(
+            firestoreService: context.read<FirestoreService>(),
+            authService: context.read<AuthService>(),
+            functionsService: context.read<CloudFunctionsService>(),
+          ),
         ),
         RepositoryProvider<ProfileRepository>(
-          create: (context) => ProfileRepositoryImpl(),
+          create: (context) => ProfileRepositoryImpl(
+            firestoreService: context.read<FirestoreService>(),
+            authService: context.read<AuthService>(),
+          ),
         ),
         RepositoryProvider<BoardRepository>(
-          create: (context) =>
-              BoardRepository(dbService: context.read<DatabaseService>()),
+          create: (context) => BoardRepository(
+            firestoreService: context.read<FirestoreService>(),
+            authService: context.read<AuthService>(),
+            dbService: context.read<DatabaseService>(),
+          ),
         ),
         RepositoryProvider<CanvasSyncRepository>(
-          create: (context) =>
-              CanvasSyncRepository(dbService: context.read<DatabaseService>()),
+          create: (context) => CanvasSyncRepository(
+            firestoreService: context.read<FirestoreService>(),
+            authService: context.read<AuthService>(),
+            dbService: context.read<DatabaseService>(),
+          ),
         ),
       ],
-      // 2. Blocs second
+      // 2. BLoCs (depend on repositories)
       child: MultiBlocProvider(
         providers: [
           BlocProvider(
@@ -86,8 +115,11 @@ void main() async {
             ),
           ),
           BlocProvider(
-            create: (context) =>
-                CanvasBloc(boardRepo: context.read<BoardRepository>()),
+            create: (context) => CanvasBloc(
+              boardRepository: context.read<BoardRepository>(),
+              syncRepository: context.read<CanvasSyncRepository>(),
+              boardId: '',
+            ),
           ),
         ],
         child: const MyApp(),

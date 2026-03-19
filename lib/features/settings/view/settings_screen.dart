@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/core/database/database_service.dart';
+import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/utils/tray_tips_preferences.dart';
 import 'package:inklink/features/auth/view/login_screen.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
@@ -56,7 +57,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     // 1. Get real user data
-    final user = FirebaseAuth.instance.currentUser;
+    final user = context.read<AuthService>().getCurrentUser();
 
     return BlocListener<AuthBloc, AuthState>(
       // 2. Listen for the Unauthenticated state to navigate away

@@ -1,23 +1,30 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:isar/isar.dart';
 import 'dart:async';
 import '../../core/database/database_service.dart';
 import '../../core/database/collections/local_board.dart';
+import '../../core/services/firestore_service.dart';
+import '../../core/services/auth_service.dart';
 import '../models/board.dart';
 
 class BoardRepository {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirestoreService _firestoreService;
+  final AuthService _authService;
   final DatabaseService _dbService;
   static const String crdtEngine = 'crdt_v1';
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _ownedBoardsSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _joinedBoardsSub;
   String? _syncUserId;
 
-  BoardRepository({required DatabaseService dbService})
-    : _dbService = dbService;
+  BoardRepository({
+    required FirestoreService firestoreService,
+    required AuthService authService,
+    required DatabaseService dbService,
+  }) : _firestoreService = firestoreService,
+       _authService = authService,
+       _dbService = dbService;
 
-  String? get currentUserId => FirebaseAuth.instance.currentUser?.uid;
+  String? get currentUserId => _authService.getCurrentUserId();
 
   /// Starts long-lived sync from Firestore -> Isar for the current user.
   /// UI should read from Isar streams only.
@@ -37,7 +44,7 @@ class BoardRepository {
     await stopBoardsSync();
     _syncUserId = uid;
 
-    _ownedBoardsSub = _db
+    _ownedBoardsSub = _firestoreService
         .collection('boards')
         .where('ownerId', isEqualTo: uid)
         .snapshots()
@@ -53,7 +60,7 @@ class BoardRepository {
           },
         );
 
-    _joinedBoardsSub = _db
+    _joinedBoardsSub = _firestoreService
         .collection('boards')
         .where('members', arrayContains: uid)
         .snapshots()
@@ -178,7 +185,7 @@ class BoardRepository {
   Future<String> createNewBoard([String name = 'Untitled Board']) async {
     if (currentUserId == null) throw Exception("User not authenticated");
 
-    final docRef = _db.collection('boards').doc();
+    final docRef = _firestoreService.collection('boards').doc();
     final now = DateTime.now();
 
     final boardData = {
@@ -218,7 +225,7 @@ class BoardRepository {
   Future<void> joinBoard(String boardId) async {
     if (currentUserId == null) throw Exception("User not authenticated");
 
-    final docRef = _db.collection('boards').doc(boardId);
+    final docRef = _firestoreService.collection('boards').doc(boardId);
 
     try {
       await docRef.update({
@@ -250,7 +257,7 @@ class BoardRepository {
     }
 
     // Remote update
-    await _db.collection('boards').doc(boardId).update({
+    await _firestoreService.collection('boards').doc(boardId).update({
       'title': newName,
       'name': newName,
       'updatedAt': FieldValue.serverTimestamp(),
@@ -267,6 +274,6 @@ class BoardRepository {
     });
 
     // Delete remotely
-    await _db.collection('boards').doc(boardId).delete();
+    await _firestoreService.collection('boards').doc(boardId).delete();
   }
 }

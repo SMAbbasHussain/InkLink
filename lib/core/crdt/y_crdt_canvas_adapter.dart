@@ -3,26 +3,34 @@ import 'dart:convert';
 
 import 'package:y_crdt/y_crdt.dart';
 
-class YCrdtCanvasAdapter {
+abstract class CanvasDocAdapter {
+  Uint8List encodeStateVector();
+  Uint8List encodeStateUpdate({Uint8List? vector});
+  void applyUpdate(Uint8List update, {String origin = 'remote'});
+  Uint8List upsertElement(
+    String elementId,
+    Map<String, dynamic> payload, {
+    String origin = 'local',
+  });
+  Uint8List deleteElement(String elementId, {String origin = 'local'});
+  Uint8List clearElements({String origin = 'local'});
+  Uint8List? undoLast({String origin = 'local'});
+  Uint8List? redoLast({String origin = 'local'});
+  Map<String, Map<String, dynamic>> materializeElements();
+}
+
+class CanvasDocAdapterFactory {
+  static Future<CanvasDocAdapter> create() {
+    return YCrdtCanvasAdapter.create();
+  }
+}
+
+class YCrdtCanvasAdapter implements CanvasDocAdapter {
   static const String elementsMapName = 'elements';
   static const String historyArrayName = 'history';
+  final CanvasDocAdapter _delegate;
 
-  final YCrdt? _api;
-  final YDocI? _doc;
-  final YMapI? _elements;
-  final YArrayI? _history;
-  final bool _fallback;
-  final Map<String, Map<String, dynamic>> _fallbackElements =
-      <String, Map<String, dynamic>>{};
-  final List<Map<String, dynamic>> _fallbackHistory = <Map<String, dynamic>>[];
-
-  YCrdtCanvasAdapter._(
-    this._api,
-    this._doc,
-    this._elements,
-    this._history, {
-    bool fallback = false,
-  }) : _fallback = fallback;
+  YCrdtCanvasAdapter._(this._delegate);
 
   static Future<YCrdtCanvasAdapter> create() async {
     try {
@@ -30,39 +38,92 @@ class YCrdtCanvasAdapter {
       final doc = api.newDoc();
       final elements = doc.map(name: elementsMapName);
       final history = doc.array(name: historyArrayName);
-      return YCrdtCanvasAdapter._(api, doc, elements, history);
+      return YCrdtCanvasAdapter._(
+        _YjsCanvasDocAdapter(api, doc, elements, history),
+      );
     } catch (_) {
       // On some Android runtimes y_crdt initialization can fail.
       // Fallback keeps local+remote persistence operational.
-      return YCrdtCanvasAdapter._(null, null, null, null, fallback: true);
+      return YCrdtCanvasAdapter._(_FallbackCanvasDocAdapter());
     }
   }
 
+  @override
   Uint8List encodeStateVector() {
-    if (_fallback) return Uint8List(0);
-    return _api!.encodeStateVector(doc: _doc!);
+    return _delegate.encodeStateVector();
   }
 
+  @override
   Uint8List encodeStateUpdate({Uint8List? vector}) {
-    if (_fallback) {
-      return _encodeFallbackSnapshot();
-    }
+    return _delegate.encodeStateUpdate(vector: vector);
+  }
 
-    final result = _api!.encodeStateAsUpdate(doc: _doc!, vector: vector);
+  @override
+  void applyUpdate(Uint8List update, {String origin = 'remote'}) {
+    _delegate.applyUpdate(update, origin: origin);
+  }
+
+  @override
+  Uint8List upsertElement(
+    String elementId,
+    Map<String, dynamic> payload, {
+    String origin = 'local',
+  }) {
+    return _delegate.upsertElement(elementId, payload, origin: origin);
+  }
+
+  @override
+  Uint8List deleteElement(String elementId, {String origin = 'local'}) {
+    return _delegate.deleteElement(elementId, origin: origin);
+  }
+
+  @override
+  Uint8List clearElements({String origin = 'local'}) {
+    return _delegate.clearElements(origin: origin);
+  }
+
+  @override
+  Uint8List? undoLast({String origin = 'local'}) {
+    return _delegate.undoLast(origin: origin);
+  }
+
+  @override
+  Uint8List? redoLast({String origin = 'local'}) {
+    return _delegate.redoLast(origin: origin);
+  }
+
+  @override
+  Map<String, Map<String, dynamic>> materializeElements() {
+    return _delegate.materializeElements();
+  }
+}
+
+class _YjsCanvasDocAdapter implements CanvasDocAdapter {
+  final YCrdt _api;
+  final YDocI _doc;
+  final YMapI _elements;
+  final YArrayI _history;
+
+  _YjsCanvasDocAdapter(this._api, this._doc, this._elements, this._history);
+
+  @override
+  Uint8List encodeStateVector() {
+    return _api.encodeStateVector(doc: _doc);
+  }
+
+  @override
+  Uint8List encodeStateUpdate({Uint8List? vector}) {
+    final result = _api.encodeStateAsUpdate(doc: _doc, vector: vector);
     if (result.isError) {
       throw Exception('Failed to encode CRDT state update: ${result.error}');
     }
     return result.ok!;
   }
 
+  @override
   void applyUpdate(Uint8List update, {String origin = 'remote'}) {
-    if (_fallback) {
-      _applyFallbackSnapshot(update);
-      return;
-    }
-
-    final result = _api!.applyUpdate(
-      doc: _doc!,
+    final result = _api.applyUpdate(
+      doc: _doc,
       diff: update,
       origin: Uint8List.fromList(origin.codeUnits),
     );
@@ -71,32 +132,18 @@ class YCrdtCanvasAdapter {
     }
   }
 
+  @override
   Uint8List upsertElement(
     String elementId,
     Map<String, dynamic> payload, {
     String origin = 'local',
   }) {
-    if (_fallback) {
-      final before = _fallbackElements[elementId];
-      _fallbackElements[elementId] = Map<String, dynamic>.from(payload);
-      _fallbackHistory.add({
-        'op': 'upsert',
-        'elementId': elementId,
-        'before': before,
-        'after': payload,
-        'undone': false,
-        'origin': origin,
-        'ts': DateTime.now().toIso8601String(),
-      });
-      return _encodeFallbackSnapshot();
-    }
-
     final before = materializeElements()[elementId];
 
-    final txn = _doc!.writeTransaction(
+    final txn = _doc.writeTransaction(
       origin: Uint8List.fromList(origin.codeUnits),
     );
-    _elements!.set(elementId, _toAnyVal(payload), txn: txn);
+    _elements.set(elementId, _toAnyVal(payload), txn: txn);
     _appendHistory({
       'op': 'upsert',
       'elementId': elementId,
@@ -111,29 +158,11 @@ class YCrdtCanvasAdapter {
     return update;
   }
 
+  @override
   Uint8List deleteElement(String elementId, {String origin = 'local'}) {
-    if (_fallback) {
-      final before = _fallbackElements[elementId];
-      if (before == null) {
-        return _encodeFallbackSnapshot();
-      }
-
-      _fallbackElements.remove(elementId);
-      _fallbackHistory.add({
-        'op': 'delete',
-        'elementId': elementId,
-        'before': before,
-        'after': null,
-        'undone': false,
-        'origin': origin,
-        'ts': DateTime.now().toIso8601String(),
-      });
-      return _encodeFallbackSnapshot();
-    }
-
     final before = materializeElements()[elementId];
     if (before == null) {
-      final txn = _doc!.writeTransaction(
+      final txn = _doc.writeTransaction(
         origin: Uint8List.fromList(origin.codeUnits),
       );
       final update = txn.encodeUpdate();
@@ -141,10 +170,10 @@ class YCrdtCanvasAdapter {
       return update;
     }
 
-    final txn = _doc!.writeTransaction(
+    final txn = _doc.writeTransaction(
       origin: Uint8List.fromList(origin.codeUnits),
     );
-    _elements!.delete(elementId, txn: txn);
+    _elements.delete(elementId, txn: txn);
     _appendHistory({
       'op': 'delete',
       'elementId': elementId,
@@ -159,28 +188,14 @@ class YCrdtCanvasAdapter {
     return update;
   }
 
+  @override
   Uint8List clearElements({String origin = 'local'}) {
-    if (_fallback) {
-      final snapshot = materializeElements();
-      _fallbackElements.clear();
-      _fallbackHistory.add({
-        'op': 'clear',
-        'elementId': null,
-        'before': snapshot,
-        'after': null,
-        'undone': false,
-        'origin': origin,
-        'ts': DateTime.now().toIso8601String(),
-      });
-      return _encodeFallbackSnapshot();
-    }
-
     final snapshot = materializeElements();
-    final txn = _doc!.writeTransaction(
+    final txn = _doc.writeTransaction(
       origin: Uint8List.fromList(origin.codeUnits),
     );
     for (final key in snapshot.keys) {
-      _elements!.delete(key, txn: txn);
+      _elements.delete(key, txn: txn);
     }
     _appendHistory({
       'op': 'clear',
@@ -196,27 +211,8 @@ class YCrdtCanvasAdapter {
     return update;
   }
 
+  @override
   Uint8List? undoLast({String origin = 'local'}) {
-    if (_fallback) {
-      int index = -1;
-      Map<String, dynamic>? entry;
-
-      for (int i = _fallbackHistory.length - 1; i >= 0; i--) {
-        final e = _fallbackHistory[i];
-        if ((e['undone'] as bool?) == true) continue;
-        index = i;
-        entry = e;
-        break;
-      }
-
-      if (index == -1 || entry == null) return null;
-
-      _applyFallbackInverse(entry);
-      entry['undone'] = true;
-      _fallbackHistory[index] = Map<String, dynamic>.from(entry);
-      return _encodeFallbackSnapshot();
-    }
-
     final history = _readHistory();
     int index = -1;
     Map<String, dynamic>? entry;
@@ -231,7 +227,7 @@ class YCrdtCanvasAdapter {
 
     if (index == -1 || entry == null) return null;
 
-    final txn = _doc!.writeTransaction(
+    final txn = _doc.writeTransaction(
       origin: Uint8List.fromList(origin.codeUnits),
     );
 
@@ -244,27 +240,8 @@ class YCrdtCanvasAdapter {
     return update;
   }
 
+  @override
   Uint8List? redoLast({String origin = 'local'}) {
-    if (_fallback) {
-      int index = -1;
-      Map<String, dynamic>? entry;
-
-      for (int i = _fallbackHistory.length - 1; i >= 0; i--) {
-        final e = _fallbackHistory[i];
-        if ((e['undone'] as bool?) != true) continue;
-        index = i;
-        entry = e;
-        break;
-      }
-
-      if (index == -1 || entry == null) return null;
-
-      _applyFallbackForward(entry);
-      entry['undone'] = false;
-      _fallbackHistory[index] = Map<String, dynamic>.from(entry);
-      return _encodeFallbackSnapshot();
-    }
-
     final history = _readHistory();
     int index = -1;
     Map<String, dynamic>? entry;
@@ -279,7 +256,7 @@ class YCrdtCanvasAdapter {
 
     if (index == -1 || entry == null) return null;
 
-    final txn = _doc!.writeTransaction(
+    final txn = _doc.writeTransaction(
       origin: Uint8List.fromList(origin.codeUnits),
     );
 
@@ -292,14 +269,9 @@ class YCrdtCanvasAdapter {
     return update;
   }
 
+  @override
   Map<String, Map<String, dynamic>> materializeElements() {
-    if (_fallback) {
-      return _fallbackElements.map(
-        (k, v) => MapEntry(k, Map<String, dynamic>.from(v)),
-      );
-    }
-
-    final json = _elements!.toJson();
+    final json = _elements.toJson();
     final result = <String, Map<String, dynamic>>{};
 
     for (final entry in json.entries) {
@@ -346,11 +318,11 @@ class YCrdtCanvasAdapter {
   }
 
   void _appendHistory(Map<String, dynamic> entry, WriteTransactionI txn) {
-    _history!.push([_toAnyVal(entry)], txn: txn);
+    _history.push([_toAnyVal(entry)], txn: txn);
   }
 
   List<Map<String, dynamic>> _readHistory() {
-    final raw = _history!.toJson();
+    final raw = _history.toJson();
     return raw
         .map(_fromAnyVal)
         .whereType<Map>()
@@ -363,7 +335,7 @@ class YCrdtCanvasAdapter {
     Map<String, dynamic> entry,
     WriteTransactionI txn,
   ) {
-    _history!.delete(index: index, length: 1, txn: txn);
+    _history.delete(index: index, length: 1, txn: txn);
     _history.insert(index: index, items: [_toAnyVal(entry)], txn: txn);
   }
 
@@ -376,19 +348,19 @@ class YCrdtCanvasAdapter {
       case 'upsert':
         if (elementId == null) return;
         if (before is Map<String, dynamic>) {
-          _elements!.set(elementId, _toAnyVal(before), txn: txn);
+          _elements.set(elementId, _toAnyVal(before), txn: txn);
         } else {
-          _elements!.delete(elementId, txn: txn);
+          _elements.delete(elementId, txn: txn);
         }
         return;
       case 'delete':
         if (elementId == null) return;
         if (before is Map<String, dynamic>) {
-          _elements!.set(elementId, _toAnyVal(before), txn: txn);
+          _elements.set(elementId, _toAnyVal(before), txn: txn);
         }
         return;
       case 'clear':
-        final current = _elements!.toJson();
+        final current = _elements.toJson();
         for (final key in current.keys) {
           _elements.delete(key, txn: txn);
         }
@@ -412,15 +384,15 @@ class YCrdtCanvasAdapter {
       case 'upsert':
         if (elementId == null) return;
         if (after is Map<String, dynamic>) {
-          _elements!.set(elementId, _toAnyVal(after), txn: txn);
+          _elements.set(elementId, _toAnyVal(after), txn: txn);
         }
         return;
       case 'delete':
         if (elementId == null) return;
-        _elements!.delete(elementId, txn: txn);
+        _elements.delete(elementId, txn: txn);
         return;
       case 'clear':
-        final current = _elements!.toJson();
+        final current = _elements.toJson();
         for (final key in current.keys) {
           _elements.delete(key, txn: txn);
         }
@@ -429,17 +401,141 @@ class YCrdtCanvasAdapter {
         return;
     }
   }
+}
 
-  Uint8List _encodeFallbackSnapshot() {
+class _FallbackCanvasDocAdapter implements CanvasDocAdapter {
+  final Map<String, Map<String, dynamic>> _elements =
+      <String, Map<String, dynamic>>{};
+  final List<Map<String, dynamic>> _history = <Map<String, dynamic>>[];
+
+  @override
+  Uint8List encodeStateVector() {
+    return Uint8List(0);
+  }
+
+  @override
+  Uint8List encodeStateUpdate({Uint8List? vector}) {
+    return _encodeSnapshot();
+  }
+
+  @override
+  void applyUpdate(Uint8List update, {String origin = 'remote'}) {
+    _applySnapshot(update);
+  }
+
+  @override
+  Uint8List upsertElement(
+    String elementId,
+    Map<String, dynamic> payload, {
+    String origin = 'local',
+  }) {
+    final before = _elements[elementId];
+    _elements[elementId] = Map<String, dynamic>.from(payload);
+    _history.add({
+      'op': 'upsert',
+      'elementId': elementId,
+      'before': before,
+      'after': payload,
+      'undone': false,
+      'origin': origin,
+      'ts': DateTime.now().toIso8601String(),
+    });
+    return _encodeSnapshot();
+  }
+
+  @override
+  Uint8List deleteElement(String elementId, {String origin = 'local'}) {
+    final before = _elements[elementId];
+    if (before == null) {
+      return _encodeSnapshot();
+    }
+
+    _elements.remove(elementId);
+    _history.add({
+      'op': 'delete',
+      'elementId': elementId,
+      'before': before,
+      'after': null,
+      'undone': false,
+      'origin': origin,
+      'ts': DateTime.now().toIso8601String(),
+    });
+    return _encodeSnapshot();
+  }
+
+  @override
+  Uint8List clearElements({String origin = 'local'}) {
+    final snapshot = materializeElements();
+    _elements.clear();
+    _history.add({
+      'op': 'clear',
+      'elementId': null,
+      'before': snapshot,
+      'after': null,
+      'undone': false,
+      'origin': origin,
+      'ts': DateTime.now().toIso8601String(),
+    });
+    return _encodeSnapshot();
+  }
+
+  @override
+  Uint8List? undoLast({String origin = 'local'}) {
+    int index = -1;
+    Map<String, dynamic>? entry;
+
+    for (int i = _history.length - 1; i >= 0; i--) {
+      final e = _history[i];
+      if ((e['undone'] as bool?) == true) continue;
+      index = i;
+      entry = e;
+      break;
+    }
+
+    if (index == -1 || entry == null) return null;
+
+    _applyInverse(entry);
+    entry['undone'] = true;
+    _history[index] = Map<String, dynamic>.from(entry);
+    return _encodeSnapshot();
+  }
+
+  @override
+  Uint8List? redoLast({String origin = 'local'}) {
+    int index = -1;
+    Map<String, dynamic>? entry;
+
+    for (int i = _history.length - 1; i >= 0; i--) {
+      final e = _history[i];
+      if ((e['undone'] as bool?) != true) continue;
+      index = i;
+      entry = e;
+      break;
+    }
+
+    if (index == -1 || entry == null) return null;
+
+    _applyForward(entry);
+    entry['undone'] = false;
+    _history[index] = Map<String, dynamic>.from(entry);
+    return _encodeSnapshot();
+  }
+
+  @override
+  Map<String, Map<String, dynamic>> materializeElements() {
+    return _elements.map((k, v) => MapEntry(k, Map<String, dynamic>.from(v)));
+  }
+
+  Uint8List _encodeSnapshot() {
     final payload = {
       'kind': 'fallback_snapshot_v1',
-      'elements': _fallbackElements,
-      'history': _fallbackHistory,
+      'elements': _elements,
+      'history': _history,
     };
     return Uint8List.fromList(utf8.encode(jsonEncode(payload)));
   }
 
-  void _applyFallbackSnapshot(Uint8List update) {
+  void _applySnapshot(Uint8List update) {
     dynamic decoded;
     try {
       decoded = jsonDecode(utf8.decode(update));
@@ -453,7 +549,7 @@ class YCrdtCanvasAdapter {
     final rawElements = decoded['elements'];
     final rawHistory = decoded['history'];
 
-    _fallbackElements
+    _elements
       ..clear()
       ..addAll(
         (rawElements is Map)
@@ -468,7 +564,7 @@ class YCrdtCanvasAdapter {
             : <String, Map<String, dynamic>>{},
       );
 
-    _fallbackHistory
+    _history
       ..clear()
       ..addAll(
         (rawHistory is List)
@@ -479,7 +575,7 @@ class YCrdtCanvasAdapter {
       );
   }
 
-  void _applyFallbackInverse(Map<String, dynamic> entry) {
+  void _applyInverse(Map<String, dynamic> entry) {
     final op = entry['op'] as String?;
     final elementId = entry['elementId'] as String?;
     final before = entry['before'];
@@ -488,25 +584,25 @@ class YCrdtCanvasAdapter {
       case 'upsert':
         if (elementId == null) return;
         if (before is Map) {
-          _fallbackElements[elementId] = before.map(
+          _elements[elementId] = before.map(
             (k, v) => MapEntry(k.toString(), v),
           );
         } else {
-          _fallbackElements.remove(elementId);
+          _elements.remove(elementId);
         }
         return;
       case 'delete':
         if (elementId == null) return;
         if (before is Map) {
-          _fallbackElements[elementId] = before.map(
+          _elements[elementId] = before.map(
             (k, v) => MapEntry(k.toString(), v),
           );
         }
         return;
       case 'clear':
-        _fallbackElements.clear();
+        _elements.clear();
         if (before is Map) {
-          _fallbackElements.addAll(
+          _elements.addAll(
             before.map(
               (k, v) => MapEntry(
                 k.toString(),
@@ -523,7 +619,7 @@ class YCrdtCanvasAdapter {
     }
   }
 
-  void _applyFallbackForward(Map<String, dynamic> entry) {
+  void _applyForward(Map<String, dynamic> entry) {
     final op = entry['op'] as String?;
     final elementId = entry['elementId'] as String?;
     final after = entry['after'];
@@ -531,16 +627,14 @@ class YCrdtCanvasAdapter {
     switch (op) {
       case 'upsert':
         if (elementId == null || after is! Map) return;
-        _fallbackElements[elementId] = after.map(
-          (k, v) => MapEntry(k.toString(), v),
-        );
+        _elements[elementId] = after.map((k, v) => MapEntry(k.toString(), v));
         return;
       case 'delete':
         if (elementId == null) return;
-        _fallbackElements.remove(elementId);
+        _elements.remove(elementId);
         return;
       case 'clear':
-        _fallbackElements.clear();
+        _elements.clear();
         return;
       default:
         return;

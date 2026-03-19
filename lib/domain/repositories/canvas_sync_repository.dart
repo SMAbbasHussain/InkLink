@@ -1,21 +1,28 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:isar/isar.dart';
 import 'dart:async';
 import 'dart:convert';
 import '../../core/database/database_service.dart';
 import '../../core/database/collections/local_crdt_update.dart';
+import '../../core/services/firestore_service.dart';
+import '../../core/services/auth_service.dart';
 
 class CanvasSyncRepository {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirestoreService _firestoreService;
+  final AuthService _authService;
   final DatabaseService _dbService;
   final Map<String, StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>
   _remoteCrdtSubs = {};
 
-  CanvasSyncRepository({required DatabaseService dbService})
-    : _dbService = dbService;
+  CanvasSyncRepository({
+    required FirestoreService firestoreService,
+    required AuthService authService,
+    required DatabaseService dbService,
+  }) : _firestoreService = firestoreService,
+       _authService = authService,
+       _dbService = dbService;
 
-  String? get currentUserId => FirebaseAuth.instance.currentUser?.uid;
+  String? get currentUserId => _authService.getCurrentUserId();
 
   Future<void> pushCrdtUpdate({
     required String boardId,
@@ -64,7 +71,7 @@ class CanvasSyncRepository {
   Future<void> hydrateCrdtUpdates(String boardId) async {
     QuerySnapshot<Map<String, dynamic>> snapshot;
     try {
-      snapshot = await _db
+      snapshot = await _firestoreService
           .collection('boards')
           .doc(boardId)
           .collection('crdt_updates')
@@ -103,7 +110,7 @@ class CanvasSyncRepository {
     if (currentUserId == null) return;
     if (_remoteCrdtSubs.containsKey(boardId)) return;
 
-    final sub = _db
+    final sub = _firestoreService
         .collection('boards')
         .doc(boardId)
         .collection('crdt_updates')
@@ -168,7 +175,7 @@ class CanvasSyncRepository {
     final isar = await _dbService.database;
 
     try {
-      await _db
+      await _firestoreService
           .collection('boards')
           .doc(local.boardId)
           .collection('crdt_updates')
