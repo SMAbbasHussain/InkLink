@@ -9,6 +9,7 @@ import '../models/board.dart';
 class BoardRepository {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final DatabaseService _dbService;
+  static const String crdtEngine = 'crdt_v1';
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _ownedBoardsSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _joinedBoardsSub;
   String? _syncUserId;
@@ -40,17 +41,33 @@ class BoardRepository {
         .collection('boards')
         .where('ownerId', isEqualTo: uid)
         .snapshots()
-        .listen((snapshot) {
-          _syncBoardsToLocal(snapshot.docs);
-        });
+        .listen(
+          (snapshot) {
+            _syncBoardsToLocal(snapshot.docs);
+          },
+          onError: (error, stackTrace) {
+            if (error is FirebaseException &&
+                error.code == 'permission-denied') {
+              return;
+            }
+          },
+        );
 
     _joinedBoardsSub = _db
         .collection('boards')
         .where('members', arrayContains: uid)
         .snapshots()
-        .listen((snapshot) {
-          _syncBoardsToLocal(snapshot.docs);
-        });
+        .listen(
+          (snapshot) {
+            _syncBoardsToLocal(snapshot.docs);
+          },
+          onError: (error, stackTrace) {
+            if (error is FirebaseException &&
+                error.code == 'permission-denied') {
+              return;
+            }
+          },
+        );
   }
 
   Future<void> stopBoardsSync() async {
@@ -84,15 +101,24 @@ class BoardRepository {
 
       return filterQuery
           .sortByUpdatedAtDesc()
-          .watch(fireImmediately: true) // This ensures data flows as soon as Bloc listens
-          .map((localBoards) => localBoards.map((lb) => Board(
-                id: lb.boardId,
-                title: lb.title,
-                ownerId: lb.ownerId,
-                members: lb.members,
-                createdAt: lb.createdAt,
-                updatedAt: lb.updatedAt,
-              )).toList());
+          .watch(
+            fireImmediately: true,
+          ) // This ensures data flows as soon as Bloc listens
+          .map(
+            (localBoards) => localBoards
+                .map(
+                  (lb) => Board(
+                    id: lb.boardId,
+                    title: lb.title,
+                    ownerId: lb.ownerId,
+                    members: lb.members,
+                    engine: lb.engine,
+                    createdAt: lb.createdAt,
+                    updatedAt: lb.updatedAt,
+                  ),
+                )
+                .toList(),
+          );
     });
   }
 
@@ -111,6 +137,7 @@ class BoardRepository {
             title: lb.title,
             ownerId: lb.ownerId,
             members: lb.members,
+            engine: lb.engine,
             createdAt: lb.createdAt,
             updatedAt: lb.updatedAt,
           );
@@ -118,7 +145,7 @@ class BoardRepository {
         .asBroadcastStream();
   }
 
-   Future<void> _syncBoardsToLocal(
+  Future<void> _syncBoardsToLocal(
     List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
   ) async {
     final isar = await _dbService.database;
@@ -132,6 +159,7 @@ class BoardRepository {
         ..title = data['title'] ?? data['name'] ?? 'Untitled Board'
         ..ownerId = data['ownerId'] ?? ''
         ..members = List<String>.from(data['members'] ?? [])
+        ..engine = data['engine'] ?? crdtEngine
         ..createdAt =
             (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()
         ..updatedAt =
@@ -159,6 +187,7 @@ class BoardRepository {
       'name': name, // Maintain backward compatibility
       'ownerId': currentUserId,
       'members': [currentUserId],
+      'engine': crdtEngine,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
       'lastEditedBy': currentUserId,
@@ -174,6 +203,7 @@ class BoardRepository {
       ..title = name
       ..ownerId = currentUserId!
       ..members = [currentUserId!]
+      ..engine = crdtEngine
       ..createdAt = now
       ..updatedAt = now
       ..isSynced = true;

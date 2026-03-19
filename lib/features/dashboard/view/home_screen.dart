@@ -63,18 +63,25 @@ class _HomeScreenState extends State<HomeScreen>
             onPressed: () async {
               if (controller.text.isNotEmpty) {
                 try {
-                  await context.read<BoardRepository>().joinBoard(controller.text.trim());
+                  final boardId = controller.text.trim();
+                  await context.read<BoardRepository>().joinBoard(boardId);
                   if (!mounted) return;
                   Navigator.pop(dialogContext);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Successfully joined!')),
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => CanvasScreen(
+                        boardId: boardId,
+                        showTrayTipsOnEntry: true,
+                      ),
+                    ),
                   );
                   _tabController.animateTo(1);
                 } catch (e) {
                   if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Failed to join: $e')),
-                  );
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('Failed to join: $e')));
                 }
               }
             },
@@ -100,13 +107,19 @@ class _HomeScreenState extends State<HomeScreen>
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => CanvasScreen(boardId: state.boardId),
+                  builder: (_) => CanvasScreen(
+                    boardId: state.boardId,
+                    showTrayTipsOnEntry: true,
+                  ),
                 ),
               );
             }
             if (state is CanvasError) {
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(state.message), backgroundColor: Colors.red),
+                SnackBar(
+                  content: Text(state.message),
+                  backgroundColor: Colors.red,
+                ),
               );
             }
           },
@@ -137,7 +150,8 @@ class _HomeScreenState extends State<HomeScreen>
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => ProfileScreen(userId: user.uid),
+                            builder: (context) =>
+                                ProfileScreen(userId: user.uid),
                           ),
                         );
                       }
@@ -150,7 +164,11 @@ class _HomeScreenState extends State<HomeScreen>
                           ? NetworkImage(user!.photoURL!)
                           : null,
                       child: user?.photoURL == null
-                          ? const Icon(Icons.person, size: 20, color: AppColors.primary)
+                          ? const Icon(
+                              Icons.person,
+                              size: 20,
+                              color: AppColors.primary,
+                            )
                           : null,
                     ),
                   ),
@@ -167,7 +185,10 @@ class _HomeScreenState extends State<HomeScreen>
                       children: [
                         Text(
                           "Hello, ${user?.displayName?.split(' ')[0] ?? 'Creator'}! 👋",
-                          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         const SizedBox(height: 8),
                         const Text(
@@ -183,7 +204,9 @@ class _HomeScreenState extends State<HomeScreen>
                               title: "New Board",
                               icon: Icons.add,
                               color: AppColors.actionBlue,
-                              onTap: () => context.read<CanvasBloc>().add(CreateBoardRequested()),
+                              onTap: () => context.read<CanvasBloc>().add(
+                                CreateBoardRequested(),
+                              ),
                             ),
                             const SizedBox(width: 16),
                             QuickActionButton(
@@ -212,7 +235,9 @@ class _HomeScreenState extends State<HomeScreen>
                         Tab(text: "Joined Boards"),
                       ],
                     ),
-                    isDark ? AppColors.bgDark : Theme.of(context).scaffoldBackgroundColor,
+                    isDark
+                        ? AppColors.bgDark
+                        : Theme.of(context).scaffoldBackgroundColor,
                   ),
                 ),
               ],
@@ -261,7 +286,8 @@ class _HomeScreenState extends State<HomeScreen>
           return BoardCard(
             board: board,
             isOwner: isOwner,
-            onRename: (id, newName) => context.read<BoardRepository>().renameBoard(id, newName),
+            onRename: (id, newName) =>
+                context.read<BoardRepository>().renameBoard(id, newName),
             onDelete: (id) => context.read<BoardRepository>().deleteBoard(id),
           );
         },
@@ -308,10 +334,15 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
   double get maxExtent => _tabBar.preferredSize.height;
 
   @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
     return Container(color: backgroundColor, child: _tabBar);
   }
 
   @override
-  bool shouldRebuild(covariant SliverPersistentHeaderDelegate oldDelegate) => false;
+  bool shouldRebuild(covariant SliverPersistentHeaderDelegate oldDelegate) =>
+      false;
 }

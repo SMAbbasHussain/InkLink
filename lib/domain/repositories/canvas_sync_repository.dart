@@ -2,182 +2,190 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:isar/isar.dart';
 import 'dart:async';
+import 'dart:convert';
 import '../../core/database/database_service.dart';
-import '../../core/database/collections/local_operation.dart';
-import '../models/canvas_operation.dart';
+import '../../core/database/collections/local_crdt_update.dart';
 
 class CanvasSyncRepository {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final DatabaseService _dbService;
   final Map<String, StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>
-  _remoteBoardSubs = {};
+  _remoteCrdtSubs = {};
 
   CanvasSyncRepository({required DatabaseService dbService})
     : _dbService = dbService;
 
   String? get currentUserId => FirebaseAuth.instance.currentUser?.uid;
 
-  /// Push an operation to Isar locally, then to Firestore
-  Future<void> pushOperation(CanvasOperation op) async {
-    if (currentUserId == null) return;
-
+  Future<void> pushCrdtUpdate({
+    required String boardId,
+    required String updateId,
+    required List<int> payload,
+  }) async {
+    final userId = currentUserId;
     final isar = await _dbService.database;
+    final payloadBase64 = base64Encode(payload);
 
-    // Save locally
-    final localOp = LocalOperation()
-      ..opId = op.opId
-      ..boardId = op.boardId
-      ..objectId = op.objectId
-      ..type = op.type
-      ..action = op.action
-      ..data = op.data
-      ..timestamp = op.timestamp
-      ..clientId = op.clientId
+    final local = LocalCrdtUpdate()
+      ..updateId = updateId
+      ..boardId = boardId
+      ..payloadBase64 = payloadBase64
+      ..sourceClientId = userId ?? 'anonymous'
+      ..appliedAt = DateTime.now()
       ..isSynced = false;
 
     await isar.writeTxn(() async {
-      await isar.localOperations.putByOpId(localOp);
+      await isar.localCrdtUpdates.putByUpdateId(local);
     });
 
-    // Push to Firestore
-    try {
-      await _db
-          .collection('boards')
-          .doc(op.boardId)
-          .collection('operations')
-          .doc(op.opId)
-          .set(op.toMap());
-
-      // Mark as synced
-      await isar.writeTxn(() async {
-        localOp.isSynced = true;
-        await isar.localOperations.putByOpId(localOp);
-      });
-    } catch (e) {
-      // Offline or error - the operation is still saved in Isar (isSynced = false)
-      // A background sync worker can retry pushing `isSynced == false` operations later
-    }
-  }
-
-  /// Listen to operations from Firestore (to fetch what others are drawing)
-  /// AND fetch local offline operations.
-  Stream<List<CanvasOperation>> listenToOperations(String boardId) async* {
-    if (currentUserId == null) {
-      yield [];
+    if (userId == null) {
       return;
     }
 
-    await hydrateBoardOperations(boardId);
-    startRemoteSync(boardId);
-
-    // Stream from Isar for local changes and immediate startup
-    final isar = await _dbService.database;
-
-    yield* isar.localOperations
-        .filter()
-        .boardIdEqualTo(boardId)
-        .sortByTimestamp()
-        .watch(fireImmediately: true)
-        .map((localOps) {
-          return localOps
-              .map(
-                (lOp) => CanvasOperation(
-                  opId: lOp.opId,
-                  boardId: lOp.boardId,
-                  objectId: lOp.objectId,
-                  type: lOp.type,
-                  action: lOp.action,
-                  data: lOp.data,
-                  timestamp: lOp.timestamp,
-                  clientId: lOp.clientId,
-                ),
-              )
-              .toList();
-        });
+    await _pushSingleUpdate(local, userId);
+    await _syncPendingLocalUpdates(boardId, userId);
   }
 
-  Future<void> hydrateBoardOperations(String boardId) async {
-    final snapshot = await _db
-        .collection('boards')
-        .doc(boardId)
-        .collection('operations')
-        .get();
+  Stream<List<LocalCrdtUpdate>> listenToCrdtUpdates(String boardId) async* {
+    if (currentUserId != null) {
+      await hydrateCrdtUpdates(boardId);
+      startCrdtRemoteSync(boardId);
+      await _syncPendingLocalUpdates(boardId, currentUserId!);
+    }
+
+    final isar = await _dbService.database;
+    yield* isar.localCrdtUpdates
+        .filter()
+        .boardIdEqualTo(boardId)
+        .sortByAppliedAt()
+        .watch(fireImmediately: true);
+  }
+
+  Future<void> hydrateCrdtUpdates(String boardId) async {
+    QuerySnapshot<Map<String, dynamic>> snapshot;
+    try {
+      snapshot = await _db
+          .collection('boards')
+          .doc(boardId)
+          .collection('crdt_updates')
+          .get();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') return;
+      rethrow;
+    }
 
     if (snapshot.docs.isEmpty) return;
 
     final isar = await _dbService.database;
-    final List<LocalOperation> opsToSave = [];
+    final updates = <LocalCrdtUpdate>[];
 
-    for (var doc in snapshot.docs) {
+    for (final doc in snapshot.docs) {
       final data = doc.data();
-      final lOp = LocalOperation()
-        ..opId = doc.id
+      final update = LocalCrdtUpdate()
+        ..updateId = doc.id
         ..boardId = data['boardId'] ?? boardId
-        ..objectId = data['objectId'] ?? ''
-        ..type = data['type'] ?? ''
-        ..action = data['action'] ?? ''
-        ..data = data['data'] ?? ''
-        ..timestamp = data['timestamp'] ?? ''
-        ..clientId = data['clientId'] ?? ''
+        ..payloadBase64 = data['payloadBase64'] ?? ''
+        ..sourceClientId = data['sourceClientId'] ?? ''
+        ..appliedAt =
+            (data['appliedAt'] as Timestamp?)?.toDate() ?? DateTime.now()
         ..isSynced = true;
-      opsToSave.add(lOp);
+      updates.add(update);
     }
 
     await isar.writeTxn(() async {
-      for (final op in opsToSave) {
-        await isar.localOperations.putByOpId(op);
+      for (final update in updates) {
+        await isar.localCrdtUpdates.putByUpdateId(update);
       }
     });
   }
 
-  /// Background listener to pull new remote operations to Isar
-  void startRemoteSync(String boardId) {
-    if (_remoteBoardSubs.containsKey(boardId)) {
-      return;
-    }
+  void startCrdtRemoteSync(String boardId) {
+    if (currentUserId == null) return;
+    if (_remoteCrdtSubs.containsKey(boardId)) return;
 
     final sub = _db
         .collection('boards')
         .doc(boardId)
-        .collection('operations')
+        .collection('crdt_updates')
         .snapshots()
-        .listen((snapshot) async {
-          if (snapshot.docs.isEmpty) return;
+        .listen(
+          (snapshot) async {
+            if (snapshot.docs.isEmpty) return;
 
-          final isar = await _dbService.database;
-          final List<LocalOperation> opsToSave = [];
+            final isar = await _dbService.database;
+            final updates = <LocalCrdtUpdate>[];
 
-          for (var doc in snapshot.docs) {
-            final data = doc.data();
+            for (final doc in snapshot.docs) {
+              final data = doc.data();
+              final update = LocalCrdtUpdate()
+                ..updateId = doc.id
+                ..boardId = data['boardId'] ?? boardId
+                ..payloadBase64 = data['payloadBase64'] ?? ''
+                ..sourceClientId = data['sourceClientId'] ?? ''
+                ..appliedAt =
+                    (data['appliedAt'] as Timestamp?)?.toDate() ??
+                    DateTime.now()
+                ..isSynced = true;
+              updates.add(update);
+            }
 
-            final lOp = LocalOperation()
-              ..opId = doc.id
-              ..boardId = data['boardId'] ?? boardId
-              ..objectId = data['objectId'] ?? ''
-              ..type = data['type'] ?? ''
-              ..action = data['action'] ?? ''
-              ..data = data['data'] ?? ''
-              ..timestamp = data['timestamp'] ?? ''
-              ..clientId = data['clientId'] ?? ''
-              ..isSynced = true;
-
-            opsToSave.add(lOp);
-          }
-
-          if (opsToSave.isNotEmpty) {
             await isar.writeTxn(() async {
-              for (var op in opsToSave) {
-                await isar.localOperations.putByOpId(op);
+              for (final update in updates) {
+                await isar.localCrdtUpdates.putByUpdateId(update);
               }
             });
-          }
-        });
+          },
+          onError: (error, stackTrace) {
+            if (error is FirebaseException &&
+                error.code == 'permission-denied') {
+              return;
+            }
+          },
+        );
 
-    _remoteBoardSubs[boardId] = sub;
+    _remoteCrdtSubs[boardId] = sub;
   }
 
-  Future<void> stopRemoteSync(String boardId) async {
-    final sub = _remoteBoardSubs.remove(boardId);
+  Future<void> stopCrdtRemoteSync(String boardId) async {
+    final sub = _remoteCrdtSubs.remove(boardId);
     await sub?.cancel();
+  }
+
+  Future<void> _syncPendingLocalUpdates(String boardId, String userId) async {
+    final isar = await _dbService.database;
+    final localUpdates = await isar.localCrdtUpdates
+        .filter()
+        .boardIdEqualTo(boardId)
+        .findAll();
+
+    for (final local in localUpdates) {
+      if (local.isSynced) continue;
+      await _pushSingleUpdate(local, userId);
+    }
+  }
+
+  Future<void> _pushSingleUpdate(LocalCrdtUpdate local, String userId) async {
+    final isar = await _dbService.database;
+
+    try {
+      await _db
+          .collection('boards')
+          .doc(local.boardId)
+          .collection('crdt_updates')
+          .doc(local.updateId)
+          .set({
+            'boardId': local.boardId,
+            'payloadBase64': local.payloadBase64,
+            'sourceClientId': userId,
+            'appliedAt': FieldValue.serverTimestamp(),
+          });
+
+      await isar.writeTxn(() async {
+        local.isSynced = true;
+        await isar.localCrdtUpdates.putByUpdateId(local);
+      });
+    } catch (_) {
+      // Keep unsynced for retry on next sync opportunity.
+    }
   }
 }

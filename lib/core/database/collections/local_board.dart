@@ -12,6 +12,7 @@ class LocalBoard {
   late String title;
   late String ownerId;
   late List<String> members;
+  late String engine;
   late DateTime createdAt;
   late DateTime updatedAt;
 

@@ -1,6 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:inklink/core/database/database_service.dart';
+import 'package:inklink/core/utils/tray_tips_preferences.dart';
 import 'package:inklink/features/auth/view/login_screen.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
@@ -8,8 +10,46 @@ import 'package:inklink/features/auth/bloc/auth_state.dart';
 import '../../theme/bloc/theme_bloc.dart';
 import '../../../core/constants/app_colors.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _showTrayTips = true;
+  bool _loadingTrayTipsPreference = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTrayTipsPreference();
+  }
+
+  Future<void> _loadTrayTipsPreference() async {
+    final value = await TrayTipsPreferences.getShowTrayTips();
+    if (!mounted) return;
+    setState(() {
+      _showTrayTips = value;
+      _loadingTrayTipsPreference = false;
+    });
+  }
+
+  Future<void> _onTrayTipsToggled(bool value) async {
+    setState(() {
+      _showTrayTips = value;
+    });
+    await TrayTipsPreferences.setShowTrayTips(value);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          value ? 'Canvas tray tips enabled.' : 'Canvas tray tips disabled.',
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -47,13 +87,24 @@ class SettingsScreen extends StatelessWidget {
               onChanged: (_) => context.read<ThemeBloc>().add(ToggleTheme()),
             ),
 
+            _buildSectionHeader("Canvas"),
+            SwitchListTile(
+              title: const Text("Show Tray Tips Overlay"),
+              subtitle: const Text(
+                "Show tray position helper when creating or joining a board",
+              ),
+              secondary: const Icon(Icons.lightbulb_outline),
+              value: _showTrayTips,
+              onChanged: _loadingTrayTipsPreference ? null : _onTrayTipsToggled,
+            ),
+
             _buildSectionHeader("Storage"),
             ListTile(
               leading: const Icon(Icons.cloud_download),
               title: const Text("Offline Database (Isar)"),
-              subtitle: const Text("1.2 MB used"),
+              subtitle: const Text("Tap clear to remove local cached boards"),
               trailing: TextButton(
-                onPressed: () {},
+                onPressed: () => _clearCache(context),
                 child: const Text("Clear Cache"),
               ),
             ),
@@ -124,6 +175,24 @@ class SettingsScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _clearCache(BuildContext context) async {
+    try {
+      await context.read<DatabaseService>().clearLocalCache();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Local cache cleared successfully.')),
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to clear local cache.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   Widget _buildSectionHeader(String title) {

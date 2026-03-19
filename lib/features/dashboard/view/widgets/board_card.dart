@@ -47,9 +47,12 @@ class BoardCard extends StatelessWidget {
                   borderRadius: const BorderRadius.vertical(
                     top: Radius.circular(15),
                   ),
-                  image: const DecorationImage(
-                    image: NetworkImage("https://via.placeholder.com/150"),
-                    fit: BoxFit.cover,
+                ),
+                child: Center(
+                  child: Icon(
+                    Icons.draw_rounded,
+                    size: 36,
+                    color: isDark ? Colors.white54 : Colors.black26,
                   ),
                 ),
               ),

@@ -5,24 +5,32 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:inklink/domain/models/board.dart';
-import 'package:inklink/domain/models/canvas_operation.dart';
 import 'package:inklink/domain/repositories/board_repository.dart';
 import 'package:inklink/domain/repositories/canvas_sync_repository.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/constants/app_colors.dart';
+import '../../../core/crdt/y_crdt_canvas_adapter.dart';
+import '../../../core/database/collections/local_crdt_update.dart';
+import '../../../core/utils/tray_tips_preferences.dart';
 import 'trays/ai_tray.dart';
 import 'trays/brush_tray.dart';
 import 'trays/canvas_shape_type.dart';
 import 'trays/members_tray.dart';
 import 'trays/shapes_tray.dart';
 import 'trays/tools_tray.dart';
+import 'widgets/tray_tips_overlay.dart';
 
 class CanvasScreen extends StatefulWidget {
   final String boardId;
-  const CanvasScreen({super.key, required this.boardId});
+  final bool showTrayTipsOnEntry;
+
+  const CanvasScreen({
+    super.key,
+    required this.boardId,
+    this.showTrayTipsOnEntry = false,
+  });
 
   @override
   State<CanvasScreen> createState() => _CanvasScreenState();
@@ -33,10 +41,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
   final TextEditingController _aiPromptController = TextEditingController();
   final Uuid _uuid = const Uuid();
   final math.Random _random = math.Random();
-  StreamSubscription<List<CanvasOperation>>? _operationsSub;
+  StreamSubscription<List<LocalCrdtUpdate>>? _crdtUpdatesSub;
+  YCrdtCanvasAdapter? _crdtAdapter;
+  Future<void>? _crdtInitFuture;
+  final Set<String> _appliedCrdtUpdateIds = <String>{};
+  bool _showTrayTipsOverlay = false;
 
   final List<_CanvasElement> _elements = [];
-  final List<_CanvasElement> _redoStack = [];
   List<Offset> _currentStrokePoints = [];
 
   Color _selectedColor = Colors.black;
@@ -46,16 +57,61 @@ class _CanvasScreenState extends State<CanvasScreen> {
   void initState() {
     super.initState();
     context.read<BoardRepository>().startBoardsSync();
-    _startOperationListener();
+    _crdtInitFuture = _initializeCrdtSync();
+    unawaited(_maybeShowTrayTipsOverlay());
   }
 
-  void _startOperationListener() {
-    final syncRepo = context.read<CanvasSyncRepository>();
-    _operationsSub = syncRepo.listenToOperations(widget.boardId).listen((ops) {
-      final sortedOps = List<CanvasOperation>.from(ops)
-        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+  Future<void> _maybeShowTrayTipsOverlay() async {
+    if (!widget.showTrayTipsOnEntry) return;
 
-      final rebuilt = _rebuildElementsFromOps(sortedOps);
+    final showTips = await TrayTipsPreferences.getShowTrayTips();
+    if (!mounted || !showTips) return;
+
+    setState(() {
+      _showTrayTipsOverlay = true;
+    });
+  }
+
+  Future<void> _initializeCrdtSync() async {
+    if (_crdtAdapter != null && _crdtUpdatesSub != null) return;
+
+    try {
+      _crdtAdapter ??= await YCrdtCanvasAdapter.create();
+      _appliedCrdtUpdateIds.clear();
+      _startCrdtUpdatesListener();
+    } finally {
+      _crdtInitFuture = null;
+    }
+  }
+
+  Future<void> _ensureCrdtReady() async {
+    if (_crdtAdapter != null) return;
+    _crdtInitFuture ??= _initializeCrdtSync();
+    await _crdtInitFuture;
+  }
+
+  void _startCrdtUpdatesListener() {
+    if (_crdtUpdatesSub != null) return;
+
+    final syncRepo = context.read<CanvasSyncRepository>();
+    _crdtUpdatesSub = syncRepo.listenToCrdtUpdates(widget.boardId).listen((
+      updates,
+    ) {
+      final adapter = _crdtAdapter;
+      if (adapter == null) return;
+
+      for (final update in updates) {
+        if (_appliedCrdtUpdateIds.contains(update.updateId)) {
+          continue;
+        }
+
+        final bytes = base64Decode(update.payloadBase64);
+        adapter.applyUpdate(bytes, origin: 'remote');
+        _appliedCrdtUpdateIds.add(update.updateId);
+      }
+
+      final state = adapter.materializeElements();
+      final rebuilt = _rebuildElementsFromCrdtState(state);
       if (!mounted) return;
       setState(() {
         _elements
@@ -65,32 +121,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
     });
   }
 
-  List<_CanvasElement> _rebuildElementsFromOps(List<CanvasOperation> ops) {
-    final Map<String, _CanvasElement> byObjectId = {};
+  List<_CanvasElement> _rebuildElementsFromCrdtState(
+    Map<String, Map<String, dynamic>> elementsById,
+  ) {
+    final rebuilt = <_CanvasElement>[];
 
-    for (final op in ops) {
-      Map<String, dynamic> payload;
-      try {
-        final decoded = jsonDecode(op.data);
-        payload = decoded is Map<String, dynamic> ? decoded : {};
-      } catch (_) {
-        payload = {};
-      }
+    for (final entry in elementsById.entries) {
+      final id = entry.key;
+      final payload = entry.value;
+      final type = payload['type'] as String?;
 
-      if (op.action == 'delete') {
-        if (op.type == 'board') {
-          byObjectId.clear();
-        } else {
-          byObjectId.remove(op.objectId);
-        }
-        continue;
-      }
-
-      if (op.action != 'create' && op.action != 'update') {
-        continue;
-      }
-
-      if (op.type == 'stroke') {
+      if (type == 'stroke') {
         final pointMaps = (payload['points'] as List?) ?? [];
         final points = pointMaps
             .whereType<Map>()
@@ -100,62 +141,65 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 (p['y'] as num?)?.toDouble() ?? 0,
               ),
             )
-            .toList();
-        final color = Color(
-          (payload['color'] as num?)?.toInt() ?? Colors.black.value,
-        );
-        final strokeWidth = (payload['strokeWidth'] as num?)?.toDouble() ?? 5;
+            .toList(growable: false);
 
-        byObjectId[op.objectId] = _CanvasElement.stroke(
-          id: op.objectId,
-          points: points,
-          color: color,
-          strokeWidth: strokeWidth,
+        rebuilt.add(
+          _CanvasElement.stroke(
+            id: id,
+            points: points,
+            color: Color(
+              (payload['color'] as num?)?.toInt() ?? Colors.black.value,
+            ),
+            strokeWidth: (payload['strokeWidth'] as num?)?.toDouble() ?? 5,
+          ),
         );
         continue;
       }
 
-      if (op.type == 'shape') {
+      if (type == 'shape') {
         final shapeName = (payload['shapeType'] as String?) ?? 'square';
         final shapeType = CanvasShapeType.values.firstWhere(
           (s) => s.name == shapeName,
           orElse: () => CanvasShapeType.square,
         );
-        final color = Color(
-          (payload['color'] as num?)?.toInt() ?? Colors.black.value,
-        );
 
-        byObjectId[op.objectId] = _CanvasElement.shape(
-          id: op.objectId,
-          shapeType: shapeType,
-          center: Offset(
-            (payload['cx'] as num?)?.toDouble() ?? 0,
-            (payload['cy'] as num?)?.toDouble() ?? 0,
+        rebuilt.add(
+          _CanvasElement.shape(
+            id: id,
+            shapeType: shapeType,
+            center: Offset(
+              (payload['cx'] as num?)?.toDouble() ?? 0,
+              (payload['cy'] as num?)?.toDouble() ?? 0,
+            ),
+            size: (payload['size'] as num?)?.toDouble() ?? 64,
+            color: Color(
+              (payload['color'] as num?)?.toInt() ?? Colors.black.value,
+            ),
+            strokeWidth: 3,
           ),
-          size: (payload['size'] as num?)?.toDouble() ?? 64,
-          color: color,
-          strokeWidth: 3,
         );
         continue;
       }
 
-      if (op.type == 'text') {
-        final color = Color(
-          (payload['color'] as num?)?.toInt() ?? Colors.black.value,
-        );
-        byObjectId[op.objectId] = _CanvasElement.text(
-          id: op.objectId,
-          center: Offset(
-            (payload['cx'] as num?)?.toDouble() ?? 0,
-            (payload['cy'] as num?)?.toDouble() ?? 0,
+      if (type == 'text') {
+        rebuilt.add(
+          _CanvasElement.text(
+            id: id,
+            center: Offset(
+              (payload['cx'] as num?)?.toDouble() ?? 0,
+              (payload['cy'] as num?)?.toDouble() ?? 0,
+            ),
+            text: (payload['text'] as String?) ?? '',
+            color: Color(
+              (payload['color'] as num?)?.toInt() ?? Colors.black.value,
+            ),
           ),
-          text: (payload['text'] as String?) ?? '',
-          color: color,
         );
       }
     }
 
-    return byObjectId.values.toList();
+    rebuilt.sort((a, b) => a.id.compareTo(b.id));
+    return rebuilt;
   }
 
   void _openTray(String tray) {
@@ -170,21 +214,62 @@ class _CanvasScreenState extends State<CanvasScreen> {
     required String objectId,
     required Map<String, dynamic> data,
   }) async {
-    final syncRepo = context.read<CanvasSyncRepository>();
-    final userId = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
-
-    await syncRepo.pushOperation(
-      CanvasOperation(
-        opId: _uuid.v4(),
-        boardId: widget.boardId,
-        objectId: objectId,
-        type: type,
-        action: action,
-        data: jsonEncode(data),
-        timestamp: DateTime.now().toIso8601String(),
-        clientId: userId,
-      ),
+    await _saveCrdtOperation(
+      action: action,
+      type: type,
+      objectId: objectId,
+      data: data,
     );
+  }
+
+  Future<void> _saveCrdtOperation({
+    required String action,
+    required String type,
+    required String objectId,
+    required Map<String, dynamic> data,
+  }) async {
+    await _ensureCrdtReady();
+
+    final adapter = _crdtAdapter;
+    if (adapter == null) return;
+
+    Uint8List update;
+    if (action == 'delete' && type == 'board') {
+      update = adapter.clearElements(origin: 'local');
+    } else if (action == 'delete') {
+      update = adapter.deleteElement(objectId, origin: 'local');
+    } else {
+      final payload = <String, dynamic>{'type': type, ...data};
+      update = adapter.upsertElement(objectId, payload, origin: 'local');
+    }
+
+    await _publishCrdtUpdate(update);
+    _refreshFromCrdtAdapter();
+  }
+
+  Future<void> _publishCrdtUpdate(Uint8List update) async {
+    final updateId = _uuid.v4();
+    _appliedCrdtUpdateIds.add(updateId);
+
+    await context.read<CanvasSyncRepository>().pushCrdtUpdate(
+      boardId: widget.boardId,
+      updateId: updateId,
+      payload: update,
+    );
+  }
+
+  void _refreshFromCrdtAdapter() {
+    final adapter = _crdtAdapter;
+    if (adapter == null) return;
+
+    final state = adapter.materializeElements();
+    final rebuilt = _rebuildElementsFromCrdtState(state);
+    if (!mounted) return;
+    setState(() {
+      _elements
+        ..clear()
+        ..addAll(rebuilt);
+    });
   }
 
   void _startStroke(Offset point) {
@@ -216,7 +301,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
     setState(() {
       _elements.add(stroke);
-      _redoStack.clear();
       _currentStrokePoints = [];
     });
 
@@ -249,7 +333,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
     setState(() {
       _elements.add(shape);
-      _redoStack.clear();
       activeTray = null;
     });
 
@@ -283,7 +366,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
     setState(() {
       _elements.add(note);
-      _redoStack.clear();
       _aiPromptController.clear();
       activeTray = null;
     });
@@ -302,45 +384,46 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   void _undo() {
-    if (_elements.isEmpty) return;
-    final removed = _elements.last;
-    setState(() {
-      _elements.removeLast();
-      _redoStack.add(removed);
-      activeTray = null;
-    });
-
-    _saveOperation(
-      action: 'delete',
-      type: removed.kind.name,
-      objectId: removed.id,
-      data: {'reason': 'undo'},
-    );
+    unawaited(_undoCrdt());
   }
 
   void _redo() {
-    if (_redoStack.isEmpty) return;
-    final restored = _redoStack.last;
+    unawaited(_redoCrdt());
+  }
+
+  Future<void> _undoCrdt() async {
+    final adapter = _crdtAdapter;
+    if (adapter == null) return;
+
+    final update = adapter.undoLast(origin: 'local');
+    if (update == null) return;
+
+    await _publishCrdtUpdate(update);
+    _refreshFromCrdtAdapter();
+    if (!mounted) return;
     setState(() {
-      _redoStack.removeLast();
-      _elements.add(restored);
       activeTray = null;
     });
+  }
 
-    _saveOperation(
-      action: 'create',
-      type: restored.kind.name,
-      objectId: restored.id,
-      data: {'reason': 'redo'},
-    );
+  Future<void> _redoCrdt() async {
+    final adapter = _crdtAdapter;
+    if (adapter == null) return;
+
+    final update = adapter.redoLast(origin: 'local');
+    if (update == null) return;
+
+    await _publishCrdtUpdate(update);
+    _refreshFromCrdtAdapter();
+    if (!mounted) return;
+    setState(() {
+      activeTray = null;
+    });
   }
 
   void _clearAll() {
     if (_elements.isEmpty) return;
     setState(() {
-      _redoStack
-        ..clear()
-        ..addAll(_elements);
       _elements.clear();
       activeTray = null;
     });
@@ -461,6 +544,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
           // 3. EDGE TRIGGERS
           _buildEdgeTriggers(),
+
+          if (_showTrayTipsOverlay)
+            TrayTipsOverlay(
+              onDismiss: () {
+                setState(() {
+                  _showTrayTipsOverlay = false;
+                });
+              },
+            ),
         ],
       ),
     );
@@ -583,8 +675,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   @override
   void dispose() {
-    _operationsSub?.cancel();
-    context.read<CanvasSyncRepository>().stopRemoteSync(widget.boardId);
+    _crdtUpdatesSub?.cancel();
+    context.read<CanvasSyncRepository>().stopCrdtRemoteSync(widget.boardId);
     _aiPromptController.dispose();
     super.dispose();
   }
