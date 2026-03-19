@@ -24,6 +24,7 @@ class CanvasElement {
 
 /// State for CanvasBloc
 class CanvasState {
+  final String? boardTitle;
   final List<CanvasElement> elements;
   final List<Offset> currentStroke;
   final Color selectedColor;
@@ -34,6 +35,7 @@ class CanvasState {
   final String? error;
 
   CanvasState({
+    this.boardTitle,
     this.elements = const [],
     this.currentStroke = const [],
     this.selectedColor = Colors.black,
@@ -46,6 +48,7 @@ class CanvasState {
 
   /// Create a copy with optional field overrides
   CanvasState copyWith({
+    Object? boardTitle = _unset,
     List<CanvasElement>? elements,
     List<Offset>? currentStroke,
     Color? selectedColor,
@@ -56,6 +59,9 @@ class CanvasState {
     Object? error = _unset,
   }) {
     return CanvasState(
+      boardTitle: boardTitle == _unset
+          ? this.boardTitle
+          : boardTitle as String?,
       elements: elements ?? this.elements,
       currentStroke: currentStroke ?? this.currentStroke,
       selectedColor: selectedColor ?? this.selectedColor,
@@ -74,6 +80,7 @@ class CanvasState {
       identical(this, other) ||
       other is CanvasState &&
           runtimeType == other.runtimeType &&
+          boardTitle == other.boardTitle &&
           elements == other.elements &&
           currentStroke == other.currentStroke &&
           selectedColor == other.selectedColor &&
@@ -85,6 +92,7 @@ class CanvasState {
 
   @override
   int get hashCode =>
+      boardTitle.hashCode ^
       elements.hashCode ^
       currentStroke.hashCode ^
       selectedColor.hashCode ^

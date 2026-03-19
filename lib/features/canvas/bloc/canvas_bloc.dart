@@ -9,8 +9,9 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/crdt/y_crdt_canvas_adapter.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
-import '../../../domain/repositories/board_repository.dart';
-import '../../../domain/repositories/canvas_sync_repository.dart';
+import '../../../domain/models/board.dart';
+import '../../../domain/repositories/board/board_repository.dart';
+import '../../../domain/repositories/canvas/canvas_sync_repository.dart';
 import '../view/trays/canvas_shape_type.dart';
 
 part 'canvas_event.dart';
@@ -23,6 +24,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final math.Random _random = math.Random();
 
   StreamSubscription<List<LocalCrdtUpdate>>? _crdtUpdatesSub;
+  StreamSubscription<Board?>? _boardMetaSub;
   CanvasDocAdapter? _crdtAdapter;
   Future<void>? _crdtInitFuture;
   final Set<String> _appliedCrdtUpdateIds = <String>{};
@@ -39,6 +41,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CreateBoardRequested>(_onCreateBoardRequested);
     on<CanvasStartBoardSyncRequested>(_onCanvasStartBoardSyncRequested);
     on<CanvasRenameBoardRequested>(_onCanvasRenameBoardRequested);
+    on<CanvasBoardTitleUpdated>(_onCanvasBoardTitleUpdated);
     on<CanvasInitializeCrdt>(_onInitializeCrdt);
     on<CanvasApplyRemoteUpdate>(_onApplyRemoteUpdate);
     on<CanvasStartStroke>(_onStartStroke);
@@ -115,6 +118,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(isLoading: true, error: null));
 
     try {
+      _startBoardMetadataListener();
       await _ensureCrdtReady();
       _startCrdtUpdatesListener();
       _refreshFromCrdtAdapter(emit);
@@ -122,6 +126,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     } catch (e) {
       emit(state.copyWith(isLoading: false, error: e.toString()));
     }
+  }
+
+  void _onCanvasBoardTitleUpdated(
+    CanvasBoardTitleUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(boardTitle: event.title));
   }
 
   Future<void> _onApplyRemoteUpdate(
@@ -164,6 +175,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
     final strokeId = _uuid.v4();
     final strokeData = {
+      'z': _nextZIndex(),
       'color': state.selectedColor.value,
       'strokeWidth': state.strokeWidth,
       'points': state.currentStroke
@@ -194,6 +206,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shapeId = _uuid.v4();
     final shapeData = {
+      'z': _nextZIndex(),
       'shapeType': event.shapeType.name,
       'cx': event.center.dx,
       'cy': event.center.dy,
@@ -225,6 +238,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
     final textId = _uuid.v4();
     final textData = {
+      'z': _nextZIndex(),
       'text': prompt,
       'cx': event.position.dx,
       'cy': event.position.dy,
@@ -362,6 +376,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     });
   }
 
+  void _startBoardMetadataListener() {
+    final boardRepository = _boardRepository;
+    if (boardRepository == null || _boardId.isEmpty) return;
+
+    _boardMetaSub?.cancel();
+    _boardMetaSub = boardRepository.getBoardById(_boardId).listen((board) {
+      add(CanvasBoardTitleUpdated(board?.title));
+    });
+  }
+
   Future<void> _saveCrdtOperation({
     required String action,
     required String type,
@@ -420,6 +444,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Map<String, Map<String, dynamic>> elementsById,
   ) {
     final rebuilt = <CanvasElement>[];
+    final currentOrder = <String, int>{
+      for (var i = 0; i < state.elements.length; i++) state.elements[i].id: i,
+    };
+    final maxExistingOrder = currentOrder.isEmpty
+        ? 0
+        : currentOrder.values.reduce(math.max) + 1;
 
     for (final entry in elementsById.entries) {
       final id = entry.key;
@@ -443,6 +473,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             id: id,
             type: 'stroke',
             data: {
+              'z': _readElementOrder(
+                elementId: id,
+                payload: payload,
+                currentOrder: currentOrder,
+                fallbackOrder: maxExistingOrder + rebuilt.length,
+              ),
               'color':
                   (payload['color'] as num?)?.toInt() ?? Colors.black.value,
               'strokeWidth':
@@ -467,6 +503,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             id: id,
             type: 'shape',
             data: {
+              'z': _readElementOrder(
+                elementId: id,
+                payload: payload,
+                currentOrder: currentOrder,
+                fallbackOrder: maxExistingOrder + rebuilt.length,
+              ),
               'shapeType': shapeType.name,
               'cx': (payload['cx'] as num?)?.toDouble() ?? 0.0,
               'cy': (payload['cy'] as num?)?.toDouble() ?? 0.0,
@@ -487,6 +529,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             id: id,
             type: 'text',
             data: {
+              'z': _readElementOrder(
+                elementId: id,
+                payload: payload,
+                currentOrder: currentOrder,
+                fallbackOrder: maxExistingOrder + rebuilt.length,
+              ),
               'text': (payload['text'] as String?) ?? '',
               'cx': (payload['cx'] as num?)?.toDouble() ?? 0.0,
               'cy': (payload['cy'] as num?)?.toDouble() ?? 0.0,
@@ -498,8 +546,40 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       }
     }
 
-    rebuilt.sort((a, b) => a.id.compareTo(b.id));
+    rebuilt.sort((a, b) {
+      final za = ((a.data as Map<String, dynamic>)['z'] as num?)?.toInt() ?? 0;
+      final zb = ((b.data as Map<String, dynamic>)['z'] as num?)?.toInt() ?? 0;
+      if (za != zb) return za.compareTo(zb);
+      return a.id.compareTo(b.id);
+    });
     return rebuilt;
+  }
+
+  int _nextZIndex() {
+    var maxZ = -1;
+    for (final element in state.elements) {
+      final z = ((element.data as Map<String, dynamic>)['z'] as num?)?.toInt();
+      if (z != null && z > maxZ) {
+        maxZ = z;
+      }
+    }
+    return maxZ + 1;
+  }
+
+  int _readElementOrder({
+    required String elementId,
+    required Map<String, dynamic> payload,
+    required Map<String, int> currentOrder,
+    required int fallbackOrder,
+  }) {
+    final explicit = (payload['z'] as num?)?.toInt();
+    if (explicit != null) return explicit;
+
+    if (currentOrder.containsKey(elementId)) {
+      return currentOrder[elementId]!;
+    }
+
+    return fallbackOrder;
   }
 
   Offset randomShapeCenter() =>
@@ -510,6 +590,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
   @override
   Future<void> close() async {
+    await _boardMetaSub?.cancel();
     await _crdtUpdatesSub?.cancel();
     if (_canSync) {
       await _syncRepository?.stopCrdtRemoteSync(_boardId);

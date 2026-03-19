@@ -1,5 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../domain/repositories/profile_repository.dart';
+import '../../../domain/repositories/profile/profile_repository.dart';
 
 // States
 abstract class ProfileState {}

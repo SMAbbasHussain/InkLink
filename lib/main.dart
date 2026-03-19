@@ -6,30 +6,33 @@ import 'package:inklink/core/theme/app_theme.dart';
 import 'package:inklink/core/services/firestore_service.dart';
 import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/services/cloud_functions_service.dart';
-import 'package:inklink/domain/repositories/auth_repository.dart';
-import 'package:inklink/domain/repositories/auth_repository_impl.dart';
-import 'package:inklink/domain/repositories/board_repository.dart';
-import 'package:inklink/domain/repositories/canvas_sync_repository.dart';
+import 'package:inklink/domain/repositories/auth/auth_repository.dart';
+import 'package:inklink/domain/repositories/auth/auth_repository_impl.dart';
+import 'package:inklink/domain/repositories/board/board_repository.dart';
+import 'package:inklink/domain/repositories/board/board_repository_impl.dart';
+import 'package:inklink/domain/repositories/canvas/canvas_sync_repository.dart';
+import 'package:inklink/domain/repositories/canvas/canvas_sync_repository_impl.dart';
 import 'package:inklink/core/database/database_service.dart';
-import 'package:inklink/domain/repositories/social_repository.dart';
-import 'package:inklink/domain/repositories/social_repository_impl.dart';
-import 'package:inklink/domain/repositories/profile_repository.dart';
-import 'package:inklink/domain/repositories/profile_repository_impl.dart';
-import 'package:inklink/domain/repositories/theme_repository.dart'; // Add this
+import 'package:inklink/domain/repositories/profile/profile_repository_impl.dart';
+import 'package:inklink/domain/repositories/social/social_repository.dart';
+import 'package:inklink/domain/repositories/profile/profile_repository.dart';
+import 'package:inklink/domain/repositories/social/social_repository_impl.dart';
+import 'package:inklink/domain/repositories/settings/settings_repository.dart';
+import 'package:inklink/domain/repositories/settings/settings_repository_impl.dart';
+import 'package:inklink/domain/repositories/theme/theme_repository_impl.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
-import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
 import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:inklink/features/friends/bloc/friends_bloc.dart';
 import 'package:inklink/features/navigation/bloc/nav_bloc.dart';
 import 'package:inklink/features/theme/bloc/theme_bloc.dart';
-import 'firebase_options.dart';
+import 'package:inklink/firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  final themeRepository = ThemeRepository();
+  final themeRepository = ThemeRepositoryImpl();
   final initialThemeMode = await themeRepository.getThemeMode();
 
   final databaseService = DatabaseService();
@@ -71,18 +74,22 @@ void main() async {
           ),
         ),
         RepositoryProvider<BoardRepository>(
-          create: (context) => BoardRepository(
+          create: (context) => FirestoreBoardRepository(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
             dbService: context.read<DatabaseService>(),
           ),
         ),
         RepositoryProvider<CanvasSyncRepository>(
-          create: (context) => CanvasSyncRepository(
+          create: (context) => FirestoreCanvasSyncRepository(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
             dbService: context.read<DatabaseService>(),
           ),
+        ),
+        RepositoryProvider<SettingsRepository>(
+          create: (context) =>
+              SettingsRepositoryImpl(databaseService: databaseService),
         ),
       ],
       // 2. BLoCs (depend on repositories)
@@ -112,13 +119,6 @@ void main() async {
             create: (context) => FriendsBloc(
               socialRepo: context
                   .read<SocialRepository>(), // Reads from RepoProvider
-            ),
-          ),
-          BlocProvider(
-            create: (context) => CanvasBloc(
-              boardRepository: context.read<BoardRepository>(),
-              syncRepository: context.read<CanvasSyncRepository>(),
-              boardId: '',
             ),
           ),
         ],

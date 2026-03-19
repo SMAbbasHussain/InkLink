@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/domain/repositories/profile_repository.dart';
 import 'package:inklink/features/profile/bloc/profile_bloc.dart';
 import 'package:inklink/features/profile/view/widgets/edit_profile_sheet.dart';
 import '../../../core/constants/app_colors.dart';
@@ -20,74 +19,67 @@ class ProfileScreen extends StatelessWidget {
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return BlocProvider(
-      create: (context) =>
-          ProfileBloc(profileRepo: context.read<ProfileRepository>())
-            ..add(LoadProfile(userId)),
-      child: Scaffold(
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: IconButton(
-            icon: Icon(
-              Icons.arrow_back,
-              color: isDark ? Colors.white : Colors.black,
-            ),
-            onPressed: () => Navigator.pop(context),
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(
+            Icons.arrow_back,
+            color: isDark ? Colors.white : Colors.black,
           ),
-          actions: [
-            BlocBuilder<ProfileBloc, ProfileState>(
-              builder: (context, state) {
-                if (state is ProfileLoaded && state.isSelf) {
-                  return IconButton(
-                    icon: const Icon(Icons.edit_outlined),
-                    onPressed: () {
-                      // Use the extracted widget
-                      showModalBottomSheet(
-                        context: context,
-                        isScrollControlled: true,
-                        backgroundColor: Colors.transparent,
-                        builder: (_) => BlocProvider.value(
-                          value: context
-                              .read<
-                                ProfileBloc
-                              >(), // Pass the bloc to the sheet
-                          child: EditProfileSheet(userData: state.userData),
-                        ),
-                      );
-                    },
-                  );
-                }
-                return const SizedBox.shrink();
-              },
-            ),
-          ],
+          onPressed: () => Navigator.pop(context),
         ),
-        extendBodyBehindAppBar: true,
-        body: BlocBuilder<ProfileBloc, ProfileState>(
-          builder: (context, state) {
-            if (state is ProfileLoading) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (state is ProfileError) {
-              return Center(child: Text(state.message));
-            }
-            if (state is ProfileLoaded) {
-              final user = state.userData;
-              return Column(
-                children: [
-                  _buildHeader(user, isDark),
-                  const SizedBox(height: 24),
-                  _buildBioSection(user, isDark),
-                  const Spacer(),
-                  _buildActionButtons(context, state, isDark),
-                  const SizedBox(height: 40),
-                ],
-              );
-            }
-            return const SizedBox.shrink();
-          },
-        ),
+        actions: [
+          BlocBuilder<ProfileBloc, ProfileState>(
+            builder: (context, state) {
+              if (state is ProfileLoaded && state.isSelf) {
+                return IconButton(
+                  icon: const Icon(Icons.edit_outlined),
+                  onPressed: () {
+                    // Use the extracted widget
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (_) => BlocProvider.value(
+                        value: context
+                            .read<ProfileBloc>(), // Pass the bloc to the sheet
+                        child: EditProfileSheet(userData: state.userData),
+                      ),
+                    );
+                  },
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+        ],
+      ),
+      extendBodyBehindAppBar: true,
+      body: BlocBuilder<ProfileBloc, ProfileState>(
+        builder: (context, state) {
+          if (state is ProfileLoading) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (state is ProfileError) {
+            return Center(child: Text(state.message));
+          }
+          if (state is ProfileLoaded) {
+            final user = state.userData;
+            return Column(
+              children: [
+                _buildHeader(user, isDark),
+                const SizedBox(height: 24),
+                _buildBioSection(user, isDark),
+                const Spacer(),
+                _buildActionButtons(context, state, isDark),
+                const SizedBox(height: 40),
+              ],
+            );
+          }
+          return const SizedBox.shrink();
+        },
       ),
     );
   }

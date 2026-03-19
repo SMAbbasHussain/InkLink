@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:rxdart/rxdart.dart';
 import '../../../domain/models/board.dart';
-import '../../../domain/repositories/board_repository.dart';
+import '../../../domain/repositories/board/board_repository.dart';
 
 // States
 abstract class DashboardState {}
@@ -14,12 +14,14 @@ class DashboardLoaded extends DashboardState {
   final List<Board> joinedBoards;
   final String? actionError;
   final String? joinedBoardId;
+  final String? createdBoardId;
 
   DashboardLoaded({
     required this.ownedBoards,
     required this.joinedBoards,
     this.actionError,
     this.joinedBoardId,
+    this.createdBoardId,
   });
 
   DashboardLoaded copyWith({
@@ -27,6 +29,7 @@ class DashboardLoaded extends DashboardState {
     List<Board>? joinedBoards,
     Object? actionError = _unset,
     Object? joinedBoardId = _unset,
+    Object? createdBoardId = _unset,
   }) {
     return DashboardLoaded(
       ownedBoards: ownedBoards ?? this.ownedBoards,
@@ -37,6 +40,9 @@ class DashboardLoaded extends DashboardState {
       joinedBoardId: joinedBoardId == _unset
           ? this.joinedBoardId
           : joinedBoardId as String?,
+      createdBoardId: createdBoardId == _unset
+          ? this.createdBoardId
+          : createdBoardId as String?,
     );
   }
 }
@@ -55,6 +61,12 @@ class DashboardJoinBoardRequested extends DashboardEvent {
   final String boardId;
 
   DashboardJoinBoardRequested(this.boardId);
+}
+
+class DashboardCreateBoardRequested extends DashboardEvent {
+  final String? title;
+
+  DashboardCreateBoardRequested({this.title});
 }
 
 class DashboardRenameBoardRequested extends DashboardEvent {
@@ -85,6 +97,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   DashboardBloc({required this.boardRepo}) : super(DashboardInitial()) {
     on<LoadDashboardRequested>(_onLoadDashboardRequested);
     on<_UpdateDashboardData>(_onUpdateDashboardData);
+    on<DashboardCreateBoardRequested>(_onDashboardCreateBoardRequested);
     on<DashboardJoinBoardRequested>(_onDashboardJoinBoardRequested);
     on<DashboardRenameBoardRequested>(_onDashboardRenameBoardRequested);
     on<DashboardDeleteBoardRequested>(_onDashboardDeleteBoardRequested);
@@ -145,6 +158,27 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     }
   }
 
+  Future<void> _onDashboardCreateBoardRequested(
+    DashboardCreateBoardRequested event,
+    Emitter<DashboardState> emit,
+  ) async {
+    try {
+      final boardId = await boardRepo.createNewBoard(
+        event.title ?? 'Untitled Board',
+      );
+
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(current.copyWith(createdBoardId: boardId, actionError: null));
+      }
+    } catch (e) {
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(current.copyWith(actionError: 'Failed to create board: $e'));
+      }
+    }
+  }
+
   Future<void> _onDashboardRenameBoardRequested(
     DashboardRenameBoardRequested event,
     Emitter<DashboardState> emit,
@@ -187,7 +221,13 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   ) {
     final current = state;
     if (current is DashboardLoaded) {
-      emit(current.copyWith(actionError: null, joinedBoardId: null));
+      emit(
+        current.copyWith(
+          actionError: null,
+          joinedBoardId: null,
+          createdBoardId: null,
+        ),
+      );
     }
   }
 

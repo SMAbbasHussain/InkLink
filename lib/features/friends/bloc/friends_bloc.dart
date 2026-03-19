@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:rxdart/rxdart.dart';
-import '../../../domain/repositories/social_repository.dart';
+import '../../../domain/repositories/social/social_repository.dart';
 import 'friends_event.dart';
 import 'friends_state.dart';
 

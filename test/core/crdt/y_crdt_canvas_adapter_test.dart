@@ -79,5 +79,63 @@ void main() {
       timeout: const Timeout(Duration(minutes: 3)),
       skip: !hasWasmAsset,
     );
+
+    test('fallback mode merges concurrent upserts from peers', () {
+      final clientA = YCrdtCanvasAdapter.fallbackForTest();
+      final clientB = YCrdtCanvasAdapter.fallbackForTest();
+
+      final updateA = clientA.upsertElement('a', {
+        'type': 'text',
+        'text': 'A',
+        'cx': 1,
+        'cy': 1,
+        'color': 0xFF111111,
+      });
+      final updateB = clientB.upsertElement('b', {
+        'type': 'text',
+        'text': 'B',
+        'cx': 2,
+        'cy': 2,
+        'color': 0xFF222222,
+      });
+
+      clientA.applyUpdate(updateB);
+      clientB.applyUpdate(updateA);
+
+      expect(clientA.materializeElements().keys.toSet(), {'a', 'b'});
+      expect(clientB.materializeElements().keys.toSet(), {'a', 'b'});
+    });
+
+    test('fallback mode preserves deletes while merging peer updates', () {
+      final clientA = YCrdtCanvasAdapter.fallbackForTest();
+      final clientB = YCrdtCanvasAdapter.fallbackForTest();
+
+      final seed = clientA.upsertElement('x', {
+        'type': 'shape',
+        'shapeType': 'square',
+        'cx': 10,
+        'cy': 10,
+        'size': 30,
+        'color': 0xFF000000,
+      });
+      clientB.applyUpdate(seed);
+
+      final deleteX = clientA.deleteElement('x');
+      final createY = clientB.upsertElement('y', {
+        'type': 'text',
+        'text': 'Y',
+        'cx': 3,
+        'cy': 3,
+        'color': 0xFF333333,
+      });
+
+      clientA.applyUpdate(createY);
+      clientB.applyUpdate(deleteX);
+
+      expect(clientA.materializeElements().containsKey('x'), isFalse);
+      expect(clientB.materializeElements().containsKey('x'), isFalse);
+      expect(clientA.materializeElements().containsKey('y'), isTrue);
+      expect(clientB.materializeElements().containsKey('y'), isTrue);
+    });
   });
 }

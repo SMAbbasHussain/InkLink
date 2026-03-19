@@ -3,9 +3,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/domain/models/board.dart';
-import 'package:inklink/domain/repositories/board_repository.dart';
-import 'package:inklink/domain/repositories/canvas_sync_repository.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
@@ -39,15 +36,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   @override
   void initState() {
     super.initState();
-
-    _canvasBloc = CanvasBloc(
-      boardRepository: context.read<BoardRepository>(),
-      syncRepository: context.read<CanvasSyncRepository>(),
-      boardId: widget.boardId,
-    );
-
-    _canvasBloc.add(const CanvasStartBoardSyncRequested());
-    _canvasBloc.add(CanvasInitializeCrdt(widget.boardId));
+    _canvasBloc = context.read<CanvasBloc>();
     _maybeShowTrayTipsOverlay();
   }
 
@@ -134,13 +123,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final boardRepo = context.read<BoardRepository>();
 
     return BlocProvider.value(
       value: _canvasBloc,
       child: BlocBuilder<CanvasBloc, CanvasState>(
         builder: (context, state) {
           final mappedElements = _mapElements(state.elements);
+          final title =
+              state.boardTitle ??
+              'Board ${widget.boardId.substring(0, math.min(6, widget.boardId.length))}';
 
           return Scaffold(
             backgroundColor: isDark
@@ -148,15 +139,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 : const Color(0xFFF5F5F5),
             resizeToAvoidBottomInset: false,
             appBar: AppBar(
-              title: StreamBuilder<Board?>(
-                stream: boardRepo.getBoardById(widget.boardId),
-                builder: (context, snapshot) {
-                  return Text(
-                    snapshot.data?.title ??
-                        'Board ${widget.boardId.substring(0, math.min(6, widget.boardId.length))}',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  );
-                },
+              title: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               centerTitle: true,
               elevation: 0,

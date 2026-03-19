@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../domain/repositories/theme_repository.dart';
+import '../../../domain/repositories/theme/theme_repository.dart';
 
 // Events
 abstract class ThemeEvent {}

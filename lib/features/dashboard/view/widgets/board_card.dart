@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:inklink/core/constants/app_colors.dart';
 import 'package:inklink/domain/models/board.dart';
-import 'package:inklink/features/canvas/view/canvas_screen.dart';
+import 'package:inklink/features/canvas/view/canvas_route.dart';
 
 class BoardCard extends StatelessWidget {
   final Board board;
@@ -24,10 +24,7 @@ class BoardCard extends StatelessWidget {
 
     return GestureDetector(
       onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => CanvasScreen(boardId: board.id)),
-        );
+        Navigator.push(context, buildCanvasRoute(context, boardId: board.id));
       },
       child: Container(
         decoration: BoxDecoration(

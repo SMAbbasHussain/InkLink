@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/features/profile/view/profile_screen.dart';
+import 'package:inklink/features/profile/view/profile_route.dart';
 import '../bloc/friends_bloc.dart';
 import '../bloc/friends_event.dart';
 import '../bloc/friends_state.dart';
@@ -24,9 +24,7 @@ class FriendRequestsScreen extends StatelessWidget {
                 return GestureDetector(
                   onTap: () => Navigator.push(
                     context,
-                    MaterialPageRoute(
-                      builder: (_) => ProfileScreen(userId: req['fromUid']),
-                    ),
+                    buildProfileRoute(context, userId: req['fromUid']),
                   ),
                   child: RequestCard(
                     request: req,

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:inklink/domain/repositories/settings/settings_repository.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../friends/view/friends_screen.dart';
+import '../../settings/bloc/settings_bloc.dart';
 import '../../settings/view/settings_screen.dart';
 import '../../dashboard/view/home_screen.dart';
 import '../bloc/nav_bloc.dart';
@@ -14,7 +16,12 @@ class MainWrapper extends StatelessWidget {
     final List<Widget> screens = [
       const HomeScreen(),
       const FriendsScreen(),
-      const SettingsScreen(),
+      BlocProvider(
+        create: (context) =>
+            SettingsBloc(settingsRepository: context.read<SettingsRepository>())
+              ..add(const SettingsLoadRequested()),
+        child: const SettingsScreen(),
+      ),
     ];
 
     return BlocBuilder<NavBloc, NavState>(

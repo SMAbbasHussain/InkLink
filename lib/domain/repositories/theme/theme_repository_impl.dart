@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'theme_repository.dart';
 
-class ThemeRepository {
+class ThemeRepositoryImpl implements ThemeRepository {
   static const _key = 'theme_mode';
 
-  // Save the user's choice
+  @override
   Future<void> saveThemeMode(ThemeMode mode) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
@@ -13,7 +14,7 @@ class ThemeRepository {
     ); // Saves 'light', 'dark', or 'system'
   }
 
-  // Load the choice, defaulting to 'system'
+  @override
   Future<ThemeMode> getThemeMode() async {
     final prefs = await SharedPreferences.getInstance();
     final String? themeName = prefs.getString(_key);

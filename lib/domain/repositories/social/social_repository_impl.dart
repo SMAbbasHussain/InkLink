@@ -1,9 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import '../../domain/repositories/social_repository.dart';
-import '../../core/services/firestore_service.dart';
-import '../../core/services/auth_service.dart';
-import '../../core/services/cloud_functions_service.dart';
+import 'dart:developer' as developer;
+import 'social_repository.dart';
+import '../../../core/services/firestore_service.dart';
+import '../../../core/services/auth_service.dart';
+import '../../../core/services/cloud_functions_service.dart';
 import 'package:rxdart/rxdart.dart';
 
 class SocialRepositoryImpl implements SocialRepository {
@@ -77,7 +78,10 @@ class SocialRepositoryImpl implements SocialRepository {
       }
     } on FirebaseFunctionsException catch (e) {
       // This will give you the actual error from the Cloud Function logs
-      print("Cloud Function Error: ${e.code} - ${e.message}");
+      developer.log(
+        'Cloud Function Error: ${e.code} - ${e.message}',
+        name: 'SocialRepositoryImpl',
+      );
       throw Exception(e.message);
     } catch (e) {
       throw Exception("Connection error");
@@ -98,7 +102,10 @@ class SocialRepositoryImpl implements SocialRepository {
         throw Exception("Server failed to decline request");
       }
     } on FirebaseFunctionsException catch (e) {
-      print("Cloud Function Error: ${e.code} - ${e.message}");
+      developer.log(
+        'Cloud Function Error: ${e.code} - ${e.message}',
+        name: 'SocialRepositoryImpl',
+      );
       throw Exception(e.message);
     } catch (e) {
       throw Exception("Connection error");
