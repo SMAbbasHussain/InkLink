@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/domain/repositories/profile_repository.dart';
+import 'package:inklink/domain/repositories/profile/profile_repository.dart';
 import 'package:inklink/features/profile/bloc/profile_bloc.dart';
 import 'package:inklink/features/profile/view/widgets/edit_profile_sheet.dart';
 import '../../../core/constants/app_colors.dart';
