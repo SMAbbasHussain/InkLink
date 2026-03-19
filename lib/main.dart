@@ -26,7 +26,7 @@ import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:inklink/features/friends/bloc/friends_bloc.dart';
 import 'package:inklink/features/navigation/bloc/nav_bloc.dart';
 import 'package:inklink/features/theme/bloc/theme_bloc.dart';
-import 'firebase_options.dart';
+import 'package:inklink/firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
