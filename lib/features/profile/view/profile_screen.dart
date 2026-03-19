@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/domain/repositories/social_repository.dart';
 import 'package:inklink/domain/repositories/profile_repository.dart';
 import 'package:inklink/features/profile/bloc/profile_bloc.dart';
 import 'package:inklink/features/profile/view/widgets/edit_profile_sheet.dart';
@@ -22,10 +21,9 @@ class ProfileScreen extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return BlocProvider(
-      create: (context) => ProfileBloc(
-        profileRepo: context.read<ProfileRepository>(),
-        socialRepo: context.read<SocialRepository>(),
-      )..add(LoadProfile(userId)),
+      create: (context) =>
+          ProfileBloc(profileRepo: context.read<ProfileRepository>())
+            ..add(LoadProfile(userId)),
       child: Scaffold(
         appBar: AppBar(
           backgroundColor: Colors.transparent,

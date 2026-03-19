@@ -173,7 +173,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
           MaterialPageRoute(builder: (_) => ProfileScreen(userId: userId)),
         ),
         borderRadius: BorderRadius.circular(20),
-        
+
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(

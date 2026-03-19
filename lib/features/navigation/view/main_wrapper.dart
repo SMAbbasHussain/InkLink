@@ -20,25 +20,25 @@ class MainWrapper extends StatelessWidget {
     return BlocBuilder<NavBloc, NavState>(
       builder: (context, state) {
         return Scaffold(
-          body: IndexedStack(
-            index: state.index,
-            children: screens,
-          ),
+          body: IndexedStack(index: state.index, children: screens),
           bottomNavigationBar: NavigationBarTheme(
             data: NavigationBarThemeData(
               // This creates the capsule/pill behind the icon
-              indicatorColor: AppColors.primary.withOpacity(0.2), 
+              indicatorColor: AppColors.primary.withOpacity(0.2),
               labelTextStyle: WidgetStateProperty.all(
                 const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
               ),
             ),
             child: NavigationBar(
               selectedIndex: state.index,
-              onDestinationSelected: (index) => 
+              onDestinationSelected: (index) =>
                   context.read<NavBloc>().add(ChangeTab(index)),
               destinations: const [
                 NavigationDestination(
-                  selectedIcon: Icon(Icons.home_filled, color: AppColors.primary),
+                  selectedIcon: Icon(
+                    Icons.home_filled,
+                    color: AppColors.primary,
+                  ),
                   icon: Icon(Icons.home_outlined),
                   label: 'Home',
                 ),

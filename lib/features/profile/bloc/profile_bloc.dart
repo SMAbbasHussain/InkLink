@@ -1,7 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../domain/repositories/social_repository.dart';
 import '../../../domain/repositories/profile_repository.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 // States
 abstract class ProfileState {}
@@ -42,14 +40,17 @@ class UpdateProfileRequested extends ProfileEvent {
 
 class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
   final ProfileRepository profileRepo;
-  final SocialRepository socialRepo;
 
-  ProfileBloc({required this.profileRepo, required this.socialRepo})
-    : super(ProfileInitial()) {
+  ProfileBloc({required this.profileRepo}) : super(ProfileInitial()) {
     on<LoadProfile>((event, emit) async {
       emit(ProfileLoading());
       try {
-        final currentUid = FirebaseAuth.instance.currentUser!.uid;
+        final currentUid = profileRepo.getCurrentUserId();
+        if (currentUid == null) {
+          emit(ProfileError('User not authenticated'));
+          return;
+        }
+
         final userData = await profileRepo.getUserById(event.userId);
 
         if (userData == null) {

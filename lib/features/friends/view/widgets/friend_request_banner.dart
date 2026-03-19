@@ -11,7 +11,10 @@ class FriendRequestBanner extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return GestureDetector(
-      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FriendRequestsScreen())),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const FriendRequestsScreen()),
+      ),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         padding: const EdgeInsets.all(20),
@@ -39,7 +42,11 @@ class FriendRequestBanner extends StatelessWidget {
                 color: AppColors.primary,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.people_rounded, color: Colors.white, size: 22),
+              child: const Icon(
+                Icons.people_rounded,
+                color: Colors.white,
+                size: 22,
+              ),
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -47,12 +54,15 @@ class FriendRequestBanner extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    "Friend Requests", 
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)
+                    "Friend Requests",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
                   Text(
-                    "You have $count pending invitations", 
-                    style: TextStyle(color: isDark ? Colors.white70 : Colors.black54, fontSize: 13)
+                    "You have $count pending invitations",
+                    style: TextStyle(
+                      color: isDark ? Colors.white70 : Colors.black54,
+                      fontSize: 13,
+                    ),
                   ),
                 ],
               ),
@@ -64,7 +74,11 @@ class FriendRequestBanner extends StatelessWidget {
                 color: AppColors.primary,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 12),
+              child: const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white,
+                size: 12,
+              ),
             ),
           ],
         ),

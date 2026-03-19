@@ -30,7 +30,7 @@ class RequestCard extends StatelessWidget {
             color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
             blurRadius: 15,
             offset: const Offset(0, 8),
-          )
+          ),
         ],
       ),
       child: Column(
@@ -41,12 +41,12 @@ class RequestCard extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 28,
-                  backgroundImage: request['senderPic'] != null 
-                      ? NetworkImage(request['senderPic']) 
+                  backgroundImage: request['senderPic'] != null
+                      ? NetworkImage(request['senderPic'])
                       : null,
                   backgroundColor: AppColors.primary.withOpacity(0.2),
-                  child: request['senderPic'] == null 
-                      ? const Icon(Icons.person, color: AppColors.primary) 
+                  child: request['senderPic'] == null
+                      ? const Icon(Icons.person, color: AppColors.primary)
                       : null,
                 ),
                 // Online indicator mock
@@ -59,7 +59,10 @@ class RequestCard extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: Colors.green,
                       shape: BoxShape.circle,
-                      border: Border.all(color: isDark ? AppColors.surfaceDark : Colors.white, width: 2),
+                      border: Border.all(
+                        color: isDark ? AppColors.surfaceDark : Colors.white,
+                        width: 2,
+                      ),
                     ),
                   ),
                 ),
@@ -124,7 +127,10 @@ class RequestCard extends StatelessWidget {
           children: [
             Icon(icon, color: color, size: 18),
             const SizedBox(width: 8),
-            Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+            Text(
+              label,
+              style: TextStyle(color: color, fontWeight: FontWeight.bold),
+            ),
           ],
         ),
       ),

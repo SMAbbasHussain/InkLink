@@ -1,164 +1,318 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
 import 'package:inklink/features/canvas/view/canvas_screen.dart';
+import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:inklink/features/dashboard/view/widgets/board_card.dart';
 import 'package:inklink/features/dashboard/view/widgets/quick_action_button.dart';
 import 'package:inklink/features/profile/view/profile_screen.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../theme/bloc/theme_bloc.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+  State<HomeScreen> createState() => _HomeScreenState();
+}
 
-    // 1. Get current user data from Firebase
-    final user = FirebaseAuth.instance.currentUser;
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+  late TabController _tabController;
 
-    return BlocListener<CanvasBloc, CanvasState>(
-      listener: (context, state) {
-        if (state is CanvasReady) {
-          // Navigate to the newly created board
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => CanvasScreen(boardId: state.boardId),
-            ),
-          );
-        }
-        if (state is CanvasError) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(state.message)));
-        }
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text(
-            "InkLink",
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 26),
+  @override
+  bool get wantKeepAlive => true; // Preserves tab state
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+
+    context.read<DashboardBloc>().add(LoadDashboardRequested());
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  void _showJoinDialog() {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Join Board'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: "Enter the Join Code (Board ID)",
           ),
-          actions: [
-            IconButton(
-              icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
-              onPressed: () => context.read<ThemeBloc>().add(ToggleTheme()),
-            ),
-            IconButton(
-              icon: const Icon(Icons.notifications_none),
-              onPressed: () {},
-            ),
-            // 2. Dynamic Profile Picture
-            Padding(
-              padding: const EdgeInsets.only(right: 16.0),
-              child: InkWell(
-                onTap: () {
-                  if (user != null) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ProfileScreen(userId: user.uid),
-                      ),
-                    );
-                  }
-                },
-                customBorder:
-                    const CircleBorder(), // Keeps the ripple effect circular
-                child: CircleAvatar(
-                  radius: 18, // Adjusted size
-                  backgroundColor: AppColors.primary.withOpacity(0.2),
-                  backgroundImage: user?.photoURL != null
-                      ? NetworkImage(user!.photoURL!)
-                      : null,
-                  child: user?.photoURL == null
-                      ? const Icon(
-                          Icons.person,
-                          size: 20,
-                          color: AppColors.primary,
-                        )
-                      : null,
-                ),
-              ),
-            ),
-          ],
+          autofocus: true,
         ),
-        body: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 3. Personalized Greeting
-                Text(
-                  "Hello, ${user?.displayName?.split(' ')[0] ?? 'Creator'}! 👋",
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              if (controller.text.isNotEmpty) {
+                final boardId = controller.text.trim();
+                context.read<DashboardBloc>().add(
+                  DashboardJoinBoardRequested(boardId),
+                );
+                Navigator.pop(dialogContext);
+              }
+            },
+            child: const Text('Join'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context); // Required by AutomaticKeepAliveClientMixin
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final user = context.read<AuthService>().getCurrentUser();
+
+    return MultiBlocListener(
+      listeners: [
+        BlocListener<DashboardBloc, DashboardState>(
+          listenWhen: (previous, current) =>
+              current is DashboardLoaded &&
+              (current.joinedBoardId != null || current.actionError != null),
+          listener: (context, state) async {
+            if (state is! DashboardLoaded) return;
+            final dashboardBloc = this.context.read<DashboardBloc>();
+            final scaffoldMessenger = ScaffoldMessenger.of(this.context);
+            final navigator = Navigator.of(this.context);
+
+            if (state.actionError != null) {
+              scaffoldMessenger.showSnackBar(
+                SnackBar(
+                  content: Text(state.actionError!),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              dashboardBloc.add(DashboardConsumeEffects());
+              return;
+            }
+
+            final boardId = state.joinedBoardId;
+            if (boardId == null) return;
+
+            await navigator.push(
+              MaterialPageRoute(
+                builder: (_) =>
+                    CanvasScreen(boardId: boardId, showTrayTipsOnEntry: true),
+              ),
+            );
+            if (!mounted) return;
+            _tabController.animateTo(1);
+            dashboardBloc.add(DashboardConsumeEffects());
+          },
+        ),
+        // Listen for Canvas creation success to navigate
+        BlocListener<CanvasBloc, CanvasState>(
+          listener: (context, state) {
+            if (state is CanvasReady) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => CanvasScreen(
+                    boardId: state.boardId,
+                    showTrayTipsOnEntry: true,
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  "Ready to bring your ideas to life?",
-                  style: TextStyle(color: Colors.grey.shade500),
+              );
+            }
+            if (state is CanvasErrorState) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(state.message),
+                  backgroundColor: Colors.red,
                 ),
-                const SizedBox(height: 24),
-
-                // AI Prompt Bar
-                _buildSearchBar(isDark),
-                const SizedBox(height: 30),
-
-                // Quick Actions
-                Row(
-                  children: [
-                    QuickActionButton(
-                      title: "New Board",
-                      icon: Icons.add,
-                      color: AppColors.actionBlue,
-                      onTap: () => context.read<CanvasBloc>().add(
-                        CreateBoardRequested(),
-                      ),
+              );
+            }
+          },
+        ),
+      ],
+      child: BlocBuilder<DashboardBloc, DashboardState>(
+        builder: (context, state) {
+          return Scaffold(
+            appBar: AppBar(
+              title: const Text(
+                "InkLink",
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 26),
+              ),
+              actions: [
+                IconButton(
+                  icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+                  onPressed: () => context.read<ThemeBloc>().add(ToggleTheme()),
+                ),
+                const Padding(
+                  padding: EdgeInsets.only(right: 16.0),
+                  child: Icon(Icons.notifications_none),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 16.0),
+                  child: InkWell(
+                    onTap: () {
+                      if (user != null) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                ProfileScreen(userId: user.uid),
+                          ),
+                        );
+                      }
+                    },
+                    customBorder: const CircleBorder(),
+                    child: CircleAvatar(
+                      radius: 18,
+                      backgroundColor: AppColors.primary.withOpacity(0.2),
+                      backgroundImage: user?.photoURL != null
+                          ? NetworkImage(user!.photoURL!)
+                          : null,
+                      child: user?.photoURL == null
+                          ? const Icon(
+                              Icons.person,
+                              size: 20,
+                              color: AppColors.primary,
+                            )
+                          : null,
                     ),
-                    SizedBox(width: 16),
-                    QuickActionButton(
-                      title: "Join Board",
-                      icon: Icons.group_add,
-                      color: AppColors.actionOrange,
-                      onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Join Board tapped!")),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 30),
-
-                // Recent Boards Section
-                const Text(
-                  "Recent Boards",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
-                    childAspectRatio: 0.85,
                   ),
-                  itemCount: 4,
-                  itemBuilder: (context, index) => BoardCard(index: index),
                 ),
               ],
             ),
-          ),
-        ),
+            body: NestedScrollView(
+              headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Hello, ${user?.displayName?.split(' ')[0] ?? 'Creator'}! 👋",
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          "Ready to bring your ideas to life?",
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                        const SizedBox(height: 24),
+                        _buildSearchBar(isDark),
+                        const SizedBox(height: 30),
+                        Row(
+                          children: [
+                            QuickActionButton(
+                              title: "New Board",
+                              icon: Icons.add,
+                              color: AppColors.actionBlue,
+                              onTap: () => context.read<CanvasBloc>().add(
+                                CreateBoardRequested(),
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            QuickActionButton(
+                              title: "Join Board",
+                              icon: Icons.group_add,
+                              color: AppColors.actionOrange,
+                              onTap: _showJoinDialog,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                    ),
+                  ),
+                ),
+                SliverPersistentHeader(
+                  pinned: true,
+                  delegate: _SliverAppBarDelegate(
+                    TabBar(
+                      controller: _tabController,
+                      indicatorColor: AppColors.primary,
+                      labelColor: AppColors.primary,
+                      unselectedLabelColor: Colors.grey,
+                      tabs: const [
+                        Tab(text: "My Boards"),
+                        Tab(text: "Joined Boards"),
+                      ],
+                    ),
+                    isDark
+                        ? AppColors.bgDark
+                        : Theme.of(context).scaffoldBackgroundColor,
+                  ),
+                ),
+              ],
+              body: TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildBoardGrid(state, isOwner: true),
+                  _buildBoardGrid(state, isOwner: false),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
+  }
+
+  Widget _buildBoardGrid(DashboardState state, {required bool isOwner}) {
+    if (state is DashboardInitial) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (state is DashboardLoaded) {
+      final boards = isOwner ? state.ownedBoards : state.joinedBoards;
+
+      if (boards.isEmpty) {
+        return Center(
+          child: Text(
+            isOwner ? "No boards created yet." : "No boards joined yet.",
+            style: const TextStyle(color: Colors.grey),
+          ),
+        );
+      }
+
+      return GridView.builder(
+        padding: const EdgeInsets.all(16.0),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          crossAxisSpacing: 16,
+          mainAxisSpacing: 16,
+          childAspectRatio: 0.85,
+        ),
+        itemCount: boards.length,
+        itemBuilder: (context, index) {
+          final board = boards[index];
+          return BoardCard(
+            board: board,
+            isOwner: isOwner,
+            onRename: (id, newName) => context.read<DashboardBloc>().add(
+              DashboardRenameBoardRequested(id, newName),
+            ),
+            onDelete: (id) => context.read<DashboardBloc>().add(
+              DashboardDeleteBoardRequested(id),
+            ),
+          );
+        },
+      );
+    }
+    return const SizedBox.shrink();
   }
 
   Widget _buildSearchBar(bool isDark) {
@@ -185,4 +339,29 @@ class HomeScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
+  _SliverAppBarDelegate(this._tabBar, this.backgroundColor);
+
+  final TabBar _tabBar;
+  final Color backgroundColor;
+
+  @override
+  double get minExtent => _tabBar.preferredSize.height;
+  @override
+  double get maxExtent => _tabBar.preferredSize.height;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return Container(color: backgroundColor, child: _tabBar);
+  }
+
+  @override
+  bool shouldRebuild(covariant SliverPersistentHeaderDelegate oldDelegate) =>
+      false;
 }

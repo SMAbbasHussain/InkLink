@@ -3,19 +3,26 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../../domain/repositories/auth_repository.dart';
 import '../../core/utils/helpers.dart'; // FIX: Use centralized helper for search keywords
+import '../../core/services/firestore_service.dart';
+import '../../core/services/auth_service.dart';
 import 'dart:developer' as developer;
 
 class FirebaseAuthRepository implements AuthRepository {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore =
-      FirebaseFirestore.instance; // Add Firestore instance
+  final AuthService _authService;
+  final FirestoreService _firestoreService;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
 
-  @override
-  Stream<User?> get user => _auth.authStateChanges();
+  FirebaseAuthRepository({
+    required AuthService authService,
+    required FirestoreService firestoreService,
+  }) : _authService = authService,
+       _firestoreService = firestoreService;
 
   @override
-  User? get currentUser => _auth.currentUser;
+  Stream<User?> get user => _authService.getInstance().authStateChanges();
+
+  @override
+  User? get currentUser => _authService.getCurrentUser();
 
   @override
   Future<User?> signInWithGoogle() async {
@@ -30,14 +37,14 @@ class FirebaseAuthRepository implements AuthRepository {
         idToken: googleAuth.idToken,
       );
 
-      final UserCredential userCredential = await _auth.signInWithCredential(
-        credential,
-      );
+      final UserCredential userCredential = await _authService
+          .getInstance()
+          .signInWithCredential(credential);
       final User? user = userCredential.user;
 
       if (user != null) {
         // 1. CHECK IF USER EXISTS FIRST
-        final userDoc = await _firestore
+        final userDoc = await _firestoreService
             .collection('users')
             .doc(user.uid)
             .get();
@@ -49,7 +56,7 @@ class FirebaseAuthRepository implements AuthRepository {
         } else {
           // 3. If they exist, ONLY update presence/activity, NOT the whole profile
           developer.log("Existing Google user. Updating activity...");
-          await _firestore.collection('users').doc(user.uid).update({
+          await _firestoreService.collection('users').doc(user.uid).update({
             'lastActive': FieldValue.serverTimestamp(),
             'isOnline': true,
           });
@@ -95,7 +102,7 @@ class FirebaseAuthRepository implements AuthRepository {
       };
 
       // FIX: Use SetOptions(merge: true) to prevent wiping existing fields like 'bio'
-      await _firestore
+      await _firestoreService
           .collection('users')
           .doc(user.uid)
           .set(userData, SetOptions(merge: true));
@@ -106,17 +113,12 @@ class FirebaseAuthRepository implements AuthRepository {
     }
   }
 
-  // FIX: Removed duplicate _generateSearchKeywords - now using centralized helper
-  // from lib/core/utils/helpers.dart to avoid duplication
-
-  // --- SIGN IN WITH EMAIL (Don't forget to add Firestore here too!) ---
   @override
   Future<User?> signUp(String name, String email, String password) async {
     try {
-      final credential = await _auth.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
+      final credential = await _authService
+          .getInstance()
+          .createUserWithEmailAndPassword(email: email, password: password);
       final user = credential.user;
 
       if (user != null) {
@@ -137,7 +139,7 @@ class FirebaseAuthRepository implements AuthRepository {
 
   @override
   Future<User?> signIn(String email, String password) async =>
-      (await _auth.signInWithEmailAndPassword(
+      (await _authService.getInstance().signInWithEmailAndPassword(
         email: email,
         password: password,
       )).user;
@@ -145,7 +147,7 @@ class FirebaseAuthRepository implements AuthRepository {
   @override
   Future<void> signOut() async {
     await _googleSignIn.signOut();
-    await _auth.signOut();
+    await _authService.getInstance().signOut();
   }
 
   String _mapFirebaseAuthError(FirebaseAuthException e) {

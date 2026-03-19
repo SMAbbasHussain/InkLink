@@ -1,24 +1,32 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../../domain/repositories/social_repository.dart';
+import '../../core/services/firestore_service.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/services/cloud_functions_service.dart';
 import 'package:rxdart/rxdart.dart';
 
 class SocialRepositoryImpl implements SocialRepository {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
-    region: 'us-central1',
-  );
+  final FirestoreService _firestoreService;
+  final AuthService _authService;
+  final CloudFunctionsService _functionsService;
 
-  String get _currentUid => _auth.currentUser!.uid;
+  SocialRepositoryImpl({
+    required FirestoreService firestoreService,
+    required AuthService authService,
+    required CloudFunctionsService functionsService,
+  }) : _firestoreService = firestoreService,
+       _authService = authService,
+       _functionsService = functionsService;
+
+  String get _currentUid => _authService.getCurrentUserId()!;
 
   @override
   Future<List<Map<String, dynamic>>> searchUsersByEmail(String email) async {
     // FIX: Ensure consistent email lookup by converting to lowercase
     // Important: Make sure emails are always stored lowercase in Firestore
     // to prevent case sensitivity issues in search
-    final snap = await _db
+    final snap = await _firestoreService
         .collection('users')
         .where('email', isEqualTo: email.trim().toLowerCase())
         .get();
@@ -37,7 +45,7 @@ class SocialRepositoryImpl implements SocialRepository {
     // and creating a request. Consider moving this logic to a Cloud Function with
     // a transaction to ensure atomicity: another user could accept a request or
     // send a request between these two operations.
-    final friendCheck = await _db
+    final friendCheck = await _firestoreService
         .collection('users')
         .doc(_currentUid)
         .collection('friends')
@@ -45,11 +53,12 @@ class SocialRepositoryImpl implements SocialRepository {
         .get();
     if (friendCheck.exists) throw Exception("Already friends.");
 
-    await _db.collection('friend_requests').doc(requestId).set({
+    final currentUser = _authService.getCurrentUser();
+    await _firestoreService.collection('friend_requests').doc(requestId).set({
       'fromUid': _currentUid,
       'toUid': targetUid,
-      'senderName': _auth.currentUser!.displayName,
-      'senderPic': _auth.currentUser!.photoURL,
+      'senderName': currentUser?.displayName,
+      'senderPic': currentUser?.photoURL,
       'timestamp': FieldValue.serverTimestamp(),
       'status': 'pending',
     });
@@ -59,9 +68,9 @@ class SocialRepositoryImpl implements SocialRepository {
   Future<void> acceptFriendRequest(String requestId, String senderUid) async {
     try {
       // Ensure this string matches the filename in functions/src/ EXACTLY (without .js)
-      final result = await _functions.httpsCallable('acceptFriendRequest').call(
-        {'requestId': requestId},
-      );
+      final result = await _functionsService
+          .httpsCallable('acceptFriendRequest')
+          .call({'requestId': requestId});
 
       if (result.data['success'] != true) {
         throw Exception("Server failed to establish friendship");
@@ -81,7 +90,7 @@ class SocialRepositoryImpl implements SocialRepository {
     // This ensures server-side validation (permission checks, logging)
     // and matches the decline_friend_request Cloud Function
     try {
-      final result = await _functions
+      final result = await _functionsService
           .httpsCallable('declineFriendRequest')
           .call({'requestId': requestId});
 
@@ -98,7 +107,7 @@ class SocialRepositoryImpl implements SocialRepository {
 
   @override
   Stream<List<Map<String, dynamic>>> watchIncomingRequests() {
-    return _db
+    return _firestoreService
         .collection('friend_requests')
         .where('toUid', isEqualTo: _currentUid)
         .snapshots()
@@ -110,9 +119,9 @@ class SocialRepositoryImpl implements SocialRepository {
 
   @override
   Stream<List<Map<String, dynamic>>> watchFriendsList() {
-    final currentUid = _auth.currentUser!.uid;
+    final currentUid = _authService.getCurrentUserId()!;
 
-    return _db
+    return _firestoreService
         .collection('users')
         .doc(currentUid)
         .collection('friends')
@@ -127,7 +136,7 @@ class SocialRepositoryImpl implements SocialRepository {
             return Stream.value([]);
           }
 
-          return _db
+          return _firestoreService
               .collection('users')
               .where(FieldPath.documentId, whereIn: friendUids)
               .snapshots()
