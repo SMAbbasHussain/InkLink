@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/features/friends/view/widgets/friend_request_banner.dart';
-import 'package:inklink/features/profile/view/profile_screen.dart';
+import 'package:inklink/features/profile/view/profile_route.dart';
 import '../../../core/constants/app_colors.dart';
 import '../bloc/friends_bloc.dart';
 import '../bloc/friends_event.dart';
@@ -168,10 +168,8 @@ class _FriendsScreenState extends State<FriendsScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       // Use InkWell inside or around for ripple effect
       child: InkWell(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => ProfileScreen(userId: userId)),
-        ),
+        onTap: () =>
+            Navigator.push(context, buildProfileRoute(context, userId: userId)),
         borderRadius: BorderRadius.circular(20),
 
         child: Container(
@@ -406,10 +404,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                           // NAVIGATE TO PROFILE
                           Navigator.push(
                             context,
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  ProfileScreen(userId: user['uid']),
-                            ),
+                            buildProfileRoute(context, userId: user['uid']),
                           );
                         },
                         contentPadding: EdgeInsets.zero,

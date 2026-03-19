@@ -6,7 +6,11 @@ class AuthLoading extends AuthState {}
 
 class Authenticated extends AuthState {
   final String userName;
-  Authenticated(this.userName);
+  final String uid;
+  final String? email;
+  final String? photoUrl;
+
+  Authenticated(this.userName, {required this.uid, this.email, this.photoUrl});
 }
 
 class Unauthenticated extends AuthState {}

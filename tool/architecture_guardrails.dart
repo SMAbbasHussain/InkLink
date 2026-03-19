@@ -18,6 +18,7 @@ void main() {
 
     _checkFirebaseSingletonUsage(relativePath, source, violations);
     _checkRepositoryUsageInViews(relativePath, source, violations);
+    _checkScreenLayerBoundaries(relativePath, source, violations);
   }
 
   if (violations.isEmpty) {
@@ -74,6 +75,45 @@ void _checkRepositoryUsageInViews(
     final token =
         match.group(0) ?? 'context.read<...Repository>().<mutation>()';
     violations.add('$path directly mutates repository in view: $token');
+  }
+}
+
+void _checkScreenLayerBoundaries(
+  String path,
+  String source,
+  List<String> violations,
+) {
+  final isScreenFile =
+      path.startsWith('lib/features/') && path.endsWith('_screen.dart');
+  if (!isScreenFile) return;
+
+  final forbiddenContextDependencyPattern = RegExp(
+    r'(?:context|this\.context)\.(?:read|watch|select)<[^>]*(?:Repository|Service)[^>]*>',
+  );
+
+  final dependencyMatches = forbiddenContextDependencyPattern.allMatches(
+    source,
+  );
+  for (final match in dependencyMatches) {
+    final token =
+        match.group(0) ?? 'context.read/watch/select<...Repository|Service>';
+    violations.add('$path accesses data dependency directly in screen: $token');
+  }
+
+  final forbiddenImportPatterns = <RegExp>[
+    RegExp(r"import\s+'package:inklink/core/services/"),
+    RegExp(r"import\s+'package:inklink/domain/repositories/"),
+    RegExp(r"import\s+'\.\./\.\./\.\./core/services/"),
+    RegExp(r"import\s+'\.\./\.\./\.\./domain/repositories/"),
+  ];
+
+  for (final importPattern in forbiddenImportPatterns) {
+    if (importPattern.hasMatch(source)) {
+      violations.add(
+        '$path imports service/repository directly. Move composition to route/wrapper and keep screen UI-only.',
+      );
+      break;
+    }
   }
 }
 

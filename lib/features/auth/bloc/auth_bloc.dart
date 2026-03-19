@@ -7,6 +7,15 @@ import 'auth_state.dart';
 class AuthBloc extends Bloc<AuthEvent, AuthState> {
   final AuthRepository authRepository;
 
+  Authenticated _toAuthenticated(User user, {String? fallbackName}) {
+    return Authenticated(
+      user.displayName ?? fallbackName ?? 'User',
+      uid: user.uid,
+      email: user.email,
+      photoUrl: user.photoURL,
+    );
+  }
+
   AuthBloc({required this.authRepository}) : super(AuthInitial()) {
     on<AuthCheckRequested>((event, emit) async {
       // FIX: Listen to the user stream instead of single snapshot
@@ -15,7 +24,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         authRepository.user,
         onData: (user) {
           if (user != null) {
-            return Authenticated(user.displayName ?? "User");
+            return _toAuthenticated(user);
           } else {
             return Unauthenticated();
           }
@@ -30,7 +39,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       emit(AuthLoading());
       try {
         final user = await authRepository.signIn(event.email, event.password);
-        emit(Authenticated(user?.displayName ?? "User"));
+        if (user == null) {
+          emit(Unauthenticated());
+          return;
+        }
+        emit(_toAuthenticated(user));
       } catch (e) {
         emit(AuthError(e.toString()));
       }
@@ -44,7 +57,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           event.email,
           event.password,
         );
-        emit(Authenticated(user?.displayName ?? event.name));
+        if (user == null) {
+          emit(Unauthenticated());
+          return;
+        }
+        emit(_toAuthenticated(user, fallbackName: event.name));
       } catch (e) {
         emit(AuthError(e.toString()));
       }
@@ -57,7 +74,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
         if (user != null) {
           // Success: User picked an account and Firebase authed
-          emit(Authenticated(user.displayName ?? "Creator"));
+          emit(_toAuthenticated(user, fallbackName: 'Creator'));
         } else {
           // Cancelled: User closed the selector
           emit(Unauthenticated());

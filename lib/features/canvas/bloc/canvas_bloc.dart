@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/crdt/y_crdt_canvas_adapter.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
+import '../../../domain/models/board.dart';
 import '../../../domain/repositories/board/board_repository.dart';
 import '../../../domain/repositories/canvas/canvas_sync_repository.dart';
 import '../view/trays/canvas_shape_type.dart';
@@ -23,6 +24,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final math.Random _random = math.Random();
 
   StreamSubscription<List<LocalCrdtUpdate>>? _crdtUpdatesSub;
+  StreamSubscription<Board?>? _boardMetaSub;
   CanvasDocAdapter? _crdtAdapter;
   Future<void>? _crdtInitFuture;
   final Set<String> _appliedCrdtUpdateIds = <String>{};
@@ -39,6 +41,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CreateBoardRequested>(_onCreateBoardRequested);
     on<CanvasStartBoardSyncRequested>(_onCanvasStartBoardSyncRequested);
     on<CanvasRenameBoardRequested>(_onCanvasRenameBoardRequested);
+    on<CanvasBoardTitleUpdated>(_onCanvasBoardTitleUpdated);
     on<CanvasInitializeCrdt>(_onInitializeCrdt);
     on<CanvasApplyRemoteUpdate>(_onApplyRemoteUpdate);
     on<CanvasStartStroke>(_onStartStroke);
@@ -115,6 +118,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(isLoading: true, error: null));
 
     try {
+      _startBoardMetadataListener();
       await _ensureCrdtReady();
       _startCrdtUpdatesListener();
       _refreshFromCrdtAdapter(emit);
@@ -122,6 +126,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     } catch (e) {
       emit(state.copyWith(isLoading: false, error: e.toString()));
     }
+  }
+
+  void _onCanvasBoardTitleUpdated(
+    CanvasBoardTitleUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(boardTitle: event.title));
   }
 
   Future<void> _onApplyRemoteUpdate(
@@ -365,6 +376,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     });
   }
 
+  void _startBoardMetadataListener() {
+    final boardRepository = _boardRepository;
+    if (boardRepository == null || _boardId.isEmpty) return;
+
+    _boardMetaSub?.cancel();
+    _boardMetaSub = boardRepository.getBoardById(_boardId).listen((board) {
+      add(CanvasBoardTitleUpdated(board?.title));
+    });
+  }
+
   Future<void> _saveCrdtOperation({
     required String action,
     required String type,
@@ -569,6 +590,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
   @override
   Future<void> close() async {
+    await _boardMetaSub?.cancel();
     await _crdtUpdatesSub?.cancel();
     if (_canSync) {
       await _syncRepository?.stopCrdtRemoteSync(_boardId);

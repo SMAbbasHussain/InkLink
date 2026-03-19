@@ -622,6 +622,49 @@ MultiRepositoryProvider (provides repositories)
           └── Child widgets (access via context.read/watch)
 ```
 
+### Route Composition Convention
+
+To keep screens UI-focused and architecture-consistent:
+
+1. Build BLoCs and inject repositories/services at composition boundaries only:
+  - app-level composition in `main.dart`
+  - feature-level composition in wrappers/routes (for example `*_route.dart`)
+2. Keep `*screen.dart` files focused on UI/state rendering and event dispatch only.
+3. Do not call `context.read/watch/select<...Repository|...Service>()` inside screen files.
+4. Use route helpers to keep navigation + composition consistent:
+  - `buildCanvasRoute(...)`
+  - `buildProfileRoute(...)`
+
+---
+
+## 🛡️ Enforced Architecture Guardrails
+
+The project includes automated checks in `tool/architecture_guardrails.dart`.
+
+### Enforced Rules
+
+1. No direct Firebase singleton usage outside approved core service files.
+2. No direct repository mutation calls inside view files.
+3. No direct service/repository access in feature screen files (`*_screen.dart`).
+4. No direct service/repository imports in feature screen files.
+
+### Run Locally
+
+```bash
+dart run tool/architecture_guardrails.dart
+```
+
+### CI Enforcement
+
+Guardrails run automatically in GitHub Actions via:
+
+`/.github/workflows/architecture-guardrails.yml`
+
+This workflow runs:
+1. `dart run tool/architecture_guardrails.dart`
+2. `flutter analyze`
+3. `flutter test`
+
 ---
 
 ## 🔗 File Dependency Quick Reference

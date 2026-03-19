@@ -29,6 +29,13 @@ class CanvasInitializeCrdt extends CanvasEvent {
   const CanvasInitializeCrdt(this.boardId);
 }
 
+/// Internal board metadata update from repository stream
+class CanvasBoardTitleUpdated extends CanvasEvent {
+  final String? title;
+
+  const CanvasBoardTitleUpdated(this.title);
+}
+
 /// Update canvas from remote CRDT changes
 class CanvasApplyRemoteUpdate extends CanvasEvent {
   final List<LocalCrdtUpdate> updates;

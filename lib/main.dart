@@ -17,10 +17,11 @@ import 'package:inklink/domain/repositories/profile/profile_repository_impl.dart
 import 'package:inklink/domain/repositories/social/social_repository.dart';
 import 'package:inklink/domain/repositories/profile/profile_repository.dart';
 import 'package:inklink/domain/repositories/social/social_repository_impl.dart';
+import 'package:inklink/domain/repositories/settings/settings_repository.dart';
+import 'package:inklink/domain/repositories/settings/settings_repository_impl.dart';
 import 'package:inklink/domain/repositories/theme/theme_repository_impl.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
-import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
 import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:inklink/features/friends/bloc/friends_bloc.dart';
 import 'package:inklink/features/navigation/bloc/nav_bloc.dart';
@@ -86,6 +87,10 @@ void main() async {
             dbService: context.read<DatabaseService>(),
           ),
         ),
+        RepositoryProvider<SettingsRepository>(
+          create: (context) =>
+              SettingsRepositoryImpl(databaseService: databaseService),
+        ),
       ],
       // 2. BLoCs (depend on repositories)
       child: MultiBlocProvider(
@@ -114,13 +119,6 @@ void main() async {
             create: (context) => FriendsBloc(
               socialRepo: context
                   .read<SocialRepository>(), // Reads from RepoProvider
-            ),
-          ),
-          BlocProvider(
-            create: (context) => CanvasBloc(
-              boardRepository: context.read<BoardRepository>(),
-              syncRepository: context.read<CanvasSyncRepository>(),
-              boardId: '',
             ),
           ),
         ],

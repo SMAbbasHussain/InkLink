@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/core/services/auth_service.dart';
-import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
-import 'package:inklink/features/canvas/view/canvas_screen.dart';
+import 'package:inklink/features/canvas/view/canvas_route.dart';
+import 'package:inklink/features/auth/bloc/auth_bloc.dart';
+import 'package:inklink/features/auth/bloc/auth_state.dart';
 import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:inklink/features/dashboard/view/widgets/board_card.dart';
 import 'package:inklink/features/dashboard/view/widgets/quick_action_button.dart';
-import 'package:inklink/features/profile/view/profile_screen.dart';
+import 'package:inklink/features/profile/view/profile_route.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../theme/bloc/theme_bloc.dart';
 
@@ -77,14 +77,17 @@ class _HomeScreenState extends State<HomeScreen>
   Widget build(BuildContext context) {
     super.build(context); // Required by AutomaticKeepAliveClientMixin
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final user = context.read<AuthService>().getCurrentUser();
+    final authState = context.watch<AuthBloc>().state;
+    final authUser = authState is Authenticated ? authState : null;
 
     return MultiBlocListener(
       listeners: [
         BlocListener<DashboardBloc, DashboardState>(
           listenWhen: (previous, current) =>
               current is DashboardLoaded &&
-              (current.joinedBoardId != null || current.actionError != null),
+              (current.joinedBoardId != null ||
+                  current.createdBoardId != null ||
+                  current.actionError != null),
           listener: (context, state) async {
             if (state is! DashboardLoaded) return;
             final dashboardBloc = this.context.read<DashboardBloc>();
@@ -102,42 +105,19 @@ class _HomeScreenState extends State<HomeScreen>
               return;
             }
 
-            final boardId = state.joinedBoardId;
+            final boardId = state.createdBoardId ?? state.joinedBoardId;
             if (boardId == null) return;
 
             await navigator.push(
-              MaterialPageRoute(
-                builder: (_) =>
-                    CanvasScreen(boardId: boardId, showTrayTipsOnEntry: true),
+              buildCanvasRoute(
+                this.context,
+                boardId: boardId,
+                showTrayTipsOnEntry: true,
               ),
             );
             if (!mounted) return;
             _tabController.animateTo(1);
             dashboardBloc.add(DashboardConsumeEffects());
-          },
-        ),
-        // Listen for Canvas creation success to navigate
-        BlocListener<CanvasBloc, CanvasState>(
-          listener: (context, state) {
-            if (state is CanvasReady) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => CanvasScreen(
-                    boardId: state.boardId,
-                    showTrayTipsOnEntry: true,
-                  ),
-                ),
-              );
-            }
-            if (state is CanvasErrorState) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(state.message),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            }
           },
         ),
       ],
@@ -162,13 +142,10 @@ class _HomeScreenState extends State<HomeScreen>
                   padding: const EdgeInsets.only(right: 16.0),
                   child: InkWell(
                     onTap: () {
-                      if (user != null) {
+                      if (authUser != null) {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                ProfileScreen(userId: user.uid),
-                          ),
+                          buildProfileRoute(context, userId: authUser.uid),
                         );
                       }
                     },
@@ -176,10 +153,10 @@ class _HomeScreenState extends State<HomeScreen>
                     child: CircleAvatar(
                       radius: 18,
                       backgroundColor: AppColors.primary.withOpacity(0.2),
-                      backgroundImage: user?.photoURL != null
-                          ? NetworkImage(user!.photoURL!)
+                      backgroundImage: authUser?.photoUrl != null
+                          ? NetworkImage(authUser!.photoUrl!)
                           : null,
-                      child: user?.photoURL == null
+                      child: authUser?.photoUrl == null
                           ? const Icon(
                               Icons.person,
                               size: 20,
@@ -200,7 +177,7 @@ class _HomeScreenState extends State<HomeScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          "Hello, ${user?.displayName?.split(' ')[0] ?? 'Creator'}! 👋",
+                          "Hello, ${authUser?.userName.split(' ')[0] ?? 'Creator'}! 👋",
                           style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
@@ -220,8 +197,8 @@ class _HomeScreenState extends State<HomeScreen>
                               title: "New Board",
                               icon: Icons.add,
                               color: AppColors.actionBlue,
-                              onTap: () => context.read<CanvasBloc>().add(
-                                CreateBoardRequested(),
+                              onTap: () => context.read<DashboardBloc>().add(
+                                DashboardCreateBoardRequested(),
                               ),
                             ),
                             const SizedBox(width: 16),
