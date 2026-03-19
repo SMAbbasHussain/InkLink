@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:rxdart/rxdart.dart';
 import '../../../domain/models/board.dart';
-import '../../../domain/repositories/board_repository.dart';
+import '../../../domain/repositories/board/board_repository.dart';
 
 // States
 abstract class DashboardState {}

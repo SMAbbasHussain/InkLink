@@ -7,15 +7,15 @@ import 'package:inklink/core/services/firestore_service.dart';
 import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/services/cloud_functions_service.dart';
 import 'package:inklink/domain/repositories/auth_repository.dart';
-import 'package:inklink/domain/repositories/auth_repository_impl.dart';
-import 'package:inklink/domain/repositories/board_repository.dart';
-import 'package:inklink/domain/repositories/canvas_sync_repository.dart';
+import 'package:inklink/domain/repositories/board/board_repository.dart';
+import 'package:inklink/domain/repositories/board/board_repository_impl.dart';
+import 'package:inklink/domain/repositories/canvas/canvas_sync_repository.dart';
+import 'package:inklink/domain/repositories/canvas/canvas_sync_repository_impl.dart';
 import 'package:inklink/core/database/database_service.dart';
 import 'package:inklink/domain/repositories/social_repository.dart';
-import 'package:inklink/domain/repositories/social_repository_impl.dart';
 import 'package:inklink/domain/repositories/profile_repository.dart';
-import 'package:inklink/domain/repositories/profile_repository_impl.dart';
-import 'package:inklink/domain/repositories/theme_repository.dart'; // Add this
+import 'package:inklink/domain/repositories/theme_repository.dart';
+import 'package:inklink/domain/repositories/theme/theme_repository_impl.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
@@ -29,7 +29,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  final themeRepository = ThemeRepository();
+  final themeRepository = ThemeRepositoryImpl();
   final initialThemeMode = await themeRepository.getThemeMode();
 
   final databaseService = DatabaseService();
@@ -71,14 +71,14 @@ void main() async {
           ),
         ),
         RepositoryProvider<BoardRepository>(
-          create: (context) => BoardRepository(
+          create: (context) => FirestoreBoardRepository(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
             dbService: context.read<DatabaseService>(),
           ),
         ),
         RepositoryProvider<CanvasSyncRepository>(
-          create: (context) => CanvasSyncRepository(
+          create: (context) => FirestoreCanvasSyncRepository(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
             dbService: context.read<DatabaseService>(),

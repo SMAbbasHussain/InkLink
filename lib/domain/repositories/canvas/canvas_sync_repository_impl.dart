@@ -1,20 +1,23 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:isar/isar.dart';
 import 'dart:async';
 import 'dart:convert';
-import '../../core/database/database_service.dart';
-import '../../core/database/collections/local_crdt_update.dart';
-import '../../core/services/firestore_service.dart';
-import '../../core/services/auth_service.dart';
 
-class CanvasSyncRepository {
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:isar/isar.dart';
+
+import '../../../core/database/collections/local_crdt_update.dart';
+import '../../../core/database/database_service.dart';
+import '../../../core/services/auth_service.dart';
+import '../../../core/services/firestore_service.dart';
+import 'canvas_sync_repository.dart';
+
+class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   final FirestoreService _firestoreService;
   final AuthService _authService;
   final DatabaseService _dbService;
   final Map<String, StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>
   _remoteCrdtSubs = {};
 
-  CanvasSyncRepository({
+  FirestoreCanvasSyncRepository({
     required FirestoreService firestoreService,
     required AuthService authService,
     required DatabaseService dbService,
@@ -22,8 +25,10 @@ class CanvasSyncRepository {
        _authService = authService,
        _dbService = dbService;
 
+  @override
   String? get currentUserId => _authService.getCurrentUserId();
 
+  @override
   Future<void> pushCrdtUpdate({
     required String boardId,
     required String updateId,
@@ -53,6 +58,7 @@ class CanvasSyncRepository {
     await _syncPendingLocalUpdates(boardId, userId);
   }
 
+  @override
   Stream<List<LocalCrdtUpdate>> listenToCrdtUpdates(String boardId) async* {
     if (currentUserId != null) {
       await hydrateCrdtUpdates(boardId);
@@ -68,6 +74,7 @@ class CanvasSyncRepository {
         .watch(fireImmediately: true);
   }
 
+  @override
   Future<void> hydrateCrdtUpdates(String boardId) async {
     QuerySnapshot<Map<String, dynamic>> snapshot;
     try {
@@ -106,6 +113,7 @@ class CanvasSyncRepository {
     });
   }
 
+  @override
   void startCrdtRemoteSync(String boardId) {
     if (currentUserId == null) return;
     if (_remoteCrdtSubs.containsKey(boardId)) return;
@@ -153,6 +161,7 @@ class CanvasSyncRepository {
     _remoteCrdtSubs[boardId] = sub;
   }
 
+  @override
   Future<void> stopCrdtRemoteSync(String boardId) async {
     final sub = _remoteCrdtSubs.remove(boardId);
     await sub?.cancel();

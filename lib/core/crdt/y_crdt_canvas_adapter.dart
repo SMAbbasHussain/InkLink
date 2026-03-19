@@ -32,6 +32,10 @@ class YCrdtCanvasAdapter implements CanvasDocAdapter {
 
   YCrdtCanvasAdapter._(this._delegate);
 
+  factory YCrdtCanvasAdapter.fallbackForTest() {
+    return YCrdtCanvasAdapter._(_FallbackCanvasDocAdapter());
+  }
+
   static Future<YCrdtCanvasAdapter> create() async {
     try {
       final api = await ycrdtApi();
@@ -406,7 +410,10 @@ class _YjsCanvasDocAdapter implements CanvasDocAdapter {
 class _FallbackCanvasDocAdapter implements CanvasDocAdapter {
   final Map<String, Map<String, dynamic>> _elements =
       <String, Map<String, dynamic>>{};
+  final Map<String, int> _elementVersions = <String, int>{};
+  final Map<String, int> _tombstoneVersions = <String, int>{};
   final List<Map<String, dynamic>> _history = <Map<String, dynamic>>[];
+  int _lastVersion = 0;
 
   @override
   Uint8List encodeStateVector() {
@@ -429,15 +436,22 @@ class _FallbackCanvasDocAdapter implements CanvasDocAdapter {
     Map<String, dynamic> payload, {
     String origin = 'local',
   }) {
+    final version = _nextVersion();
     final before = _elements[elementId];
-    _elements[elementId] = Map<String, dynamic>.from(payload);
+    _setElement(
+      elementId,
+      Map<String, dynamic>.from(payload),
+      version: version,
+    );
     _history.add({
       'op': 'upsert',
+      'opId': _newOpId(version),
       'elementId': elementId,
       'before': before,
       'after': payload,
       'undone': false,
       'origin': origin,
+      'version': version,
       'ts': DateTime.now().toIso8601String(),
     });
     return _encodeSnapshot();
@@ -445,19 +459,18 @@ class _FallbackCanvasDocAdapter implements CanvasDocAdapter {
 
   @override
   Uint8List deleteElement(String elementId, {String origin = 'local'}) {
+    final version = _nextVersion();
     final before = _elements[elementId];
-    if (before == null) {
-      return _encodeSnapshot();
-    }
-
-    _elements.remove(elementId);
+    _setDeleted(elementId, version: version);
     _history.add({
       'op': 'delete',
+      'opId': _newOpId(version),
       'elementId': elementId,
       'before': before,
       'after': null,
       'undone': false,
       'origin': origin,
+      'version': version,
       'ts': DateTime.now().toIso8601String(),
     });
     return _encodeSnapshot();
@@ -465,15 +478,21 @@ class _FallbackCanvasDocAdapter implements CanvasDocAdapter {
 
   @override
   Uint8List clearElements({String origin = 'local'}) {
+    final version = _nextVersion();
     final snapshot = materializeElements();
+    for (final elementId in _elements.keys.toList(growable: false)) {
+      _setDeleted(elementId, version: version);
+    }
     _elements.clear();
     _history.add({
       'op': 'clear',
+      'opId': _newOpId(version),
       'elementId': null,
       'before': snapshot,
       'after': null,
       'undone': false,
       'origin': origin,
+      'version': version,
       'ts': DateTime.now().toIso8601String(),
     });
     return _encodeSnapshot();
@@ -530,6 +549,8 @@ class _FallbackCanvasDocAdapter implements CanvasDocAdapter {
     final payload = {
       'kind': 'fallback_snapshot_v1',
       'elements': _elements,
+      'elementVersions': _elementVersions,
+      'tombstones': _tombstoneVersions,
       'history': _history,
     };
     return Uint8List.fromList(utf8.encode(jsonEncode(payload)));
@@ -546,36 +567,68 @@ class _FallbackCanvasDocAdapter implements CanvasDocAdapter {
     if (decoded is! Map<String, dynamic>) return;
     if (decoded['kind'] != 'fallback_snapshot_v1') return;
 
-    final rawElements = decoded['elements'];
-    final rawHistory = decoded['history'];
+    final remoteElements = _readElementsMap(decoded['elements']);
+    final remoteElementVersions = _readVersionsMap(decoded['elementVersions']);
+    final remoteTombstones = _readVersionsMap(decoded['tombstones']);
 
-    _elements
-      ..clear()
-      ..addAll(
-        (rawElements is Map)
-            ? rawElements.map(
-                (k, v) => MapEntry(
-                  k.toString(),
-                  (v is Map)
-                      ? v.map((ek, ev) => MapEntry(ek.toString(), ev))
-                      : <String, dynamic>{},
-                ),
-              )
-            : <String, Map<String, dynamic>>{},
-      );
+    if (remoteElementVersions.isEmpty && remoteTombstones.isEmpty) {
+      // Legacy payloads had no merge metadata. Merge as additive upserts.
+      for (final entry in remoteElements.entries) {
+        final version = _nextVersion();
+        _setElement(entry.key, entry.value, version: version);
+      }
+    } else {
+      final ids = <String>{
+        ..._elements.keys,
+        ..._elementVersions.keys,
+        ..._tombstoneVersions.keys,
+        ...remoteElements.keys,
+        ...remoteElementVersions.keys,
+        ...remoteTombstones.keys,
+      };
 
-    _history
-      ..clear()
-      ..addAll(
-        (rawHistory is List)
-            ? rawHistory.whereType<Map>().map(
-                (e) => e.map((k, v) => MapEntry(k.toString(), v)),
-              )
-            : const Iterable<Map<String, dynamic>>.empty(),
-      );
+      for (final id in ids) {
+        final localElementVersion = _elementVersions[id] ?? 0;
+        final localTombstoneVersion = _tombstoneVersions[id] ?? 0;
+        final localVersion = localElementVersion >= localTombstoneVersion
+            ? localElementVersion
+            : localTombstoneVersion;
+        final localIsDeleted = localTombstoneVersion > localElementVersion;
+
+        final remoteElementVersion = remoteElementVersions[id] ?? 0;
+        final remoteTombstoneVersion = remoteTombstones[id] ?? 0;
+        final remoteVersion = remoteElementVersion >= remoteTombstoneVersion
+            ? remoteElementVersion
+            : remoteTombstoneVersion;
+        final remoteIsDeleted = remoteTombstoneVersion > remoteElementVersion;
+
+        if (remoteVersion > localVersion) {
+          if (remoteIsDeleted) {
+            _setDeleted(id, version: remoteVersion);
+          } else {
+            final remoteElement = remoteElements[id];
+            if (remoteElement != null) {
+              _setElement(id, remoteElement, version: remoteVersion);
+            }
+          }
+          continue;
+        }
+
+        if (remoteVersion == localVersion && remoteVersion != 0) {
+          // Prefer tombstones on equal clocks to avoid resurrection.
+          if (remoteIsDeleted && !localIsDeleted) {
+            _setDeleted(id, version: remoteVersion);
+          }
+        }
+      }
+    }
+
+    final remoteHistory = _readHistoryList(decoded['history']);
+    _mergeHistory(remoteHistory);
   }
 
   void _applyInverse(Map<String, dynamic> entry) {
+    final version = _nextVersion();
     final op = entry['op'] as String?;
     final elementId = entry['elementId'] as String?;
     final before = entry['before'];
@@ -584,34 +637,37 @@ class _FallbackCanvasDocAdapter implements CanvasDocAdapter {
       case 'upsert':
         if (elementId == null) return;
         if (before is Map) {
-          _elements[elementId] = before.map(
-            (k, v) => MapEntry(k.toString(), v),
+          _setElement(
+            elementId,
+            before.map((k, v) => MapEntry(k.toString(), v)),
+            version: version,
           );
         } else {
-          _elements.remove(elementId);
+          _setDeleted(elementId, version: version);
         }
         return;
       case 'delete':
         if (elementId == null) return;
         if (before is Map) {
-          _elements[elementId] = before.map(
-            (k, v) => MapEntry(k.toString(), v),
+          _setElement(
+            elementId,
+            before.map((k, v) => MapEntry(k.toString(), v)),
+            version: version,
           );
         }
         return;
       case 'clear':
         _elements.clear();
+        _elementVersions.clear();
         if (before is Map) {
-          _elements.addAll(
-            before.map(
-              (k, v) => MapEntry(
-                k.toString(),
-                (v is Map)
-                    ? v.map((ek, ev) => MapEntry(ek.toString(), ev))
-                    : <String, dynamic>{},
-              ),
-            ),
-          );
+          for (final entry in before.entries) {
+            if (entry.key is! String || entry.value is! Map) continue;
+            final elementId = entry.key as String;
+            final mapValue = (entry.value as Map).map(
+              (k, v) => MapEntry(k.toString(), v),
+            );
+            _setElement(elementId, mapValue, version: version);
+          }
         }
         return;
       default:
@@ -620,6 +676,7 @@ class _FallbackCanvasDocAdapter implements CanvasDocAdapter {
   }
 
   void _applyForward(Map<String, dynamic> entry) {
+    final version = _nextVersion();
     final op = entry['op'] as String?;
     final elementId = entry['elementId'] as String?;
     final after = entry['after'];
@@ -627,17 +684,134 @@ class _FallbackCanvasDocAdapter implements CanvasDocAdapter {
     switch (op) {
       case 'upsert':
         if (elementId == null || after is! Map) return;
-        _elements[elementId] = after.map((k, v) => MapEntry(k.toString(), v));
+        _setElement(
+          elementId,
+          after.map((k, v) => MapEntry(k.toString(), v)),
+          version: version,
+        );
         return;
       case 'delete':
         if (elementId == null) return;
-        _elements.remove(elementId);
+        _setDeleted(elementId, version: version);
         return;
       case 'clear':
+        for (final elementId in _elements.keys.toList(growable: false)) {
+          _setDeleted(elementId, version: version);
+        }
         _elements.clear();
         return;
       default:
         return;
     }
+  }
+
+  int _nextVersion() {
+    final now = DateTime.now().microsecondsSinceEpoch;
+    if (now <= _lastVersion) {
+      _lastVersion += 1;
+    } else {
+      _lastVersion = now;
+    }
+    return _lastVersion;
+  }
+
+  String _newOpId(int version) => 'v$version';
+
+  void _setElement(
+    String elementId,
+    Map<String, dynamic> payload, {
+    required int version,
+  }) {
+    _elements[elementId] = Map<String, dynamic>.from(payload);
+    _elementVersions[elementId] = version;
+    _tombstoneVersions.remove(elementId);
+    if (version > _lastVersion) {
+      _lastVersion = version;
+    }
+  }
+
+  void _setDeleted(String elementId, {required int version}) {
+    _elements.remove(elementId);
+    _elementVersions.remove(elementId);
+    _tombstoneVersions[elementId] = version;
+    if (version > _lastVersion) {
+      _lastVersion = version;
+    }
+  }
+
+  Map<String, Map<String, dynamic>> _readElementsMap(dynamic rawElements) {
+    if (rawElements is! Map) return <String, Map<String, dynamic>>{};
+
+    return rawElements.map(
+      (k, v) => MapEntry(
+        k.toString(),
+        (v is Map)
+            ? v.map((ek, ev) => MapEntry(ek.toString(), ev))
+            : <String, dynamic>{},
+      ),
+    );
+  }
+
+  Map<String, int> _readVersionsMap(dynamic rawVersions) {
+    if (rawVersions is! Map) return <String, int>{};
+
+    return rawVersions.map((k, v) {
+      final asInt = (v as num?)?.toInt() ?? 0;
+      return MapEntry(k.toString(), asInt);
+    });
+  }
+
+  List<Map<String, dynamic>> _readHistoryList(dynamic rawHistory) {
+    if (rawHistory is! List) return <Map<String, dynamic>>[];
+
+    return rawHistory
+        .whereType<Map>()
+        .map((e) => e.map((k, v) => MapEntry(k.toString(), v)))
+        .toList(growable: false);
+  }
+
+  void _mergeHistory(List<Map<String, dynamic>> remoteHistory) {
+    if (remoteHistory.isEmpty) return;
+
+    final knownKeys = <String>{
+      for (final h in _history)
+        _historyKey(
+          opId: h['opId']?.toString(),
+          version: (h['version'] as num?)?.toInt(),
+          op: h['op']?.toString(),
+          elementId: h['elementId']?.toString(),
+          ts: h['ts']?.toString(),
+        ),
+    };
+
+    for (final remote in remoteHistory) {
+      final key = _historyKey(
+        opId: remote['opId']?.toString(),
+        version: (remote['version'] as num?)?.toInt(),
+        op: remote['op']?.toString(),
+        elementId: remote['elementId']?.toString(),
+        ts: remote['ts']?.toString(),
+      );
+      if (knownKeys.contains(key)) continue;
+
+      _history.add(Map<String, dynamic>.from(remote));
+      knownKeys.add(key);
+    }
+  }
+
+  String _historyKey({
+    required String? opId,
+    required int? version,
+    required String? op,
+    required String? elementId,
+    required String? ts,
+  }) {
+    if (opId != null && opId.isNotEmpty) {
+      return 'op:$opId';
+    }
+    if (version != null) {
+      return 'ver:$version';
+    }
+    return 'legacy:${op ?? ''}:${elementId ?? ''}:${ts ?? ''}';
   }
 }

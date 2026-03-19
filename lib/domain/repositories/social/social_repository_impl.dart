@@ -1,9 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import '../../domain/repositories/social_repository.dart';
-import '../../core/services/firestore_service.dart';
-import '../../core/services/auth_service.dart';
-import '../../core/services/cloud_functions_service.dart';
+import 'social_repository.dart';
+import '../../../core/services/firestore_service.dart';
+import '../../../core/services/auth_service.dart';
+import '../../../core/services/cloud_functions_service.dart';
 import 'package:rxdart/rxdart.dart';
 
 class SocialRepositoryImpl implements SocialRepository {

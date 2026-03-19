@@ -1,6 +1,6 @@
-import '../../core/utils/helpers.dart';
-import '../../core/services/firestore_service.dart';
-import '../../core/services/auth_service.dart';
+import '../../../core/utils/helpers.dart';
+import '../../../core/services/firestore_service.dart';
+import '../../../core/services/auth_service.dart';
 import 'profile_repository.dart';
 
 class ProfileRepositoryImpl implements ProfileRepository {

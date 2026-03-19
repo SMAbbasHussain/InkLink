@@ -1,10 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import '../../domain/repositories/auth_repository.dart';
-import '../../core/utils/helpers.dart'; // FIX: Use centralized helper for search keywords
-import '../../core/services/firestore_service.dart';
-import '../../core/services/auth_service.dart';
+import 'auth_repository.dart';
+import '../../../core/utils/helpers.dart'; // FIX: Use centralized helper for search keywords
+import '../../../core/services/firestore_service.dart';
+import '../../../core/services/auth_service.dart';
 import 'dart:developer' as developer;
 
 class FirebaseAuthRepository implements AuthRepository {

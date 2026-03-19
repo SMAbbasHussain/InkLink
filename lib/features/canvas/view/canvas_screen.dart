@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/domain/models/board.dart';
-import 'package:inklink/domain/repositories/board_repository.dart';
-import 'package:inklink/domain/repositories/canvas_sync_repository.dart';
+import 'package:inklink/domain/repositories/board/board_repository.dart';
+import 'package:inklink/domain/repositories/canvas/canvas_sync_repository.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
