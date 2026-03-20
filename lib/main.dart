@@ -27,9 +27,11 @@ import 'package:inklink/features/friends/bloc/friends_bloc.dart';
 import 'package:inklink/features/navigation/bloc/nav_bloc.dart';
 import 'package:inklink/features/theme/bloc/theme_bloc.dart';
 import 'package:inklink/firebase_options.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: ".env");
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   final themeRepository = ThemeRepositoryImpl();
