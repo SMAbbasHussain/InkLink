@@ -1,6 +1,6 @@
 {
   "projects": {
-    "default": "inklink-f0308"
+    "InkLink": "inklink-f0308"
   },
   "targets": {},
   "etags": {}
