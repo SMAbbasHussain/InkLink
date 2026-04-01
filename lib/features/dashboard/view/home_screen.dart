@@ -20,6 +20,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   late TabController _tabController;
+  String? _watchedProfileUserId;
 
   @override
   bool get wantKeepAlive => true; // Preserves tab state
@@ -30,6 +31,10 @@ class _HomeScreenState extends State<HomeScreen>
     _tabController = TabController(length: 2, vsync: this);
 
     context.read<DashboardBloc>().add(LoadDashboardRequested());
+
+    final authState = context.read<AuthBloc>().state;
+    final authUser = authState is Authenticated ? authState : null;
+    _syncProfileWatch(authUser?.uid);
   }
 
   @override
@@ -73,12 +78,21 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  void _syncProfileWatch(String? userId) {
+    if (_watchedProfileUserId == userId) return;
+    _watchedProfileUserId = userId;
+    context.read<DashboardBloc>().add(
+      DashboardWatchCurrentUserProfileRequested(userId),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context); // Required by AutomaticKeepAliveClientMixin
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final authState = context.watch<AuthBloc>().state;
     final authUser = authState is Authenticated ? authState : null;
+    _syncProfileWatch(authUser?.uid);
 
     return MultiBlocListener(
       listeners: [
@@ -123,6 +137,12 @@ class _HomeScreenState extends State<HomeScreen>
       ],
       child: BlocBuilder<DashboardBloc, DashboardState>(
         builder: (context, state) {
+          final photoURL = state is DashboardLoaded
+              ? (state.currentUserProfile != null
+                    ? state.currentUserProfile!['photoURL'] as String?
+                    : null)
+              : null;
+
           return Scaffold(
             appBar: AppBar(
               title: const Text(
@@ -150,20 +170,31 @@ class _HomeScreenState extends State<HomeScreen>
                       }
                     },
                     customBorder: const CircleBorder(),
-                    child: CircleAvatar(
-                      radius: 18,
-                      backgroundColor: AppColors.primary.withOpacity(0.2),
-                      backgroundImage: authUser?.photoUrl != null
-                          ? NetworkImage(authUser!.photoUrl!)
-                          : null,
-                      child: authUser?.photoUrl == null
-                          ? const Icon(
+                    child: authUser != null
+                        ? CircleAvatar(
+                            radius: 18,
+                            backgroundColor: AppColors.primary.withOpacity(0.2),
+                            backgroundImage:
+                                (photoURL != null && photoURL.isNotEmpty)
+                                ? NetworkImage(photoURL)
+                                : null,
+                            child: (photoURL == null || photoURL.isEmpty)
+                                ? const Icon(
+                                    Icons.person,
+                                    size: 20,
+                                    color: AppColors.primary,
+                                  )
+                                : null,
+                          )
+                        : CircleAvatar(
+                            radius: 18,
+                            backgroundColor: AppColors.primary.withOpacity(0.2),
+                            child: const Icon(
                               Icons.person,
                               size: 20,
                               color: AppColors.primary,
-                            )
-                          : null,
-                    ),
+                            ),
+                          ),
                   ),
                 ),
               ],

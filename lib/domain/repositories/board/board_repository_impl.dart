@@ -126,7 +126,6 @@ class FirestoreBoardRepository implements BoardRepository {
                     title: lb.title,
                     ownerId: lb.ownerId,
                     members: lb.members,
-                    engine: lb.engine,
                     createdAt: lb.createdAt,
                     updatedAt: lb.updatedAt,
                   ),
@@ -152,7 +151,6 @@ class FirestoreBoardRepository implements BoardRepository {
             title: lb.title,
             ownerId: lb.ownerId,
             members: lb.members,
-            engine: lb.engine,
             createdAt: lb.createdAt,
             updatedAt: lb.updatedAt,
           );

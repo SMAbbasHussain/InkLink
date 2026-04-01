@@ -2,6 +2,7 @@ import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'collections/local_board.dart';
 import 'collections/local_crdt_update.dart';
+import '../../domain/models/user_model.dart';
 
 class DatabaseService {
   late Future<Isar> db;
@@ -14,7 +15,7 @@ class DatabaseService {
     if (Isar.instanceNames.isEmpty) {
       final dir = await getApplicationDocumentsDirectory();
       return await Isar.open(
-        [LocalBoardSchema, LocalCrdtUpdateSchema],
+        [LocalBoardSchema, LocalCrdtUpdateSchema, UserModelSchema],
         directory: dir.path,
         inspector: true,
       );
@@ -29,6 +30,7 @@ class DatabaseService {
     await isar.writeTxn(() async {
       await isar.localBoards.clear();
       await isar.localCrdtUpdates.clear();
+      await isar.userModels.clear();
     });
   }
 }

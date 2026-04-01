@@ -8,6 +8,17 @@ class ProfileInitial extends ProfileState {}
 
 class ProfileLoading extends ProfileState {}
 
+class ProfilePhotoUploading extends ProfileState {
+  final Map<String, dynamic> userData;
+  final bool isSelf;
+  final bool isFriend;
+  ProfilePhotoUploading({
+    required this.userData,
+    required this.isSelf,
+    required this.isFriend,
+  });
+}
+
 class ProfileLoaded extends ProfileState {
   final Map<String, dynamic> userData;
   final bool isSelf;
@@ -36,6 +47,29 @@ class UpdateProfileRequested extends ProfileEvent {
   final String name;
   final String bio;
   UpdateProfileRequested({required this.name, required this.bio});
+}
+
+class UploadProfilePhotoRequested extends ProfileEvent {
+  final String imageData; // Base64 encoded image
+  final String filename;
+  UploadProfilePhotoRequested({
+    required this.imageData,
+    required this.filename,
+  });
+}
+
+class SaveProfileChangesRequested extends ProfileEvent {
+  final String name;
+  final String bio;
+  final String? imageData;
+  final String? filename;
+
+  SaveProfileChangesRequested({
+    required this.name,
+    required this.bio,
+    this.imageData,
+    this.filename,
+  });
 }
 
 class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
@@ -71,6 +105,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
         emit(ProfileError(e.toString()));
       }
     });
+
     on<UpdateProfileRequested>((event, emit) async {
       final currentState = state;
       if (currentState is ProfileLoaded) {
@@ -99,6 +134,86 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
           // Restore previous state if error occurs
           emit(currentState);
         }
+      }
+    });
+
+    on<UploadProfilePhotoRequested>((event, emit) async {
+      final currentState = state;
+      if (currentState is ProfileLoaded) {
+        // Emit uploading state (shows loading indicator while keeping UI responsive)
+        emit(
+          ProfilePhotoUploading(
+            userData: currentState.userData,
+            isSelf: currentState.isSelf,
+            isFriend: currentState.isFriend,
+          ),
+        );
+
+        try {
+          // Call repository to upload image and get the new photoURL
+          final photoUrl = await profileRepo.uploadProfilePhoto(
+            imageData: event.imageData,
+            filename: event.filename,
+          );
+
+          // Update local state immediately with the new photoURL
+          final updatedUserData = {...currentState.userData};
+          updatedUserData['photoURL'] = photoUrl;
+
+          emit(
+            ProfileLoaded(
+              userData: updatedUserData,
+              isSelf: currentState.isSelf,
+              isFriend: currentState.isFriend,
+            ),
+          );
+        } catch (e) {
+          emit(ProfileError("Failed to upload photo: ${e.toString()}"));
+          // Restore previous state if error occurs
+          emit(currentState);
+        }
+      }
+    });
+
+    on<SaveProfileChangesRequested>((event, emit) async {
+      final currentState = state;
+      if (currentState is! ProfileLoaded) return;
+
+      emit(ProfileLoading());
+      try {
+        await profileRepo.updateUserProfile(name: event.name, bio: event.bio);
+
+        String? photoUrl;
+        final shouldUploadPhoto =
+            event.imageData != null &&
+            event.imageData!.isNotEmpty &&
+            event.filename != null &&
+            event.filename!.isNotEmpty;
+
+        if (shouldUploadPhoto) {
+          photoUrl = await profileRepo.uploadProfilePhoto(
+            imageData: event.imageData!,
+            filename: event.filename!,
+          );
+        }
+
+        final updatedUserData = {...currentState.userData};
+        updatedUserData['displayName'] = event.name;
+        updatedUserData['bio'] = event.bio;
+        if (photoUrl != null) {
+          updatedUserData['photoURL'] = photoUrl;
+        }
+
+        emit(
+          ProfileLoaded(
+            userData: updatedUserData,
+            isSelf: currentState.isSelf,
+            isFriend: currentState.isFriend,
+          ),
+        );
+      } catch (e) {
+        emit(ProfileError('Failed to save profile changes: ${e.toString()}'));
+        emit(currentState);
       }
     });
   }

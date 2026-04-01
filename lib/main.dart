@@ -73,6 +73,8 @@ void main() async {
           create: (context) => ProfileRepositoryImpl(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
+            functionsService: context.read<CloudFunctionsService>(),
+            dbService: context.read<DatabaseService>(),
           ),
         ),
         RepositoryProvider<BoardRepository>(
@@ -108,8 +110,10 @@ void main() async {
           ),
           BlocProvider(create: (context) => NavBloc()),
           BlocProvider(
-            create: (context) =>
-                DashboardBloc(boardRepo: context.read<BoardRepository>()),
+            create: (context) => DashboardBloc(
+              boardRepo: context.read<BoardRepository>(),
+              profileRepo: context.read<ProfileRepository>(),
+            ),
           ),
           BlocProvider(
             create: (context) =>

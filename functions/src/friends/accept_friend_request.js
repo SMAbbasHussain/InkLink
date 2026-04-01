@@ -12,10 +12,10 @@
  */
 
 const { HttpsError } = require("firebase-functions/v2/https");
-const admin = require("../server/firebase-admin");
-const { validateRequestId, validateUID, validateDifferentUIDs } = require("./utils/validation");
-const FirestorePaths = require("./utils/firestore_paths");
-const logger = require("./utils/logger");
+const admin = require("../../server/firebase-admin");
+const { validateRequestId, validateUID, validateDifferentUIDs } = require("../utils/validation");
+const FirestorePaths = require("../utils/firestore_paths");
+const logger = require("../utils/logger");
 
 module.exports = async (request) => {
   const { data, auth } = request;

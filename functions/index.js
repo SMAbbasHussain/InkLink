@@ -7,8 +7,14 @@ const logger = require('./src/utils/logger');
 // FIX: Load Firebase region from environment or use default
 const FIREBASE_REGION = process.env.FIREBASE_REGION || 'us-central1';
 
-// Define any secrets needed by your functions
-const mySecrets = [];
+// Define secrets exposed to callable functions at runtime
+const mySecrets = [
+    'CLOUDFLARE_R2_ACCESS_KEY',
+    'CLOUDFLARE_R2_SECRET_KEY',
+    'CLOUDFLARE_ACCOUNT_ID',
+    'CLOUDFLARE_R2_BUCKET',
+    'CLOUDFLARE_R2_PUBLIC_URL',
+];
 
 /**
  * Dynamically load and export all Cloud Functions from src/ directory
@@ -26,15 +32,14 @@ const apiFiles = glob.sync(`src/**/*.js`, {
 
 apiFiles.forEach(filePath => {
     try {
-        const functionName = filePath
-            .replace(/^src[\\/]/, '')   // remove src/ or src\
-            .replace(/\.js$/, '')
-            .replace(/[\\/]/g, '_')
-            .replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+        // Export name: just the filename (camelCase, no folder prefix)
+        let functionName = path.basename(filePath, '.js');
+        // Convert snake_case or kebab-case to camelCase
+        functionName = functionName.replace(/[-_](.)/g, (_, c) => c.toUpperCase());
 
         const absolutePath = path.resolve(__dirname, filePath);
 
-        // FIX: Validate that the handler exists and is a function
+        // Validate that the handler exists and is a function
         let handler;
         try {
             handler = require(absolutePath);
@@ -53,8 +58,6 @@ apiFiles.forEach(filePath => {
             {
                 secrets: mySecrets,
                 region: FIREBASE_REGION,
-                // FIX: Removed unnecessary CORS flag (not used for callable functions)
-                // CORS is only needed for HTTP functions, not callable functions
                 timeoutSeconds: 540, // 9 minutes - Firebase default
             },
             async (request) => {

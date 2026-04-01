@@ -5,7 +5,6 @@ class Board {
   final String title;
   final String ownerId;
   final List<String> members;
-  final String engine;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -14,7 +13,6 @@ class Board {
     required this.title,
     required this.ownerId,
     required this.members,
-    required this.engine,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -25,7 +23,6 @@ class Board {
       title: map['title'] ?? 'Untitled Board',
       ownerId: map['ownerId'] ?? '',
       members: List<String>.from(map['members'] ?? []),
-      engine: map['engine'] ?? 'crdt_v1',
       createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (map['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
@@ -36,7 +33,6 @@ class Board {
       'title': title,
       'ownerId': ownerId,
       'members': members,
-      'engine': engine,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
     };

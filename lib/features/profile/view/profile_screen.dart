@@ -65,6 +65,18 @@ class ProfileScreen extends StatelessWidget {
           if (state is ProfileError) {
             return Center(child: Text(state.message));
           }
+          if (state is ProfilePhotoUploading) {
+            final user = state.userData;
+            return Column(
+              children: [
+                _buildHeader(user, isDark),
+                const SizedBox(height: 24),
+                _buildBioSection(user, isDark),
+                const Spacer(),
+                const SizedBox(height: 40),
+              ],
+            );
+          }
           if (state is ProfileLoaded) {
             final user = state.userData;
             return Column(

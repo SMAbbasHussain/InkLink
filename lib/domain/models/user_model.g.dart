@@ -1,6 +1,6 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'local_board.dart';
+part of 'user_model.dart';
 
 // **************************************************************************
 // IsarCollectionGenerator
@@ -9,17 +9,17 @@ part of 'local_board.dart';
 // coverage:ignore-file
 // ignore_for_file: duplicate_ignore, non_constant_identifier_names, constant_identifier_names, invalid_use_of_protected_member, unnecessary_cast, prefer_const_constructors, lines_longer_than_80_chars, require_trailing_commas, inference_failure_on_function_invocation, unnecessary_parenthesis, unnecessary_raw_strings, unnecessary_null_checks, join_return_with_assignment, prefer_final_locals, avoid_js_rounded_ints, avoid_positional_boolean_parameters, always_specify_types
 
-extension GetLocalBoardCollection on Isar {
-  IsarCollection<LocalBoard> get localBoards => this.collection();
+extension GetUserModelCollection on Isar {
+  IsarCollection<UserModel> get userModels => this.collection();
 }
 
-const LocalBoardSchema = CollectionSchema(
-  name: r'LocalBoard',
-  id: 7827830612906253906,
+const UserModelSchema = CollectionSchema(
+  name: r'UserModel',
+  id: 7195426469378571114,
   properties: {
-    r'boardId': PropertySchema(
+    r'bio': PropertySchema(
       id: 0,
-      name: r'boardId',
+      name: r'bio',
       type: IsarType.string,
     ),
     r'createdAt': PropertySchema(
@@ -27,51 +27,46 @@ const LocalBoardSchema = CollectionSchema(
       name: r'createdAt',
       type: IsarType.dateTime,
     ),
-    r'engine': PropertySchema(
+    r'displayName': PropertySchema(
       id: 2,
-      name: r'engine',
+      name: r'displayName',
       type: IsarType.string,
     ),
-    r'isSynced': PropertySchema(
+    r'email': PropertySchema(
       id: 3,
-      name: r'isSynced',
-      type: IsarType.bool,
-    ),
-    r'members': PropertySchema(
-      id: 4,
-      name: r'members',
-      type: IsarType.stringList,
-    ),
-    r'ownerId': PropertySchema(
-      id: 5,
-      name: r'ownerId',
+      name: r'email',
       type: IsarType.string,
     ),
-    r'title': PropertySchema(
-      id: 6,
-      name: r'title',
+    r'photoURL': PropertySchema(
+      id: 4,
+      name: r'photoURL',
+      type: IsarType.string,
+    ),
+    r'uid': PropertySchema(
+      id: 5,
+      name: r'uid',
       type: IsarType.string,
     ),
     r'updatedAt': PropertySchema(
-      id: 7,
+      id: 6,
       name: r'updatedAt',
       type: IsarType.dateTime,
     )
   },
-  estimateSize: _localBoardEstimateSize,
-  serialize: _localBoardSerialize,
-  deserialize: _localBoardDeserialize,
-  deserializeProp: _localBoardDeserializeProp,
+  estimateSize: _userModelEstimateSize,
+  serialize: _userModelSerialize,
+  deserialize: _userModelDeserialize,
+  deserializeProp: _userModelDeserializeProp,
   idName: r'id',
   indexes: {
-    r'boardId': IndexSchema(
-      id: 8343624544803511651,
-      name: r'boardId',
+    r'uid': IndexSchema(
+      id: 8193695471701937315,
+      name: r'uid',
       unique: true,
       replace: true,
       properties: [
         IndexPropertySchema(
-          name: r'boardId',
+          name: r'uid',
           type: IndexType.hash,
           caseSensitive: true,
         )
@@ -80,68 +75,71 @@ const LocalBoardSchema = CollectionSchema(
   },
   links: {},
   embeddedSchemas: {},
-  getId: _localBoardGetId,
-  getLinks: _localBoardGetLinks,
-  attach: _localBoardAttach,
+  getId: _userModelGetId,
+  getLinks: _userModelGetLinks,
+  attach: _userModelAttach,
   version: '3.1.0+1',
 );
 
-int _localBoardEstimateSize(
-  LocalBoard object,
+int _userModelEstimateSize(
+  UserModel object,
   List<int> offsets,
   Map<Type, List<int>> allOffsets,
 ) {
   var bytesCount = offsets.last;
-  bytesCount += 3 + object.boardId.length * 3;
-  bytesCount += 3 + object.engine.length * 3;
-  bytesCount += 3 + object.members.length * 3;
   {
-    for (var i = 0; i < object.members.length; i++) {
-      final value = object.members[i];
-      bytesCount += value.length * 3;
+    final value = object.bio;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
     }
   }
-  bytesCount += 3 + object.ownerId.length * 3;
-  bytesCount += 3 + object.title.length * 3;
+  bytesCount += 3 + object.displayName.length * 3;
+  bytesCount += 3 + object.email.length * 3;
+  {
+    final value = object.photoURL;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
+  bytesCount += 3 + object.uid.length * 3;
   return bytesCount;
 }
 
-void _localBoardSerialize(
-  LocalBoard object,
+void _userModelSerialize(
+  UserModel object,
   IsarWriter writer,
   List<int> offsets,
   Map<Type, List<int>> allOffsets,
 ) {
-  writer.writeString(offsets[0], object.boardId);
+  writer.writeString(offsets[0], object.bio);
   writer.writeDateTime(offsets[1], object.createdAt);
-  writer.writeString(offsets[2], object.engine);
-  writer.writeBool(offsets[3], object.isSynced);
-  writer.writeStringList(offsets[4], object.members);
-  writer.writeString(offsets[5], object.ownerId);
-  writer.writeString(offsets[6], object.title);
-  writer.writeDateTime(offsets[7], object.updatedAt);
+  writer.writeString(offsets[2], object.displayName);
+  writer.writeString(offsets[3], object.email);
+  writer.writeString(offsets[4], object.photoURL);
+  writer.writeString(offsets[5], object.uid);
+  writer.writeDateTime(offsets[6], object.updatedAt);
 }
 
-LocalBoard _localBoardDeserialize(
+UserModel _userModelDeserialize(
   Id id,
   IsarReader reader,
   List<int> offsets,
   Map<Type, List<int>> allOffsets,
 ) {
-  final object = LocalBoard();
-  object.boardId = reader.readString(offsets[0]);
-  object.createdAt = reader.readDateTime(offsets[1]);
-  object.engine = reader.readString(offsets[2]);
-  object.id = id;
-  object.isSynced = reader.readBool(offsets[3]);
-  object.members = reader.readStringList(offsets[4]) ?? [];
-  object.ownerId = reader.readString(offsets[5]);
-  object.title = reader.readString(offsets[6]);
-  object.updatedAt = reader.readDateTime(offsets[7]);
+  final object = UserModel(
+    bio: reader.readStringOrNull(offsets[0]),
+    createdAt: reader.readDateTime(offsets[1]),
+    displayName: reader.readString(offsets[2]),
+    email: reader.readString(offsets[3]),
+    id: id,
+    photoURL: reader.readStringOrNull(offsets[4]),
+    uid: reader.readString(offsets[5]),
+    updatedAt: reader.readDateTimeOrNull(offsets[6]),
+  );
   return object;
 }
 
-P _localBoardDeserializeProp<P>(
+P _userModelDeserializeProp<P>(
   IsarReader reader,
   int propertyId,
   int offset,
@@ -149,105 +147,102 @@ P _localBoardDeserializeProp<P>(
 ) {
   switch (propertyId) {
     case 0:
-      return (reader.readString(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 1:
       return (reader.readDateTime(offset)) as P;
     case 2:
       return (reader.readString(offset)) as P;
     case 3:
-      return (reader.readBool(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 4:
-      return (reader.readStringList(offset) ?? []) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 5:
       return (reader.readString(offset)) as P;
     case 6:
-      return (reader.readString(offset)) as P;
-    case 7:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
   }
 }
 
-Id _localBoardGetId(LocalBoard object) {
-  return object.id;
+Id _userModelGetId(UserModel object) {
+  return object.id ?? Isar.autoIncrement;
 }
 
-List<IsarLinkBase<dynamic>> _localBoardGetLinks(LocalBoard object) {
+List<IsarLinkBase<dynamic>> _userModelGetLinks(UserModel object) {
   return [];
 }
 
-void _localBoardAttach(IsarCollection<dynamic> col, Id id, LocalBoard object) {
+void _userModelAttach(IsarCollection<dynamic> col, Id id, UserModel object) {
   object.id = id;
 }
 
-extension LocalBoardByIndex on IsarCollection<LocalBoard> {
-  Future<LocalBoard?> getByBoardId(String boardId) {
-    return getByIndex(r'boardId', [boardId]);
+extension UserModelByIndex on IsarCollection<UserModel> {
+  Future<UserModel?> getByUid(String uid) {
+    return getByIndex(r'uid', [uid]);
   }
 
-  LocalBoard? getByBoardIdSync(String boardId) {
-    return getByIndexSync(r'boardId', [boardId]);
+  UserModel? getByUidSync(String uid) {
+    return getByIndexSync(r'uid', [uid]);
   }
 
-  Future<bool> deleteByBoardId(String boardId) {
-    return deleteByIndex(r'boardId', [boardId]);
+  Future<bool> deleteByUid(String uid) {
+    return deleteByIndex(r'uid', [uid]);
   }
 
-  bool deleteByBoardIdSync(String boardId) {
-    return deleteByIndexSync(r'boardId', [boardId]);
+  bool deleteByUidSync(String uid) {
+    return deleteByIndexSync(r'uid', [uid]);
   }
 
-  Future<List<LocalBoard?>> getAllByBoardId(List<String> boardIdValues) {
-    final values = boardIdValues.map((e) => [e]).toList();
-    return getAllByIndex(r'boardId', values);
+  Future<List<UserModel?>> getAllByUid(List<String> uidValues) {
+    final values = uidValues.map((e) => [e]).toList();
+    return getAllByIndex(r'uid', values);
   }
 
-  List<LocalBoard?> getAllByBoardIdSync(List<String> boardIdValues) {
-    final values = boardIdValues.map((e) => [e]).toList();
-    return getAllByIndexSync(r'boardId', values);
+  List<UserModel?> getAllByUidSync(List<String> uidValues) {
+    final values = uidValues.map((e) => [e]).toList();
+    return getAllByIndexSync(r'uid', values);
   }
 
-  Future<int> deleteAllByBoardId(List<String> boardIdValues) {
-    final values = boardIdValues.map((e) => [e]).toList();
-    return deleteAllByIndex(r'boardId', values);
+  Future<int> deleteAllByUid(List<String> uidValues) {
+    final values = uidValues.map((e) => [e]).toList();
+    return deleteAllByIndex(r'uid', values);
   }
 
-  int deleteAllByBoardIdSync(List<String> boardIdValues) {
-    final values = boardIdValues.map((e) => [e]).toList();
-    return deleteAllByIndexSync(r'boardId', values);
+  int deleteAllByUidSync(List<String> uidValues) {
+    final values = uidValues.map((e) => [e]).toList();
+    return deleteAllByIndexSync(r'uid', values);
   }
 
-  Future<Id> putByBoardId(LocalBoard object) {
-    return putByIndex(r'boardId', object);
+  Future<Id> putByUid(UserModel object) {
+    return putByIndex(r'uid', object);
   }
 
-  Id putByBoardIdSync(LocalBoard object, {bool saveLinks = true}) {
-    return putByIndexSync(r'boardId', object, saveLinks: saveLinks);
+  Id putByUidSync(UserModel object, {bool saveLinks = true}) {
+    return putByIndexSync(r'uid', object, saveLinks: saveLinks);
   }
 
-  Future<List<Id>> putAllByBoardId(List<LocalBoard> objects) {
-    return putAllByIndex(r'boardId', objects);
+  Future<List<Id>> putAllByUid(List<UserModel> objects) {
+    return putAllByIndex(r'uid', objects);
   }
 
-  List<Id> putAllByBoardIdSync(List<LocalBoard> objects,
-      {bool saveLinks = true}) {
-    return putAllByIndexSync(r'boardId', objects, saveLinks: saveLinks);
+  List<Id> putAllByUidSync(List<UserModel> objects, {bool saveLinks = true}) {
+    return putAllByIndexSync(r'uid', objects, saveLinks: saveLinks);
   }
 }
 
-extension LocalBoardQueryWhereSort
-    on QueryBuilder<LocalBoard, LocalBoard, QWhere> {
-  QueryBuilder<LocalBoard, LocalBoard, QAfterWhere> anyId() {
+extension UserModelQueryWhereSort
+    on QueryBuilder<UserModel, UserModel, QWhere> {
+  QueryBuilder<UserModel, UserModel, QAfterWhere> anyId() {
     return QueryBuilder.apply(this, (query) {
       return query.addWhereClause(const IdWhereClause.any());
     });
   }
 }
 
-extension LocalBoardQueryWhere
-    on QueryBuilder<LocalBoard, LocalBoard, QWhereClause> {
-  QueryBuilder<LocalBoard, LocalBoard, QAfterWhereClause> idEqualTo(Id id) {
+extension UserModelQueryWhere
+    on QueryBuilder<UserModel, UserModel, QWhereClause> {
+  QueryBuilder<UserModel, UserModel, QAfterWhereClause> idEqualTo(Id id) {
     return QueryBuilder.apply(this, (query) {
       return query.addWhereClause(IdWhereClause.between(
         lower: id,
@@ -256,7 +251,7 @@ extension LocalBoardQueryWhere
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterWhereClause> idNotEqualTo(Id id) {
+  QueryBuilder<UserModel, UserModel, QAfterWhereClause> idNotEqualTo(Id id) {
     return QueryBuilder.apply(this, (query) {
       if (query.whereSort == Sort.asc) {
         return query
@@ -278,7 +273,7 @@ extension LocalBoardQueryWhere
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterWhereClause> idGreaterThan(Id id,
+  QueryBuilder<UserModel, UserModel, QAfterWhereClause> idGreaterThan(Id id,
       {bool include = false}) {
     return QueryBuilder.apply(this, (query) {
       return query.addWhereClause(
@@ -287,7 +282,7 @@ extension LocalBoardQueryWhere
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterWhereClause> idLessThan(Id id,
+  QueryBuilder<UserModel, UserModel, QAfterWhereClause> idLessThan(Id id,
       {bool include = false}) {
     return QueryBuilder.apply(this, (query) {
       return query.addWhereClause(
@@ -296,7 +291,7 @@ extension LocalBoardQueryWhere
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterWhereClause> idBetween(
+  QueryBuilder<UserModel, UserModel, QAfterWhereClause> idBetween(
     Id lowerId,
     Id upperId, {
     bool includeLower = true,
@@ -312,45 +307,44 @@ extension LocalBoardQueryWhere
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterWhereClause> boardIdEqualTo(
-      String boardId) {
+  QueryBuilder<UserModel, UserModel, QAfterWhereClause> uidEqualTo(String uid) {
     return QueryBuilder.apply(this, (query) {
       return query.addWhereClause(IndexWhereClause.equalTo(
-        indexName: r'boardId',
-        value: [boardId],
+        indexName: r'uid',
+        value: [uid],
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterWhereClause> boardIdNotEqualTo(
-      String boardId) {
+  QueryBuilder<UserModel, UserModel, QAfterWhereClause> uidNotEqualTo(
+      String uid) {
     return QueryBuilder.apply(this, (query) {
       if (query.whereSort == Sort.asc) {
         return query
             .addWhereClause(IndexWhereClause.between(
-              indexName: r'boardId',
+              indexName: r'uid',
               lower: [],
-              upper: [boardId],
+              upper: [uid],
               includeUpper: false,
             ))
             .addWhereClause(IndexWhereClause.between(
-              indexName: r'boardId',
-              lower: [boardId],
+              indexName: r'uid',
+              lower: [uid],
               includeLower: false,
               upper: [],
             ));
       } else {
         return query
             .addWhereClause(IndexWhereClause.between(
-              indexName: r'boardId',
-              lower: [boardId],
+              indexName: r'uid',
+              lower: [uid],
               includeLower: false,
               upper: [],
             ))
             .addWhereClause(IndexWhereClause.between(
-              indexName: r'boardId',
+              indexName: r'uid',
               lower: [],
-              upper: [boardId],
+              upper: [uid],
               includeUpper: false,
             ));
       }
@@ -358,62 +352,77 @@ extension LocalBoardQueryWhere
   }
 }
 
-extension LocalBoardQueryFilter
-    on QueryBuilder<LocalBoard, LocalBoard, QFilterCondition> {
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> boardIdEqualTo(
-    String value, {
+extension UserModelQueryFilter
+    on QueryBuilder<UserModel, UserModel, QFilterCondition> {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> bioIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'bio',
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> bioIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'bio',
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> bioEqualTo(
+    String? value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'boardId',
+        property: r'bio',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      boardIdGreaterThan(
-    String value, {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> bioGreaterThan(
+    String? value, {
     bool include = false,
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.greaterThan(
         include: include,
-        property: r'boardId',
+        property: r'bio',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> boardIdLessThan(
-    String value, {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> bioLessThan(
+    String? value, {
     bool include = false,
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.lessThan(
         include: include,
-        property: r'boardId',
+        property: r'bio',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> boardIdBetween(
-    String lower,
-    String upper, {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> bioBetween(
+    String? lower,
+    String? upper, {
     bool includeLower = true,
     bool includeUpper = true,
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.between(
-        property: r'boardId',
+        property: r'bio',
         lower: lower,
         includeLower: includeLower,
         upper: upper,
@@ -423,76 +432,75 @@ extension LocalBoardQueryFilter
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> boardIdStartsWith(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> bioStartsWith(
     String value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.startsWith(
-        property: r'boardId',
+        property: r'bio',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> boardIdEndsWith(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> bioEndsWith(
     String value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.endsWith(
-        property: r'boardId',
+        property: r'bio',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> boardIdContains(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> bioContains(
       String value,
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.contains(
-        property: r'boardId',
+        property: r'bio',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> boardIdMatches(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> bioMatches(
       String pattern,
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.matches(
-        property: r'boardId',
+        property: r'bio',
         wildcard: pattern,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> boardIdIsEmpty() {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> bioIsEmpty() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'boardId',
+        property: r'bio',
         value: '',
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      boardIdIsNotEmpty() {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> bioIsNotEmpty() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.greaterThan(
-        property: r'boardId',
+        property: r'bio',
         value: '',
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> createdAtEqualTo(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> createdAtEqualTo(
       DateTime value) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
@@ -502,7 +510,7 @@ extension LocalBoardQueryFilter
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
       createdAtGreaterThan(
     DateTime value, {
     bool include = false,
@@ -516,7 +524,7 @@ extension LocalBoardQueryFilter
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> createdAtLessThan(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> createdAtLessThan(
     DateTime value, {
     bool include = false,
   }) {
@@ -529,7 +537,7 @@ extension LocalBoardQueryFilter
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> createdAtBetween(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> createdAtBetween(
     DateTime lower,
     DateTime upper, {
     bool includeLower = true,
@@ -546,20 +554,21 @@ extension LocalBoardQueryFilter
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> engineEqualTo(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> displayNameEqualTo(
     String value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'engine',
+        property: r'displayName',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> engineGreaterThan(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
+      displayNameGreaterThan(
     String value, {
     bool include = false,
     bool caseSensitive = true,
@@ -567,14 +576,14 @@ extension LocalBoardQueryFilter
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.greaterThan(
         include: include,
-        property: r'engine',
+        property: r'displayName',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> engineLessThan(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> displayNameLessThan(
     String value, {
     bool include = false,
     bool caseSensitive = true,
@@ -582,14 +591,14 @@ extension LocalBoardQueryFilter
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.lessThan(
         include: include,
-        property: r'engine',
+        property: r'displayName',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> engineBetween(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> displayNameBetween(
     String lower,
     String upper, {
     bool includeLower = true,
@@ -598,7 +607,7 @@ extension LocalBoardQueryFilter
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.between(
-        property: r'engine',
+        property: r'displayName',
         lower: lower,
         includeLower: includeLower,
         upper: upper,
@@ -608,154 +617,91 @@ extension LocalBoardQueryFilter
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> engineStartsWith(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
+      displayNameStartsWith(
     String value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.startsWith(
-        property: r'engine',
+        property: r'displayName',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> engineEndsWith(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> displayNameEndsWith(
     String value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.endsWith(
-        property: r'engine',
+        property: r'displayName',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> engineContains(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> displayNameContains(
       String value,
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.contains(
-        property: r'engine',
+        property: r'displayName',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> engineMatches(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> displayNameMatches(
       String pattern,
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.matches(
-        property: r'engine',
+        property: r'displayName',
         wildcard: pattern,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> engineIsEmpty() {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
+      displayNameIsEmpty() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'engine',
+        property: r'displayName',
         value: '',
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      engineIsNotEmpty() {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
+      displayNameIsNotEmpty() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.greaterThan(
-        property: r'engine',
+        property: r'displayName',
         value: '',
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> idEqualTo(
-      Id value) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'id',
-        value: value,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> idGreaterThan(
-    Id value, {
-    bool include = false,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.greaterThan(
-        include: include,
-        property: r'id',
-        value: value,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> idLessThan(
-    Id value, {
-    bool include = false,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.lessThan(
-        include: include,
-        property: r'id',
-        value: value,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> idBetween(
-    Id lower,
-    Id upper, {
-    bool includeLower = true,
-    bool includeUpper = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.between(
-        property: r'id',
-        lower: lower,
-        includeLower: includeLower,
-        upper: upper,
-        includeUpper: includeUpper,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> isSyncedEqualTo(
-      bool value) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'isSynced',
-        value: value,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersElementEqualTo(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> emailEqualTo(
     String value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'members',
+        property: r'email',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersElementGreaterThan(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> emailGreaterThan(
     String value, {
     bool include = false,
     bool caseSensitive = true,
@@ -763,15 +709,14 @@ extension LocalBoardQueryFilter
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.greaterThan(
         include: include,
-        property: r'members',
+        property: r'email',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersElementLessThan(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> emailLessThan(
     String value, {
     bool include = false,
     bool caseSensitive = true,
@@ -779,15 +724,14 @@ extension LocalBoardQueryFilter
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.lessThan(
         include: include,
-        property: r'members',
+        property: r'email',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersElementBetween(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> emailBetween(
     String lower,
     String upper, {
     bool includeLower = true,
@@ -796,7 +740,7 @@ extension LocalBoardQueryFilter
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.between(
-        property: r'members',
+        property: r'email',
         lower: lower,
         includeLower: includeLower,
         upper: upper,
@@ -806,349 +750,213 @@ extension LocalBoardQueryFilter
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersElementStartsWith(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> emailStartsWith(
     String value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.startsWith(
-        property: r'members',
+        property: r'email',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersElementEndsWith(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> emailEndsWith(
     String value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.endsWith(
-        property: r'members',
+        property: r'email',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersElementContains(String value, {bool caseSensitive = true}) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.contains(
-        property: r'members',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersElementMatches(String pattern, {bool caseSensitive = true}) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.matches(
-        property: r'members',
-        wildcard: pattern,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersElementIsEmpty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'members',
-        value: '',
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersElementIsNotEmpty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.greaterThan(
-        property: r'members',
-        value: '',
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersLengthEqualTo(int length) {
-    return QueryBuilder.apply(this, (query) {
-      return query.listLength(
-        r'members',
-        length,
-        true,
-        length,
-        true,
-      );
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> membersIsEmpty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.listLength(
-        r'members',
-        0,
-        true,
-        0,
-        true,
-      );
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersIsNotEmpty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.listLength(
-        r'members',
-        0,
-        false,
-        999999,
-        true,
-      );
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersLengthLessThan(
-    int length, {
-    bool include = false,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.listLength(
-        r'members',
-        0,
-        true,
-        length,
-        include,
-      );
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersLengthGreaterThan(
-    int length, {
-    bool include = false,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.listLength(
-        r'members',
-        length,
-        include,
-        999999,
-        true,
-      );
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      membersLengthBetween(
-    int lower,
-    int upper, {
-    bool includeLower = true,
-    bool includeUpper = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.listLength(
-        r'members',
-        lower,
-        includeLower,
-        upper,
-        includeUpper,
-      );
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> ownerIdEqualTo(
-    String value, {
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'ownerId',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      ownerIdGreaterThan(
-    String value, {
-    bool include = false,
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.greaterThan(
-        include: include,
-        property: r'ownerId',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> ownerIdLessThan(
-    String value, {
-    bool include = false,
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.lessThan(
-        include: include,
-        property: r'ownerId',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> ownerIdBetween(
-    String lower,
-    String upper, {
-    bool includeLower = true,
-    bool includeUpper = true,
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.between(
-        property: r'ownerId',
-        lower: lower,
-        includeLower: includeLower,
-        upper: upper,
-        includeUpper: includeUpper,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> ownerIdStartsWith(
-    String value, {
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.startsWith(
-        property: r'ownerId',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> ownerIdEndsWith(
-    String value, {
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.endsWith(
-        property: r'ownerId',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> ownerIdContains(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> emailContains(
       String value,
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.contains(
-        property: r'ownerId',
+        property: r'email',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> ownerIdMatches(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> emailMatches(
       String pattern,
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.matches(
-        property: r'ownerId',
+        property: r'email',
         wildcard: pattern,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> ownerIdIsEmpty() {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> emailIsEmpty() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'ownerId',
+        property: r'email',
         value: '',
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      ownerIdIsNotEmpty() {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> emailIsNotEmpty() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.greaterThan(
-        property: r'ownerId',
+        property: r'email',
         value: '',
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> titleEqualTo(
-    String value, {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> idIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'id',
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> idIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'id',
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> idEqualTo(
+      Id? value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'id',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> idGreaterThan(
+    Id? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'id',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> idLessThan(
+    Id? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'id',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> idBetween(
+    Id? lower,
+    Id? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'id',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> photoURLIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'photoURL',
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
+      photoURLIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'photoURL',
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> photoURLEqualTo(
+    String? value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'title',
+        property: r'photoURL',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> titleGreaterThan(
-    String value, {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> photoURLGreaterThan(
+    String? value, {
     bool include = false,
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.greaterThan(
         include: include,
-        property: r'title',
+        property: r'photoURL',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> titleLessThan(
-    String value, {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> photoURLLessThan(
+    String? value, {
     bool include = false,
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.lessThan(
         include: include,
-        property: r'title',
+        property: r'photoURL',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> titleBetween(
-    String lower,
-    String upper, {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> photoURLBetween(
+    String? lower,
+    String? upper, {
     bool includeLower = true,
     bool includeUpper = true,
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.between(
-        property: r'title',
+        property: r'photoURL',
         lower: lower,
         includeLower: includeLower,
         upper: upper,
@@ -1158,77 +966,224 @@ extension LocalBoardQueryFilter
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> titleStartsWith(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> photoURLStartsWith(
     String value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.startsWith(
-        property: r'title',
+        property: r'photoURL',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> titleEndsWith(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> photoURLEndsWith(
     String value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.endsWith(
-        property: r'title',
+        property: r'photoURL',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> titleContains(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> photoURLContains(
       String value,
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.contains(
-        property: r'title',
+        property: r'photoURL',
         value: value,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> titleMatches(
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> photoURLMatches(
       String pattern,
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.matches(
-        property: r'title',
+        property: r'photoURL',
         wildcard: pattern,
         caseSensitive: caseSensitive,
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> titleIsEmpty() {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> photoURLIsEmpty() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'title',
+        property: r'photoURL',
         value: '',
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
-      titleIsNotEmpty() {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
+      photoURLIsNotEmpty() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.greaterThan(
-        property: r'title',
+        property: r'photoURL',
         value: '',
       ));
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> updatedAtEqualTo(
-      DateTime value) {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> uidEqualTo(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'uid',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> uidGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'uid',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> uidLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'uid',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> uidBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'uid',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> uidStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'uid',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> uidEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'uid',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> uidContains(
+      String value,
+      {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'uid',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> uidMatches(
+      String pattern,
+      {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'uid',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> uidIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'uid',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> uidIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'uid',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> updatedAtIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'updatedAt',
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
+      updatedAtIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'updatedAt',
+      ));
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> updatedAtEqualTo(
+      DateTime? value) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
         property: r'updatedAt',
@@ -1237,9 +1192,9 @@ extension LocalBoardQueryFilter
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
       updatedAtGreaterThan(
-    DateTime value, {
+    DateTime? value, {
     bool include = false,
   }) {
     return QueryBuilder.apply(this, (query) {
@@ -1251,8 +1206,8 @@ extension LocalBoardQueryFilter
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> updatedAtLessThan(
-    DateTime value, {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> updatedAtLessThan(
+    DateTime? value, {
     bool include = false,
   }) {
     return QueryBuilder.apply(this, (query) {
@@ -1264,9 +1219,9 @@ extension LocalBoardQueryFilter
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> updatedAtBetween(
-    DateTime lower,
-    DateTime upper, {
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> updatedAtBetween(
+    DateTime? lower,
+    DateTime? upper, {
     bool includeLower = true,
     bool includeUpper = true,
   }) {
@@ -1282,304 +1237,292 @@ extension LocalBoardQueryFilter
   }
 }
 
-extension LocalBoardQueryObject
-    on QueryBuilder<LocalBoard, LocalBoard, QFilterCondition> {}
+extension UserModelQueryObject
+    on QueryBuilder<UserModel, UserModel, QFilterCondition> {}
 
-extension LocalBoardQueryLinks
-    on QueryBuilder<LocalBoard, LocalBoard, QFilterCondition> {}
+extension UserModelQueryLinks
+    on QueryBuilder<UserModel, UserModel, QFilterCondition> {}
 
-extension LocalBoardQuerySortBy
-    on QueryBuilder<LocalBoard, LocalBoard, QSortBy> {
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByBoardId() {
+extension UserModelQuerySortBy on QueryBuilder<UserModel, UserModel, QSortBy> {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByBio() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'boardId', Sort.asc);
+      return query.addSortBy(r'bio', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByBoardIdDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByBioDesc() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'boardId', Sort.desc);
+      return query.addSortBy(r'bio', Sort.desc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByCreatedAt() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByCreatedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'createdAt', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByCreatedAtDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByCreatedAtDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'createdAt', Sort.desc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByEngine() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByDisplayName() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'engine', Sort.asc);
+      return query.addSortBy(r'displayName', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByEngineDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByDisplayNameDesc() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'engine', Sort.desc);
+      return query.addSortBy(r'displayName', Sort.desc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByIsSynced() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByEmail() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'isSynced', Sort.asc);
+      return query.addSortBy(r'email', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByIsSyncedDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByEmailDesc() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'isSynced', Sort.desc);
+      return query.addSortBy(r'email', Sort.desc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByOwnerId() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByPhotoURL() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'ownerId', Sort.asc);
+      return query.addSortBy(r'photoURL', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByOwnerIdDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByPhotoURLDesc() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'ownerId', Sort.desc);
+      return query.addSortBy(r'photoURL', Sort.desc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByTitle() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByUid() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'title', Sort.asc);
+      return query.addSortBy(r'uid', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByTitleDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByUidDesc() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'title', Sort.desc);
+      return query.addSortBy(r'uid', Sort.desc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByUpdatedAt() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByUpdatedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'updatedAt', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByUpdatedAtDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByUpdatedAtDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'updatedAt', Sort.desc);
     });
   }
 }
 
-extension LocalBoardQuerySortThenBy
-    on QueryBuilder<LocalBoard, LocalBoard, QSortThenBy> {
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByBoardId() {
+extension UserModelQuerySortThenBy
+    on QueryBuilder<UserModel, UserModel, QSortThenBy> {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByBio() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'boardId', Sort.asc);
+      return query.addSortBy(r'bio', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByBoardIdDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByBioDesc() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'boardId', Sort.desc);
+      return query.addSortBy(r'bio', Sort.desc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByCreatedAt() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByCreatedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'createdAt', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByCreatedAtDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByCreatedAtDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'createdAt', Sort.desc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByEngine() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByDisplayName() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'engine', Sort.asc);
+      return query.addSortBy(r'displayName', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByEngineDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByDisplayNameDesc() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'engine', Sort.desc);
+      return query.addSortBy(r'displayName', Sort.desc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenById() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByEmail() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'email', Sort.asc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByEmailDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'email', Sort.desc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenById() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'id', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByIdDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByIdDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'id', Sort.desc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByIsSynced() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByPhotoURL() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'isSynced', Sort.asc);
+      return query.addSortBy(r'photoURL', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByIsSyncedDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByPhotoURLDesc() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'isSynced', Sort.desc);
+      return query.addSortBy(r'photoURL', Sort.desc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByOwnerId() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByUid() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'ownerId', Sort.asc);
+      return query.addSortBy(r'uid', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByOwnerIdDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByUidDesc() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'ownerId', Sort.desc);
+      return query.addSortBy(r'uid', Sort.desc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByTitle() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'title', Sort.asc);
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByTitleDesc() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'title', Sort.desc);
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByUpdatedAt() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByUpdatedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'updatedAt', Sort.asc);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByUpdatedAtDesc() {
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByUpdatedAtDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'updatedAt', Sort.desc);
     });
   }
 }
 
-extension LocalBoardQueryWhereDistinct
-    on QueryBuilder<LocalBoard, LocalBoard, QDistinct> {
-  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByBoardId(
+extension UserModelQueryWhereDistinct
+    on QueryBuilder<UserModel, UserModel, QDistinct> {
+  QueryBuilder<UserModel, UserModel, QDistinct> distinctByBio(
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
-      return query.addDistinctBy(r'boardId', caseSensitive: caseSensitive);
+      return query.addDistinctBy(r'bio', caseSensitive: caseSensitive);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByCreatedAt() {
+  QueryBuilder<UserModel, UserModel, QDistinct> distinctByCreatedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'createdAt');
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByEngine(
+  QueryBuilder<UserModel, UserModel, QDistinct> distinctByDisplayName(
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
-      return query.addDistinctBy(r'engine', caseSensitive: caseSensitive);
+      return query.addDistinctBy(r'displayName', caseSensitive: caseSensitive);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByIsSynced() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addDistinctBy(r'isSynced');
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByMembers() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addDistinctBy(r'members');
-    });
-  }
-
-  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByOwnerId(
+  QueryBuilder<UserModel, UserModel, QDistinct> distinctByEmail(
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
-      return query.addDistinctBy(r'ownerId', caseSensitive: caseSensitive);
+      return query.addDistinctBy(r'email', caseSensitive: caseSensitive);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByTitle(
+  QueryBuilder<UserModel, UserModel, QDistinct> distinctByPhotoURL(
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
-      return query.addDistinctBy(r'title', caseSensitive: caseSensitive);
+      return query.addDistinctBy(r'photoURL', caseSensitive: caseSensitive);
     });
   }
 
-  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByUpdatedAt() {
+  QueryBuilder<UserModel, UserModel, QDistinct> distinctByUid(
+      {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'uid', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QDistinct> distinctByUpdatedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'updatedAt');
     });
   }
 }
 
-extension LocalBoardQueryProperty
-    on QueryBuilder<LocalBoard, LocalBoard, QQueryProperty> {
-  QueryBuilder<LocalBoard, int, QQueryOperations> idProperty() {
+extension UserModelQueryProperty
+    on QueryBuilder<UserModel, UserModel, QQueryProperty> {
+  QueryBuilder<UserModel, int, QQueryOperations> idProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'id');
     });
   }
 
-  QueryBuilder<LocalBoard, String, QQueryOperations> boardIdProperty() {
+  QueryBuilder<UserModel, String?, QQueryOperations> bioProperty() {
     return QueryBuilder.apply(this, (query) {
-      return query.addPropertyName(r'boardId');
+      return query.addPropertyName(r'bio');
     });
   }
 
-  QueryBuilder<LocalBoard, DateTime, QQueryOperations> createdAtProperty() {
+  QueryBuilder<UserModel, DateTime, QQueryOperations> createdAtProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'createdAt');
     });
   }
 
-  QueryBuilder<LocalBoard, String, QQueryOperations> engineProperty() {
+  QueryBuilder<UserModel, String, QQueryOperations> displayNameProperty() {
     return QueryBuilder.apply(this, (query) {
-      return query.addPropertyName(r'engine');
+      return query.addPropertyName(r'displayName');
     });
   }
 
-  QueryBuilder<LocalBoard, bool, QQueryOperations> isSyncedProperty() {
+  QueryBuilder<UserModel, String, QQueryOperations> emailProperty() {
     return QueryBuilder.apply(this, (query) {
-      return query.addPropertyName(r'isSynced');
+      return query.addPropertyName(r'email');
     });
   }
 
-  QueryBuilder<LocalBoard, List<String>, QQueryOperations> membersProperty() {
+  QueryBuilder<UserModel, String?, QQueryOperations> photoURLProperty() {
     return QueryBuilder.apply(this, (query) {
-      return query.addPropertyName(r'members');
+      return query.addPropertyName(r'photoURL');
     });
   }
 
-  QueryBuilder<LocalBoard, String, QQueryOperations> ownerIdProperty() {
+  QueryBuilder<UserModel, String, QQueryOperations> uidProperty() {
     return QueryBuilder.apply(this, (query) {
-      return query.addPropertyName(r'ownerId');
+      return query.addPropertyName(r'uid');
     });
   }
 
-  QueryBuilder<LocalBoard, String, QQueryOperations> titleProperty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addPropertyName(r'title');
-    });
-  }
-
-  QueryBuilder<LocalBoard, DateTime, QQueryOperations> updatedAtProperty() {
+  QueryBuilder<UserModel, DateTime?, QQueryOperations> updatedAtProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'updatedAt');
     });

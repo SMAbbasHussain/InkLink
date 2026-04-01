@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../../core/crdt/y_crdt_canvas_adapter.dart';
+import '../../../core/crdt/canvas_crdt_adapter.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../domain/models/board.dart';
 import '../../../domain/repositories/board/board_repository.dart';

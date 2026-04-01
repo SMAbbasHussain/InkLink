@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:rxdart/rxdart.dart';
 import '../../../domain/models/board.dart';
 import '../../../domain/repositories/board/board_repository.dart';
+import '../../../domain/repositories/profile/profile_repository.dart';
 
 // States
 abstract class DashboardState {}
@@ -12,6 +13,7 @@ class DashboardInitial extends DashboardState {}
 class DashboardLoaded extends DashboardState {
   final List<Board> ownedBoards;
   final List<Board> joinedBoards;
+  final Map<String, dynamic>? currentUserProfile;
   final String? actionError;
   final String? joinedBoardId;
   final String? createdBoardId;
@@ -19,6 +21,7 @@ class DashboardLoaded extends DashboardState {
   DashboardLoaded({
     required this.ownedBoards,
     required this.joinedBoards,
+    this.currentUserProfile,
     this.actionError,
     this.joinedBoardId,
     this.createdBoardId,
@@ -27,6 +30,7 @@ class DashboardLoaded extends DashboardState {
   DashboardLoaded copyWith({
     List<Board>? ownedBoards,
     List<Board>? joinedBoards,
+    Object? currentUserProfile = _unset,
     Object? actionError = _unset,
     Object? joinedBoardId = _unset,
     Object? createdBoardId = _unset,
@@ -34,6 +38,9 @@ class DashboardLoaded extends DashboardState {
     return DashboardLoaded(
       ownedBoards: ownedBoards ?? this.ownedBoards,
       joinedBoards: joinedBoards ?? this.joinedBoards,
+      currentUserProfile: currentUserProfile == _unset
+          ? this.currentUserProfile
+          : currentUserProfile as Map<String, dynamic>?,
       actionError: actionError == _unset
           ? this.actionError
           : actionError as String?,
@@ -86,15 +93,31 @@ class DashboardConsumeEffects extends DashboardEvent {
   DashboardConsumeEffects();
 }
 
+class DashboardWatchCurrentUserProfileRequested extends DashboardEvent {
+  final String? userId;
+
+  DashboardWatchCurrentUserProfileRequested(this.userId);
+}
+
+class _UpdateCurrentUserProfile extends DashboardEvent {
+  final Map<String, dynamic>? userData;
+
+  _UpdateCurrentUserProfile(this.userData);
+}
+
 class LoadDashboardRequested extends DashboardEvent {}
 
 const Object _unset = Object();
 
 class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   final BoardRepository boardRepo;
+  final ProfileRepository profileRepo;
   StreamSubscription<List<List<Board>>>? _dashboardSub;
+  StreamSubscription<Map<String, dynamic>?>? _profileSub;
+  Map<String, dynamic>? _latestCurrentUserProfile;
 
-  DashboardBloc({required this.boardRepo}) : super(DashboardInitial()) {
+  DashboardBloc({required this.boardRepo, required this.profileRepo})
+    : super(DashboardInitial()) {
     on<LoadDashboardRequested>(_onLoadDashboardRequested);
     on<_UpdateDashboardData>(_onUpdateDashboardData);
     on<DashboardCreateBoardRequested>(_onDashboardCreateBoardRequested);
@@ -102,6 +125,10 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     on<DashboardRenameBoardRequested>(_onDashboardRenameBoardRequested);
     on<DashboardDeleteBoardRequested>(_onDashboardDeleteBoardRequested);
     on<DashboardConsumeEffects>(_onDashboardConsumeEffects);
+    on<DashboardWatchCurrentUserProfileRequested>(
+      _onDashboardWatchCurrentUserProfileRequested,
+    );
+    on<_UpdateCurrentUserProfile>(_onUpdateCurrentUserProfile);
   }
 
   Future<void> _onLoadDashboardRequested(
@@ -137,7 +164,42 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       return;
     }
 
-    emit(DashboardLoaded(ownedBoards: event.owned, joinedBoards: event.joined));
+    emit(
+      DashboardLoaded(
+        ownedBoards: event.owned,
+        joinedBoards: event.joined,
+        currentUserProfile: _latestCurrentUserProfile,
+      ),
+    );
+  }
+
+  Future<void> _onDashboardWatchCurrentUserProfileRequested(
+    DashboardWatchCurrentUserProfileRequested event,
+    Emitter<DashboardState> emit,
+  ) async {
+    await _profileSub?.cancel();
+    _profileSub = null;
+
+    if (event.userId == null || event.userId!.isEmpty) {
+      add(_UpdateCurrentUserProfile(null));
+      return;
+    }
+
+    _profileSub = profileRepo.getUserByIdStream(event.userId!).listen((data) {
+      add(_UpdateCurrentUserProfile(data));
+    });
+  }
+
+  void _onUpdateCurrentUserProfile(
+    _UpdateCurrentUserProfile event,
+    Emitter<DashboardState> emit,
+  ) {
+    _latestCurrentUserProfile = event.userData;
+
+    final current = state;
+    if (current is DashboardLoaded) {
+      emit(current.copyWith(currentUserProfile: event.userData));
+    }
   }
 
   Future<void> _onDashboardJoinBoardRequested(
@@ -234,6 +296,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   @override
   Future<void> close() {
     _dashboardSub?.cancel();
+    _profileSub?.cancel();
     return super.close();
   }
 }
