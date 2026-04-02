@@ -32,6 +32,9 @@ class ProfileRepositoryImpl implements ProfileRepository {
   Future<Map<String, dynamic>?> getUserById(String uid) async {
     final cached = await _getCachedUserMap(uid);
     if (cached != null) {
+      // Return cached data immediately for fast page load, but revalidate
+      // in background to catch profile edits made on other devices
+      _revalidateUserFromFirestore(uid);
       return cached;
     }
 
@@ -41,6 +44,24 @@ class ProfileRepositoryImpl implements ProfileRepository {
 
     await _upsertCachedUser(uid, data);
     return data;
+  }
+
+  /// Fetches fresh user data from Firestore and updates cache silently.
+  /// Does not block—intended for background revalidation after cache hit.
+  void _revalidateUserFromFirestore(String uid) {
+    _firestoreService
+        .collection('users')
+        .doc(uid)
+        .get()
+        .then((doc) {
+          final data = doc.data();
+          if (data != null) {
+            _upsertCachedUser(uid, data);
+          }
+        })
+        .catchError((_) {
+          // Silently ignore revalidation errors; cache remains valid
+        });
   }
 
   @override

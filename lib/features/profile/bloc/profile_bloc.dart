@@ -212,8 +212,25 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
           ),
         );
       } catch (e) {
-        emit(ProfileError('Failed to save profile changes: ${e.toString()}'));
-        emit(currentState);
+        // Profile text changes (name/bio) were already persisted before photo upload.
+        // If photo upload failed, emit state with updated name/bio to preserve those
+        // changes in the UI instead of rolling back, then show error.
+        final updatedUserData = {...currentState.userData};
+        updatedUserData['displayName'] = event.name;
+        updatedUserData['bio'] = event.bio;
+
+        emit(
+          ProfileLoaded(
+            userData: updatedUserData,
+            isSelf: currentState.isSelf,
+            isFriend: currentState.isFriend,
+          ),
+        );
+        emit(
+          ProfileError(
+            'Name and bio updated, but failed to upload photo: ${e.toString()}',
+          ),
+        );
       }
     });
   }
