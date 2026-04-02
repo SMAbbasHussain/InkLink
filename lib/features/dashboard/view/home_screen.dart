@@ -6,6 +6,12 @@ import 'package:inklink/features/auth/bloc/auth_state.dart';
 import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:inklink/features/dashboard/view/widgets/board_card.dart';
 import 'package:inklink/features/dashboard/view/widgets/quick_action_button.dart';
+import 'package:inklink/features/friends/bloc/friends_bloc.dart';
+import 'package:inklink/features/friends/bloc/friends_event.dart';
+import 'package:inklink/features/friends/bloc/friends_state.dart';
+import 'package:inklink/features/invitations/bloc/invitations_bloc.dart';
+import 'package:inklink/features/invitations/view/board_invites_screen.dart';
+import 'package:inklink/features/notifications/view/notifications_route.dart';
 import 'package:inklink/features/profile/view/profile_route.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../theme/bloc/theme_bloc.dart';
@@ -29,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    context.read<InvitationsBloc>().add(const InvitationsLoadRequested());
 
     context.read<DashboardBloc>().add(LoadDashboardRequested());
 
@@ -74,6 +81,173 @@ class _HomeScreenState extends State<HomeScreen>
             child: const Text('Join'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showCreateBoardDialog() {
+    final nameController = TextEditingController();
+    final inviteesController = TextEditingController();
+    final selectedFriendIds = <String>{};
+    int inviteExpiryHours = 72;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('Create Board'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Board name',
+                      hintText: 'Enter board name',
+                    ),
+                    autofocus: true,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: inviteesController,
+                    decoration: const InputDecoration(
+                      labelText: 'Invite users (optional)',
+                      hintText: 'Comma-separated emails or user IDs',
+                    ),
+                    maxLines: 2,
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Select from friends (optional)',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          context.read<FriendsBloc>().add(LoadFriendsInfo());
+                        },
+                        child: const Text('Load'),
+                      ),
+                    ],
+                  ),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 140),
+                    child: BlocBuilder<FriendsBloc, FriendsState>(
+                      builder: (context, friendsState) {
+                        if (friendsState is FriendsLoading) {
+                          return const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(8.0),
+                              child: CircularProgressIndicator(),
+                            ),
+                          );
+                        }
+
+                        if (friendsState is! FriendsLoaded ||
+                            friendsState.friends.isEmpty) {
+                          return const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'No friends loaded yet.',
+                              style: TextStyle(color: Colors.grey),
+                            ),
+                          );
+                        }
+
+                        return SingleChildScrollView(
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: friendsState.friends.map((friend) {
+                              final uid = friend['uid']?.toString() ?? '';
+                              if (uid.isEmpty) {
+                                return const SizedBox.shrink();
+                              }
+                              final name =
+                                  friend['displayName']?.toString() ?? 'Friend';
+                              final selected = selectedFriendIds.contains(uid);
+                              return FilterChip(
+                                selected: selected,
+                                label: Text(name),
+                                onSelected: (value) {
+                                  setState(() {
+                                    if (value) {
+                                      selectedFriendIds.add(uid);
+                                    } else {
+                                      selectedFriendIds.remove(uid);
+                                    }
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('Invite expiration'),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<int>(
+                    value: inviteExpiryHours,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 24, child: Text('24 hours')),
+                      DropdownMenuItem(value: 72, child: Text('3 days')),
+                      DropdownMenuItem(value: 168, child: Text('7 days')),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() {
+                        inviteExpiryHours = value;
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  final invitees = inviteesController.text
+                      .split(',')
+                      .map((e) => e.trim())
+                      .where((e) => e.isNotEmpty)
+                      .toSet()
+                      .toList();
+
+                  invitees.addAll(selectedFriendIds);
+
+                  context.read<DashboardBloc>().add(
+                    DashboardCreateBoardRequested(
+                      title: nameController.text.trim().isEmpty
+                          ? 'Untitled Board'
+                          : nameController.text.trim(),
+                      invitedUserIds: invitees,
+                      inviteExpiryHours: inviteExpiryHours,
+                    ),
+                  );
+
+                  Navigator.pop(dialogContext);
+                },
+                child: const Text('Create'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -154,9 +328,14 @@ class _HomeScreenState extends State<HomeScreen>
                   icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
                   onPressed: () => context.read<ThemeBloc>().add(ToggleTheme()),
                 ),
-                const Padding(
-                  padding: EdgeInsets.only(right: 16.0),
-                  child: Icon(Icons.notifications_none),
+                Padding(
+                  padding: const EdgeInsets.only(right: 4.0),
+                  child: IconButton(
+                    icon: const Icon(Icons.notifications_none),
+                    onPressed: () {
+                      Navigator.push(context, buildNotificationsRoute(context));
+                    },
+                  ),
                 ),
                 Padding(
                   padding: const EdgeInsets.only(right: 16.0),
@@ -208,16 +387,61 @@ class _HomeScreenState extends State<HomeScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          "Hello, ${authUser?.userName.split(' ')[0] ?? 'Creator'}! 👋",
+                          "Ready to bring your ideas to life?",
                           style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          "Ready to bring your ideas to life?",
-                          style: TextStyle(color: Colors.grey),
+                        const SizedBox(height: 10),
+                        BlocBuilder<InvitationsBloc, InvitationsState>(
+                          builder: (context, inviteState) {
+                            final count = inviteState is InvitationsLoaded
+                                ? inviteState.invites.length
+                                : 0;
+                            if (count == 0) {
+                              return const SizedBox.shrink();
+                            }
+
+                            return InkWell(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => BlocProvider.value(
+                                      value: context.read<InvitationsBloc>(),
+                                      child: const BoardInvitesScreen(),
+                                    ),
+                                  ),
+                                );
+                              },
+                              borderRadius: BorderRadius.circular(12),
+                              child: Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.actionOrange.withOpacity(
+                                    0.12,
+                                  ),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: AppColors.actionOrange.withOpacity(
+                                      0.5,
+                                    ),
+                                  ),
+                                ),
+                                child: Text(
+                                  '$count pending board invite${count > 1 ? 's' : ''} - tap to review',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
                         ),
                         const SizedBox(height: 24),
                         _buildSearchBar(isDark),
@@ -228,9 +452,7 @@ class _HomeScreenState extends State<HomeScreen>
                               title: "New Board",
                               icon: Icons.add,
                               color: AppColors.actionBlue,
-                              onTap: () => context.read<DashboardBloc>().add(
-                                DashboardCreateBoardRequested(),
-                              ),
+                              onTap: _showCreateBoardDialog,
                             ),
                             const SizedBox(width: 16),
                             QuickActionButton(

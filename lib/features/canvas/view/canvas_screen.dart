@@ -1,6 +1,8 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -18,11 +20,15 @@ import 'widgets/tray_tips_overlay.dart';
 class CanvasScreen extends StatefulWidget {
   final String boardId;
   final bool showTrayTipsOnEntry;
+  final String boardPreviewQuality;
+  final bool boardPreviewCompressionEnabled;
 
   const CanvasScreen({
     super.key,
     required this.boardId,
     this.showTrayTipsOnEntry = false,
+    this.boardPreviewQuality = 'medium',
+    this.boardPreviewCompressionEnabled = true,
   });
 
   @override
@@ -31,6 +37,8 @@ class CanvasScreen extends StatefulWidget {
 
 class _CanvasScreenState extends State<CanvasScreen> {
   final TextEditingController _aiPromptController = TextEditingController();
+  final GlobalKey _canvasPreviewKey = GlobalKey();
+  bool _savingPreview = false;
   late final CanvasBloc _canvasBloc;
 
   @override
@@ -120,6 +128,52 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
+  Future<void> _savePreview() async {
+    if (_savingPreview) return;
+    _savingPreview = true;
+
+    try {
+      final boundary =
+          _canvasPreviewKey.currentContext?.findRenderObject()
+              as RenderRepaintBoundary?;
+      if (boundary == null) return;
+
+      double pixelRatio;
+      switch (widget.boardPreviewQuality) {
+        case 'low':
+          pixelRatio = 0.2;
+          break;
+        case 'high':
+          pixelRatio = 0.5;
+          break;
+        case 'medium':
+        default:
+          pixelRatio = 0.35;
+          break;
+      }
+
+      if (!widget.boardPreviewCompressionEnabled) {
+        pixelRatio = (pixelRatio + 0.2).clamp(0.2, 0.8);
+      }
+
+      final ui.Image image = await boundary.toImage(pixelRatio: pixelRatio);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = byteData?.buffer.asUint8List();
+      if (bytes == null || bytes.isEmpty) return;
+      _canvasBloc.add(CanvasSaveBoardPreviewRequested(bytes));
+    } catch (_) {
+      // Ignore preview errors and allow navigation to continue.
+    } finally {
+      _savingPreview = false;
+    }
+  }
+
+  Future<void> _exitCanvas() async {
+    await _savePreview();
+    if (!mounted) return;
+    Navigator.pop(context);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -133,92 +187,102 @@ class _CanvasScreenState extends State<CanvasScreen> {
               state.boardTitle ??
               'Board ${widget.boardId.substring(0, math.min(6, widget.boardId.length))}';
 
-          return Scaffold(
-            backgroundColor: isDark
-                ? AppColors.bgDark
-                : const Color(0xFFF5F5F5),
-            resizeToAvoidBottomInset: false,
-            appBar: AppBar(
-              title: Text(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              centerTitle: true,
-              elevation: 0,
-              backgroundColor: Colors.transparent,
-              actions: [
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert),
-                  onSelected: (value) {
-                    if (value == 'rename') {
-                      _showRenameDialog();
-                    } else if (value == 'copy') {
-                      Clipboard.setData(ClipboardData(text: widget.boardId));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Join Code copied to clipboard!'),
+          return WillPopScope(
+            onWillPop: () async {
+              await _savePreview();
+              return true;
+            },
+            child: Scaffold(
+              backgroundColor: isDark
+                  ? AppColors.bgDark
+                  : const Color(0xFFF5F5F5),
+              resizeToAvoidBottomInset: false,
+              appBar: AppBar(
+                title: Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                centerTitle: true,
+                elevation: 0,
+                backgroundColor: Colors.transparent,
+                actions: [
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert),
+                    onSelected: (value) {
+                      if (value == 'rename') {
+                        _showRenameDialog();
+                      } else if (value == 'copy') {
+                        Clipboard.setData(ClipboardData(text: widget.boardId));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Join Code copied to clipboard!'),
+                          ),
+                        );
+                      } else if (value == 'exit') {
+                        _exitCanvas();
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(
+                        value: 'rename',
+                        child: Text('Rename Board'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'copy',
+                        child: Text('Copy Join Code'),
+                      ),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'exit',
+                        child: Text(
+                          'Exit Canvas',
+                          style: TextStyle(color: Colors.red),
                         ),
-                      );
-                    } else if (value == 'exit') {
-                      Navigator.pop(context);
-                    }
-                  },
-                  itemBuilder: (context) => [
-                    const PopupMenuItem(
-                      value: 'rename',
-                      child: Text('Rename Board'),
-                    ),
-                    const PopupMenuItem(
-                      value: 'copy',
-                      child: Text('Copy Join Code'),
-                    ),
-                    const PopupMenuDivider(),
-                    const PopupMenuItem(
-                      value: 'exit',
-                      child: Text(
-                        'Exit Canvas',
-                        style: TextStyle(color: Colors.red),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              body: RepaintBoundary(
+                key: _canvasPreviewKey,
+                child: Stack(
+                  children: [
+                    GestureDetector(
+                      onTap: () {
+                        if (state.activeTray != null) {
+                          _canvasBloc.add(CanvasToggleTray(state.activeTray!));
+                        }
+                      },
+                      onPanStart: (details) =>
+                          _startStroke(details.localPosition),
+                      onPanUpdate: (details) =>
+                          _appendStroke(details.localPosition),
+                      onPanEnd: (_) => _endStroke(),
+                      behavior: HitTestBehavior.translucent,
+                      child: SizedBox.expand(
+                        child: CustomPaint(
+                          painter: _CanvasPainter(
+                            elements: mappedElements,
+                            currentPoints: state.currentStroke,
+                            currentColor: state.selectedColor,
+                            currentStrokeWidth: state.strokeWidth,
+                          ),
+                        ),
                       ),
                     ),
+
+                    _buildAllTrays(state),
+                    _buildEdgeTriggers(),
+
+                    if (state.showTrayTips)
+                      TrayTipsOverlay(
+                        onDismiss: () {
+                          _canvasBloc.add(const CanvasDismissTrayTips());
+                        },
+                      ),
                   ],
                 ),
-              ],
-            ),
-            body: Stack(
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    if (state.activeTray != null) {
-                      _canvasBloc.add(CanvasToggleTray(state.activeTray!));
-                    }
-                  },
-                  onPanStart: (details) => _startStroke(details.localPosition),
-                  onPanUpdate: (details) =>
-                      _appendStroke(details.localPosition),
-                  onPanEnd: (_) => _endStroke(),
-                  behavior: HitTestBehavior.translucent,
-                  child: SizedBox.expand(
-                    child: CustomPaint(
-                      painter: _CanvasPainter(
-                        elements: mappedElements,
-                        currentPoints: state.currentStroke,
-                        currentColor: state.selectedColor,
-                        currentStrokeWidth: state.strokeWidth,
-                      ),
-                    ),
-                  ),
-                ),
-
-                _buildAllTrays(state),
-                _buildEdgeTriggers(),
-
-                if (state.showTrayTips)
-                  TrayTipsOverlay(
-                    onDismiss: () {
-                      _canvasBloc.add(const CanvasDismissTrayTips());
-                    },
-                  ),
-              ],
+              ),
             ),
           );
         },

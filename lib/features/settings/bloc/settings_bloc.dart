@@ -20,6 +20,18 @@ class SettingsClearCacheRequested extends SettingsEvent {
   const SettingsClearCacheRequested();
 }
 
+class SettingsBoardPreviewQualityChanged extends SettingsEvent {
+  final String quality;
+
+  const SettingsBoardPreviewQualityChanged(this.quality);
+}
+
+class SettingsBoardPreviewCompressionToggled extends SettingsEvent {
+  final bool enabled;
+
+  const SettingsBoardPreviewCompressionToggled(this.enabled);
+}
+
 class SettingsConsumeMessage extends SettingsEvent {
   const SettingsConsumeMessage();
 }
@@ -27,12 +39,16 @@ class SettingsConsumeMessage extends SettingsEvent {
 class SettingsState {
   final bool showTrayTips;
   final bool isLoadingTrayTips;
+  final String boardPreviewQuality;
+  final bool boardPreviewCompressionEnabled;
   final String? message;
   final bool isError;
 
   const SettingsState({
     this.showTrayTips = true,
     this.isLoadingTrayTips = true,
+    this.boardPreviewQuality = 'medium',
+    this.boardPreviewCompressionEnabled = true,
     this.message,
     this.isError = false,
   });
@@ -40,12 +56,17 @@ class SettingsState {
   SettingsState copyWith({
     bool? showTrayTips,
     bool? isLoadingTrayTips,
+    String? boardPreviewQuality,
+    bool? boardPreviewCompressionEnabled,
     Object? message = _unset,
     bool? isError,
   }) {
     return SettingsState(
       showTrayTips: showTrayTips ?? this.showTrayTips,
       isLoadingTrayTips: isLoadingTrayTips ?? this.isLoadingTrayTips,
+      boardPreviewQuality: boardPreviewQuality ?? this.boardPreviewQuality,
+      boardPreviewCompressionEnabled:
+          boardPreviewCompressionEnabled ?? this.boardPreviewCompressionEnabled,
       message: message == _unset ? this.message : message as String?,
       isError: isError ?? this.isError,
     );
@@ -63,6 +84,10 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
     on<SettingsLoadRequested>(_onLoadRequested);
     on<SettingsTrayTipsToggled>(_onTrayTipsToggled);
     on<SettingsClearCacheRequested>(_onClearCacheRequested);
+    on<SettingsBoardPreviewQualityChanged>(_onBoardPreviewQualityChanged);
+    on<SettingsBoardPreviewCompressionToggled>(
+      _onBoardPreviewCompressionToggled,
+    );
     on<SettingsConsumeMessage>(_onConsumeMessage);
   }
 
@@ -71,7 +96,17 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
     Emitter<SettingsState> emit,
   ) async {
     final value = await _settingsRepository.getShowTrayTips();
-    emit(state.copyWith(showTrayTips: value, isLoadingTrayTips: false));
+    final quality = await _settingsRepository.getBoardPreviewQuality();
+    final compression = await _settingsRepository
+        .getBoardPreviewCompressionEnabled();
+    emit(
+      state.copyWith(
+        showTrayTips: value,
+        boardPreviewQuality: quality,
+        boardPreviewCompressionEnabled: compression,
+        isLoadingTrayTips: false,
+      ),
+    );
   }
 
   Future<void> _onTrayTipsToggled(
@@ -109,6 +144,45 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
         state.copyWith(message: 'Failed to clear local cache.', isError: true),
       );
     }
+  }
+
+  Future<void> _onBoardPreviewQualityChanged(
+    SettingsBoardPreviewQualityChanged event,
+    Emitter<SettingsState> emit,
+  ) async {
+    emit(
+      state.copyWith(
+        boardPreviewQuality: event.quality,
+        message: null,
+        isError: false,
+      ),
+    );
+    await _settingsRepository.setBoardPreviewQuality(event.quality);
+    emit(
+      state.copyWith(message: 'Board preview quality updated.', isError: false),
+    );
+  }
+
+  Future<void> _onBoardPreviewCompressionToggled(
+    SettingsBoardPreviewCompressionToggled event,
+    Emitter<SettingsState> emit,
+  ) async {
+    emit(
+      state.copyWith(
+        boardPreviewCompressionEnabled: event.enabled,
+        message: null,
+        isError: false,
+      ),
+    );
+    await _settingsRepository.setBoardPreviewCompressionEnabled(event.enabled);
+    emit(
+      state.copyWith(
+        message: event.enabled
+            ? 'Board preview compression enabled.'
+            : 'Board preview compression disabled.',
+        isError: false,
+      ),
+    );
   }
 
   void _onConsumeMessage(

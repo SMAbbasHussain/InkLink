@@ -24,6 +24,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         authRepository.user,
         onData: (user) {
           if (user != null) {
+            authRepository.syncFcmToken();
             return _toAuthenticated(user);
           } else {
             return Unauthenticated();
@@ -43,6 +44,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           emit(Unauthenticated());
           return;
         }
+        await authRepository.syncFcmToken();
         emit(_toAuthenticated(user));
       } catch (e) {
         emit(AuthError(e.toString()));
@@ -61,6 +63,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           emit(Unauthenticated());
           return;
         }
+        await authRepository.syncFcmToken();
         emit(_toAuthenticated(user, fallbackName: event.name));
       } catch (e) {
         emit(AuthError(e.toString()));
@@ -74,6 +77,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
         if (user != null) {
           // Success: User picked an account and Firebase authed
+          await authRepository.syncFcmToken();
           emit(_toAuthenticated(user, fallbackName: 'Creator'));
         } else {
           // Cancelled: User closed the selector

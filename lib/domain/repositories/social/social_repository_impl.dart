@@ -38,31 +38,23 @@ class SocialRepositoryImpl implements SocialRepository {
   Future<void> sendFriendRequest(String targetUid) async {
     if (_currentUid == targetUid) return;
 
-    // Deterministic ID (senderUid_receiverUid) ensures 1 request per pair
-    final List<String> ids = [_currentUid, targetUid]..sort();
-    final String requestId = ids.join('_');
+    try {
+      final result = await _functionsService
+          .httpsCallable('sendFriendRequest')
+          .call({'targetUid': targetUid});
 
-    // NOTE: There is a potential race condition between checking if friendship exists
-    // and creating a request. Consider moving this logic to a Cloud Function with
-    // a transaction to ensure atomicity: another user could accept a request or
-    // send a request between these two operations.
-    final friendCheck = await _firestoreService
-        .collection('users')
-        .doc(_currentUid)
-        .collection('friends')
-        .doc(targetUid)
-        .get();
-    if (friendCheck.exists) throw Exception("Already friends.");
-
-    final currentUser = _authService.getCurrentUser();
-    await _firestoreService.collection('friend_requests').doc(requestId).set({
-      'fromUid': _currentUid,
-      'toUid': targetUid,
-      'senderName': currentUser?.displayName,
-      'senderPic': currentUser?.photoURL,
-      'timestamp': FieldValue.serverTimestamp(),
-      'status': 'pending',
-    });
+      if (result.data['success'] != true) {
+        throw Exception('Server failed to send request');
+      }
+    } on FirebaseFunctionsException catch (e) {
+      developer.log(
+        'Cloud Function Error: ${e.code} - ${e.message}',
+        name: 'SocialRepositoryImpl',
+      );
+      throw Exception(e.message);
+    } catch (e) {
+      throw Exception('Connection error');
+    }
   }
 
   @override

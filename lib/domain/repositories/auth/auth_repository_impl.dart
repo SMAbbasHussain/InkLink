@@ -5,18 +5,23 @@ import 'auth_repository.dart';
 import '../../../core/utils/helpers.dart'; // FIX: Use centralized helper for search keywords
 import '../../../core/services/firestore_service.dart';
 import '../../../core/services/auth_service.dart';
+import '../../../core/services/messaging_service.dart';
 import 'dart:developer' as developer;
 
 class FirebaseAuthRepository implements AuthRepository {
   final AuthService _authService;
   final FirestoreService _firestoreService;
+  final MessagingService _messagingService;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
+  bool _tokenRefreshBound = false;
 
   FirebaseAuthRepository({
     required AuthService authService,
     required FirestoreService firestoreService,
+    required MessagingService messagingService,
   }) : _authService = authService,
-       _firestoreService = firestoreService;
+       _firestoreService = firestoreService,
+       _messagingService = messagingService;
 
   @override
   Stream<User?> get user => _authService.getInstance().authStateChanges();
@@ -145,7 +150,58 @@ class FirebaseAuthRepository implements AuthRepository {
       )).user;
 
   @override
+  Future<void> syncFcmToken() async {
+    final current = _authService.getCurrentUser();
+    if (current == null) return;
+
+    try {
+      await _messagingService.requestPermission();
+      final token = await _messagingService.getToken();
+      if (token != null && token.isNotEmpty) {
+        await _firestoreService.collection('users').doc(current.uid).set({
+          'fcmToken': token,
+          'fcmTokens': FieldValue.arrayUnion([token]),
+          'lastActive': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+
+      if (!_tokenRefreshBound) {
+        _tokenRefreshBound = true;
+        _messagingService.onTokenRefresh.listen((newToken) async {
+          final user = _authService.getCurrentUser();
+          if (user == null || newToken.isEmpty) return;
+
+          await _firestoreService.collection('users').doc(user.uid).set({
+            'fcmToken': newToken,
+            'fcmTokens': FieldValue.arrayUnion([newToken]),
+            'lastActive': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        });
+      }
+    } catch (e) {
+      developer.log('Failed to sync FCM token', error: e);
+    }
+  }
+
+  @override
   Future<void> signOut() async {
+    final current = _authService.getCurrentUser();
+    if (current != null) {
+      try {
+        final token = await _messagingService.getToken();
+        if (token != null && token.isNotEmpty) {
+          await _firestoreService.collection('users').doc(current.uid).set({
+            'fcmToken': FieldValue.delete(),
+            'fcmTokens': FieldValue.arrayRemove([token]),
+            'lastActive': FieldValue.serverTimestamp(),
+            'isOnline': false,
+          }, SetOptions(merge: true));
+        }
+      } catch (e) {
+        developer.log('Failed to clear FCM token on sign out', error: e);
+      }
+    }
+
     await _googleSignIn.signOut();
     await _authService.getInstance().signOut();
   }

@@ -86,6 +86,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               );
                             },
                     ),
+                    ListTile(
+                      leading: const Icon(
+                        Icons.photo_size_select_large_outlined,
+                      ),
+                      title: const Text('Board Preview Quality'),
+                      subtitle: const Text(
+                        'Used when saving board thumbnail after leaving canvas',
+                      ),
+                      trailing: DropdownButton<String>(
+                        value: settingsState.boardPreviewQuality,
+                        onChanged: (value) {
+                          if (value == null) return;
+                          context.read<SettingsBloc>().add(
+                            SettingsBoardPreviewQualityChanged(value),
+                          );
+                        },
+                        items: const [
+                          DropdownMenuItem(value: 'low', child: Text('Low')),
+                          DropdownMenuItem(
+                            value: 'medium',
+                            child: Text('Medium'),
+                          ),
+                          DropdownMenuItem(value: 'high', child: Text('High')),
+                        ],
+                      ),
+                    ),
+                    SwitchListTile(
+                      title: const Text('Compress Board Preview'),
+                      subtitle: const Text(
+                        'Recommended ON. Defaults to medium compressed previews.',
+                      ),
+                      secondary: const Icon(Icons.compress_outlined),
+                      value: settingsState.boardPreviewCompressionEnabled,
+                      onChanged: (value) {
+                        context.read<SettingsBloc>().add(
+                          SettingsBoardPreviewCompressionToggled(value),
+                        );
+                      },
+                    ),
                     _buildSectionHeader('Storage'),
                     ListTile(
                       leading: const Icon(Icons.cloud_download),

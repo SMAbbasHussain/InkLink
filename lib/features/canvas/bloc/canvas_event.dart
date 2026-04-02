@@ -130,3 +130,9 @@ class CanvasShowTrayTips extends CanvasEvent {
 class CanvasDismissTrayTips extends CanvasEvent {
   const CanvasDismissTrayTips();
 }
+
+class CanvasSaveBoardPreviewRequested extends CanvasEvent {
+  final Uint8List pngBytes;
+
+  const CanvasSaveBoardPreviewRequested(this.pngBytes);
+}

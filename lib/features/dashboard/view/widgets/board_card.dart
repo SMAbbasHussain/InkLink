@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:inklink/core/constants/app_colors.dart';
@@ -45,13 +47,32 @@ class BoardCard extends StatelessWidget {
                     top: Radius.circular(15),
                   ),
                 ),
-                child: Center(
-                  child: Icon(
-                    Icons.draw_rounded,
-                    size: 36,
-                    color: isDark ? Colors.white54 : Colors.black26,
-                  ),
-                ),
+                child: board.previewPath != null && board.previewPath!.isNotEmpty
+                    ? ClipRRect(
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(15),
+                        ),
+                        child: Image.file(
+                          File(board.previewPath!),
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          gaplessPlayback: true,
+                          errorBuilder: (_, _, _) => Center(
+                            child: Icon(
+                              Icons.draw_rounded,
+                              size: 36,
+                              color: isDark ? Colors.white54 : Colors.black26,
+                            ),
+                          ),
+                        ),
+                      )
+                    : Center(
+                        child: Icon(
+                          Icons.draw_rounded,
+                          size: 36,
+                          color: isDark ? Colors.white54 : Colors.black26,
+                        ),
+                      ),
               ),
             ),
             Padding(

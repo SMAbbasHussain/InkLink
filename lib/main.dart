@@ -6,12 +6,18 @@ import 'package:inklink/core/theme/app_theme.dart';
 import 'package:inklink/core/services/firestore_service.dart';
 import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/services/cloud_functions_service.dart';
+import 'package:inklink/core/services/local_notification_service.dart';
+import 'package:inklink/core/services/messaging_service.dart';
 import 'package:inklink/domain/repositories/auth/auth_repository.dart';
 import 'package:inklink/domain/repositories/auth/auth_repository_impl.dart';
 import 'package:inklink/domain/repositories/board/board_repository.dart';
 import 'package:inklink/domain/repositories/board/board_repository_impl.dart';
 import 'package:inklink/domain/repositories/canvas/canvas_sync_repository.dart';
 import 'package:inklink/domain/repositories/canvas/canvas_sync_repository_impl.dart';
+import 'package:inklink/domain/repositories/invitation/invitation_repository.dart';
+import 'package:inklink/domain/repositories/invitation/invitation_repository_impl.dart';
+import 'package:inklink/domain/repositories/notification/notification_repository.dart';
+import 'package:inklink/domain/repositories/notification/notification_repository_impl.dart';
 import 'package:inklink/core/database/database_service.dart';
 import 'package:inklink/domain/repositories/profile/profile_repository_impl.dart';
 import 'package:inklink/domain/repositories/social/social_repository.dart';
@@ -29,10 +35,17 @@ import 'package:inklink/features/theme/bloc/theme_bloc.dart';
 import 'package:inklink/firebase_options.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  final messagingService = MessagingServiceImpl();
+  await LocalNotificationService.initialize(navigatorKey: appNavigatorKey);
+  messagingService.onMessage.listen(
+    LocalNotificationService.showFromRemoteMessage,
+  );
 
   final themeRepository = ThemeRepositoryImpl();
   final initialThemeMode = await themeRepository.getThemeMode();
@@ -53,6 +66,7 @@ void main() async {
         RepositoryProvider<CloudFunctionsService>(
           create: (context) => CloudFunctionsServiceImpl(),
         ),
+        RepositoryProvider<MessagingService>.value(value: messagingService),
         // Other services
         RepositoryProvider<DatabaseService>.value(value: databaseService),
         // 1. Repositories (depend on Firebase services)
@@ -60,6 +74,7 @@ void main() async {
           create: (context) => FirebaseAuthRepository(
             authService: context.read<AuthService>(),
             firestoreService: context.read<FirestoreService>(),
+            messagingService: context.read<MessagingService>(),
           ),
         ),
         RepositoryProvider<SocialRepository>(
@@ -81,6 +96,7 @@ void main() async {
           create: (context) => FirestoreBoardRepository(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
+            functionsService: context.read<CloudFunctionsService>(),
             dbService: context.read<DatabaseService>(),
           ),
         ),
@@ -94,6 +110,19 @@ void main() async {
         RepositoryProvider<SettingsRepository>(
           create: (context) =>
               SettingsRepositoryImpl(databaseService: databaseService),
+        ),
+        RepositoryProvider<NotificationRepository>(
+          create: (context) => NotificationRepositoryImpl(
+            firestoreService: context.read<FirestoreService>(),
+            authService: context.read<AuthService>(),
+          ),
+        ),
+        RepositoryProvider<InvitationRepository>(
+          create: (context) => InvitationRepositoryImpl(
+            firestoreService: context.read<FirestoreService>(),
+            authService: context.read<AuthService>(),
+            functionsService: context.read<CloudFunctionsService>(),
+          ),
         ),
       ],
       // 2. BLoCs (depend on repositories)
@@ -142,6 +171,7 @@ class MyApp extends StatelessWidget {
     return BlocBuilder<ThemeBloc, ThemeMode>(
       builder: (context, themeMode) {
         return MaterialApp(
+          navigatorKey: appNavigatorKey,
           title: 'InkLink',
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,

@@ -1,11 +1,15 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:isar/isar.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../../core/database/collections/local_board.dart';
 import '../../../core/database/database_service.dart';
 import '../../../core/services/auth_service.dart';
+import '../../../core/services/cloud_functions_service.dart';
 import '../../../core/services/firestore_service.dart';
 import '../../models/board.dart';
 import 'board_repository.dart';
@@ -13,6 +17,7 @@ import 'board_repository.dart';
 class FirestoreBoardRepository implements BoardRepository {
   final FirestoreService _firestoreService;
   final AuthService _authService;
+  final CloudFunctionsService _functionsService;
   final DatabaseService _dbService;
   static const String crdtEngine = 'crdt_v1';
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _ownedBoardsSub;
@@ -24,9 +29,11 @@ class FirestoreBoardRepository implements BoardRepository {
   FirestoreBoardRepository({
     required FirestoreService firestoreService,
     required AuthService authService,
+    required CloudFunctionsService functionsService,
     required DatabaseService dbService,
   }) : _firestoreService = firestoreService,
        _authService = authService,
+       _functionsService = functionsService,
        _dbService = dbService;
 
   @override
@@ -126,6 +133,7 @@ class FirestoreBoardRepository implements BoardRepository {
                     title: lb.title,
                     ownerId: lb.ownerId,
                     members: lb.members,
+                    previewPath: lb.previewPath,
                     createdAt: lb.createdAt,
                     updatedAt: lb.updatedAt,
                   ),
@@ -151,6 +159,7 @@ class FirestoreBoardRepository implements BoardRepository {
             title: lb.title,
             ownerId: lb.ownerId,
             members: lb.members,
+            previewPath: lb.previewPath,
             createdAt: lb.createdAt,
             updatedAt: lb.updatedAt,
           );
@@ -179,6 +188,9 @@ class FirestoreBoardRepository implements BoardRepository {
         ..ownerId = data['ownerId'] ?? ''
         ..members = List<String>.from(data['members'] ?? [])
         ..engine = data['engine'] ?? crdtEngine
+        ..previewPath = (await isar.localBoards.getByBoardId(
+          boardId,
+        ))?.previewPath
         ..createdAt =
             (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()
         ..updatedAt =
@@ -223,7 +235,11 @@ class FirestoreBoardRepository implements BoardRepository {
   }
 
   @override
-  Future<String> createNewBoard([String name = 'Untitled Board']) async {
+  Future<String> createNewBoard({
+    String name = 'Untitled Board',
+    List<String> invitedUserIds = const [],
+    int inviteExpiryHours = 72,
+  }) async {
     if (currentUserId == null) throw Exception('User not authenticated');
 
     final docRef = _firestoreService.collection('boards').doc();
@@ -250,6 +266,7 @@ class FirestoreBoardRepository implements BoardRepository {
       ..ownerId = currentUserId!
       ..members = [currentUserId!]
       ..engine = crdtEngine
+      ..previewPath = null
       ..createdAt = now
       ..updatedAt = now
       ..isSynced = true;
@@ -257,6 +274,19 @@ class FirestoreBoardRepository implements BoardRepository {
     await isar.writeTxn(() async {
       await isar.localBoards.putByBoardId(newLocalBoard);
     });
+
+    if (invitedUserIds.isNotEmpty) {
+      try {
+        await _functionsService.httpsCallable('sendBoardInvite').call({
+          'boardId': docRef.id,
+          'boardTitle': name,
+          'invitedUserIds': invitedUserIds,
+          'inviteExpiryHours': inviteExpiryHours,
+        });
+      } catch (_) {
+        // Do not fail board creation if invite notification fails.
+      }
+    }
 
     return docRef.id;
   }
@@ -313,5 +343,51 @@ class FirestoreBoardRepository implements BoardRepository {
     });
 
     await _firestoreService.collection('boards').doc(boardId).delete();
+  }
+
+  @override
+  Future<void> saveBoardPreview(String boardId, Uint8List pngBytes) async {
+    if (currentUserId == null || boardId.isEmpty || pngBytes.isEmpty) {
+      return;
+    }
+
+    final directory = await getApplicationDocumentsDirectory();
+    final previewsDir = Directory(
+      '${directory.path}${Platform.pathSeparator}inklink${Platform.pathSeparator}board_previews',
+    );
+    if (!await previewsDir.exists()) {
+      await previewsDir.create(recursive: true);
+    }
+
+    final previewFile = File(
+      '${previewsDir.path}${Platform.pathSeparator}$boardId.png',
+    );
+    await previewFile.writeAsBytes(pngBytes, flush: true);
+
+    final isar = await _dbService.database;
+    final localBoard = await isar.localBoards.getByBoardId(boardId);
+    if (localBoard == null) return;
+
+    localBoard.previewPath = previewFile.path;
+    localBoard.updatedAt = DateTime.now();
+
+    await _firestoreService.collection('boards').doc(boardId).update({
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    await isar.writeTxn(() async {
+      await isar.localBoards.putByBoardId(localBoard);
+    });
+  }
+
+  @override
+  Stream<String?> watchBoardPreview(String boardId) {
+    return _dbService.database.asStream().asyncExpand((isar) {
+      return isar.localBoards
+          .filter()
+          .boardIdEqualTo(boardId)
+          .watch(fireImmediately: true)
+          .map((boards) => boards.isEmpty ? null : boards.first.previewPath);
+    });
   }
 }

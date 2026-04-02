@@ -58,6 +58,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasToggleTray>(_onToggleTray);
     on<CanvasShowTrayTips>(_onShowTrayTips);
     on<CanvasDismissTrayTips>(_onDismissTrayTips);
+    on<CanvasSaveBoardPreviewRequested>(_onSaveBoardPreviewRequested);
   }
 
   bool get _canSync => _syncRepository != null && _boardId.isNotEmpty;
@@ -343,6 +344,20 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     emit(state.copyWith(showTrayTips: false));
+  }
+
+  Future<void> _onSaveBoardPreviewRequested(
+    CanvasSaveBoardPreviewRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final boardRepository = _boardRepository;
+    if (boardRepository == null || _boardId.isEmpty) return;
+
+    try {
+      await boardRepository.saveBoardPreview(_boardId, event.pngBytes);
+    } catch (_) {
+      // Preview persistence failure should not interrupt canvas usage.
+    }
   }
 
   Future<void> _initializeCrdtSync() async {

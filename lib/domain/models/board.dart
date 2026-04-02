@@ -5,6 +5,7 @@ class Board {
   final String title;
   final String ownerId;
   final List<String> members;
+  final String? previewPath;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -13,6 +14,7 @@ class Board {
     required this.title,
     required this.ownerId,
     required this.members,
+    this.previewPath,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -23,6 +25,7 @@ class Board {
       title: map['title'] ?? 'Untitled Board',
       ownerId: map['ownerId'] ?? '',
       members: List<String>.from(map['members'] ?? []),
+      previewPath: map['previewPath'] as String?,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (map['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
@@ -33,6 +36,7 @@ class Board {
       'title': title,
       'ownerId': ownerId,
       'members': members,
+      'previewPath': previewPath,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
     };

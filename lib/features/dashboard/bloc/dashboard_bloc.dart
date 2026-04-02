@@ -72,8 +72,14 @@ class DashboardJoinBoardRequested extends DashboardEvent {
 
 class DashboardCreateBoardRequested extends DashboardEvent {
   final String? title;
+  final List<String> invitedUserIds;
+  final int inviteExpiryHours;
 
-  DashboardCreateBoardRequested({this.title});
+  DashboardCreateBoardRequested({
+    this.title,
+    this.invitedUserIds = const [],
+    this.inviteExpiryHours = 72,
+  });
 }
 
 class DashboardRenameBoardRequested extends DashboardEvent {
@@ -226,7 +232,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   ) async {
     try {
       final boardId = await boardRepo.createNewBoard(
-        event.title ?? 'Untitled Board',
+        name: event.title ?? 'Untitled Board',
+        invitedUserIds: event.invitedUserIds,
+        inviteExpiryHours: event.inviteExpiryHours,
       );
 
       final current = state;

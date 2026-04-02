@@ -6,10 +6,13 @@
 const FirestorePaths = {
   // Collections
   USERS: 'users',
+  BOARDS: 'boards',
   FRIEND_REQUESTS: 'friend_requests',
+  BOARD_INVITES: 'board_invites',
   
   // User subcollections
   FRIENDS_SUBCOLLECTION: 'friends',
+  NOTIFICATIONS_SUBCOLLECTION: 'notifications',
   
   // User document fields
   UID: 'uid',
@@ -21,6 +24,8 @@ const FirestorePaths = {
   CREATED_AT: 'createdAt',
   LAST_ACTIVE: 'lastActive',
   SEARCH_KEYWORDS: 'searchKeywords',
+  FCM_TOKEN: 'fcmToken',
+  FCM_TOKENS: 'fcmTokens',
   
   // Friend request fields
   FROM_UID: 'fromUid',
@@ -29,6 +34,21 @@ const FirestorePaths = {
   SENDER_PIC: 'senderPic',
   TIMESTAMP: 'timestamp',
   STATUS: 'status',
+
+  // Board invite fields
+  BOARD_ID: 'boardId',
+  BOARD_TITLE: 'boardTitle',
+  EXPIRES_AT: 'expiresAt',
+  INVITE_EXPIRY_HOURS: 'inviteExpiryHours',
+
+  // Notification fields
+  TYPE: 'type',
+  TITLE: 'title',
+  BODY: 'body',
+  ACTION: 'action',
+  TARGET_ID: 'targetId',
+  GROUPING_KEY: 'groupingKey',
+  READ_AT: 'readAt',
   
   // Friend document fields
   SINCE: 'since',

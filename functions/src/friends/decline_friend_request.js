@@ -16,6 +16,7 @@ const admin = require("../../server/firebase-admin");
 const { validateRequestId, validateUID } = require("../utils/validation");
 const FirestorePaths = require("../utils/firestore_paths");
 const logger = require("../utils/logger");
+const { updateUserNotificationStatus } = require('../utils/notification_sender');
 
 module.exports = async (request) => {
   const { data, auth } = request;
@@ -97,8 +98,18 @@ module.exports = async (request) => {
 
       return {
         success: true,
-        message: 'Friend request declined successfully.'
+        message: 'Friend request declined successfully.',
+        toUid,
       };
+    });
+
+    await updateUserNotificationStatus({
+      recipientUid: result.toUid,
+      type: 'friend_request',
+      targetId: requestId,
+      status: 'declined',
+      title: 'Friend request declined',
+      body: 'You declined this friend request.',
     });
 
     logger.info('Friend request declined successfully', {

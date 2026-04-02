@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:inklink/domain/repositories/invitation/invitation_repository.dart';
 import 'package:inklink/domain/repositories/settings/settings_repository.dart';
 import '../../../core/constants/app_colors.dart';
+import '../../invitations/bloc/invitations_bloc.dart';
 import '../../friends/view/friends_screen.dart';
 import '../../settings/bloc/settings_bloc.dart';
 import '../../settings/view/settings_screen.dart';
@@ -14,7 +16,12 @@ class MainWrapper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final List<Widget> screens = [
-      const HomeScreen(),
+      BlocProvider(
+        create: (context) => InvitationsBloc(
+          invitationRepository: context.read<InvitationRepository>(),
+        )..add(const InvitationsLoadRequested()),
+        child: const HomeScreen(),
+      ),
       const FriendsScreen(),
       BlocProvider(
         create: (context) =>
