@@ -1,13 +1,13 @@
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'collections/local_board.dart';
 import 'collections/local_crdt_update.dart';
 import '../../domain/models/user_model.dart';
 
-class DatabaseService {
+class LocalDatabaseService {
   late Future<Isar> db;
 
-  DatabaseService() {
+  LocalDatabaseService() {
     db = _initDb();
   }
 

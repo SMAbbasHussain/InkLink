@@ -2,7 +2,7 @@ import '../../../core/utils/helpers.dart';
 import '../../../core/services/firestore_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/cloud_functions_service.dart';
-import '../../../core/database/database_service.dart';
+import '../../../core/database/local_database_service.dart';
 import '../../models/user_model.dart';
 import 'profile_repository.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -11,17 +11,17 @@ class ProfileRepositoryImpl implements ProfileRepository {
   final FirestoreService _firestoreService;
   final AuthService _authService;
   final CloudFunctionsService _functionsService;
-  final DatabaseService _dbService;
+  final LocalDatabaseService _localDatabaseService;
 
   ProfileRepositoryImpl({
     required FirestoreService firestoreService,
     required AuthService authService,
     required CloudFunctionsService functionsService,
-    required DatabaseService dbService,
+    required LocalDatabaseService localDatabaseService,
   }) : _firestoreService = firestoreService,
        _authService = authService,
        _functionsService = functionsService,
-       _dbService = dbService;
+       _localDatabaseService = localDatabaseService;
 
   @override
   String? getCurrentUserId() {
@@ -165,7 +165,7 @@ class ProfileRepositoryImpl implements ProfileRepository {
   }
 
   Future<Map<String, dynamic>?> _getCachedUserMap(String uid) async {
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
     final user = await isar.userModels.getByUid(uid);
     if (user == null) return null;
 
@@ -180,7 +180,7 @@ class ProfileRepositoryImpl implements ProfileRepository {
   }
 
   Future<void> _upsertCachedUser(String uid, Map<String, dynamic> data) async {
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
     final existingModel = await isar.userModels.getByUid(uid);
 
     final model =

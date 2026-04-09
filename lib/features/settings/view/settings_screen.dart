@@ -128,7 +128,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _buildSectionHeader('Storage'),
                     ListTile(
                       leading: const Icon(Icons.cloud_download),
-                      title: const Text('Offline Database (Isar)'),
+                      title: const Text('Offline Database (Isar Community)'),
                       subtitle: const Text(
                         'Tap clear to remove local cached boards',
                       ),

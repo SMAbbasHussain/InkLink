@@ -43,6 +43,7 @@ const LocalBoardSchema = CollectionSchema(
       type: IsarType.dateTime,
     ),
   },
+
   estimateSize: _localBoardEstimateSize,
   serialize: _localBoardSerialize,
   deserialize: _localBoardDeserialize,
@@ -65,10 +66,11 @@ const LocalBoardSchema = CollectionSchema(
   },
   links: {},
   embeddedSchemas: {},
+
   getId: _localBoardGetId,
   getLinks: _localBoardGetLinks,
   attach: _localBoardAttach,
-  version: '3.1.0+1',
+  version: '3.3.2',
 );
 
 int _localBoardEstimateSize(
@@ -87,7 +89,12 @@ int _localBoardEstimateSize(
     }
   }
   bytesCount += 3 + object.ownerId.length * 3;
-  bytesCount += 3 + (object.previewPath?.length ?? 0) * 3;
+  {
+    final value = object.previewPath;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
   bytesCount += 3 + object.title.length * 3;
   return bytesCount;
 }
@@ -151,7 +158,7 @@ P _localBoardDeserializeProp<P>(
     case 6:
       return (reader.readStringOrNull(offset)) as P;
     case 7:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 8:
       return (reader.readDateTime(offset)) as P;
     default:
@@ -1126,6 +1133,165 @@ extension LocalBoardQueryFilter
     });
   }
 
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  previewPathIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'previewPath'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  previewPathIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'previewPath'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  previewPathEqualTo(String? value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'previewPath',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  previewPathGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'previewPath',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  previewPathLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'previewPath',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  previewPathBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'previewPath',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  previewPathStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'previewPath',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  previewPathEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'previewPath',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  previewPathContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'previewPath',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  previewPathMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'previewPath',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  previewPathIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'previewPath', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  previewPathIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'previewPath', value: ''),
+      );
+    });
+  }
+
   QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> titleEqualTo(
     String value, {
     bool caseSensitive = true,
@@ -1399,6 +1565,18 @@ extension LocalBoardQuerySortBy
     });
   }
 
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByPreviewPath() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'previewPath', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByPreviewPathDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'previewPath', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByTitle() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'title', Sort.asc);
@@ -1498,6 +1676,18 @@ extension LocalBoardQuerySortThenBy
     });
   }
 
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByPreviewPath() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'previewPath', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByPreviewPathDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'previewPath', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByTitle() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'title', Sort.asc);
@@ -1567,6 +1757,14 @@ extension LocalBoardQueryWhereDistinct
     });
   }
 
+  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByPreviewPath({
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'previewPath', caseSensitive: caseSensitive);
+    });
+  }
+
   QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByTitle({
     bool caseSensitive = true,
   }) {
@@ -1623,6 +1821,12 @@ extension LocalBoardQueryProperty
   QueryBuilder<LocalBoard, String, QQueryOperations> ownerIdProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'ownerId');
+    });
+  }
+
+  QueryBuilder<LocalBoard, String?, QQueryOperations> previewPathProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'previewPath');
     });
   }
 

@@ -3,6 +3,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 abstract class MessagingService {
   Future<NotificationSettings> requestPermission();
   Future<String?> getToken();
+  Future<void> deleteToken();
   Stream<String> get onTokenRefresh;
   Stream<RemoteMessage> get onMessage;
 }
@@ -21,6 +22,11 @@ class MessagingServiceImpl implements MessagingService {
   @override
   Future<String?> getToken() {
     return _messaging.getToken();
+  }
+
+  @override
+  Future<void> deleteToken() {
+    return _messaging.deleteToken();
   }
 
   @override

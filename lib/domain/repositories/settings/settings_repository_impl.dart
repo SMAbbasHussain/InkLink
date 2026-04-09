@@ -1,13 +1,13 @@
-import '../../../core/database/database_service.dart';
+import '../../../core/database/local_database_service.dart';
 import '../../../core/utils/board_preview_preferences.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
 import 'settings_repository.dart';
 
 class SettingsRepositoryImpl implements SettingsRepository {
-  final DatabaseService _databaseService;
+  final LocalDatabaseService _localDatabaseService;
 
-  SettingsRepositoryImpl({required DatabaseService databaseService})
-    : _databaseService = databaseService;
+  SettingsRepositoryImpl({required LocalDatabaseService localDatabaseService})
+    : _localDatabaseService = localDatabaseService;
 
   @override
   Future<bool> getShowTrayTips() {
@@ -41,6 +41,6 @@ class SettingsRepositoryImpl implements SettingsRepository {
 
   @override
   Future<void> clearLocalCache() {
-    return _databaseService.clearLocalCache();
+    return _localDatabaseService.clearLocalCache();
   }
 }

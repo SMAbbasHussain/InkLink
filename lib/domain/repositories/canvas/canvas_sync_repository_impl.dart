@@ -2,10 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 
 import '../../../core/database/collections/local_crdt_update.dart';
-import '../../../core/database/database_service.dart';
+import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
 import 'canvas_sync_repository.dart';
@@ -13,17 +13,17 @@ import 'canvas_sync_repository.dart';
 class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   final FirestoreService _firestoreService;
   final AuthService _authService;
-  final DatabaseService _dbService;
+  final LocalDatabaseService _localDatabaseService;
   final Map<String, StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>
   _remoteCrdtSubs = {};
 
   FirestoreCanvasSyncRepository({
     required FirestoreService firestoreService,
     required AuthService authService,
-    required DatabaseService dbService,
+    required LocalDatabaseService localDatabaseService,
   }) : _firestoreService = firestoreService,
        _authService = authService,
-       _dbService = dbService;
+       _localDatabaseService = localDatabaseService;
 
   @override
   String? get currentUserId => _authService.getCurrentUserId();
@@ -35,7 +35,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     required List<int> payload,
   }) async {
     final userId = currentUserId;
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
     final payloadBase64 = base64Encode(payload);
 
     final local = LocalCrdtUpdate()
@@ -66,7 +66,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       await _syncPendingLocalUpdates(boardId, currentUserId!);
     }
 
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
     yield* isar.localCrdtUpdates
         .filter()
         .boardIdEqualTo(boardId)
@@ -90,7 +90,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
     if (snapshot.docs.isEmpty) return;
 
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
     final updates = <LocalCrdtUpdate>[];
 
     for (final doc in snapshot.docs) {
@@ -127,7 +127,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           (snapshot) async {
             if (snapshot.docs.isEmpty) return;
 
-            final isar = await _dbService.database;
+            final isar = await _localDatabaseService.database;
             final updates = <LocalCrdtUpdate>[];
 
             for (final doc in snapshot.docs) {
@@ -168,7 +168,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   }
 
   Future<void> _syncPendingLocalUpdates(String boardId, String userId) async {
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
     final localUpdates = await isar.localCrdtUpdates
         .filter()
         .boardIdEqualTo(boardId)
@@ -181,7 +181,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   }
 
   Future<void> _pushSingleUpdate(LocalCrdtUpdate local, String userId) async {
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
 
     try {
       await _firestoreService

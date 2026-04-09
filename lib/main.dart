@@ -18,7 +18,7 @@ import 'package:inklink/domain/repositories/invitation/invitation_repository.dar
 import 'package:inklink/domain/repositories/invitation/invitation_repository_impl.dart';
 import 'package:inklink/domain/repositories/notification/notification_repository.dart';
 import 'package:inklink/domain/repositories/notification/notification_repository_impl.dart';
-import 'package:inklink/core/database/database_service.dart';
+import 'package:inklink/core/database/local_database_service.dart';
 import 'package:inklink/domain/repositories/profile/profile_repository_impl.dart';
 import 'package:inklink/domain/repositories/social/social_repository.dart';
 import 'package:inklink/domain/repositories/profile/profile_repository.dart';
@@ -50,9 +50,9 @@ void main() async {
   final themeRepository = ThemeRepositoryImpl();
   final initialThemeMode = await themeRepository.getThemeMode();
 
-  final databaseService = DatabaseService();
+  final localDatabaseService = LocalDatabaseService();
   // Ensure DB drops tables or is initialized
-  await databaseService.database;
+  await localDatabaseService.database;
 
   runApp(
     // 0. Firebase Services (provide first, before repositories)
@@ -68,7 +68,9 @@ void main() async {
         ),
         RepositoryProvider<MessagingService>.value(value: messagingService),
         // Other services
-        RepositoryProvider<DatabaseService>.value(value: databaseService),
+        RepositoryProvider<LocalDatabaseService>.value(
+          value: localDatabaseService,
+        ),
         // 1. Repositories (depend on Firebase services)
         RepositoryProvider<AuthRepository>(
           create: (context) => FirebaseAuthRepository(
@@ -89,7 +91,7 @@ void main() async {
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
             functionsService: context.read<CloudFunctionsService>(),
-            dbService: context.read<DatabaseService>(),
+            localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
         RepositoryProvider<BoardRepository>(
@@ -97,19 +99,20 @@ void main() async {
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
             functionsService: context.read<CloudFunctionsService>(),
-            dbService: context.read<DatabaseService>(),
+            localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
         RepositoryProvider<CanvasSyncRepository>(
           create: (context) => FirestoreCanvasSyncRepository(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
-            dbService: context.read<DatabaseService>(),
+            localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
         RepositoryProvider<SettingsRepository>(
-          create: (context) =>
-              SettingsRepositoryImpl(databaseService: databaseService),
+          create: (context) => SettingsRepositoryImpl(
+            localDatabaseService: context.read<LocalDatabaseService>(),
+          ),
         ),
         RepositoryProvider<NotificationRepository>(
           create: (context) => NotificationRepositoryImpl(

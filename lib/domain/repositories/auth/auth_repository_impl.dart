@@ -189,14 +189,21 @@ class FirebaseAuthRepository implements AuthRepository {
     if (current != null) {
       try {
         final token = await _messagingService.getToken();
+        final userUpdates = <String, dynamic>{
+          'fcmToken': FieldValue.delete(),
+          'lastActive': FieldValue.serverTimestamp(),
+          'isOnline': false,
+        };
         if (token != null && token.isNotEmpty) {
-          await _firestoreService.collection('users').doc(current.uid).set({
-            'fcmToken': FieldValue.delete(),
-            'fcmTokens': FieldValue.arrayRemove([token]),
-            'lastActive': FieldValue.serverTimestamp(),
-            'isOnline': false,
-          }, SetOptions(merge: true));
+          userUpdates['fcmTokens'] = FieldValue.arrayRemove([token]);
         }
+
+        await _firestoreService
+            .collection('users')
+            .doc(current.uid)
+            .set(userUpdates, SetOptions(merge: true));
+
+        await _messagingService.deleteToken();
       } catch (e) {
         developer.log('Failed to clear FCM token on sign out', error: e);
       }

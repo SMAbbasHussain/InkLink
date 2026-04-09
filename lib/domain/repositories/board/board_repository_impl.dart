@@ -3,11 +3,11 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/database/collections/local_board.dart';
-import '../../../core/database/database_service.dart';
+import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/cloud_functions_service.dart';
 import '../../../core/services/firestore_service.dart';
@@ -18,7 +18,7 @@ class FirestoreBoardRepository implements BoardRepository {
   final FirestoreService _firestoreService;
   final AuthService _authService;
   final CloudFunctionsService _functionsService;
-  final DatabaseService _dbService;
+  final LocalDatabaseService _localDatabaseService;
   static const String crdtEngine = 'crdt_v1';
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _ownedBoardsSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _joinedBoardsSub;
@@ -30,11 +30,11 @@ class FirestoreBoardRepository implements BoardRepository {
     required FirestoreService firestoreService,
     required AuthService authService,
     required CloudFunctionsService functionsService,
-    required DatabaseService dbService,
+    required LocalDatabaseService localDatabaseService,
   }) : _firestoreService = firestoreService,
        _authService = authService,
        _functionsService = functionsService,
-       _dbService = dbService;
+       _localDatabaseService = localDatabaseService;
 
   @override
   String? get currentUserId => _authService.getCurrentUserId();
@@ -111,7 +111,7 @@ class FirestoreBoardRepository implements BoardRepository {
   }
 
   Stream<List<Board>> _watchLocalBoards({required bool owned}) {
-    return _dbService.database.asStream().asyncExpand((isar) {
+    return _localDatabaseService.database.asStream().asyncExpand((isar) {
       final queryBuilder = isar.localBoards.filter();
 
       final filterQuery = owned
@@ -145,7 +145,7 @@ class FirestoreBoardRepository implements BoardRepository {
 
   @override
   Stream<Board?> getBoardById(String boardId) async* {
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
 
     yield* isar.localBoards
         .filter()
@@ -174,7 +174,7 @@ class FirestoreBoardRepository implements BoardRepository {
     final uid = _syncUserId;
     if (uid == null) return;
 
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
     final updates = <String, LocalBoard>{};
     final snapshotIds = <String>{};
 
@@ -259,7 +259,7 @@ class FirestoreBoardRepository implements BoardRepository {
 
     await docRef.set(boardData);
 
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
     final newLocalBoard = LocalBoard()
       ..boardId = docRef.id
       ..title = name
@@ -316,7 +316,7 @@ class FirestoreBoardRepository implements BoardRepository {
   Future<void> renameBoard(String boardId, String newName) async {
     if (currentUserId == null) return;
 
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
     final board = await isar.localBoards.getByBoardId(boardId);
     if (board != null) {
       board.title = newName;
@@ -337,7 +337,7 @@ class FirestoreBoardRepository implements BoardRepository {
   Future<void> deleteBoard(String boardId) async {
     if (currentUserId == null) return;
 
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
     await isar.writeTxn(() async {
       await isar.localBoards.deleteByBoardId(boardId);
     });
@@ -364,7 +364,7 @@ class FirestoreBoardRepository implements BoardRepository {
     );
     await previewFile.writeAsBytes(pngBytes, flush: true);
 
-    final isar = await _dbService.database;
+    final isar = await _localDatabaseService.database;
     final localBoard = await isar.localBoards.getByBoardId(boardId);
     if (localBoard == null) return;
 
@@ -382,7 +382,7 @@ class FirestoreBoardRepository implements BoardRepository {
 
   @override
   Stream<String?> watchBoardPreview(String boardId) {
-    return _dbService.database.asStream().asyncExpand((isar) {
+    return _localDatabaseService.database.asStream().asyncExpand((isar) {
       return isar.localBoards
           .filter()
           .boardIdEqualTo(boardId)
