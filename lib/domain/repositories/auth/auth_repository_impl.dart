@@ -14,6 +14,7 @@ class FirebaseAuthRepository implements AuthRepository {
   final MessagingService _messagingService;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
   bool _tokenRefreshBound = false;
+  String? _lastSyncedToken;
 
   FirebaseAuthRepository({
     required AuthService authService,
@@ -48,24 +49,9 @@ class FirebaseAuthRepository implements AuthRepository {
       final User? user = userCredential.user;
 
       if (user != null) {
-        // 1. CHECK IF USER EXISTS FIRST
-        final userDoc = await _firestoreService
-            .collection('users')
-            .doc(user.uid)
-            .get();
-
-        if (!userDoc.exists) {
-          // 2. Only register if they are a NEW user
-          developer.log("New Google user. Registering...");
-          await registerUserInFirestore(user, displayName: user.displayName);
-        } else {
-          // 3. If they exist, ONLY update presence/activity, NOT the whole profile
-          developer.log("Existing Google user. Updating activity...");
-          await _firestoreService.collection('users').doc(user.uid).update({
-            'lastActive': FieldValue.serverTimestamp(),
-            'isOnline': true,
-          });
-        }
+        // Always upsert profile fields on auth success to avoid partial docs
+        // when token sync runs before profile registration during Google sign-in.
+        await registerUserInFirestore(user, displayName: user.displayName);
       }
 
       return user;
@@ -89,28 +75,32 @@ class FirebaseAuthRepository implements AuthRepository {
   @override
   Future<void> registerUserInFirestore(User user, {String? displayName}) async {
     try {
-      final String finalName =
-          displayName ?? user.displayName ?? "InkLink Creator";
+      final docRef = _firestoreService.collection('users').doc(user.uid);
+      final existingDoc = await docRef.get();
+      final existingData = existingDoc.data();
 
-      final userData = {
+      final String finalName =
+          (existingData?['displayName'] as String?) ??
+          displayName ??
+          user.displayName ??
+          "InkLink Creator";
+
+      final userData = <String, dynamic>{
         'uid': user.uid,
         'email': user.email,
         'displayName': finalName,
         'photoURL': user.photoURL ?? '',
         'isOnline': true,
-        'createdAt': FieldValue.serverTimestamp(),
         'lastActive': FieldValue.serverTimestamp(),
-        'searchKeywords': generateSearchKeywords(
-          finalName,
-        ), // FIX: Use centralized helper
-        // No 'bio' here, so we MUST use merge: true
+        'searchKeywords': generateSearchKeywords(finalName),
       };
 
+      if (!existingDoc.exists) {
+        userData['createdAt'] = FieldValue.serverTimestamp();
+      }
+
       // FIX: Use SetOptions(merge: true) to prevent wiping existing fields like 'bio'
-      await _firestoreService
-          .collection('users')
-          .doc(user.uid)
-          .set(userData, SetOptions(merge: true));
+      await docRef.set(userData, SetOptions(merge: true));
 
       developer.log("User doc processed with merge: true");
     } catch (e) {
@@ -158,11 +148,15 @@ class FirebaseAuthRepository implements AuthRepository {
       await _messagingService.requestPermission();
       final token = await _messagingService.getToken();
       if (token != null && token.isNotEmpty) {
-        await _firestoreService.collection('users').doc(current.uid).set({
-          'fcmToken': token,
-          'fcmTokens': FieldValue.arrayUnion([token]),
-          'lastActive': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+        if (_lastSyncedToken != token) {
+          await _firestoreService.collection('users').doc(current.uid).set({
+            'fcmToken': token,
+            'fcmTokens': FieldValue.arrayUnion([token]),
+            'lastActive': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+
+          _lastSyncedToken = token;
+        }
       }
 
       if (!_tokenRefreshBound) {
@@ -171,11 +165,15 @@ class FirebaseAuthRepository implements AuthRepository {
           final user = _authService.getCurrentUser();
           if (user == null || newToken.isEmpty) return;
 
+          if (_lastSyncedToken == newToken) return;
+
           await _firestoreService.collection('users').doc(user.uid).set({
             'fcmToken': newToken,
             'fcmTokens': FieldValue.arrayUnion([newToken]),
             'lastActive': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
+
+          _lastSyncedToken = newToken;
         });
       }
     } catch (e) {
@@ -211,6 +209,7 @@ class FirebaseAuthRepository implements AuthRepository {
 
     await _googleSignIn.signOut();
     await _authService.getInstance().signOut();
+    _lastSyncedToken = null;
   }
 
   String _mapFirebaseAuthError(FirebaseAuthException e) {
