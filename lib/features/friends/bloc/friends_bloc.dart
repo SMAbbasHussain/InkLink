@@ -1,15 +1,15 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:rxdart/rxdart.dart';
-import '../../../domain/repositories/social/social_repository.dart';
+import '../../../domain/repositories/friends/friends_repository.dart';
 import 'friends_event.dart';
 import 'friends_state.dart';
 
 class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
-  final SocialRepository socialRepo;
+  final FriendsRepository friendsRepo;
   StreamSubscription? _friendsSubscription;
 
-  FriendsBloc({required this.socialRepo}) : super(FriendsInitial()) {
+  FriendsBloc({required this.friendsRepo}) : super(FriendsInitial()) {
     on<LoadFriendsInfo>((event, emit) async {
       emit(FriendsLoading());
       await _friendsSubscription?.cancel();
@@ -18,8 +18,8 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
       // For now, let's fix the syntax error.
       _friendsSubscription =
           Rx.combineLatest2(
-            socialRepo.watchFriendsList(),
-            socialRepo.watchIncomingRequests(),
+            friendsRepo.watchFriendsList(),
+            friendsRepo.watchIncomingRequests(),
             (
               List<Map<String, dynamic>> friends,
               List<Map<String, dynamic>> requests,
@@ -46,7 +46,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     on<SearchUserByEmailRequested>((event, emit) async {
       emit(FriendsLoading());
       try {
-        final results = await socialRepo.searchUsersByEmail(event.email);
+        final results = await friendsRepo.searchUsersByEmail(event.email);
         emit(SearchResultsLoaded(results));
       } catch (e) {
         emit(FriendsError("User not found"));
@@ -58,7 +58,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
       final currentState = state;
 
       try {
-        await socialRepo.acceptFriendRequest(event.requestId, event.senderUid);
+        await friendsRepo.acceptFriendRequest(event.requestId, event.senderUid);
         // Success! The stream from Firestore will automatically update the list.
       } catch (e) {
         // Restore previous state so the list doesn't vanish
@@ -76,7 +76,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
 
     on<DeclineFriendRequestRequested>((event, emit) async {
       try {
-        await socialRepo.declineFriendRequest(event.requestId);
+        await friendsRepo.declineFriendRequest(event.requestId);
       } catch (e) {
         emit(FriendsError("Request declined"));
       }
@@ -84,7 +84,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
 
     on<SendFriendRequestRequested>((event, emit) async {
       try {
-        await socialRepo.sendFriendRequest(event.targetUid);
+        await friendsRepo.sendFriendRequest(event.targetUid);
       } catch (e) {
         emit(FriendsError(e.toString()));
       }

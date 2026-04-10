@@ -3,7 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/repositories/invitation/invitation_repository.dart';
 import '../../../domain/repositories/notification/notification_repository.dart';
-import '../../invitations/bloc/invitations_bloc.dart';
+import '../../board_invitations/bloc/board_invitations_bloc.dart';
 import '../bloc/notifications_bloc.dart';
 import 'notifications_screen.dart';
 
@@ -17,9 +17,9 @@ Route<void> buildNotificationsRoute(BuildContext context) {
           )..add(const NotificationsLoadRequested()),
         ),
         BlocProvider(
-          create: (_) => InvitationsBloc(
+          create: (_) => BoardInvitationsBloc(
             invitationRepository: context.read<InvitationRepository>(),
-          )..add(const InvitationsLoadRequested()),
+          )..add(const BoardInvitationsLoadRequested()),
         ),
       ],
       child: const NotificationsScreen(),

@@ -27,9 +27,9 @@ lib/
 |       |-- auth/
 |       |-- board/
 |       |-- canvas/
+|       |-- friends/
 |       |-- profile/
 |       |-- settings/
-|       |-- social/
 |       `-- theme/
 `-- features/
     |-- auth/
@@ -66,7 +66,7 @@ Provided services in app scope:
 Provided repositories in app scope:
 
 - `AuthRepository`
-- `SocialRepository`
+- `FriendsRepository`
 - `ProfileRepository`
 - `BoardRepository`
 - `CanvasSyncRepository`
@@ -107,9 +107,9 @@ Repository pattern is standardized as interface + implementation per folder:
 - `auth/auth_repository.dart` + `auth/auth_repository_impl.dart`
 - `board/board_repository.dart` + `board/board_repository_impl.dart`
 - `canvas/canvas_sync_repository.dart` + `canvas/canvas_sync_repository_impl.dart`
+- `friends/friends_repository.dart` + `friends/friends_repository_impl.dart`
 - `profile/profile_repository.dart` + `profile/profile_repository_impl.dart`
 - `settings/settings_repository.dart` + `settings/settings_repository_impl.dart`
-- `social/social_repository.dart` + `social/social_repository_impl.dart`
 - `theme/theme_repository.dart` + `theme/theme_repository_impl.dart`
 
 ## Feature Notes
@@ -132,7 +132,7 @@ Repository pattern is standardized as interface + implementation per folder:
 
 ### friends
 
-- `FriendsBloc` handles friend requests and social interactions via `SocialRepository`.
+- `FriendsBloc` handles friend requests and social interactions via `FriendsRepository`.
 
 ### profile
 

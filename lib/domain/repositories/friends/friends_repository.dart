@@ -1,4 +1,4 @@
-abstract class SocialRepository {
+abstract class FriendsRepository {
   // Search
   Future<List<Map<String, dynamic>>> searchUsersByEmail(String email);
 

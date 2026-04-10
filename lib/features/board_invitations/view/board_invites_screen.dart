@@ -2,16 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../features/canvas/view/canvas_route.dart';
-import '../bloc/invitations_bloc.dart';
+import '../bloc/board_invitations_bloc.dart';
 
 class BoardInvitesScreen extends StatelessWidget {
   const BoardInvitesScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return BlocConsumer<InvitationsBloc, InvitationsState>(
+    return BlocConsumer<BoardInvitationsBloc, BoardInvitationsState>(
       listener: (context, state) {
-        if (state is InvitationsLoaded && state.message != null) {
+        if (state is BoardInvitationsLoaded && state.message != null) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(state.message!),
@@ -32,27 +32,29 @@ class BoardInvitesScreen extends StatelessWidget {
         }
       },
       builder: (context, state) {
-        if (state is InvitationsInitial) {
-          context.read<InvitationsBloc>().add(const InvitationsLoadRequested());
+        if (state is BoardInvitationsInitial) {
+          context.read<BoardInvitationsBloc>().add(
+            const BoardInvitationsLoadRequested(),
+          );
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
 
-        if (state is InvitationsLoading) {
+        if (state is BoardInvitationsLoading) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
 
-        if (state is InvitationsError) {
+        if (state is BoardInvitationsError) {
           return Scaffold(
             appBar: AppBar(title: const Text('Board Invites')),
             body: Center(child: Text(state.message)),
           );
         }
 
-        final loaded = state as InvitationsLoaded;
+        final loaded = state as BoardInvitationsLoaded;
         return Scaffold(
           appBar: AppBar(title: const Text('Board Invites')),
           body: loaded.invites.isEmpty
@@ -129,11 +131,13 @@ class BoardInvitesScreen extends StatelessWidget {
                                     onPressed: inviteId.isEmpty
                                         ? null
                                         : () {
-                                            context.read<InvitationsBloc>().add(
-                                              InvitationDeclineRequested(
-                                                inviteId,
-                                              ),
-                                            );
+                                            context
+                                                .read<BoardInvitationsBloc>()
+                                                .add(
+                                                  BoardInvitationDeclineRequested(
+                                                    inviteId,
+                                                  ),
+                                                );
                                           },
                                     child: const Text('Decline'),
                                   ),
@@ -145,12 +149,14 @@ class BoardInvitesScreen extends StatelessWidget {
                                         inviteId.isEmpty || boardId.isEmpty
                                         ? null
                                         : () {
-                                            context.read<InvitationsBloc>().add(
-                                              InvitationAcceptRequested(
-                                                inviteId,
-                                                boardId: boardId,
-                                              ),
-                                            );
+                                            context
+                                                .read<BoardInvitationsBloc>()
+                                                .add(
+                                                  BoardInvitationAcceptRequested(
+                                                    inviteId,
+                                                    boardId: boardId,
+                                                  ),
+                                                );
                                           },
                                     child: const Text('Accept'),
                                   ),

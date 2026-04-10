@@ -5,8 +5,8 @@ import '../../canvas/view/canvas_route.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../../friends/bloc/friends_event.dart';
 import '../../friends/view/friend_requests_screen.dart';
-import '../../invitations/bloc/invitations_bloc.dart';
-import '../../invitations/view/board_invites_screen.dart';
+import '../../board_invitations/bloc/board_invitations_bloc.dart';
+import '../../board_invitations/view/board_invites_screen.dart';
 import '../bloc/notifications_bloc.dart';
 
 class NotificationsScreen extends StatelessWidget {
@@ -14,9 +14,9 @@ class NotificationsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocListener<InvitationsBloc, InvitationsState>(
+    return BlocListener<BoardInvitationsBloc, BoardInvitationsState>(
       listener: (context, state) {
-        if (state is! InvitationsLoaded) return;
+        if (state is! BoardInvitationsLoaded) return;
         if (state.message != null) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -160,8 +160,8 @@ class NotificationsScreen extends StatelessWidget {
                                   context
                                       .read<NotificationsBloc>()
                                       .markNotificationRead(notificationId);
-                                  context.read<InvitationsBloc>().add(
-                                    InvitationAcceptRequested(
+                                  context.read<BoardInvitationsBloc>().add(
+                                    BoardInvitationAcceptRequested(
                                       inviteId,
                                       boardId: boardId,
                                     ),
@@ -186,8 +186,8 @@ class NotificationsScreen extends StatelessWidget {
                                   context
                                       .read<NotificationsBloc>()
                                       .markNotificationRead(notificationId);
-                                  context.read<InvitationsBloc>().add(
-                                    InvitationDeclineRequested(inviteId),
+                                  context.read<BoardInvitationsBloc>().add(
+                                    BoardInvitationDeclineRequested(inviteId),
                                   );
                                 },
                               ),
@@ -258,7 +258,7 @@ class NotificationsScreen extends StatelessWidget {
                               context,
                               MaterialPageRoute(
                                 builder: (_) => BlocProvider.value(
-                                  value: context.read<InvitationsBloc>(),
+                                  value: context.read<BoardInvitationsBloc>(),
                                   child: const BoardInvitesScreen(),
                                 ),
                               ),

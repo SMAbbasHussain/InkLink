@@ -20,9 +20,9 @@ import 'package:inklink/domain/repositories/notification/notification_repository
 import 'package:inklink/domain/repositories/notification/notification_repository_impl.dart';
 import 'package:inklink/core/database/local_database_service.dart';
 import 'package:inklink/domain/repositories/profile/profile_repository_impl.dart';
-import 'package:inklink/domain/repositories/social/social_repository.dart';
+import 'package:inklink/domain/repositories/friends/friends_repository.dart';
 import 'package:inklink/domain/repositories/profile/profile_repository.dart';
-import 'package:inklink/domain/repositories/social/social_repository_impl.dart';
+import 'package:inklink/domain/repositories/friends/friends_repository_impl.dart';
 import 'package:inklink/domain/repositories/settings/settings_repository.dart';
 import 'package:inklink/domain/repositories/settings/settings_repository_impl.dart';
 import 'package:inklink/domain/repositories/theme/theme_repository_impl.dart';
@@ -79,8 +79,8 @@ void main() async {
             messagingService: context.read<MessagingService>(),
           ),
         ),
-        RepositoryProvider<SocialRepository>(
-          create: (context) => SocialRepositoryImpl(
+        RepositoryProvider<FriendsRepository>(
+          create: (context) => FriendsRepositoryImpl(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
             functionsService: context.read<CloudFunctionsService>(),
@@ -155,8 +155,8 @@ void main() async {
           ),
           BlocProvider(
             create: (context) => FriendsBloc(
-              socialRepo: context
-                  .read<SocialRepository>(), // Reads from RepoProvider
+              friendsRepo: context
+                  .read<FriendsRepository>(), // Reads from RepoProvider
             ),
           ),
         ],

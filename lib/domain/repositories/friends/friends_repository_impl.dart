@@ -1,18 +1,18 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'dart:developer' as developer;
-import 'social_repository.dart';
+import 'friends_repository.dart';
 import '../../../core/services/firestore_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/cloud_functions_service.dart';
 import 'package:rxdart/rxdart.dart';
 
-class SocialRepositoryImpl implements SocialRepository {
+class FriendsRepositoryImpl implements FriendsRepository {
   final FirestoreService _firestoreService;
   final AuthService _authService;
   final CloudFunctionsService _functionsService;
 
-  SocialRepositoryImpl({
+  FriendsRepositoryImpl({
     required FirestoreService firestoreService,
     required AuthService authService,
     required CloudFunctionsService functionsService,
@@ -49,7 +49,7 @@ class SocialRepositoryImpl implements SocialRepository {
     } on FirebaseFunctionsException catch (e) {
       developer.log(
         'Cloud Function Error: ${e.code} - ${e.message}',
-        name: 'SocialRepositoryImpl',
+        name: 'FriendsRepositoryImpl',
       );
       throw Exception(e.message);
     } catch (e) {
@@ -72,7 +72,7 @@ class SocialRepositoryImpl implements SocialRepository {
       // This will give you the actual error from the Cloud Function logs
       developer.log(
         'Cloud Function Error: ${e.code} - ${e.message}',
-        name: 'SocialRepositoryImpl',
+        name: 'FriendsRepositoryImpl',
       );
       throw Exception(e.message);
     } catch (e) {
@@ -96,7 +96,7 @@ class SocialRepositoryImpl implements SocialRepository {
     } on FirebaseFunctionsException catch (e) {
       developer.log(
         'Cloud Function Error: ${e.code} - ${e.message}',
-        name: 'SocialRepositoryImpl',
+        name: 'FriendsRepositoryImpl',
       );
       throw Exception(e.message);
     } catch (e) {

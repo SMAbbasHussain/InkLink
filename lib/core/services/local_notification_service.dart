@@ -7,8 +7,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../domain/repositories/invitation/invitation_repository.dart';
 import '../../features/friends/view/friend_requests_screen.dart';
-import '../../features/invitations/bloc/invitations_bloc.dart';
-import '../../features/invitations/view/board_invites_screen.dart';
+import '../../features/board_invitations/bloc/board_invitations_bloc.dart';
+import '../../features/board_invitations/view/board_invites_screen.dart';
 
 class LocalNotificationService {
   static bool _initialized = false;
@@ -48,9 +48,9 @@ class LocalNotificationService {
       navigator.push(
         MaterialPageRoute(
           builder: (_) => BlocProvider(
-            create: (context) => InvitationsBloc(
+            create: (context) => BoardInvitationsBloc(
               invitationRepository: context.read<InvitationRepository>(),
-            )..add(const InvitationsLoadRequested()),
+            )..add(const BoardInvitationsLoadRequested()),
             child: const BoardInvitesScreen(),
           ),
         ),

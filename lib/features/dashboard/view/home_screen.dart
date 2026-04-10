@@ -9,8 +9,8 @@ import 'package:inklink/features/dashboard/view/widgets/quick_action_button.dart
 import 'package:inklink/features/friends/bloc/friends_bloc.dart';
 import 'package:inklink/features/friends/bloc/friends_event.dart';
 import 'package:inklink/features/friends/bloc/friends_state.dart';
-import 'package:inklink/features/invitations/bloc/invitations_bloc.dart';
-import 'package:inklink/features/invitations/view/board_invites_screen.dart';
+import 'package:inklink/features/board_invitations/bloc/board_invitations_bloc.dart';
+import 'package:inklink/features/board_invitations/view/board_invites_screen.dart';
 import 'package:inklink/features/notifications/view/notifications_route.dart';
 import 'package:inklink/features/profile/view/profile_route.dart';
 import '../../../core/constants/app_colors.dart';
@@ -35,7 +35,9 @@ class _HomeScreenState extends State<HomeScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    context.read<InvitationsBloc>().add(const InvitationsLoadRequested());
+    context.read<BoardInvitationsBloc>().add(
+      const BoardInvitationsLoadRequested(),
+    );
 
     context.read<DashboardBloc>().add(LoadDashboardRequested());
 
@@ -394,9 +396,12 @@ class _HomeScreenState extends State<HomeScreen>
                           ),
                         ),
                         const SizedBox(height: 10),
-                        BlocBuilder<InvitationsBloc, InvitationsState>(
+                        BlocBuilder<
+                          BoardInvitationsBloc,
+                          BoardInvitationsState
+                        >(
                           builder: (context, inviteState) {
-                            final count = inviteState is InvitationsLoaded
+                            final count = inviteState is BoardInvitationsLoaded
                                 ? inviteState.invites.length
                                 : 0;
                             if (count == 0) {
@@ -409,7 +414,8 @@ class _HomeScreenState extends State<HomeScreen>
                                   context,
                                   MaterialPageRoute(
                                     builder: (_) => BlocProvider.value(
-                                      value: context.read<InvitationsBloc>(),
+                                      value: context
+                                          .read<BoardInvitationsBloc>(),
                                       child: const BoardInvitesScreen(),
                                     ),
                                   ),
