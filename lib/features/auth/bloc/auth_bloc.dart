@@ -1,11 +1,11 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../../../domain/repositories/auth/auth_repository.dart';
+import '../../../domain/services/auth/auth_session_service.dart';
 import 'auth_event.dart';
 import 'auth_state.dart';
 
 class AuthBloc extends Bloc<AuthEvent, AuthState> {
-  final AuthRepository authRepository;
+  final AuthSessionService authService;
 
   Authenticated _toAuthenticated(User user, {String? fallbackName}) {
     return Authenticated(
@@ -16,15 +16,15 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     );
   }
 
-  AuthBloc({required this.authRepository}) : super(AuthInitial()) {
+  AuthBloc({required this.authService}) : super(AuthInitial()) {
     on<AuthCheckRequested>((event, emit) async {
       // FIX: Listen to the user stream instead of single snapshot
       // This ensures app updates when user logs in from another device/tab
       await emit.forEach<User?>(
-        authRepository.user,
+        authService.user,
         onData: (user) {
           if (user != null) {
-            authRepository.syncFcmToken();
+            authService.onAuthenticated(user);
             return _toAuthenticated(user);
           } else {
             return Unauthenticated();
@@ -39,7 +39,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<LoginRequested>((event, emit) async {
       emit(AuthLoading());
       try {
-        final user = await authRepository.signIn(event.email, event.password);
+        final user = await authService.signIn(event.email, event.password);
         if (user == null) {
           emit(Unauthenticated());
           return;
@@ -53,7 +53,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<RegisterRequested>((event, emit) async {
       emit(AuthLoading());
       try {
-        final user = await authRepository.signUp(
+        final user = await authService.signUp(
           event.name,
           event.email,
           event.password,
@@ -71,7 +71,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<GoogleSignInRequested>((event, emit) async {
       emit(AuthLoading()); // AppView will show spinner/splash
       try {
-        final user = await authRepository.signInWithGoogle();
+        final user = await authService.signInWithGoogle();
 
         if (user != null) {
           // Success: User picked an account and Firebase authed
@@ -87,7 +87,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     });
 
     on<LogoutRequested>((event, emit) async {
-      await authRepository.signOut();
+      await authService.signOut();
       emit(Unauthenticated());
     });
   }

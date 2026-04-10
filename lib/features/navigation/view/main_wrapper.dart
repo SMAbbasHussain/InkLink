@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/domain/repositories/invitation/invitation_repository.dart';
+import 'package:inklink/domain/services/invitation/invitation_service.dart';
 import 'package:inklink/domain/repositories/settings/settings_repository.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../board_invitations/bloc/board_invitations_bloc.dart';
@@ -18,7 +18,7 @@ class MainWrapper extends StatelessWidget {
     final List<Widget> screens = [
       BlocProvider(
         create: (context) => BoardInvitationsBloc(
-          invitationRepository: context.read<InvitationRepository>(),
+          invitationService: context.read<InvitationService>(),
         )..add(const BoardInvitationsLoadRequested()),
         child: const HomeScreen(),
       ),

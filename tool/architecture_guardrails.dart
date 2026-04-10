@@ -17,6 +17,7 @@ void main() {
     final source = entity.readAsStringSync();
 
     _checkFirebaseSingletonUsage(relativePath, source, violations);
+    _checkRepositoryLayerBoundaries(relativePath, source, violations);
     _checkRepositoryUsageInViews(relativePath, source, violations);
     _checkScreenLayerBoundaries(relativePath, source, violations);
   }
@@ -31,6 +32,47 @@ void main() {
     stderr.writeln(' - $violation');
   }
   exit(1);
+}
+
+void _checkRepositoryLayerBoundaries(
+  String path,
+  String source,
+  List<String> violations,
+) {
+  final isRepositoryFile = path.startsWith('lib/domain/repositories/');
+  if (!isRepositoryFile) return;
+
+  final forbiddenImportPatterns = <RegExp>[
+    RegExp(r"import\s+'package:cloud_functions/cloud_functions\.dart'"),
+    RegExp(
+      r"import\s+'package:inklink/core/services/cloud_functions_service\.dart'",
+    ),
+    RegExp(
+      r"import\s+'\.\./\.\./\.\./core/services/cloud_functions_service\.dart'",
+    ),
+    RegExp(r"import\s+'package:inklink/domain/services/"),
+    RegExp(r"import\s+'\.\./\.\./services/"),
+  ];
+
+  for (final importPattern in forbiddenImportPatterns) {
+    if (importPattern.hasMatch(source)) {
+      violations.add(
+        '$path crosses repository boundary with forbidden import. Repositories must stay data-access only.',
+      );
+      break;
+    }
+  }
+
+  final forbiddenCallPatterns = <RegExp>[RegExp(r'\.httpsCallable\s*\(')];
+
+  for (final callPattern in forbiddenCallPatterns) {
+    if (callPattern.hasMatch(source)) {
+      violations.add(
+        '$path calls Cloud Functions directly. Move function orchestration to domain services.',
+      );
+      break;
+    }
+  }
 }
 
 void _checkFirebaseSingletonUsage(

@@ -1,37 +1,28 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:rxdart/rxdart.dart';
-import '../../../domain/repositories/friends/friends_repository.dart';
+import '../../../domain/services/friends/friends_service.dart';
 import 'friends_event.dart';
 import 'friends_state.dart';
 
 class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
-  final FriendsRepository friendsRepo;
+  final FriendsService friendsService;
   StreamSubscription? _friendsSubscription;
 
-  FriendsBloc({required this.friendsRepo}) : super(FriendsInitial()) {
+  FriendsBloc({required this.friendsService}) : super(FriendsInitial()) {
     on<LoadFriendsInfo>((event, emit) async {
       emit(FriendsLoading());
       await _friendsSubscription?.cancel();
 
       // In a full implementation, you'd combine streams.
       // For now, let's fix the syntax error.
-      _friendsSubscription =
-          Rx.combineLatest2(
-            friendsRepo.watchFriendsList(),
-            friendsRepo.watchIncomingRequests(),
-            (
-              List<Map<String, dynamic>> friends,
-              List<Map<String, dynamic>> requests,
-            ) {
-              return UpdateFriendsLists(
-                friends: friends,
-                incomingRequests: requests,
-              );
-            },
-          ).listen((updateEvent) {
-            add(updateEvent);
-          });
+      _friendsSubscription = friendsService.watchFriendsInfo().listen((info) {
+        add(
+          UpdateFriendsLists(
+            friends: info.friends,
+            incomingRequests: info.incomingRequests,
+          ),
+        );
+      });
     });
 
     on<UpdateFriendsLists>((event, emit) {
@@ -46,7 +37,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     on<SearchUserByEmailRequested>((event, emit) async {
       emit(FriendsLoading());
       try {
-        final results = await friendsRepo.searchUsersByEmail(event.email);
+        final results = await friendsService.searchUsersByEmail(event.email);
         emit(SearchResultsLoaded(results));
       } catch (e) {
         emit(FriendsError("User not found"));
@@ -58,7 +49,10 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
       final currentState = state;
 
       try {
-        await friendsRepo.acceptFriendRequest(event.requestId, event.senderUid);
+        await friendsService.acceptFriendRequest(
+          event.requestId,
+          event.senderUid,
+        );
         // Success! The stream from Firestore will automatically update the list.
       } catch (e) {
         // Restore previous state so the list doesn't vanish
@@ -76,7 +70,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
 
     on<DeclineFriendRequestRequested>((event, emit) async {
       try {
-        await friendsRepo.declineFriendRequest(event.requestId);
+        await friendsService.declineFriendRequest(event.requestId);
       } catch (e) {
         emit(FriendsError("Request declined"));
       }
@@ -84,7 +78,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
 
     on<SendFriendRequestRequested>((event, emit) async {
       try {
-        await friendsRepo.sendFriendRequest(event.targetUid);
+        await friendsService.sendFriendRequest(event.targetUid);
       } catch (e) {
         emit(FriendsError(e.toString()));
       }

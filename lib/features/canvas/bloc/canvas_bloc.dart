@@ -10,16 +10,14 @@ import 'package:uuid/uuid.dart';
 import '../../../core/crdt/canvas_crdt_adapter.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../domain/models/board.dart';
-import '../../../domain/repositories/board/board_repository.dart';
-import '../../../domain/repositories/canvas/canvas_sync_repository.dart';
+import '../../../domain/services/canvas/canvas_service.dart';
 import '../view/trays/canvas_shape_type.dart';
 
 part 'canvas_event.dart';
 part 'canvas_state.dart';
 
 class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
-  final BoardRepository? _boardRepository;
-  final CanvasSyncRepository? _syncRepository;
+  final CanvasService? _canvasService;
   final Uuid _uuid = const Uuid();
   final math.Random _random = math.Random();
 
@@ -30,14 +28,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final Set<String> _appliedCrdtUpdateIds = <String>{};
   String _boardId;
 
-  CanvasBloc({
-    BoardRepository? boardRepository,
-    CanvasSyncRepository? syncRepository,
-    String boardId = '',
-  }) : _boardRepository = boardRepository,
-       _syncRepository = syncRepository,
-       _boardId = boardId,
-       super(CanvasInitial()) {
+  CanvasBloc({CanvasService? canvasService, String boardId = ''})
+    : _canvasService = canvasService,
+      _boardId = boardId,
+      super(CanvasInitial()) {
     on<CreateBoardRequested>(_onCreateBoardRequested);
     on<CanvasStartBoardSyncRequested>(_onCanvasStartBoardSyncRequested);
     on<CanvasRenameBoardRequested>(_onCanvasRenameBoardRequested);
@@ -61,21 +55,21 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasSaveBoardPreviewRequested>(_onSaveBoardPreviewRequested);
   }
 
-  bool get _canSync => _syncRepository != null && _boardId.isNotEmpty;
+  bool get _canSync => _canvasService != null && _boardId.isNotEmpty;
 
   Future<void> _onCreateBoardRequested(
     CreateBoardRequested event,
     Emitter<CanvasState> emit,
   ) async {
-    final boardRepository = _boardRepository;
-    if (boardRepository == null) {
+    final canvasService = _canvasService;
+    if (canvasService == null) {
       emit(CanvasErrorState('Board repository is not configured.'));
       return;
     }
 
     emit(CanvasCreating());
     try {
-      final boardId = await boardRepository.createNewBoard();
+      final boardId = await canvasService.createBoard();
       emit(CanvasReady(boardId));
     } catch (e) {
       emit(CanvasErrorState(e.toString()));
@@ -86,11 +80,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasStartBoardSyncRequested event,
     Emitter<CanvasState> emit,
   ) async {
-    final boardRepository = _boardRepository;
-    if (boardRepository == null) return;
+    final canvasService = _canvasService;
+    if (canvasService == null) return;
 
     try {
-      await boardRepository.startBoardsSync();
+      await canvasService.startBoardsSync();
     } catch (e) {
       emit(state.copyWith(error: 'Failed to sync boards: $e'));
     }
@@ -100,11 +94,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasRenameBoardRequested event,
     Emitter<CanvasState> emit,
   ) async {
-    final boardRepository = _boardRepository;
-    if (boardRepository == null || _boardId.isEmpty) return;
+    final canvasService = _canvasService;
+    if (canvasService == null || _boardId.isEmpty) return;
 
     try {
-      await boardRepository.renameBoard(_boardId, event.newName);
+      await canvasService.renameBoard(_boardId, event.newName);
       emit(state.copyWith(error: null));
     } catch (e) {
       emit(state.copyWith(error: 'Failed to rename board: $e'));
@@ -350,11 +344,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasSaveBoardPreviewRequested event,
     Emitter<CanvasState> emit,
   ) async {
-    final boardRepository = _boardRepository;
-    if (boardRepository == null || _boardId.isEmpty) return;
+    final canvasService = _canvasService;
+    if (canvasService == null || _boardId.isEmpty) return;
 
     try {
-      await boardRepository.saveBoardPreview(_boardId, event.pngBytes);
+      await canvasService.saveBoardPreview(_boardId, event.pngBytes);
     } catch (_) {
       // Preview persistence failure should not interrupt canvas usage.
     }
@@ -381,10 +375,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   void _startCrdtUpdatesListener() {
     if (_crdtUpdatesSub != null || !_canSync) return;
 
-    final syncRepository = _syncRepository;
-    if (syncRepository == null) return;
+    final canvasService = _canvasService;
+    if (canvasService == null) return;
 
-    _crdtUpdatesSub = syncRepository.listenToCrdtUpdates(_boardId).listen((
+    _crdtUpdatesSub = canvasService.listenToCrdtUpdates(_boardId).listen((
       updates,
     ) {
       add(CanvasApplyRemoteUpdate(updates));
@@ -392,11 +386,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   }
 
   void _startBoardMetadataListener() {
-    final boardRepository = _boardRepository;
-    if (boardRepository == null || _boardId.isEmpty) return;
+    final canvasService = _canvasService;
+    if (canvasService == null || _boardId.isEmpty) return;
 
     _boardMetaSub?.cancel();
-    _boardMetaSub = boardRepository.getBoardById(_boardId).listen((board) {
+    _boardMetaSub = canvasService.watchBoardById(_boardId).listen((board) {
       add(CanvasBoardTitleUpdated(board?.title));
     });
   }
@@ -432,13 +426,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   Future<void> _publishCrdtUpdate(Uint8List update) async {
     if (!_canSync) return;
 
-    final syncRepository = _syncRepository;
-    if (syncRepository == null) return;
+    final canvasService = _canvasService;
+    if (canvasService == null) return;
 
     final updateId = _uuid.v4();
     _appliedCrdtUpdateIds.add(updateId);
 
-    await syncRepository.pushCrdtUpdate(
+    await canvasService.pushCrdtUpdate(
       boardId: _boardId,
       updateId: updateId,
       payload: update,
@@ -608,7 +602,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     await _boardMetaSub?.cancel();
     await _crdtUpdatesSub?.cancel();
     if (_canSync) {
-      await _syncRepository?.stopCrdtRemoteSync(_boardId);
+      await _canvasService?.stopCrdtRemoteSync(_boardId);
     }
     return super.close();
   }

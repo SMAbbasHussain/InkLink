@@ -2,8 +2,8 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:rxdart/rxdart.dart';
 import '../../../domain/models/board.dart';
-import '../../../domain/repositories/board/board_repository.dart';
-import '../../../domain/repositories/profile/profile_repository.dart';
+import '../../../domain/services/board/board_service.dart';
+import '../../../domain/services/profile/profile_service.dart';
 
 // States
 abstract class DashboardState {}
@@ -116,13 +116,13 @@ class LoadDashboardRequested extends DashboardEvent {}
 const Object _unset = Object();
 
 class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
-  final BoardRepository boardRepo;
-  final ProfileRepository profileRepo;
+  final BoardService boardService;
+  final ProfileService profileService;
   StreamSubscription<List<List<Board>>>? _dashboardSub;
   StreamSubscription<Map<String, dynamic>?>? _profileSub;
   Map<String, dynamic>? _latestCurrentUserProfile;
 
-  DashboardBloc({required this.boardRepo, required this.profileRepo})
+  DashboardBloc({required this.boardService, required this.profileService})
     : super(DashboardInitial()) {
     on<LoadDashboardRequested>(_onLoadDashboardRequested);
     on<_UpdateDashboardData>(_onUpdateDashboardData);
@@ -142,12 +142,12 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     Emitter<DashboardState> emit,
   ) async {
     _dashboardSub?.cancel();
-    await boardRepo.startBoardsSync();
+    await boardService.startBoardsSync();
 
     _dashboardSub =
         Rx.combineLatest2<List<Board>, List<Board>, List<List<Board>>>(
-          boardRepo.getOwnedBoards(),
-          boardRepo.getJoinedBoards(),
+          boardService.getOwnedBoards(),
+          boardService.getJoinedBoards(),
           (owned, joined) => <List<Board>>[owned, joined],
         ).listen((combined) {
           add(_UpdateDashboardData(combined[0], combined[1]));
@@ -191,7 +191,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       return;
     }
 
-    _profileSub = profileRepo.getUserByIdStream(event.userId!).listen((data) {
+    _profileSub = profileService.watchUserById(event.userId!).listen((data) {
       add(_UpdateCurrentUserProfile(data));
     });
   }
@@ -213,7 +213,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     Emitter<DashboardState> emit,
   ) async {
     try {
-      await boardRepo.joinBoard(event.boardId);
+      await boardService.joinBoard(event.boardId);
       final current = state;
       if (current is DashboardLoaded) {
         emit(current.copyWith(joinedBoardId: event.boardId, actionError: null));
@@ -231,8 +231,8 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     Emitter<DashboardState> emit,
   ) async {
     try {
-      final boardId = await boardRepo.createNewBoard(
-        name: event.title ?? 'Untitled Board',
+      final boardId = await boardService.createBoard(
+        title: event.title,
         invitedUserIds: event.invitedUserIds,
         inviteExpiryHours: event.inviteExpiryHours,
       );
@@ -254,7 +254,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     Emitter<DashboardState> emit,
   ) async {
     try {
-      await boardRepo.renameBoard(event.boardId, event.newName);
+      await boardService.renameBoard(event.boardId, event.newName);
       final current = state;
       if (current is DashboardLoaded) {
         emit(current.copyWith(actionError: null));
@@ -272,7 +272,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     Emitter<DashboardState> emit,
   ) async {
     try {
-      await boardRepo.deleteBoard(event.boardId);
+      await boardService.deleteBoard(event.boardId);
       final current = state;
       if (current is DashboardLoaded) {
         emit(current.copyWith(actionError: null));

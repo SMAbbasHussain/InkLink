@@ -1,26 +1,20 @@
-import '../../../core/utils/helpers.dart';
 import '../../../core/services/firestore_service.dart';
 import '../../../core/services/auth_service.dart';
-import '../../../core/services/cloud_functions_service.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../models/user_model.dart';
 import 'profile_repository.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 
 class ProfileRepositoryImpl implements ProfileRepository {
   final FirestoreService _firestoreService;
   final AuthService _authService;
-  final CloudFunctionsService _functionsService;
   final LocalDatabaseService _localDatabaseService;
 
   ProfileRepositoryImpl({
     required FirestoreService firestoreService,
     required AuthService authService,
-    required CloudFunctionsService functionsService,
     required LocalDatabaseService localDatabaseService,
   }) : _firestoreService = firestoreService,
        _authService = authService,
-       _functionsService = functionsService,
        _localDatabaseService = localDatabaseService;
 
   @override
@@ -92,76 +86,10 @@ class ProfileRepositoryImpl implements ProfileRepository {
   }
 
   @override
-  Future<void> updateUserProfile({
-    required String name,
-    required String bio,
-  }) async {
-    final user = _authService.getCurrentUser();
-    if (user == null) return;
+  Future<void> updateUserFields(String uid, Map<String, dynamic> data) async {
+    await _firestoreService.collection('users').doc(uid).update(data);
 
-    // 1. Update Firebase Auth (for local app instance)
-    await user.updateDisplayName(name);
-
-    // 2. Generate new search keywords for the new name
-    final keywords = generateSearchKeywords(name);
-
-    // 3. Update Firestore (Source of truth for friends)
-    await _firestoreService.collection('users').doc(user.uid).update({
-      'displayName': name,
-      'bio': bio,
-      'searchKeywords': keywords,
-    });
-
-    await _upsertCachedUser(user.uid, {
-      'displayName': name,
-      'bio': bio,
-      'email': user.email,
-      'photoURL': user.photoURL,
-      'updatedAt': DateTime.now(),
-    });
-  }
-
-  @override
-  Future<String> uploadProfilePhoto({
-    required String imageData,
-    required String filename,
-  }) async {
-    final user = _authService.getCurrentUser();
-    if (user == null) {
-      throw Exception('User not authenticated');
-    }
-
-    try {
-      // Call the Cloud Function to upload to Cloudflare R2
-      final result = await _functionsService
-          .httpsCallable('uploadProfilePhoto')
-          .call({'imageData': imageData, 'filename': filename});
-
-      // Extract the photo URL from the result
-      final photoUrl = result.data['photoUrl'];
-      if (photoUrl == null || photoUrl.isEmpty) {
-        throw Exception('Failed to get photo URL from server');
-      }
-
-      // Update Firestore with the new photo URL
-      await _firestoreService.collection('users').doc(user.uid).update({
-        'photoURL': photoUrl,
-      });
-
-      await _upsertCachedUser(user.uid, {
-        'displayName': user.displayName,
-        'bio': null,
-        'email': user.email,
-        'photoURL': photoUrl,
-        'updatedAt': DateTime.now(),
-      });
-
-      return photoUrl;
-    } on FirebaseFunctionsException catch (e) {
-      throw Exception('Upload failed: ${e.message}');
-    } catch (e) {
-      throw Exception('Failed to upload profile photo: $e');
-    }
+    await _upsertCachedUser(uid, data);
   }
 
   Future<Map<String, dynamic>?> _getCachedUserMap(String uid) async {

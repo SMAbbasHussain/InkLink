@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../domain/repositories/board/board_repository.dart';
 import '../../../domain/repositories/canvas/canvas_sync_repository.dart';
 import '../../../domain/repositories/settings/settings_repository.dart';
+import '../../../domain/services/canvas/canvas_service.dart';
 import '../bloc/canvas_bloc.dart';
 import 'canvas_screen.dart';
 
@@ -59,8 +60,10 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
         return BlocProvider(
           create: (_) =>
               CanvasBloc(
-                  boardRepository: context.read<BoardRepository>(),
-                  syncRepository: context.read<CanvasSyncRepository>(),
+                  canvasService: CanvasServiceImpl(
+                    boardRepository: context.read<BoardRepository>(),
+                    syncRepository: context.read<CanvasSyncRepository>(),
+                  ),
                   boardId: widget.boardId,
                 )
                 ..add(const CanvasStartBoardSyncRequested())

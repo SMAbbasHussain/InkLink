@@ -1,20 +1,21 @@
 # InkLink
 
-InkLink is a Flutter app for real-time collaborative canvas workspaces with Firebase-backed sync and a BLoC + repository architecture.
+InkLink is a Flutter app for real-time collaborative canvas workspaces with Firebase-backed sync and a service-first BLoC architecture.
 
 ## Current Implementation Snapshot
 
 - Flutter app with feature modules under `lib/features`.
-- Firebase integration for Auth, Firestore, and Cloud Functions.
+- Firebase integration for Auth, Firestore, Cloud Functions, and Messaging.
 - Local persistence and offline-friendly state via Isar.
 - Collaborative canvas sync through CRDT update streams.
+- Friend requests, board invitations, notifications, and profile data backed by Firestore.
 - Architecture guardrails enforced locally and in GitHub Actions.
 
 ## Architecture
 
 The app follows this flow:
 
-`UI (screens/widgets)` -> `BLoC` -> `Repository` -> `Services` -> `Firebase/Local DB`
+`UI (screens/widgets)` -> `BLoC` -> `Service` -> `Repository` -> `Backend (Firebase Functions)` -> `Database`
 
 Composition happens at app and route boundaries:
 
@@ -25,7 +26,9 @@ Composition happens at app and route boundaries:
 ## Key Modules
 
 - `lib/features/auth`: sign in, sign up, session bootstrap.
-- `lib/features/dashboard`: board listing and board creation flow.
+- `lib/features/dashboard`: board listing, board creation, join, rename, and delete flow.
+- `lib/features/board_invitations`: board invite inbox and accept/decline flow.
+- `lib/features/notifications`: in-app notification inbox.
 - `lib/features/canvas`: collaborative board canvas state and sync.
 - `lib/features/friends`: friend requests and social graph actions.
 - `lib/features/profile`: profile load/update UI flow.
@@ -37,6 +40,8 @@ Composition happens at app and route boundaries:
 
 - Firestore rules enforce owner/member board access and friend-request constraints.
 - Board reads allow owner or member access.
+- Board invitations are stored in `board_invites`.
+- User notifications are stored under `users/{uid}/notifications`.
 - CRDT update writes are constrained to board members and source client checks.
 
 ## Firebase Options and API Keys
@@ -59,6 +64,8 @@ Current enforced rules include:
 2. No direct repository mutation calls from view files.
 3. No direct repository/service reads from feature screen files.
 4. No direct repository/service imports in feature screen files.
+5. No Cloud Functions imports or callable invocations from repository files.
+6. No repository imports of domain services.
 
 ## CI Behavior
 
@@ -118,3 +125,10 @@ tool/                 Project tooling scripts (including guardrails)
 For deeper lib-layer documentation, see:
 
 - `lib/README.md`
+
+## Implementation Notes
+
+- Services own business orchestration, including Cloud Function calls.
+- Repositories handle direct Firestore and local persistence access.
+- Current app flows cover auth, friends, profiles, boards, board invitations, notifications, and canvas sync.
+- Requirements that are not yet implemented in the app include public board discovery, comments, live presence, brainstorming sessions, voice calls, and AI-assisted object generation.

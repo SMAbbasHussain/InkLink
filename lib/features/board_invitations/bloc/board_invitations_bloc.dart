@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../domain/repositories/invitation/invitation_repository.dart';
+import '../../../domain/services/invitation/invitation_service.dart';
 
 abstract class BoardInvitationsEvent {
   const BoardInvitationsEvent();
@@ -81,12 +81,13 @@ class BoardInvitationsError extends BoardInvitationsState {
 
 const Object _unset = Object();
 
-class BoardInvitationsBloc extends Bloc<BoardInvitationsEvent, BoardInvitationsState> {
-  final InvitationRepository _invitationRepository;
+class BoardInvitationsBloc
+    extends Bloc<BoardInvitationsEvent, BoardInvitationsState> {
+  final InvitationService _invitationService;
   StreamSubscription<List<Map<String, dynamic>>>? _invitesSub;
 
-  BoardInvitationsBloc({required InvitationRepository invitationRepository})
-    : _invitationRepository = invitationRepository,
+  BoardInvitationsBloc({required InvitationService invitationService})
+    : _invitationService = invitationService,
       super(const BoardInvitationsInitial()) {
     on<BoardInvitationsLoadRequested>(_onLoadRequested);
     on<_BoardInvitationsUpdated>(_onUpdated);
@@ -100,13 +101,16 @@ class BoardInvitationsBloc extends Bloc<BoardInvitationsEvent, BoardInvitationsS
   ) async {
     emit(const BoardInvitationsLoading());
     await _invitesSub?.cancel();
-    _invitesSub = _invitationRepository.watchPendingInvites().listen(
+    _invitesSub = _invitationService.watchPendingInvites().listen(
       (invites) => add(_BoardInvitationsUpdated(invites)),
       onError: (error) => emit(BoardInvitationsError(error.toString())),
     );
   }
 
-  void _onUpdated(_BoardInvitationsUpdated event, Emitter<BoardInvitationsState> emit) {
+  void _onUpdated(
+    _BoardInvitationsUpdated event,
+    Emitter<BoardInvitationsState> emit,
+  ) {
     emit(BoardInvitationsLoaded(invites: event.invites));
   }
 
@@ -115,7 +119,7 @@ class BoardInvitationsBloc extends Bloc<BoardInvitationsEvent, BoardInvitationsS
     Emitter<BoardInvitationsState> emit,
   ) async {
     try {
-      await _invitationRepository.acceptInvite(event.inviteId);
+      await _invitationService.acceptInvite(event.inviteId);
       final current = state;
       if (current is BoardInvitationsLoaded) {
         emit(
@@ -141,7 +145,7 @@ class BoardInvitationsBloc extends Bloc<BoardInvitationsEvent, BoardInvitationsS
     Emitter<BoardInvitationsState> emit,
   ) async {
     try {
-      await _invitationRepository.declineInvite(event.inviteId);
+      await _invitationService.declineInvite(event.inviteId);
       final current = state;
       if (current is BoardInvitationsLoaded) {
         emit(current.copyWith(message: 'Invite declined.', isError: false));
@@ -162,4 +166,3 @@ class BoardInvitationsBloc extends Bloc<BoardInvitationsEvent, BoardInvitationsS
     return super.close();
   }
 }
-

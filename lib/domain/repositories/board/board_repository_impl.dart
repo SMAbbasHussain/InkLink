@@ -9,7 +9,6 @@ import 'package:path_provider/path_provider.dart';
 import '../../../core/database/collections/local_board.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
-import '../../../core/services/cloud_functions_service.dart';
 import '../../../core/services/firestore_service.dart';
 import '../../models/board.dart';
 import 'board_repository.dart';
@@ -17,7 +16,6 @@ import 'board_repository.dart';
 class FirestoreBoardRepository implements BoardRepository {
   final FirestoreService _firestoreService;
   final AuthService _authService;
-  final CloudFunctionsService _functionsService;
   final LocalDatabaseService _localDatabaseService;
   static const String crdtEngine = 'crdt_v1';
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _ownedBoardsSub;
@@ -29,11 +27,9 @@ class FirestoreBoardRepository implements BoardRepository {
   FirestoreBoardRepository({
     required FirestoreService firestoreService,
     required AuthService authService,
-    required CloudFunctionsService functionsService,
     required LocalDatabaseService localDatabaseService,
   }) : _firestoreService = firestoreService,
        _authService = authService,
-       _functionsService = functionsService,
        _localDatabaseService = localDatabaseService;
 
   @override
@@ -274,19 +270,6 @@ class FirestoreBoardRepository implements BoardRepository {
     await isar.writeTxn(() async {
       await isar.localBoards.putByBoardId(newLocalBoard);
     });
-
-    if (invitedUserIds.isNotEmpty) {
-      try {
-        await _functionsService.httpsCallable('sendBoardInvite').call({
-          'boardId': docRef.id,
-          'boardTitle': name,
-          'invitedUserIds': invitedUserIds,
-          'inviteExpiryHours': inviteExpiryHours,
-        });
-      } catch (_) {
-        // Do not fail board creation if invite notification fails.
-      }
-    }
 
     return docRef.id;
   }

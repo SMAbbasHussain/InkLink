@@ -1,5 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../domain/repositories/profile/profile_repository.dart';
+import '../../../domain/services/profile/profile_service.dart';
 
 // States
 abstract class ProfileState {}
@@ -73,33 +73,20 @@ class SaveProfileChangesRequested extends ProfileEvent {
 }
 
 class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
-  final ProfileRepository profileRepo;
+  final ProfileService profileService;
 
-  ProfileBloc({required this.profileRepo}) : super(ProfileInitial()) {
+  ProfileBloc({required this.profileService}) : super(ProfileInitial()) {
     on<LoadProfile>((event, emit) async {
       emit(ProfileLoading());
       try {
-        final currentUid = profileRepo.getCurrentUserId();
-        if (currentUid == null) {
-          emit(ProfileError('User not authenticated'));
-          return;
-        }
-
-        final userData = await profileRepo.getUserById(event.userId);
-
-        if (userData == null) {
-          emit(ProfileError("User not found"));
-          return;
-        }
-
-        final bool isSelf = currentUid == event.userId;
-        bool isFriend = false;
-        if (!isSelf) {
-          isFriend = await profileRepo.checkFriendshipStatus(event.userId);
-        }
+        final profile = await profileService.loadProfile(event.userId);
 
         emit(
-          ProfileLoaded(userData: userData, isSelf: isSelf, isFriend: isFriend),
+          ProfileLoaded(
+            userData: profile.userData,
+            isSelf: profile.isSelf,
+            isFriend: profile.isFriend,
+          ),
         );
       } catch (e) {
         emit(ProfileError(e.toString()));
@@ -111,7 +98,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
       if (currentState is ProfileLoaded) {
         emit(ProfileLoading()); // Show spinner
         try {
-          await profileRepo.updateUserProfile(name: event.name, bio: event.bio);
+          await profileService.updateProfile(name: event.name, bio: event.bio);
 
           // IMPROVEMENT: Instead of reloading the entire profile from Firestore,
           // update the local state immediately with the new values.
@@ -151,7 +138,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
 
         try {
           // Call repository to upload image and get the new photoURL
-          final photoUrl = await profileRepo.uploadProfilePhoto(
+          final photoUrl = await profileService.uploadProfilePhoto(
             imageData: event.imageData,
             filename: event.filename,
           );
@@ -181,21 +168,12 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
 
       emit(ProfileLoading());
       try {
-        await profileRepo.updateUserProfile(name: event.name, bio: event.bio);
-
-        String? photoUrl;
-        final shouldUploadPhoto =
-            event.imageData != null &&
-            event.imageData!.isNotEmpty &&
-            event.filename != null &&
-            event.filename!.isNotEmpty;
-
-        if (shouldUploadPhoto) {
-          photoUrl = await profileRepo.uploadProfilePhoto(
-            imageData: event.imageData!,
-            filename: event.filename!,
-          );
-        }
+        final photoUrl = await profileService.saveProfileChanges(
+          name: event.name,
+          bio: event.bio,
+          imageData: event.imageData,
+          filename: event.filename,
+        );
 
         final updatedUserData = {...currentState.userData};
         updatedUserData['displayName'] = event.name;

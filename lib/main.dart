@@ -26,6 +26,11 @@ import 'package:inklink/domain/repositories/friends/friends_repository_impl.dart
 import 'package:inklink/domain/repositories/settings/settings_repository.dart';
 import 'package:inklink/domain/repositories/settings/settings_repository_impl.dart';
 import 'package:inklink/domain/repositories/theme/theme_repository_impl.dart';
+import 'package:inklink/domain/services/auth/auth_session_service.dart';
+import 'package:inklink/domain/services/board/board_service.dart';
+import 'package:inklink/domain/services/friends/friends_service.dart';
+import 'package:inklink/domain/services/invitation/invitation_service.dart';
+import 'package:inklink/domain/services/profile/profile_service.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
@@ -76,21 +81,18 @@ void main() async {
           create: (context) => FirebaseAuthRepository(
             authService: context.read<AuthService>(),
             firestoreService: context.read<FirestoreService>(),
-            messagingService: context.read<MessagingService>(),
           ),
         ),
         RepositoryProvider<FriendsRepository>(
           create: (context) => FriendsRepositoryImpl(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
-            functionsService: context.read<CloudFunctionsService>(),
           ),
         ),
         RepositoryProvider<ProfileRepository>(
           create: (context) => ProfileRepositoryImpl(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
-            functionsService: context.read<CloudFunctionsService>(),
             localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
@@ -98,7 +100,6 @@ void main() async {
           create: (context) => FirestoreBoardRepository(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
-            functionsService: context.read<CloudFunctionsService>(),
             localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
@@ -124,11 +125,44 @@ void main() async {
           create: (context) => InvitationRepositoryImpl(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
-            functionsService: context.read<CloudFunctionsService>(),
+          ),
+        ),
+        // 2. Domain services (depend on repositories)
+        RepositoryProvider<AuthSessionService>(
+          create: (context) => AuthSessionServiceImpl(
+            authRepository: context.read<AuthRepository>(),
+            authService: context.read<AuthService>(),
+            messagingService: context.read<MessagingService>(),
+          ),
+        ),
+        RepositoryProvider<FriendsService>(
+          create: (context) => FriendsServiceImpl(
+            friendsRepository: context.read<FriendsRepository>(),
+            authService: context.read<AuthService>(),
+            cloudFunctionsService: context.read<CloudFunctionsService>(),
+          ),
+        ),
+        RepositoryProvider<InvitationService>(
+          create: (context) => InvitationServiceImpl(
+            invitationRepository: context.read<InvitationRepository>(),
+            cloudFunctionsService: context.read<CloudFunctionsService>(),
+          ),
+        ),
+        RepositoryProvider<BoardService>(
+          create: (context) => BoardServiceImpl(
+            boardRepository: context.read<BoardRepository>(),
+            cloudFunctionsService: context.read<CloudFunctionsService>(),
+          ),
+        ),
+        RepositoryProvider<ProfileService>(
+          create: (context) => ProfileServiceImpl(
+            profileRepository: context.read<ProfileRepository>(),
+            authService: context.read<AuthService>(),
+            cloudFunctionsService: context.read<CloudFunctionsService>(),
           ),
         ),
       ],
-      // 2. BLoCs (depend on repositories)
+      // 3. BLoCs (depend on domain services/repositories)
       child: MultiBlocProvider(
         providers: [
           BlocProvider(
@@ -143,20 +177,20 @@ void main() async {
           BlocProvider(create: (context) => NavBloc()),
           BlocProvider(
             create: (context) => DashboardBloc(
-              boardRepo: context.read<BoardRepository>(),
-              profileRepo: context.read<ProfileRepository>(),
+              boardService: context.read<BoardService>(),
+              profileService: context.read<ProfileService>(),
             ),
           ),
           BlocProvider(
             create: (context) =>
-                AuthBloc(authRepository: context.read<AuthRepository>())..add(
+                AuthBloc(authService: context.read<AuthSessionService>())..add(
                   AuthCheckRequested(),
                 ), // <--- Add this line to trigger check on start
           ),
           BlocProvider(
             create: (context) => FriendsBloc(
-              friendsRepo: context
-                  .read<FriendsRepository>(), // Reads from RepoProvider
+              friendsService: context
+                  .read<FriendsService>(), // Reads from service provider
             ),
           ),
         ],
