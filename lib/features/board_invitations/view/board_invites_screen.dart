@@ -4,8 +4,30 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../features/canvas/view/canvas_route.dart';
 import '../bloc/board_invitations_bloc.dart';
 
-class BoardInvitesScreen extends StatelessWidget {
+class BoardInvitesScreen extends StatefulWidget {
   const BoardInvitesScreen({super.key});
+
+  @override
+  State<BoardInvitesScreen> createState() => _BoardInvitesScreenState();
+}
+
+class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
+  bool _loadRequested = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _requestLoad();
+  }
+
+  void _requestLoad() {
+    if (!_loadRequested) {
+      _loadRequested = true;
+      context.read<BoardInvitationsBloc>().add(
+        const BoardInvitationsLoadRequested(),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -32,16 +54,8 @@ class BoardInvitesScreen extends StatelessWidget {
         }
       },
       builder: (context, state) {
-        if (state is BoardInvitationsInitial) {
-          context.read<BoardInvitationsBloc>().add(
-            const BoardInvitationsLoadRequested(),
-          );
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        if (state is BoardInvitationsLoading) {
+        if (state is BoardInvitationsInitial ||
+            state is BoardInvitationsLoading) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );

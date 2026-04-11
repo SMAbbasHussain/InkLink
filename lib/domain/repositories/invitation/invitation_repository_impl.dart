@@ -29,6 +29,10 @@ class InvitationRepositoryImpl implements InvitationRepository {
           (snapshot) => snapshot.docs
               .map((doc) => {'id': doc.id, ...doc.data()})
               .toList(),
-        );
+        )
+        .handleError((error, stackTrace) {
+          // Log the error - stream will emit the error event
+          print('Error watching pending invites: $error');
+        });
   }
 }

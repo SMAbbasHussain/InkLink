@@ -103,7 +103,10 @@ class BoardInvitationsBloc
     await _invitesSub?.cancel();
     _invitesSub = _invitationService.watchPendingInvites().listen(
       (invites) => add(_BoardInvitationsUpdated(invites)),
-      onError: (error) => emit(BoardInvitationsError(error.toString())),
+      onError: (error, stackTrace) {
+        print('BoardInvitationsBloc error: $error');
+        emit(BoardInvitationsError(error.toString()));
+      },
     );
   }
 
