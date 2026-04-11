@@ -15,29 +15,85 @@ class FriendRequestsScreen extends StatelessWidget {
       appBar: AppBar(title: const Text("Pending Requests"), elevation: 0),
       body: BlocBuilder<FriendsBloc, FriendsState>(
         builder: (context, state) {
-          if (state is FriendsLoaded && state.incomingRequests.isNotEmpty) {
-            return ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: state.incomingRequests.length,
-              itemBuilder: (context, index) {
-                final req = state.incomingRequests[index];
-                return GestureDetector(
-                  onTap: () => Navigator.push(
-                    context,
-                    buildProfileRoute(context, userId: req['fromUid']),
-                  ),
-                  child: RequestCard(
-                    request: req,
-                    onAccept: () => context.read<FriendsBloc>().add(
-                      AcceptFriendRequestRequested(req['id'], req['fromUid']),
+          if (state is FriendsLoaded) {
+            final hasIncoming = state.incomingRequests.isNotEmpty;
+            final hasOutgoing = state.outgoingRequests.isNotEmpty;
+
+            if (hasIncoming || hasOutgoing) {
+              return ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  if (state.isOffline)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.amber.withOpacity(0.45),
+                        ),
+                      ),
+                      child: const Text(
+                        'Offline mode: pending requests are from local cache.',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
                     ),
-                    onDecline: () => context.read<FriendsBloc>().add(
-                      DeclineFriendRequestRequested(req['id']),
+                  if (hasIncoming)
+                    ...state.incomingRequests.map((req) {
+                      return GestureDetector(
+                        onTap: () => Navigator.push(
+                          context,
+                          buildProfileRoute(context, userId: req['fromUid']),
+                        ),
+                        child: RequestCard(
+                          request: req,
+                          onAccept: () => context.read<FriendsBloc>().add(
+                            AcceptFriendRequestRequested(
+                              req['id'],
+                              req['fromUid'],
+                            ),
+                          ),
+                          onDecline: () => context.read<FriendsBloc>().add(
+                            DeclineFriendRequestRequested(req['id']),
+                          ),
+                        ),
+                      );
+                    }),
+                  if (hasOutgoing) ...[
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Sent Requests',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-                );
-              },
-            );
+                    const SizedBox(height: 8),
+                    ...state.outgoingRequests.map((req) {
+                      final toUid = req['toUid']?.toString() ?? 'Unknown user';
+                      final sentName =
+                          req['recipientName']?.toString() ?? toUid;
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: ListTile(
+                          leading: const Icon(Icons.schedule),
+                          title: Text(sentName),
+                          subtitle: const Text('Request pending'),
+                          trailing: const Text(
+                            'Pending',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ],
+              );
+            }
           }
 
           // Empty state matching InkLink style

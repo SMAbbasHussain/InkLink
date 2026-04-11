@@ -72,12 +72,63 @@ class _FriendsScreenState extends State<FriendsScreen> {
                     child: _buildSearchBar(isDark),
                   ),
                 ),
+                if (state is FriendsLoaded && state.isOffline)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.amber.withOpacity(0.45),
+                          ),
+                        ),
+                        child: const Text(
+                          'Offline mode: showing locally cached friends data.',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                  ),
 
                 // 2. Incoming Requests Banner
                 if (state is FriendsLoaded && state.incomingRequests.isNotEmpty)
                   SliverToBoxAdapter(
                     child: FriendRequestBanner(
                       count: state.incomingRequests.length,
+                    ),
+                  ),
+                if (state is FriendsLoaded && state.outgoingRequests.isNotEmpty)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: AppColors.primary.withOpacity(0.25),
+                          ),
+                        ),
+                        child: Text(
+                          '${state.outgoingRequests.length} sent request${state.outgoingRequests.length > 1 ? 's' : ''} pending',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
                     ),
                   ),
 
@@ -361,30 +412,57 @@ class _FriendsScreenState extends State<FriendsScreen> {
             Expanded(
               child: BlocBuilder<FriendsBloc, FriendsState>(
                 builder: (context, state) {
-                  if (state is FriendsLoading) {
+                  if (state is EmailSearchInProgress) {
                     return const Center(child: CircularProgressIndicator());
                   }
 
-                  if (state is SearchResultsLoaded) {
-                    if (state.results.isEmpty) {
+                  if (state is EmailSearchEmpty) {
+                    return Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.person_search_outlined,
+                          size: 60,
+                          color: Colors.grey.withOpacity(0.5),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text("No user found with this email."),
+                      ],
+                    );
+                  }
+
+                  if (state is EmailSearchResultsLoaded) {
+                    if (state.isOffline) {
                       return Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(
-                            Icons.person_search_outlined,
-                            size: 60,
-                            color: Colors.grey.withOpacity(0.5),
+                          const Icon(Icons.cloud_off, size: 52),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Offline mode',
+                            style: TextStyle(fontWeight: FontWeight.bold),
                           ),
-                          const SizedBox(height: 16),
-                          const Text("No user found with this email."),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Search requires internet. Cached friends and requests are still available.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                          const SizedBox(height: 24),
                         ],
                       );
                     }
 
-                    // Grab the first result (since emails are unique)
-                    final user = state.results.first;
+                    final user = state.result;
+                    final String searchedUid = user['uid']?.toString() ?? '';
                     final String name = user['displayName'] ?? "Creator";
                     final String? photoUrl = user['photoURL'];
+                    final isAlreadyFriend = state.friendUids.contains(
+                      searchedUid,
+                    );
+                    final isPending = state.pendingOutgoingUids.contains(
+                      searchedUid,
+                    );
                     final int gradientIdx =
                         name.length % _avatarGradients.length;
 
@@ -448,30 +526,47 @@ class _FriendsScreenState extends State<FriendsScreen> {
                           style: const TextStyle(fontSize: 13),
                         ),
                         trailing: ElevatedButton(
-                          onPressed: () {
-                            context.read<FriendsBloc>().add(
-                              SendFriendRequestRequested(user['uid']),
-                            );
-                            Navigator.pop(context); // Close sheet after sending
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text("Collaboration request sent!"),
-                                backgroundColor: Colors.green,
-                              ),
-                            );
-                          },
+                          onPressed: (isAlreadyFriend || isPending)
+                              ? null
+                              : () {
+                                  context.read<FriendsBloc>().add(
+                                    SendFriendRequestRequested(user['uid']),
+                                  );
+                                  Navigator.pop(context);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        "Collaboration request sent!",
+                                      ),
+                                      backgroundColor: Colors.green,
+                                    ),
+                                  );
+                                },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
+                            backgroundColor: isAlreadyFriend
+                                ? Colors.blue
+                                : AppColors.primary,
                             foregroundColor: Colors.white,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
                             elevation: 0,
                           ),
-                          child: const Text("Add"),
+                          child: Text(
+                            isAlreadyFriend
+                                ? "Message"
+                                : isPending
+                                ? "Pending"
+                                : "Add",
+                          ),
                         ),
                       ),
                     );
+                  }
+
+                  // Default view when sheet first opens (SearchResultsLoaded legacy state)
+                  if (state is SearchResultsLoaded) {
+                    return const SizedBox.shrink();
                   }
 
                   // Default view when sheet first opens

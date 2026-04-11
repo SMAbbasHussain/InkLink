@@ -4,5 +4,6 @@ abstract class FriendsRepository {
 
   // Streams for UI Reactivity
   Stream<List<Map<String, dynamic>>> watchIncomingRequests();
+  Stream<List<Map<String, dynamic>>> watchOutgoingRequests();
   Stream<List<Map<String, dynamic>>> watchFriendsList();
 }

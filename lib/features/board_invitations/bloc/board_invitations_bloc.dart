@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -31,6 +32,12 @@ class _BoardInvitationsUpdated extends BoardInvitationsEvent {
   const _BoardInvitationsUpdated(this.invites);
 }
 
+class _BoardInvitationsStreamFailed extends BoardInvitationsEvent {
+  final String message;
+
+  const _BoardInvitationsStreamFailed(this.message);
+}
+
 abstract class BoardInvitationsState {
   const BoardInvitationsState();
 }
@@ -48,12 +55,14 @@ class BoardInvitationsLoaded extends BoardInvitationsState {
   final String? message;
   final bool isError;
   final String? openedBoardId;
+  final bool isOffline;
 
   const BoardInvitationsLoaded({
     required this.invites,
     this.message,
     this.isError = false,
     this.openedBoardId,
+    this.isOffline = false,
   });
 
   BoardInvitationsLoaded copyWith({
@@ -61,6 +70,7 @@ class BoardInvitationsLoaded extends BoardInvitationsState {
     Object? message = _unset,
     bool? isError,
     Object? openedBoardId = _unset,
+    bool? isOffline,
   }) {
     return BoardInvitationsLoaded(
       invites: invites ?? this.invites,
@@ -69,6 +79,7 @@ class BoardInvitationsLoaded extends BoardInvitationsState {
       openedBoardId: openedBoardId == _unset
           ? this.openedBoardId
           : openedBoardId as String?,
+      isOffline: isOffline ?? this.isOffline,
     );
   }
 }
@@ -85,12 +96,14 @@ class BoardInvitationsBloc
     extends Bloc<BoardInvitationsEvent, BoardInvitationsState> {
   final InvitationService _invitationService;
   StreamSubscription<List<Map<String, dynamic>>>? _invitesSub;
+  bool _isOffline = false;
 
   BoardInvitationsBloc({required InvitationService invitationService})
     : _invitationService = invitationService,
       super(const BoardInvitationsInitial()) {
     on<BoardInvitationsLoadRequested>(_onLoadRequested);
     on<_BoardInvitationsUpdated>(_onUpdated);
+    on<_BoardInvitationsStreamFailed>(_onStreamFailed);
     on<BoardInvitationAcceptRequested>(_onAcceptRequested);
     on<BoardInvitationDeclineRequested>(_onDeclineRequested);
   }
@@ -101,11 +114,20 @@ class BoardInvitationsBloc
   ) async {
     emit(const BoardInvitationsLoading());
     await _invitesSub?.cancel();
+    _isOffline = !(await _invitationService.isOnline());
     _invitesSub = _invitationService.watchPendingInvites().listen(
-      (invites) => add(_BoardInvitationsUpdated(invites)),
+      (invites) {
+        if (isClosed) return;
+        add(_BoardInvitationsUpdated(invites));
+      },
       onError: (error, stackTrace) {
-        print('BoardInvitationsBloc error: $error');
-        emit(BoardInvitationsError(error.toString()));
+        if (isClosed) return;
+        developer.log(
+          'BoardInvitationsBloc error: $error',
+          name: 'BoardInvitationsBloc',
+          stackTrace: stackTrace,
+        );
+        add(_BoardInvitationsStreamFailed(error.toString()));
       },
     );
   }
@@ -114,7 +136,14 @@ class BoardInvitationsBloc
     _BoardInvitationsUpdated event,
     Emitter<BoardInvitationsState> emit,
   ) {
-    emit(BoardInvitationsLoaded(invites: event.invites));
+    emit(BoardInvitationsLoaded(invites: event.invites, isOffline: _isOffline));
+  }
+
+  void _onStreamFailed(
+    _BoardInvitationsStreamFailed event,
+    Emitter<BoardInvitationsState> emit,
+  ) {
+    emit(BoardInvitationsError(event.message));
   }
 
   Future<void> _onAcceptRequested(
@@ -134,9 +163,18 @@ class BoardInvitationsBloc
         );
       }
     } catch (e) {
+      if (_looksOffline(e)) {
+        _isOffline = true;
+      }
       final current = state;
       if (current is BoardInvitationsLoaded) {
-        emit(current.copyWith(message: e.toString(), isError: true));
+        emit(
+          current.copyWith(
+            message: e.toString(),
+            isError: true,
+            isOffline: _isOffline,
+          ),
+        );
       } else {
         emit(BoardInvitationsError(e.toString()));
       }
@@ -154,9 +192,18 @@ class BoardInvitationsBloc
         emit(current.copyWith(message: 'Invite declined.', isError: false));
       }
     } catch (e) {
+      if (_looksOffline(e)) {
+        _isOffline = true;
+      }
       final current = state;
       if (current is BoardInvitationsLoaded) {
-        emit(current.copyWith(message: e.toString(), isError: true));
+        emit(
+          current.copyWith(
+            message: e.toString(),
+            isError: true,
+            isOffline: _isOffline,
+          ),
+        );
       } else {
         emit(BoardInvitationsError(e.toString()));
       }
@@ -167,5 +214,10 @@ class BoardInvitationsBloc
   Future<void> close() async {
     await _invitesSub?.cancel();
     return super.close();
+  }
+
+  bool _looksOffline(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('offline') || message.contains('connection error');
   }
 }

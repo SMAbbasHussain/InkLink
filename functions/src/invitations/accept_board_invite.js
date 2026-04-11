@@ -60,10 +60,9 @@ module.exports = async (request) => {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      transaction.update(inviteRef, {
-        status: 'accepted',
-        acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      // Keep board_invites as a pending-only collection.
+      // Once accepted, remove the invite document.
+      transaction.delete(inviteRef);
 
       return { success: true, boardId, inviteId };
     });

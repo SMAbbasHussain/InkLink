@@ -71,118 +71,157 @@ class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
         final loaded = state as BoardInvitationsLoaded;
         return Scaffold(
           appBar: AppBar(title: const Text('Board Invites')),
-          body: loaded.invites.isEmpty
-              ? const Center(child: Text('No pending invites.'))
-              : ListView.separated(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: loaded.invites.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    final invite = loaded.invites[index];
-                    final inviteId = invite['id']?.toString() ?? '';
-                    final boardId = invite['boardId']?.toString() ?? '';
-                    final boardTitle =
-                        invite['boardTitle']?.toString() ?? 'Untitled Board';
-                    final senderName =
-                        invite['senderName']?.toString() ?? 'InkLink User';
-                    final senderPic = invite['senderPic']?.toString();
-                    final expiresAt = invite['expiresAt'];
+          body: Column(
+            children: [
+              if (loaded.isOffline)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.amber.withOpacity(0.45)),
+                    ),
+                    child: const Text(
+                      'Offline mode: showing cached board invites.',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: loaded.invites.isEmpty
+                    ? const Center(child: Text('No pending invites.'))
+                    : ListView.separated(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: loaded.invites.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 12),
+                        itemBuilder: (context, index) {
+                          final invite = loaded.invites[index];
+                          final inviteId = invite['id']?.toString() ?? '';
+                          final boardId = invite['boardId']?.toString() ?? '';
+                          final boardTitle =
+                              invite['boardTitle']?.toString() ??
+                              'Untitled Board';
+                          final senderName =
+                              invite['senderName']?.toString() ??
+                              'InkLink User';
+                          final senderPic = invite['senderPic']?.toString();
+                          final expiresAt = invite['expiresAt'];
 
-                    return Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                CircleAvatar(
-                                  backgroundImage:
-                                      senderPic != null && senderPic.isNotEmpty
-                                      ? NetworkImage(senderPic)
-                                      : null,
-                                  child: senderPic == null || senderPic.isEmpty
-                                      ? Text(
-                                          senderName.isEmpty
-                                              ? 'I'
-                                              : senderName[0].toUpperCase(),
-                                        )
-                                      : null,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                          return Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
                                     children: [
-                                      Text(
-                                        senderName,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
+                                      CircleAvatar(
+                                        backgroundImage:
+                                            senderPic != null &&
+                                                senderPic.isNotEmpty
+                                            ? NetworkImage(senderPic)
+                                            : null,
+                                        child:
+                                            senderPic == null ||
+                                                senderPic.isEmpty
+                                            ? Text(
+                                                senderName.isEmpty
+                                                    ? 'I'
+                                                    : senderName[0]
+                                                          .toUpperCase(),
+                                              )
+                                            : null,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              senderName,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            Text(
+                                              'invited you to "$boardTitle"',
+                                            ),
+                                            if (expiresAt != null) ...[
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                'Invite has an expiration window',
+                                                style: TextStyle(
+                                                  color: Colors.grey.shade600,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ],
+                                          ],
                                         ),
                                       ),
-                                      Text('invited you to "$boardTitle"'),
-                                      if (expiresAt != null) ...[
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          'Invite has an expiration window',
-                                          style: TextStyle(
-                                            color: Colors.grey.shade600,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ],
                                     ],
                                   ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: OutlinedButton(
-                                    onPressed: inviteId.isEmpty
-                                        ? null
-                                        : () {
-                                            context
-                                                .read<BoardInvitationsBloc>()
-                                                .add(
-                                                  BoardInvitationDeclineRequested(
-                                                    inviteId,
-                                                  ),
-                                                );
-                                          },
-                                    child: const Text('Decline'),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: OutlinedButton(
+                                          onPressed: inviteId.isEmpty
+                                              ? null
+                                              : () {
+                                                  context
+                                                      .read<
+                                                        BoardInvitationsBloc
+                                                      >()
+                                                      .add(
+                                                        BoardInvitationDeclineRequested(
+                                                          inviteId,
+                                                        ),
+                                                      );
+                                                },
+                                          child: const Text('Decline'),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: ElevatedButton(
+                                          onPressed:
+                                              inviteId.isEmpty ||
+                                                  boardId.isEmpty
+                                              ? null
+                                              : () {
+                                                  context
+                                                      .read<
+                                                        BoardInvitationsBloc
+                                                      >()
+                                                      .add(
+                                                        BoardInvitationAcceptRequested(
+                                                          inviteId,
+                                                          boardId: boardId,
+                                                        ),
+                                                      );
+                                                },
+                                          child: const Text('Accept'),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: ElevatedButton(
-                                    onPressed:
-                                        inviteId.isEmpty || boardId.isEmpty
-                                        ? null
-                                        : () {
-                                            context
-                                                .read<BoardInvitationsBloc>()
-                                                .add(
-                                                  BoardInvitationAcceptRequested(
-                                                    inviteId,
-                                                    boardId: boardId,
-                                                  ),
-                                                );
-                                          },
-                                    child: const Text('Accept'),
-                                  ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ],
-                        ),
+                          );
+                        },
                       ),
-                    );
-                  },
-                ),
+              ),
+            ],
+          ),
         );
       },
     );

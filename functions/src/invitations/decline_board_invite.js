@@ -36,10 +36,9 @@ module.exports = async (request) => {
         throw new HttpsError('failed-precondition', 'Invite is no longer pending.');
       }
 
-      transaction.update(inviteRef, {
-        status: 'declined',
-        declinedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      // Keep board_invites as a pending-only collection.
+      // Once declined, remove the invite document.
+      transaction.delete(inviteRef);
     });
 
     await updateUserNotificationStatus({

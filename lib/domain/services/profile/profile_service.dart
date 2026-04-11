@@ -52,16 +52,28 @@ class ProfileServiceImpl implements ProfileService {
       throw Exception('User not authenticated');
     }
 
+    final isSelf = currentUid == userId;
+    var isFriend = false;
+    if (!isSelf) {
+      try {
+        isFriend = await _profileRepository.checkFriendshipStatus(userId);
+      } catch (_) {
+        isFriend = false;
+      }
+    }
+
     final userData = await _profileRepository.getUserById(userId);
     if (userData == null) {
       throw Exception('User not found');
     }
 
-    final isSelf = currentUid == userId;
-    var isFriend = false;
-    if (!isSelf) {
-      isFriend = await _profileRepository.checkFriendshipStatus(userId);
-    }
+    await _profileRepository.cacheUserProfile(
+      userId,
+      userData,
+      isFriend: isFriend,
+      isSelf: isSelf,
+      source: 'profile_open',
+    );
 
     return ProfileViewData(
       userData: userData,

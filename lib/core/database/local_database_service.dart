@@ -2,6 +2,10 @@ import 'package:isar_community/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'collections/local_board.dart';
 import 'collections/local_crdt_update.dart';
+import 'collections/local_friend_request.dart';
+import 'collections/local_friend_profile.dart';
+import 'collections/local_invitation.dart';
+import 'collections/local_non_friend_profile.dart';
 import '../../domain/models/user_model.dart';
 
 class LocalDatabaseService {
@@ -15,7 +19,15 @@ class LocalDatabaseService {
     if (Isar.instanceNames.isEmpty) {
       final dir = await getApplicationDocumentsDirectory();
       return await Isar.open(
-        [LocalBoardSchema, LocalCrdtUpdateSchema, UserModelSchema],
+        [
+          LocalBoardSchema,
+          LocalCrdtUpdateSchema,
+          LocalFriendRequestSchema,
+          LocalFriendProfileSchema,
+          LocalInvitationSchema,
+          LocalNonFriendProfileSchema,
+          UserModelSchema,
+        ],
         directory: dir.path,
         inspector: true,
       );
@@ -30,6 +42,10 @@ class LocalDatabaseService {
     await isar.writeTxn(() async {
       await isar.localBoards.clear();
       await isar.localCrdtUpdates.clear();
+      await isar.localFriendRequests.clear();
+      await isar.localFriendProfiles.clear();
+      await isar.localInvitations.clear();
+      await isar.localNonFriendProfiles.clear();
       await isar.userModels.clear();
     });
   }

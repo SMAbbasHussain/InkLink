@@ -87,6 +87,7 @@ void main() async {
           create: (context) => FriendsRepositoryImpl(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
+            localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
         RepositoryProvider<ProfileRepository>(
@@ -125,6 +126,7 @@ void main() async {
           create: (context) => InvitationRepositoryImpl(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
+            localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
         // 2. Domain services (depend on repositories)
@@ -133,6 +135,7 @@ void main() async {
             authRepository: context.read<AuthRepository>(),
             authService: context.read<AuthService>(),
             messagingService: context.read<MessagingService>(),
+            localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
         RepositoryProvider<FriendsService>(
@@ -140,12 +143,14 @@ void main() async {
             friendsRepository: context.read<FriendsRepository>(),
             authService: context.read<AuthService>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
+            firestoreService: context.read<FirestoreService>(),
           ),
         ),
         RepositoryProvider<InvitationService>(
           create: (context) => InvitationServiceImpl(
             invitationRepository: context.read<InvitationRepository>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
+            firestoreService: context.read<FirestoreService>(),
           ),
         ),
         RepositoryProvider<BoardService>(

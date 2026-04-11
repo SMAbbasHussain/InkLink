@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/messaging_service.dart';
+import '../../../core/database/local_database_service.dart';
 import '../../../core/utils/helpers.dart';
 import '../../repositories/auth/auth_repository.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -19,6 +20,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
   final AuthRepository _authRepository;
   final AuthService _authService;
   final MessagingService _messagingService;
+  final LocalDatabaseService _localDatabaseService;
   bool _tokenRefreshBound = false;
   String? _lastSyncedToken;
 
@@ -26,9 +28,11 @@ class AuthSessionServiceImpl implements AuthSessionService {
     required AuthRepository authRepository,
     required AuthService authService,
     required MessagingService messagingService,
+    required LocalDatabaseService localDatabaseService,
   }) : _authRepository = authRepository,
        _authService = authService,
-       _messagingService = messagingService;
+       _messagingService = messagingService,
+       _localDatabaseService = localDatabaseService;
 
   @override
   Stream<User?> get user => _authRepository.user;
@@ -81,6 +85,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
     }
 
     await _authRepository.signOut();
+    await _localDatabaseService.clearLocalCache();
     _lastSyncedToken = null;
   }
 

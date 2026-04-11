@@ -27,5 +27,11 @@ class DeclineFriendRequestRequested extends FriendsEvent {
 class UpdateFriendsLists extends FriendsEvent {
   final List<Map<String, dynamic>> friends;
   final List<Map<String, dynamic>> incomingRequests;
-  UpdateFriendsLists({required this.friends, required this.incomingRequests});
+  final List<Map<String, dynamic>> outgoingRequests;
+
+  UpdateFriendsLists({
+    required this.friends,
+    required this.incomingRequests,
+    required this.outgoingRequests,
+  });
 }
