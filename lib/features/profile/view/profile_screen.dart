@@ -270,8 +270,9 @@ class ProfileScreen extends StatelessWidget {
 
     final now = DateTime.now();
     final difference = now.difference(lastActive);
-
-    if (difference.inMinutes < 60) {
+    if (difference.inSeconds < 60) {
+      return 'Active just now';
+    } else if (difference.inMinutes < 60) {
       return 'Active ${difference.inMinutes}m ago';
     } else if (difference.inHours < 24) {
       return 'Active ${difference.inHours}h ago';

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/features/friends/view/widgets/friend_request_banner.dart';
+import 'package:inklink/features/friends/view/widgets/friend_presence_avatar.dart';
 import 'package:inklink/features/profile/view/profile_route.dart';
 import '../../../core/constants/app_colors.dart';
 import '../bloc/friends_bloc.dart';
@@ -104,7 +105,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                       count: state.incomingRequests.length,
                     ),
                   ),
-                
+
                 // 3. Section Header (Only show if not searching or if results exist)
                 SliverToBoxAdapter(
                   child: Padding(
@@ -208,32 +209,12 @@ class _FriendsScreenState extends State<FriendsScreen> {
           child: Row(
             children: [
               // GLITTER AVATAR
-              Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: photoUrl == null
-                      ? _avatarGradients[gradientIdx]
-                      : null,
-                  image: photoUrl != null
-                      ? DecorationImage(
-                          image: NetworkImage(photoUrl),
-                          fit: BoxFit.cover,
-                        )
-                      : null,
-                ),
-                child: photoUrl == null
-                    ? Center(
-                        child: Text(
-                          name[0],
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      )
-                    : null,
+              FriendPresenceAvatar(
+                userId: userId,
+                displayName: name,
+                photoUrl: photoUrl,
+                gradient: _avatarGradients[gradientIdx],
+                isDark: isDark,
               ),
               const SizedBox(width: 16),
               Expanded(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:inklink/app_view.dart';
 import 'package:inklink/core/theme/app_theme.dart';
 import 'package:inklink/core/services/firestore_service.dart';
@@ -30,6 +31,7 @@ import 'package:inklink/domain/services/auth/auth_session_service.dart';
 import 'package:inklink/domain/services/board/board_service.dart';
 import 'package:inklink/domain/services/friends/friends_service.dart';
 import 'package:inklink/domain/services/invitation/invitation_service.dart';
+import 'package:inklink/domain/services/presence/presence_service.dart';
 import 'package:inklink/domain/services/profile/profile_service.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
@@ -45,7 +47,7 @@ final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await _ensureFirebaseInitialized();
   final messagingService = MessagingServiceImpl();
   await LocalNotificationService.initialize(navigatorKey: appNavigatorKey);
   messagingService.onMessage.listen(
@@ -68,6 +70,15 @@ void main() async {
           create: (context) => FirestoreServiceImpl(),
         ),
         RepositoryProvider<AuthService>(create: (context) => AuthServiceImpl()),
+        RepositoryProvider<PresenceService>(
+          create: (context) => PresenceServiceImpl(
+            authService: context.read<AuthService>(),
+            database: FirebaseDatabase.instanceFor(
+              app: Firebase.app(),
+              databaseURL: dotenv.env['FIREBASE_RTDB_URL'],
+            ),
+          ),
+        ),
         RepositoryProvider<CloudFunctionsService>(
           create: (context) => CloudFunctionsServiceImpl(),
         ),
@@ -136,6 +147,7 @@ void main() async {
             authService: context.read<AuthService>(),
             messagingService: context.read<MessagingService>(),
             localDatabaseService: context.read<LocalDatabaseService>(),
+            presenceService: context.read<PresenceService>(),
           ),
         ),
         RepositoryProvider<FriendsService>(
@@ -205,6 +217,23 @@ void main() async {
       ),
     ),
   );
+}
+
+Future<void> _ensureFirebaseInitialized() async {
+  if (Firebase.apps.isNotEmpty) {
+    return;
+  }
+
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } on FirebaseException catch (e) {
+    if (e.code != 'duplicate-app') {
+      rethrow;
+    }
+    Firebase.app();
+  }
 }
 
 class MyApp extends StatelessWidget {

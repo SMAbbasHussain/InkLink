@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../domain/services/presence/presence_service.dart';
 import '../../../domain/services/profile/profile_service.dart';
 
 // States
@@ -99,11 +100,21 @@ class _ProfileDocUpdated extends ProfileEvent {
   _ProfileDocUpdated(this.userData);
 }
 
+class _ProfilePresenceUpdated extends ProfileEvent {
+  final bool isOnline;
+  final DateTime? lastActive;
+
+  _ProfilePresenceUpdated({required this.isOnline, required this.lastActive});
+}
+
 class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
   final ProfileService profileService;
+  final PresenceService presenceService;
   StreamSubscription<Map<String, dynamic>?>? _liveProfileSubscription;
+  StreamSubscription<UserPresence>? _presenceSubscription;
 
-  ProfileBloc({required this.profileService}) : super(ProfileInitial()) {
+  ProfileBloc({required this.profileService, required this.presenceService})
+    : super(ProfileInitial()) {
     on<LoadProfile>((event, emit) async {
       emit(ProfileLoading());
       try {
@@ -123,6 +134,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
         );
 
         await _startLiveProfileListener(event.userId);
+        await _startPresenceListener(event.userId);
       } catch (e) {
         emit(ProfileError(e.toString()));
       }
@@ -133,8 +145,6 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
 
       if (currentState is ProfileLoaded) {
         final mergedUserData = {...currentState.userData, ...event.userData};
-        final isOnline = mergedUserData['isOnline'] == true;
-        final lastActive = _toDateTime(mergedUserData['lastActive']);
 
         emit(
           ProfileLoaded(
@@ -144,14 +154,12 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             isBlocked: currentState.isBlocked,
             friendCount: currentState.friendCount,
             boardCount: currentState.boardCount,
-            isOnline: isOnline,
-            lastActive: lastActive,
+            isOnline: currentState.isOnline,
+            lastActive: currentState.lastActive,
           ),
         );
       } else if (currentState is ProfilePhotoUploading) {
         final mergedUserData = {...currentState.userData, ...event.userData};
-        final isOnline = mergedUserData['isOnline'] == true;
-        final lastActive = _toDateTime(mergedUserData['lastActive']);
 
         emit(
           ProfilePhotoUploading(
@@ -161,8 +169,39 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             isBlocked: currentState.isBlocked,
             friendCount: currentState.friendCount,
             boardCount: currentState.boardCount,
-            isOnline: isOnline,
-            lastActive: lastActive,
+            isOnline: currentState.isOnline,
+            lastActive: currentState.lastActive,
+          ),
+        );
+      }
+    });
+
+    on<_ProfilePresenceUpdated>((event, emit) {
+      final currentState = state;
+      if (currentState is ProfileLoaded) {
+        emit(
+          ProfileLoaded(
+            userData: currentState.userData,
+            isSelf: currentState.isSelf,
+            isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: event.isOnline,
+            lastActive: event.lastActive,
+          ),
+        );
+      } else if (currentState is ProfilePhotoUploading) {
+        emit(
+          ProfilePhotoUploading(
+            userData: currentState.userData,
+            isSelf: currentState.isSelf,
+            isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: event.isOnline,
+            lastActive: event.lastActive,
           ),
         );
       }
@@ -313,17 +352,6 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
     });
   }
 
-  DateTime? _toDateTime(dynamic value) {
-    if (value is DateTime) return value;
-    if (value == null) return null;
-
-    try {
-      return value.toDate() as DateTime;
-    } catch (_) {
-      return null;
-    }
-  }
-
   Future<void> _startLiveProfileListener(String userId) async {
     await _liveProfileSubscription?.cancel();
     _liveProfileSubscription = profileService.watchUserById(userId).listen((
@@ -335,9 +363,24 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
     });
   }
 
+  Future<void> _startPresenceListener(String userId) async {
+    await _presenceSubscription?.cancel();
+    _presenceSubscription = presenceService.watchUserPresence(userId).listen((
+      presence,
+    ) {
+      add(
+        _ProfilePresenceUpdated(
+          isOnline: presence.isOnline,
+          lastActive: presence.lastChanged,
+        ),
+      );
+    });
+  }
+
   @override
   Future<void> close() async {
     await _liveProfileSubscription?.cancel();
+    await _presenceSubscription?.cancel();
     return super.close();
   }
 }

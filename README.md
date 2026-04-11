@@ -131,4 +131,4 @@ For deeper lib-layer documentation, see:
 - Services own business orchestration, including Cloud Function calls.
 - Repositories handle direct Firestore and local persistence access.
 - Current app flows cover auth, friends, profiles, boards, board invitations, notifications, and canvas sync.
-- Requirements that are not yet implemented in the app include public board discovery, comments, live presence, brainstorming sessions, voice calls, and AI-assisted object generation.
+- Requirements that are not yet implemented in the app include public board discovery, comments, brainstorming sessions, voice calls, and AI-assisted object generation.

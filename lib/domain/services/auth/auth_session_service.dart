@@ -5,6 +5,7 @@ import '../../../core/services/messaging_service.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/utils/helpers.dart';
 import '../../repositories/auth/auth_repository.dart';
+import '../presence/presence_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 abstract class AuthSessionService {
@@ -21,6 +22,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
   final AuthService _authService;
   final MessagingService _messagingService;
   final LocalDatabaseService _localDatabaseService;
+  final PresenceService _presenceService;
   bool _tokenRefreshBound = false;
   String? _lastSyncedToken;
 
@@ -29,10 +31,12 @@ class AuthSessionServiceImpl implements AuthSessionService {
     required AuthService authService,
     required MessagingService messagingService,
     required LocalDatabaseService localDatabaseService,
+    required PresenceService presenceService,
   }) : _authRepository = authRepository,
        _authService = authService,
        _messagingService = messagingService,
-       _localDatabaseService = localDatabaseService;
+       _localDatabaseService = localDatabaseService,
+       _presenceService = presenceService;
 
   @override
   Stream<User?> get user => _authRepository.user;
@@ -63,6 +67,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
 
   @override
   Future<void> onAuthenticated(User user) async {
+    await _presenceService.setUserOnline();
     await _syncFcmToken();
   }
 
@@ -70,11 +75,12 @@ class AuthSessionServiceImpl implements AuthSessionService {
   Future<void> signOut() async {
     final current = _authService.getCurrentUser();
     if (current != null) {
+      await _presenceService.setUserOffline();
+
       final token = await _messagingService.getToken();
       final userUpdates = <String, dynamic>{
         'fcmToken': FieldValue.delete(),
         'lastActive': FieldValue.serverTimestamp(),
-        'isOnline': false,
       };
       if (token != null && token.isNotEmpty) {
         userUpdates['fcmTokens'] = FieldValue.arrayRemove([token]);
@@ -135,7 +141,6 @@ class AuthSessionServiceImpl implements AuthSessionService {
       'email': user.email,
       'displayName': finalName,
       'photoURL': user.photoURL ?? '',
-      'isOnline': true,
       'lastActive': FieldValue.serverTimestamp(),
       'searchKeywords': generateSearchKeywords(finalName),
       if (existingData == null) 'createdAt': FieldValue.serverTimestamp(),

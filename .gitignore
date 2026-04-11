@@ -120,3 +120,4 @@ app.*.map.json
 android/app/google-services.json
 firestore.rules
 .env
+database.rules.json

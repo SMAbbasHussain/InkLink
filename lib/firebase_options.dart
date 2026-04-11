@@ -5,7 +5,6 @@ import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 
-
 /// Default [FirebaseOptions] for use with your Firebase apps.
 ///
 /// Example:
@@ -47,6 +46,7 @@ class DefaultFirebaseOptions {
     appId: '1:817415815905:web:f3b7cc038afb7e526aeda0',
     messagingSenderId: '817415815905',
     projectId: 'inklink-f0308',
+    databaseURL: dotenv.env['FIREBASE_RTDB_URL']!,
     authDomain: 'inklink-f0308.firebaseapp.com',
     storageBucket: 'inklink-f0308.firebasestorage.app',
     measurementId: 'G-2WQHX0NDB3',
@@ -57,6 +57,7 @@ class DefaultFirebaseOptions {
     appId: '1:817415815905:android:c0e8c32f4a6b05fd6aeda0',
     messagingSenderId: '817415815905',
     projectId: 'inklink-f0308',
+    databaseURL: dotenv.env['FIREBASE_RTDB_URL']!,
     storageBucket: 'inklink-f0308.firebasestorage.app',
   );
 
@@ -65,6 +66,7 @@ class DefaultFirebaseOptions {
     appId: '1:817415815905:ios:1cbc982d356998096aeda0',
     messagingSenderId: '817415815905',
     projectId: 'inklink-f0308',
+    databaseURL: dotenv.env['FIREBASE_RTDB_URL']!,
     storageBucket: 'inklink-f0308.firebasestorage.app',
     androidClientId:
         '817415815905-43taaregaicfjjfl84t8c42ckrk392qs.apps.googleusercontent.com',
@@ -78,6 +80,7 @@ class DefaultFirebaseOptions {
     appId: '1:817415815905:ios:1cbc982d356998096aeda0',
     messagingSenderId: '817415815905',
     projectId: 'inklink-f0308',
+    databaseURL: dotenv.env['FIREBASE_RTDB_URL']!,
     storageBucket: 'inklink-f0308.firebasestorage.app',
     androidClientId:
         '817415815905-43taaregaicfjjfl84t8c42ckrk392qs.apps.googleusercontent.com',
@@ -91,6 +94,7 @@ class DefaultFirebaseOptions {
     appId: '1:817415815905:web:48f20ca96f033f906aeda0',
     messagingSenderId: '817415815905',
     projectId: 'inklink-f0308',
+    databaseURL: dotenv.env['FIREBASE_RTDB_URL']!,
     authDomain: 'inklink-f0308.firebaseapp.com',
     storageBucket: 'inklink-f0308.firebasestorage.app',
     measurementId: 'G-2FMXDQVV88',

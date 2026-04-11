@@ -113,9 +113,6 @@ class ProfileServiceImpl implements ProfileService {
       boardCount = _toInt(userData['boardCount']);
     }
 
-    final isOnline = userData['isOnline'] == true;
-    final lastActive = _toDateTime(userData['lastActive']);
-
     return ProfileViewData(
       userData: userData,
       isSelf: isSelf,
@@ -123,8 +120,8 @@ class ProfileServiceImpl implements ProfileService {
       isBlocked: isBlocked,
       friendCount: friendCount,
       boardCount: boardCount,
-      isOnline: isOnline,
-      lastActive: lastActive,
+      isOnline: false,
+      lastActive: null,
     );
   }
 
@@ -204,17 +201,6 @@ class ProfileServiceImpl implements ProfileService {
     );
 
     return photoUrl;
-  }
-
-  DateTime? _toDateTime(dynamic value) {
-    if (value is DateTime) return value;
-    if (value == null) return null;
-
-    try {
-      return value.toDate() as DateTime;
-    } catch (_) {
-      return null;
-    }
   }
 
   int _toInt(dynamic value) {
