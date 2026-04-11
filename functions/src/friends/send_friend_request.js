@@ -3,6 +3,7 @@ const admin = require('../../server/firebase-admin');
 const { validateUID, validateDifferentUIDs } = require('../utils/validation');
 const FirestorePaths = require('../utils/firestore_paths');
 const { sendUserNotification } = require('../utils/notification_sender');
+const { hasAnyBlock, getFriendRef, getRequestRef } = require('./relationship_utils');
 const logger = require('../utils/logger');
 
 module.exports = async (request) => {
@@ -23,24 +24,21 @@ module.exports = async (request) => {
     validateDifferentUIDs(senderUid, targetUid);
 
     const firestore = admin.firestore();
-    const ids = [senderUid, targetUid].sort();
-    const requestId = ids.join('_');
+    const requestId = getRequestRef(firestore, senderUid, targetUid).id;
 
     await firestore.runTransaction(async (transaction) => {
-      const senderFriendRef = firestore
-        .collection(FirestorePaths.USERS)
-        .doc(senderUid)
-        .collection(FirestorePaths.FRIENDS_SUBCOLLECTION)
-        .doc(targetUid);
+      const senderFriendRef = getFriendRef(firestore, senderUid, targetUid);
 
       const senderFriendDoc = await transaction.get(senderFriendRef);
       if (senderFriendDoc.exists) {
         throw new HttpsError('already-exists', 'Already friends.');
       }
 
-      const requestRef = firestore
-        .collection(FirestorePaths.FRIEND_REQUESTS)
-        .doc(requestId);
+      if (await hasAnyBlock(transaction, firestore, senderUid, targetUid)) {
+        throw new HttpsError('permission-denied', 'You cannot send a request to this user.');
+      }
+
+      const requestRef = getRequestRef(firestore, senderUid, targetUid);
 
       const existingRequest = await transaction.get(requestRef);
       if (existingRequest.exists) {
@@ -73,10 +71,7 @@ module.exports = async (request) => {
       });
     });
 
-    const senderDoc = await firestore
-      .collection(FirestorePaths.USERS)
-      .doc(senderUid)
-      .get();
+    const senderDoc = await firestore.collection(FirestorePaths.USERS).doc(senderUid).get();
     const senderData = senderDoc.data() || {};
 
     const notificationResult = await sendUserNotification({

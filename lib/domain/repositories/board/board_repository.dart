@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 abstract class BoardRepository {
   String? get currentUserId;
+  Future<int> countBoardsForUser(String userId);
 
   Future<void> startBoardsSync();
   Future<void> stopBoardsSync();

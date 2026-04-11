@@ -104,34 +104,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                       count: state.incomingRequests.length,
                     ),
                   ),
-                if (state is FriendsLoaded && state.outgoingRequests.isNotEmpty)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.08),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: AppColors.primary.withOpacity(0.25),
-                          ),
-                        ),
-                        child: Text(
-                          '${state.outgoingRequests.length} sent request${state.outgoingRequests.length > 1 ? 's' : ''} pending',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    ),
-                  ),
-
+                
                 // 3. Section Header (Only show if not searching or if results exist)
                 SliverToBoxAdapter(
                   child: Padding(

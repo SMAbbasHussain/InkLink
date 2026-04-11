@@ -9,6 +9,8 @@ const FirestorePaths = {
   BOARDS: 'boards',
   FRIEND_REQUESTS: 'friend_requests',
   BOARD_INVITES: 'board_invites',
+  BLOCKED_USERS: 'blocked_users',
+  USER_REPORTS: 'user_reports',
   
   // User subcollections
   FRIENDS_SUBCOLLECTION: 'friends',

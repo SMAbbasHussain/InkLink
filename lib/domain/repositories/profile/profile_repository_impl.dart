@@ -88,7 +88,7 @@ class ProfileRepositoryImpl implements ProfileRepository {
     ) async {
       final data = snapshot.data();
       if (data != null) {
-        await _upsertCachedUser(uid, data);
+        await _cacheLiveProfileSnapshot(uid, data);
       }
       return data;
     });
@@ -99,10 +99,6 @@ class ProfileRepositoryImpl implements ProfileRepository {
     final currentUid = _authService.getCurrentUserId();
     if (currentUid == null) return false;
 
-    if (await _isFriendInCachedList(targetUid)) {
-      return true;
-    }
-
     try {
       final doc = await _firestoreService
           .collection('users')
@@ -112,7 +108,7 @@ class ProfileRepositoryImpl implements ProfileRepository {
           .get();
       return doc.exists;
     } catch (_) {
-      return false;
+      return await _isFriendInCachedList(targetUid);
     }
   }
 
@@ -193,6 +189,23 @@ class ProfileRepositoryImpl implements ProfileRepository {
     });
   }
 
+  Future<void> _cacheLiveProfileSnapshot(
+    String uid,
+    Map<String, dynamic> data,
+  ) async {
+    final currentUid = _authService.getCurrentUserId();
+    final isSelf = currentUid == uid;
+    final isFriend = !isSelf && await _isFriendInCachedList(uid);
+
+    await cacheUserProfile(
+      uid,
+      data,
+      isFriend: isFriend,
+      isSelf: isSelf,
+      source: 'profile_live',
+    );
+  }
+
   Future<void> _upsertUserModel(
     Isar isar,
     String uid,
@@ -214,6 +227,8 @@ class ProfileRepositoryImpl implements ProfileRepository {
     model.email = (data['email'] as String?) ?? model.email;
     model.bio = (data['bio'] as String?) ?? model.bio;
     model.photoURL = (data['photoURL'] as String?) ?? model.photoURL;
+    model.isOnline = data['isOnline'] as bool? ?? model.isOnline;
+    model.lastActive = _toDateTime(data['lastActive']) ?? model.lastActive;
 
     final createdAtRaw = data['createdAt'];
     if (createdAtRaw != null) {
@@ -236,6 +251,8 @@ class ProfileRepositoryImpl implements ProfileRepository {
       'photoURL': user.photoURL,
       'createdAt': user.createdAt,
       'updatedAt': user.updatedAt,
+      'isOnline': user.isOnline,
+      'lastActive': user.lastActive,
     };
   }
 

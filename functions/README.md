@@ -11,8 +11,14 @@ functions/
 │   │   ├── validation.js      # Input validation utilities
 │   │   ├── firestore_paths.js # Firestore constants (matches Flutter app)
 │   │   └── logger.js          # Structured logging utilities
-│   ├── accept_friend_request.js   # Accept friend request function
-│   └── decline_friend_request.js   # Decline friend request function
+│   ├── friends/
+│   │   ├── accept_friend_request.js  # Accept friend request function
+│   │   ├── block_user.js             # Block a user and clear relationship state
+│   │   ├── decline_friend_request.js # Decline friend request function
+│   │   ├── report_user.js            # Submit a moderation report
+│   │   ├── send_friend_request.js    # Send friend request function
+│   │   ├── relationship_utils.js     # Shared relationship helpers
+│   │   └── unfriend_user.js          # Remove an existing friendship
 ├── server/
 │   └── firebase-admin.js      # Firebase Admin SDK initialization
 ├── index.js                   # Function loader and router
@@ -126,6 +132,49 @@ Declines a pending friend request by deleting it.
 - ✅ Permission verification
 - ✅ Comprehensive error handling
 - ✅ Structured logging
+
+### `unfriend_user`
+
+Removes a friendship from both users and clears any related pending request.
+
+**Request Data:**
+```typescript
+{
+  targetUid: string
+}
+```
+
+**Response:**
+```typescript
+{
+  success: boolean,
+  message: string
+}
+```
+
+### `block_user`
+
+Blocks another user, removes any friendship or pending request state, and stores a block record.
+
+**Request Data:**
+```typescript
+{
+  targetUid: string,
+  reason?: string
+}
+```
+
+### `report_user`
+
+Stores a moderation report for another user.
+
+**Request Data:**
+```typescript
+{
+  targetUid: string,
+  reason?: string
+}
+```
 
 ## 🔧 Configuration
 

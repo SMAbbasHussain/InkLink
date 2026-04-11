@@ -31,6 +31,12 @@ class UserModel {
   /// Timestamp when the user profile was last updated
   DateTime? updatedAt;
 
+  /// Whether the user is currently online
+  bool? isOnline;
+
+  /// Timestamp of user's last activity
+  DateTime? lastActive;
+
   UserModel({
     this.id,
     required this.uid,
@@ -40,6 +46,8 @@ class UserModel {
     this.photoURL,
     required this.createdAt,
     this.updatedAt,
+    this.isOnline,
+    this.lastActive,
   });
 
   /// Convert from Firestore user data (Map) to UserModel
@@ -52,6 +60,8 @@ class UserModel {
       photoURL: data['photoURL'],
       createdAt: (data['createdAt'] as dynamic)?.toDate() ?? DateTime.now(),
       updatedAt: (data['updatedAt'] as dynamic)?.toDate(),
+      isOnline: data['isOnline'] as bool?,
+      lastActive: (data['lastActive'] as dynamic)?.toDate(),
     );
   }
 
@@ -63,6 +73,8 @@ class UserModel {
       'bio': bio,
       'photoURL': photoURL,
       'updatedAt': updatedAt ?? DateTime.now(),
+      'isOnline': isOnline,
+      'lastActive': lastActive,
     };
   }
 }

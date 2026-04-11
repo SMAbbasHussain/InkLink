@@ -29,14 +29,20 @@ const UserModelSchema = CollectionSchema(
       type: IsarType.string,
     ),
     r'email': PropertySchema(id: 3, name: r'email', type: IsarType.string),
+    r'isOnline': PropertySchema(id: 4, name: r'isOnline', type: IsarType.bool),
+    r'lastActive': PropertySchema(
+      id: 5,
+      name: r'lastActive',
+      type: IsarType.dateTime,
+    ),
     r'photoURL': PropertySchema(
-      id: 4,
+      id: 6,
       name: r'photoURL',
       type: IsarType.string,
     ),
-    r'uid': PropertySchema(id: 5, name: r'uid', type: IsarType.string),
+    r'uid': PropertySchema(id: 7, name: r'uid', type: IsarType.string),
     r'updatedAt': PropertySchema(
-      id: 6,
+      id: 8,
       name: r'updatedAt',
       type: IsarType.dateTime,
     ),
@@ -105,9 +111,11 @@ void _userModelSerialize(
   writer.writeDateTime(offsets[1], object.createdAt);
   writer.writeString(offsets[2], object.displayName);
   writer.writeString(offsets[3], object.email);
-  writer.writeString(offsets[4], object.photoURL);
-  writer.writeString(offsets[5], object.uid);
-  writer.writeDateTime(offsets[6], object.updatedAt);
+  writer.writeBool(offsets[4], object.isOnline);
+  writer.writeDateTime(offsets[5], object.lastActive);
+  writer.writeString(offsets[6], object.photoURL);
+  writer.writeString(offsets[7], object.uid);
+  writer.writeDateTime(offsets[8], object.updatedAt);
 }
 
 UserModel _userModelDeserialize(
@@ -122,9 +130,11 @@ UserModel _userModelDeserialize(
     displayName: reader.readString(offsets[2]),
     email: reader.readString(offsets[3]),
     id: id,
-    photoURL: reader.readStringOrNull(offsets[4]),
-    uid: reader.readString(offsets[5]),
-    updatedAt: reader.readDateTimeOrNull(offsets[6]),
+    isOnline: reader.readBoolOrNull(offsets[4]),
+    lastActive: reader.readDateTimeOrNull(offsets[5]),
+    photoURL: reader.readStringOrNull(offsets[6]),
+    uid: reader.readString(offsets[7]),
+    updatedAt: reader.readDateTimeOrNull(offsets[8]),
   );
   return object;
 }
@@ -145,10 +155,14 @@ P _userModelDeserializeProp<P>(
     case 3:
       return (reader.readString(offset)) as P;
     case 4:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readBoolOrNull(offset)) as P;
     case 5:
-      return (reader.readString(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 6:
+      return (reader.readStringOrNull(offset)) as P;
+    case 7:
+      return (reader.readString(offset)) as P;
+    case 8:
       return (reader.readDateTimeOrNull(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -942,6 +956,107 @@ extension UserModelQueryFilter
     });
   }
 
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> isOnlineIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'isOnline'),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
+  isOnlineIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'isOnline'),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> isOnlineEqualTo(
+    bool? value,
+  ) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'isOnline', value: value),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> lastActiveIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'lastActive'),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
+  lastActiveIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'lastActive'),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> lastActiveEqualTo(
+    DateTime? value,
+  ) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'lastActive', value: value),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
+  lastActiveGreaterThan(DateTime? value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'lastActive',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> lastActiveLessThan(
+    DateTime? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'lastActive',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> lastActiveBetween(
+    DateTime? lower,
+    DateTime? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'lastActive',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+        ),
+      );
+    });
+  }
+
   QueryBuilder<UserModel, UserModel, QAfterFilterCondition> photoURLIsNull() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(
@@ -1382,6 +1497,30 @@ extension UserModelQuerySortBy on QueryBuilder<UserModel, UserModel, QSortBy> {
     });
   }
 
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByIsOnline() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isOnline', Sort.asc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByIsOnlineDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isOnline', Sort.desc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByLastActive() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'lastActive', Sort.asc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByLastActiveDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'lastActive', Sort.desc);
+    });
+  }
+
   QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByPhotoURL() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'photoURL', Sort.asc);
@@ -1481,6 +1620,30 @@ extension UserModelQuerySortThenBy
     });
   }
 
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByIsOnline() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isOnline', Sort.asc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByIsOnlineDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isOnline', Sort.desc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByLastActive() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'lastActive', Sort.asc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByLastActiveDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'lastActive', Sort.desc);
+    });
+  }
+
   QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByPhotoURL() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'photoURL', Sort.asc);
@@ -1550,6 +1713,18 @@ extension UserModelQueryWhereDistinct
     });
   }
 
+  QueryBuilder<UserModel, UserModel, QDistinct> distinctByIsOnline() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'isOnline');
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QDistinct> distinctByLastActive() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'lastActive');
+    });
+  }
+
   QueryBuilder<UserModel, UserModel, QDistinct> distinctByPhotoURL({
     bool caseSensitive = true,
   }) {
@@ -1602,6 +1777,18 @@ extension UserModelQueryProperty
   QueryBuilder<UserModel, String, QQueryOperations> emailProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'email');
+    });
+  }
+
+  QueryBuilder<UserModel, bool?, QQueryOperations> isOnlineProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'isOnline');
+    });
+  }
+
+  QueryBuilder<UserModel, DateTime?, QQueryOperations> lastActiveProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'lastActive');
     });
   }
 

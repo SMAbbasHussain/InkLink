@@ -136,6 +136,30 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     return message.contains('offline') || message.contains('connection error');
   }
 
+  Future<void> sendFriendRequestToUser(String targetUid) {
+    return friendsService.sendFriendRequest(targetUid);
+  }
+
+  Future<void> unfriendUser(String targetUid) {
+    return friendsService.unfriendUser(targetUid);
+  }
+
+  Future<void> blockUser(String targetUid, {String? reason}) {
+    return friendsService.blockUser(targetUid, reason: reason);
+  }
+
+  Future<void> reportUser(String targetUid, {String? reason}) {
+    return friendsService.reportUser(targetUid, reason: reason);
+  }
+
+  Future<void> unblockUser(String targetUid) {
+    return friendsService.unblockUser(targetUid);
+  }
+
+  Stream<List<Map<String, dynamic>>> watchBlockedUsers() {
+    return friendsService.watchBlockedUsers();
+  }
+
   @override
   Future<void> close() {
     _friendsSubscription?.cancel();

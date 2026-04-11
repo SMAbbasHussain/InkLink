@@ -164,6 +164,8 @@ void main() async {
             profileRepository: context.read<ProfileRepository>(),
             authService: context.read<AuthService>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
+            friendsRepository: context.read<FriendsRepository>(),
+            boardRepository: context.read<BoardRepository>(),
           ),
         ),
       ],

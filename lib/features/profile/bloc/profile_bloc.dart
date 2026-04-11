@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../domain/services/profile/profile_service.dart';
 
@@ -12,10 +14,20 @@ class ProfilePhotoUploading extends ProfileState {
   final Map<String, dynamic> userData;
   final bool isSelf;
   final bool isFriend;
+  final bool isBlocked;
+  final int friendCount;
+  final int boardCount;
+  final bool isOnline;
+  final DateTime? lastActive;
   ProfilePhotoUploading({
     required this.userData,
     required this.isSelf,
     required this.isFriend,
+    required this.isBlocked,
+    this.friendCount = 0,
+    this.boardCount = 0,
+    this.isOnline = false,
+    this.lastActive,
   });
 }
 
@@ -23,10 +35,20 @@ class ProfileLoaded extends ProfileState {
   final Map<String, dynamic> userData;
   final bool isSelf;
   final bool isFriend;
+  final bool isBlocked;
+  final int friendCount;
+  final int boardCount;
+  final bool isOnline;
+  final DateTime? lastActive;
   ProfileLoaded({
     required this.userData,
     required this.isSelf,
     required this.isFriend,
+    required this.isBlocked,
+    this.friendCount = 0,
+    this.boardCount = 0,
+    this.isOnline = false,
+    this.lastActive,
   });
 }
 
@@ -72,8 +94,14 @@ class SaveProfileChangesRequested extends ProfileEvent {
   });
 }
 
+class _ProfileDocUpdated extends ProfileEvent {
+  final Map<String, dynamic> userData;
+  _ProfileDocUpdated(this.userData);
+}
+
 class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
   final ProfileService profileService;
+  StreamSubscription<Map<String, dynamic>?>? _liveProfileSubscription;
 
   ProfileBloc({required this.profileService}) : super(ProfileInitial()) {
     on<LoadProfile>((event, emit) async {
@@ -86,10 +114,57 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             userData: profile.userData,
             isSelf: profile.isSelf,
             isFriend: profile.isFriend,
+            isBlocked: profile.isBlocked,
+            friendCount: profile.friendCount,
+            boardCount: profile.boardCount,
+            isOnline: profile.isOnline,
+            lastActive: profile.lastActive,
           ),
         );
+
+        await _startLiveProfileListener(event.userId);
       } catch (e) {
         emit(ProfileError(e.toString()));
+      }
+    });
+
+    on<_ProfileDocUpdated>((event, emit) {
+      final currentState = state;
+
+      if (currentState is ProfileLoaded) {
+        final mergedUserData = {...currentState.userData, ...event.userData};
+        final isOnline = mergedUserData['isOnline'] == true;
+        final lastActive = _toDateTime(mergedUserData['lastActive']);
+
+        emit(
+          ProfileLoaded(
+            userData: mergedUserData,
+            isSelf: currentState.isSelf,
+            isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: isOnline,
+            lastActive: lastActive,
+          ),
+        );
+      } else if (currentState is ProfilePhotoUploading) {
+        final mergedUserData = {...currentState.userData, ...event.userData};
+        final isOnline = mergedUserData['isOnline'] == true;
+        final lastActive = _toDateTime(mergedUserData['lastActive']);
+
+        emit(
+          ProfilePhotoUploading(
+            userData: mergedUserData,
+            isSelf: currentState.isSelf,
+            isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: isOnline,
+            lastActive: lastActive,
+          ),
+        );
       }
     });
 
@@ -114,6 +189,11 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
               userData: updatedUserData,
               isSelf: currentState.isSelf,
               isFriend: currentState.isFriend,
+              isBlocked: currentState.isBlocked,
+              friendCount: currentState.friendCount,
+              boardCount: currentState.boardCount,
+              isOnline: currentState.isOnline,
+              lastActive: currentState.lastActive,
             ),
           );
         } catch (e) {
@@ -133,6 +213,11 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             userData: currentState.userData,
             isSelf: currentState.isSelf,
             isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: currentState.isOnline,
+            lastActive: currentState.lastActive,
           ),
         );
 
@@ -152,6 +237,11 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
               userData: updatedUserData,
               isSelf: currentState.isSelf,
               isFriend: currentState.isFriend,
+              isBlocked: currentState.isBlocked,
+              friendCount: currentState.friendCount,
+              boardCount: currentState.boardCount,
+              isOnline: currentState.isOnline,
+              lastActive: currentState.lastActive,
             ),
           );
         } catch (e) {
@@ -187,6 +277,11 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             userData: updatedUserData,
             isSelf: currentState.isSelf,
             isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: currentState.isOnline,
+            lastActive: currentState.lastActive,
           ),
         );
       } catch (e) {
@@ -202,6 +297,11 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             userData: updatedUserData,
             isSelf: currentState.isSelf,
             isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: currentState.isOnline,
+            lastActive: currentState.lastActive,
           ),
         );
         emit(
@@ -211,5 +311,33 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
         );
       }
     });
+  }
+
+  DateTime? _toDateTime(dynamic value) {
+    if (value is DateTime) return value;
+    if (value == null) return null;
+
+    try {
+      return value.toDate() as DateTime;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _startLiveProfileListener(String userId) async {
+    await _liveProfileSubscription?.cancel();
+    _liveProfileSubscription = profileService.watchUserById(userId).listen((
+      userData,
+    ) {
+      if (userData != null) {
+        add(_ProfileDocUpdated(userData));
+      }
+    });
+  }
+
+  @override
+  Future<void> close() async {
+    await _liveProfileSubscription?.cancel();
+    return super.close();
   }
 }

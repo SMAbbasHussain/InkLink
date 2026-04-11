@@ -36,6 +36,36 @@ class FirestoreBoardRepository implements BoardRepository {
   String? get currentUserId => _authService.getCurrentUserId();
 
   @override
+  Future<int> countBoardsForUser(String userId) async {
+    try {
+      final ownedSnapshot = await _firestoreService
+          .collection('boards')
+          .where('ownerId', isEqualTo: userId)
+          .get();
+
+      final memberSnapshot = await _firestoreService
+          .collection('boards')
+          .where('members', arrayContains: userId)
+          .get();
+
+      final boardIds = <String>{};
+      for (final doc in ownedSnapshot.docs) {
+        boardIds.add(doc.id);
+      }
+      for (final doc in memberSnapshot.docs) {
+        final ownerId = doc.data()['ownerId']?.toString();
+        if (ownerId != userId) {
+          boardIds.add(doc.id);
+        }
+      }
+
+      return boardIds.length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  @override
   Future<void> startBoardsSync() async {
     final uid = currentUserId;
     if (uid == null) {

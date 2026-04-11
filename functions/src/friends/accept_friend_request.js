@@ -15,6 +15,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const admin = require("../../server/firebase-admin");
 const { validateRequestId, validateUID, validateDifferentUIDs } = require("../utils/validation");
 const FirestorePaths = require("../utils/firestore_paths");
+const { hasAnyBlock, getFriendRef } = require('./relationship_utils');
 const {
   sendUserNotification,
   updateUserNotificationStatus,
@@ -135,6 +136,10 @@ module.exports = async (request) => {
         .doc(toUid)
         .collection(FirestorePaths.FRIENDS_SUBCOLLECTION)
         .doc(fromUid);
+
+      if (await hasAnyBlock(transaction, firestore, fromUid, toUid)) {
+        throw new HttpsError('permission-denied', 'This request can no longer be accepted.');
+      }
       
       const existingFriendship = await transaction.get(existingFriendshipRef);
       if (existingFriendship.exists) {
@@ -161,11 +166,7 @@ module.exports = async (request) => {
       transaction.set(existingFriendshipRef, recipientFriendData);
 
       // Sender's view: friend is toUid
-      const senderFriendRef = firestore
-        .collection(FirestorePaths.USERS)
-        .doc(fromUid)
-        .collection(FirestorePaths.FRIENDS_SUBCOLLECTION)
-        .doc(toUid);
+      const senderFriendRef = getFriendRef(firestore, fromUid, toUid);
       
       const senderFriendData = { ...friendshipData };
       senderFriendData[FirestorePaths.UID] = toUid;

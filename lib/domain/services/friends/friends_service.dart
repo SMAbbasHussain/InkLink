@@ -22,11 +22,16 @@ class FriendsInfoSnapshot {
 
 abstract class FriendsService {
   Stream<FriendsInfoSnapshot> watchFriendsInfo();
+  Stream<List<Map<String, dynamic>>> watchBlockedUsers();
   Future<List<Map<String, dynamic>>> searchUsersByEmail(String email);
   Future<bool> isOnline();
   Future<void> sendFriendRequest(String targetUid);
   Future<void> acceptFriendRequest(String requestId, String senderUid);
   Future<void> declineFriendRequest(String requestId);
+  Future<void> unfriendUser(String targetUid);
+  Future<void> blockUser(String targetUid, {String? reason});
+  Future<void> reportUser(String targetUid, {String? reason});
+  Future<void> unblockUser(String targetUid);
 }
 
 class FriendsServiceImpl implements FriendsService {
@@ -63,6 +68,11 @@ class FriendsServiceImpl implements FriendsService {
         );
       },
     );
+  }
+
+  @override
+  Stream<List<Map<String, dynamic>>> watchBlockedUsers() {
+    return _friendsRepository.watchBlockedUsers();
   }
 
   @override
@@ -121,6 +131,68 @@ class FriendsServiceImpl implements FriendsService {
       payload: {'requestId': requestId},
       failureMessage: 'Server failed to decline request',
     );
+  }
+
+  @override
+  Future<void> unfriendUser(String targetUid) async {
+    final normalizedTargetUid = targetUid.trim();
+    if (normalizedTargetUid.isEmpty) return;
+
+    await _ensureOnlineForActions();
+    await _callFriendFunction(
+      functionName: 'unfriendUser',
+      payload: {'targetUid': normalizedTargetUid},
+      failureMessage: 'Server failed to remove friendship',
+    );
+  }
+
+  @override
+  Future<void> blockUser(String targetUid, {String? reason}) async {
+    final normalizedTargetUid = targetUid.trim();
+    if (normalizedTargetUid.isEmpty) return;
+
+    await _ensureOnlineForActions();
+    await _callFriendFunction(
+      functionName: 'blockUser',
+      payload: {
+        'targetUid': normalizedTargetUid,
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+      },
+      failureMessage: 'Server failed to block user',
+    );
+
+    await _friendsRepository.cacheBlockedUser(normalizedTargetUid);
+  }
+
+  @override
+  Future<void> reportUser(String targetUid, {String? reason}) async {
+    final normalizedTargetUid = targetUid.trim();
+    if (normalizedTargetUid.isEmpty) return;
+
+    await _ensureOnlineForActions();
+    await _callFriendFunction(
+      functionName: 'reportUser',
+      payload: {
+        'targetUid': normalizedTargetUid,
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+      },
+      failureMessage: 'Server failed to submit report',
+    );
+  }
+
+  @override
+  Future<void> unblockUser(String targetUid) async {
+    final normalizedTargetUid = targetUid.trim();
+    if (normalizedTargetUid.isEmpty) return;
+
+    await _ensureOnlineForActions();
+    await _callFriendFunction(
+      functionName: 'unblockUser',
+      payload: {'targetUid': normalizedTargetUid},
+      failureMessage: 'Server failed to unblock user',
+    );
+
+    await _friendsRepository.removeBlockedUser(normalizedTargetUid);
   }
 
   Future<void> _callFriendFunction({
