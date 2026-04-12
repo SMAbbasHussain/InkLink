@@ -199,7 +199,6 @@ void main() async {
             authService: context.read<AuthService>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
             friendsRepository: context.read<FriendsRepository>(),
-            boardRepository: context.read<BoardRepository>(),
           ),
         ),
       ],

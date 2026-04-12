@@ -83,6 +83,11 @@ class BoardServiceImpl implements BoardService {
 
   @override
   Future<void> deleteBoard(String boardId) {
-    return _boardRepository.deleteBoard(boardId);
+    return _cloudFunctionsService
+        .httpsCallable('deleteBoard')
+        .call({'boardId': boardId.trim()})
+        .then((_) {
+          return _boardRepository.deleteBoard(boardId);
+        });
   }
 }

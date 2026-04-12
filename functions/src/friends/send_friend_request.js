@@ -60,12 +60,15 @@ module.exports = async (request) => {
       }
 
       const senderData = senderDoc.data() || {};
+      const targetData = targetDoc.data() || {};
 
       transaction.set(requestRef, {
         [FirestorePaths.FROM_UID]: senderUid,
         [FirestorePaths.TO_UID]: targetUid,
         [FirestorePaths.SENDER_NAME]: senderData.displayName || 'InkLink User',
         [FirestorePaths.SENDER_PIC]: senderData.photoURL || null,
+        recipientName: targetData.displayName || 'InkLink User',
+        recipientPic: targetData.photoURL || null,
         [FirestorePaths.TIMESTAMP]: admin.firestore.FieldValue.serverTimestamp(),
         [FirestorePaths.STATUS]: 'pending',
       });

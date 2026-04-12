@@ -19,33 +19,43 @@ const LocalNonFriendProfileSchema = CollectionSchema(
   id: -5721904467693556260,
   properties: {
     r'bio': PropertySchema(id: 0, name: r'bio', type: IsarType.string),
-    r'cachedAt': PropertySchema(
+    r'boardCount': PropertySchema(
       id: 1,
+      name: r'boardCount',
+      type: IsarType.long,
+    ),
+    r'cachedAt': PropertySchema(
+      id: 2,
       name: r'cachedAt',
       type: IsarType.dateTime,
     ),
     r'displayName': PropertySchema(
-      id: 2,
+      id: 3,
       name: r'displayName',
       type: IsarType.string,
     ),
-    r'email': PropertySchema(id: 3, name: r'email', type: IsarType.string),
+    r'email': PropertySchema(id: 4, name: r'email', type: IsarType.string),
+    r'friendCount': PropertySchema(
+      id: 5,
+      name: r'friendCount',
+      type: IsarType.long,
+    ),
     r'lastSeenAt': PropertySchema(
-      id: 4,
+      id: 6,
       name: r'lastSeenAt',
       type: IsarType.dateTime,
     ),
     r'lastSource': PropertySchema(
-      id: 5,
+      id: 7,
       name: r'lastSource',
       type: IsarType.string,
     ),
     r'photoURL': PropertySchema(
-      id: 6,
+      id: 8,
       name: r'photoURL',
       type: IsarType.string,
     ),
-    r'uid': PropertySchema(id: 7, name: r'uid', type: IsarType.string),
+    r'uid': PropertySchema(id: 9, name: r'uid', type: IsarType.string),
   },
 
   estimateSize: _localNonFriendProfileEstimateSize,
@@ -119,13 +129,15 @@ void _localNonFriendProfileSerialize(
   Map<Type, List<int>> allOffsets,
 ) {
   writer.writeString(offsets[0], object.bio);
-  writer.writeDateTime(offsets[1], object.cachedAt);
-  writer.writeString(offsets[2], object.displayName);
-  writer.writeString(offsets[3], object.email);
-  writer.writeDateTime(offsets[4], object.lastSeenAt);
-  writer.writeString(offsets[5], object.lastSource);
-  writer.writeString(offsets[6], object.photoURL);
-  writer.writeString(offsets[7], object.uid);
+  writer.writeLong(offsets[1], object.boardCount);
+  writer.writeDateTime(offsets[2], object.cachedAt);
+  writer.writeString(offsets[3], object.displayName);
+  writer.writeString(offsets[4], object.email);
+  writer.writeLong(offsets[5], object.friendCount);
+  writer.writeDateTime(offsets[6], object.lastSeenAt);
+  writer.writeString(offsets[7], object.lastSource);
+  writer.writeString(offsets[8], object.photoURL);
+  writer.writeString(offsets[9], object.uid);
 }
 
 LocalNonFriendProfile _localNonFriendProfileDeserialize(
@@ -136,15 +148,17 @@ LocalNonFriendProfile _localNonFriendProfileDeserialize(
 ) {
   final object = LocalNonFriendProfile(
     bio: reader.readStringOrNull(offsets[0]),
-    displayName: reader.readString(offsets[2]),
-    email: reader.readStringOrNull(offsets[3]),
+    boardCount: reader.readLongOrNull(offsets[1]) ?? 0,
+    displayName: reader.readString(offsets[3]),
+    email: reader.readStringOrNull(offsets[4]),
+    friendCount: reader.readLongOrNull(offsets[5]) ?? 0,
     id: id,
-    lastSeenAt: reader.readDateTimeOrNull(offsets[4]),
-    lastSource: reader.readStringOrNull(offsets[5]),
-    photoURL: reader.readStringOrNull(offsets[6]),
-    uid: reader.readString(offsets[7]),
+    lastSeenAt: reader.readDateTimeOrNull(offsets[6]),
+    lastSource: reader.readStringOrNull(offsets[7]),
+    photoURL: reader.readStringOrNull(offsets[8]),
+    uid: reader.readString(offsets[9]),
   );
-  object.cachedAt = reader.readDateTime(offsets[1]);
+  object.cachedAt = reader.readDateTime(offsets[2]);
   return object;
 }
 
@@ -158,18 +172,22 @@ P _localNonFriendProfileDeserializeProp<P>(
     case 0:
       return (reader.readStringOrNull(offset)) as P;
     case 1:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readLongOrNull(offset) ?? 0) as P;
     case 2:
-      return (reader.readString(offset)) as P;
+      return (reader.readDateTime(offset)) as P;
     case 3:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 4:
-      return (reader.readDateTimeOrNull(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 5:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readLongOrNull(offset) ?? 0) as P;
     case 6:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 7:
+      return (reader.readStringOrNull(offset)) as P;
+    case 8:
+      return (reader.readStringOrNull(offset)) as P;
+    case 9:
       return (reader.readString(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -599,6 +617,77 @@ extension LocalNonFriendProfileQueryFilter
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(
         FilterCondition.greaterThan(property: r'bio', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalNonFriendProfile,
+    LocalNonFriendProfile,
+    QAfterFilterCondition
+  >
+  boardCountEqualTo(int value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'boardCount', value: value),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalNonFriendProfile,
+    LocalNonFriendProfile,
+    QAfterFilterCondition
+  >
+  boardCountGreaterThan(int value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'boardCount',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalNonFriendProfile,
+    LocalNonFriendProfile,
+    QAfterFilterCondition
+  >
+  boardCountLessThan(int value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'boardCount',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalNonFriendProfile,
+    LocalNonFriendProfile,
+    QAfterFilterCondition
+  >
+  boardCountBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'boardCount',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+        ),
       );
     });
   }
@@ -1058,6 +1147,77 @@ extension LocalNonFriendProfileQueryFilter
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(
         FilterCondition.greaterThan(property: r'email', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalNonFriendProfile,
+    LocalNonFriendProfile,
+    QAfterFilterCondition
+  >
+  friendCountEqualTo(int value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'friendCount', value: value),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalNonFriendProfile,
+    LocalNonFriendProfile,
+    QAfterFilterCondition
+  >
+  friendCountGreaterThan(int value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'friendCount',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalNonFriendProfile,
+    LocalNonFriendProfile,
+    QAfterFilterCondition
+  >
+  friendCountLessThan(int value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'friendCount',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalNonFriendProfile,
+    LocalNonFriendProfile,
+    QAfterFilterCondition
+  >
+  friendCountBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'friendCount',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+        ),
       );
     });
   }
@@ -1881,6 +2041,20 @@ extension LocalNonFriendProfileQuerySortBy
   }
 
   QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QAfterSortBy>
+  sortByBoardCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'boardCount', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QAfterSortBy>
+  sortByBoardCountDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'boardCount', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QAfterSortBy>
   sortByCachedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'cachedAt', Sort.asc);
@@ -1919,6 +2093,20 @@ extension LocalNonFriendProfileQuerySortBy
   sortByEmailDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'email', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QAfterSortBy>
+  sortByFriendCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'friendCount', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QAfterSortBy>
+  sortByFriendCountDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'friendCount', Sort.desc);
     });
   }
 
@@ -1996,6 +2184,20 @@ extension LocalNonFriendProfileQuerySortThenBy
   }
 
   QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QAfterSortBy>
+  thenByBoardCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'boardCount', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QAfterSortBy>
+  thenByBoardCountDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'boardCount', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QAfterSortBy>
   thenByCachedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'cachedAt', Sort.asc);
@@ -2034,6 +2236,20 @@ extension LocalNonFriendProfileQuerySortThenBy
   thenByEmailDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'email', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QAfterSortBy>
+  thenByFriendCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'friendCount', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QAfterSortBy>
+  thenByFriendCountDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'friendCount', Sort.desc);
     });
   }
 
@@ -2118,6 +2334,13 @@ extension LocalNonFriendProfileQueryWhereDistinct
   }
 
   QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QDistinct>
+  distinctByBoardCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'boardCount');
+    });
+  }
+
+  QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QDistinct>
   distinctByCachedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'cachedAt');
@@ -2135,6 +2358,13 @@ extension LocalNonFriendProfileQueryWhereDistinct
   distinctByEmail({bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'email', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<LocalNonFriendProfile, LocalNonFriendProfile, QDistinct>
+  distinctByFriendCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'friendCount');
     });
   }
 
@@ -2186,6 +2416,13 @@ extension LocalNonFriendProfileQueryProperty
     });
   }
 
+  QueryBuilder<LocalNonFriendProfile, int, QQueryOperations>
+  boardCountProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'boardCount');
+    });
+  }
+
   QueryBuilder<LocalNonFriendProfile, DateTime, QQueryOperations>
   cachedAtProperty() {
     return QueryBuilder.apply(this, (query) {
@@ -2204,6 +2441,13 @@ extension LocalNonFriendProfileQueryProperty
   emailProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'email');
+    });
+  }
+
+  QueryBuilder<LocalNonFriendProfile, int, QQueryOperations>
+  friendCountProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'friendCount');
     });
   }
 

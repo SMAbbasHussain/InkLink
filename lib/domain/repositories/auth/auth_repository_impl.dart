@@ -98,6 +98,10 @@ class FirebaseAuthRepository implements AuthRepository {
       'lastActive': FieldValue.serverTimestamp(),
       'searchKeywords': searchKeywords,
       if (isNewUser) 'createdAt': FieldValue.serverTimestamp(),
+      if (isNewUser) 'friendCount': 0,
+      if (isNewUser) 'boardCount': 0,
+      if (isNewUser) 'ownedBoards': <String>[],
+      if (isNewUser) 'joinedBoards': <String>[],
     });
   }
 

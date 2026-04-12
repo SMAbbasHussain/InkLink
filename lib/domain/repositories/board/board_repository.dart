@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 abstract class BoardRepository {
   String? get currentUserId;
+  // Returns the number of boards owned by the user.
   Future<int> countBoardsForUser(String userId);
 
   Future<void> startBoardsSync();

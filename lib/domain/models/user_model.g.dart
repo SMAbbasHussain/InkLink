@@ -18,31 +18,41 @@ const UserModelSchema = CollectionSchema(
   id: 7195426469378571114,
   properties: {
     r'bio': PropertySchema(id: 0, name: r'bio', type: IsarType.string),
-    r'createdAt': PropertySchema(
+    r'boardCount': PropertySchema(
       id: 1,
+      name: r'boardCount',
+      type: IsarType.long,
+    ),
+    r'createdAt': PropertySchema(
+      id: 2,
       name: r'createdAt',
       type: IsarType.dateTime,
     ),
     r'displayName': PropertySchema(
-      id: 2,
+      id: 3,
       name: r'displayName',
       type: IsarType.string,
     ),
-    r'email': PropertySchema(id: 3, name: r'email', type: IsarType.string),
-    r'isOnline': PropertySchema(id: 4, name: r'isOnline', type: IsarType.bool),
-    r'lastActive': PropertySchema(
+    r'email': PropertySchema(id: 4, name: r'email', type: IsarType.string),
+    r'friendCount': PropertySchema(
       id: 5,
+      name: r'friendCount',
+      type: IsarType.long,
+    ),
+    r'isOnline': PropertySchema(id: 6, name: r'isOnline', type: IsarType.bool),
+    r'lastActive': PropertySchema(
+      id: 7,
       name: r'lastActive',
       type: IsarType.dateTime,
     ),
     r'photoURL': PropertySchema(
-      id: 6,
+      id: 8,
       name: r'photoURL',
       type: IsarType.string,
     ),
-    r'uid': PropertySchema(id: 7, name: r'uid', type: IsarType.string),
+    r'uid': PropertySchema(id: 9, name: r'uid', type: IsarType.string),
     r'updatedAt': PropertySchema(
-      id: 8,
+      id: 10,
       name: r'updatedAt',
       type: IsarType.dateTime,
     ),
@@ -108,14 +118,16 @@ void _userModelSerialize(
   Map<Type, List<int>> allOffsets,
 ) {
   writer.writeString(offsets[0], object.bio);
-  writer.writeDateTime(offsets[1], object.createdAt);
-  writer.writeString(offsets[2], object.displayName);
-  writer.writeString(offsets[3], object.email);
-  writer.writeBool(offsets[4], object.isOnline);
-  writer.writeDateTime(offsets[5], object.lastActive);
-  writer.writeString(offsets[6], object.photoURL);
-  writer.writeString(offsets[7], object.uid);
-  writer.writeDateTime(offsets[8], object.updatedAt);
+  writer.writeLong(offsets[1], object.boardCount);
+  writer.writeDateTime(offsets[2], object.createdAt);
+  writer.writeString(offsets[3], object.displayName);
+  writer.writeString(offsets[4], object.email);
+  writer.writeLong(offsets[5], object.friendCount);
+  writer.writeBool(offsets[6], object.isOnline);
+  writer.writeDateTime(offsets[7], object.lastActive);
+  writer.writeString(offsets[8], object.photoURL);
+  writer.writeString(offsets[9], object.uid);
+  writer.writeDateTime(offsets[10], object.updatedAt);
 }
 
 UserModel _userModelDeserialize(
@@ -126,15 +138,17 @@ UserModel _userModelDeserialize(
 ) {
   final object = UserModel(
     bio: reader.readStringOrNull(offsets[0]),
-    createdAt: reader.readDateTime(offsets[1]),
-    displayName: reader.readString(offsets[2]),
-    email: reader.readString(offsets[3]),
+    boardCount: reader.readLongOrNull(offsets[1]) ?? 0,
+    createdAt: reader.readDateTime(offsets[2]),
+    displayName: reader.readString(offsets[3]),
+    email: reader.readString(offsets[4]),
+    friendCount: reader.readLongOrNull(offsets[5]) ?? 0,
     id: id,
-    isOnline: reader.readBoolOrNull(offsets[4]),
-    lastActive: reader.readDateTimeOrNull(offsets[5]),
-    photoURL: reader.readStringOrNull(offsets[6]),
-    uid: reader.readString(offsets[7]),
-    updatedAt: reader.readDateTimeOrNull(offsets[8]),
+    isOnline: reader.readBoolOrNull(offsets[6]),
+    lastActive: reader.readDateTimeOrNull(offsets[7]),
+    photoURL: reader.readStringOrNull(offsets[8]),
+    uid: reader.readString(offsets[9]),
+    updatedAt: reader.readDateTimeOrNull(offsets[10]),
   );
   return object;
 }
@@ -149,20 +163,24 @@ P _userModelDeserializeProp<P>(
     case 0:
       return (reader.readStringOrNull(offset)) as P;
     case 1:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readLongOrNull(offset) ?? 0) as P;
     case 2:
-      return (reader.readString(offset)) as P;
+      return (reader.readDateTime(offset)) as P;
     case 3:
       return (reader.readString(offset)) as P;
     case 4:
-      return (reader.readBoolOrNull(offset)) as P;
-    case 5:
-      return (reader.readDateTimeOrNull(offset)) as P;
-    case 6:
-      return (reader.readStringOrNull(offset)) as P;
-    case 7:
       return (reader.readString(offset)) as P;
+    case 5:
+      return (reader.readLongOrNull(offset) ?? 0) as P;
+    case 6:
+      return (reader.readBoolOrNull(offset)) as P;
+    case 7:
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 8:
+      return (reader.readStringOrNull(offset)) as P;
+    case 9:
+      return (reader.readString(offset)) as P;
+    case 10:
       return (reader.readDateTimeOrNull(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -531,6 +549,63 @@ extension UserModelQueryFilter
     });
   }
 
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> boardCountEqualTo(
+    int value,
+  ) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'boardCount', value: value),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
+  boardCountGreaterThan(int value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'boardCount',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> boardCountLessThan(
+    int value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'boardCount',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> boardCountBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'boardCount',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+        ),
+      );
+    });
+  }
+
   QueryBuilder<UserModel, UserModel, QAfterFilterCondition> createdAtEqualTo(
     DateTime value,
   ) {
@@ -877,6 +952,63 @@ extension UserModelQueryFilter
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(
         FilterCondition.greaterThan(property: r'email', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> friendCountEqualTo(
+    int value,
+  ) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'friendCount', value: value),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition>
+  friendCountGreaterThan(int value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'friendCount',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> friendCountLessThan(
+    int value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'friendCount',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterFilterCondition> friendCountBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'friendCount',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+        ),
       );
     });
   }
@@ -1461,6 +1593,18 @@ extension UserModelQuerySortBy on QueryBuilder<UserModel, UserModel, QSortBy> {
     });
   }
 
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByBoardCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'boardCount', Sort.asc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByBoardCountDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'boardCount', Sort.desc);
+    });
+  }
+
   QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByCreatedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'createdAt', Sort.asc);
@@ -1494,6 +1638,18 @@ extension UserModelQuerySortBy on QueryBuilder<UserModel, UserModel, QSortBy> {
   QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByEmailDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'email', Sort.desc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByFriendCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'friendCount', Sort.asc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> sortByFriendCountDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'friendCount', Sort.desc);
     });
   }
 
@@ -1572,6 +1728,18 @@ extension UserModelQuerySortThenBy
     });
   }
 
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByBoardCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'boardCount', Sort.asc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByBoardCountDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'boardCount', Sort.desc);
+    });
+  }
+
   QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByCreatedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'createdAt', Sort.asc);
@@ -1605,6 +1773,18 @@ extension UserModelQuerySortThenBy
   QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByEmailDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'email', Sort.desc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByFriendCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'friendCount', Sort.asc);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QAfterSortBy> thenByFriendCountDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'friendCount', Sort.desc);
     });
   }
 
@@ -1691,6 +1871,12 @@ extension UserModelQueryWhereDistinct
     });
   }
 
+  QueryBuilder<UserModel, UserModel, QDistinct> distinctByBoardCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'boardCount');
+    });
+  }
+
   QueryBuilder<UserModel, UserModel, QDistinct> distinctByCreatedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'createdAt');
@@ -1710,6 +1896,12 @@ extension UserModelQueryWhereDistinct
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'email', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<UserModel, UserModel, QDistinct> distinctByFriendCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'friendCount');
     });
   }
 
@@ -1762,6 +1954,12 @@ extension UserModelQueryProperty
     });
   }
 
+  QueryBuilder<UserModel, int, QQueryOperations> boardCountProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'boardCount');
+    });
+  }
+
   QueryBuilder<UserModel, DateTime, QQueryOperations> createdAtProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'createdAt');
@@ -1777,6 +1975,12 @@ extension UserModelQueryProperty
   QueryBuilder<UserModel, String, QQueryOperations> emailProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'email');
+    });
+  }
+
+  QueryBuilder<UserModel, int, QQueryOperations> friendCountProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'friendCount');
     });
   }
 

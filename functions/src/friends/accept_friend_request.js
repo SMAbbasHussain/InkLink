@@ -22,6 +22,19 @@ const {
 } = require('../utils/notification_sender');
 const logger = require("../utils/logger");
 
+function toNonNegativeInt(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 0 ? 0 : Math.trunc(value);
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isNaN(parsed)) {
+      return parsed < 0 ? 0 : parsed;
+    }
+  }
+  return 0;
+}
+
 module.exports = async (request) => {
   const { data, auth } = request;
   const uid = auth?.uid;
@@ -171,6 +184,22 @@ module.exports = async (request) => {
       const senderFriendData = { ...friendshipData };
       senderFriendData[FirestorePaths.UID] = toUid;
       transaction.set(senderFriendRef, senderFriendData);
+
+      const senderFriendCount = toNonNegativeInt(
+        senderDoc.data()?.[FirestorePaths.FRIEND_COUNT],
+      );
+      const recipientFriendCount = toNonNegativeInt(
+        recipientDoc.data()?.[FirestorePaths.FRIEND_COUNT],
+      );
+
+      transaction.update(senderRef, {
+        [FirestorePaths.FRIEND_COUNT]: senderFriendCount + 1,
+        [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      transaction.update(recipientRef, {
+        [FirestorePaths.FRIEND_COUNT]: recipientFriendCount + 1,
+        [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
+      });
 
       // Delete the request
       transaction.delete(requestRef);

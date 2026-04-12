@@ -3,7 +3,6 @@ import '../../../core/services/cloud_functions_service.dart';
 import '../../../core/utils/helpers.dart';
 import '../../repositories/profile/profile_repository.dart';
 import '../../repositories/friends/friends_repository.dart';
-import '../../repositories/board/board_repository.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
 class ProfileViewData {
@@ -49,19 +48,16 @@ class ProfileServiceImpl implements ProfileService {
   final AuthService _authService;
   final CloudFunctionsService _cloudFunctionsService;
   final FriendsRepository _friendsRepository;
-  final BoardRepository _boardRepository;
 
   ProfileServiceImpl({
     required ProfileRepository profileRepository,
     required AuthService authService,
     required CloudFunctionsService cloudFunctionsService,
     required FriendsRepository friendsRepository,
-    required BoardRepository boardRepository,
   }) : _profileRepository = profileRepository,
        _authService = authService,
        _cloudFunctionsService = cloudFunctionsService,
-       _friendsRepository = friendsRepository,
-       _boardRepository = boardRepository;
+       _friendsRepository = friendsRepository;
 
   @override
   Future<ProfileViewData> loadProfile(String userId) async {
@@ -99,19 +95,8 @@ class ProfileServiceImpl implements ProfileService {
       source: 'profile_open',
     );
 
-    int friendCount = 0;
-    int boardCount = 0;
-
-    if (isSelf) {
-      // These repository queries depend on rules that may only allow
-      // the authenticated user to read their own friends/boards.
-      friendCount = await _friendsRepository.countFriendsForUser(userId);
-      boardCount = await _boardRepository.countBoardsForUser(userId);
-    } else {
-      // For other users, rely on public denormalized fields when available.
-      friendCount = _toInt(userData['friendCount']);
-      boardCount = _toInt(userData['boardCount']);
-    }
+    final friendCount = _toInt(userData['friendCount']);
+    final boardCount = _toInt(userData['boardCount']);
 
     return ProfileViewData(
       userData: userData,

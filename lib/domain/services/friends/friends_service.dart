@@ -26,6 +26,7 @@ abstract class FriendsService {
   Future<void> sendFriendRequest(String targetUid);
   Future<void> acceptFriendRequest(String requestId, String senderUid);
   Future<void> declineFriendRequest(String requestId);
+  Future<void> cancelFriendRequest(String requestId, String targetUid);
   Future<void> unfriendUser(String targetUid);
   Future<void> blockUser(String targetUid, {String? reason});
   Future<void> reportUser(String targetUid, {String? reason});
@@ -125,6 +126,19 @@ class FriendsServiceImpl implements FriendsService {
       functionName: 'declineFriendRequest',
       payload: {'requestId': requestId},
       failureMessage: 'Server failed to decline request',
+    );
+  }
+
+  @override
+  Future<void> cancelFriendRequest(String requestId, String targetUid) async {
+    final normalizedTargetUid = targetUid.trim();
+    if (requestId.trim().isEmpty || normalizedTargetUid.isEmpty) return;
+
+    await _ensureOnlineForActions();
+    await _callFriendFunction(
+      functionName: 'cancelFriendRequest',
+      payload: {'requestId': requestId, 'targetUid': normalizedTargetUid},
+      failureMessage: 'Server failed to cancel request',
     );
   }
 

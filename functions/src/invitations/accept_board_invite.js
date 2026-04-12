@@ -54,11 +54,16 @@ module.exports = async (request) => {
       if (!boardDoc.exists) {
         throw new HttpsError('not-found', 'Board not found.');
       }
+      const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
 
       transaction.update(boardRef, {
         members: admin.firestore.FieldValue.arrayUnion(uid),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
+      transaction.set(userRef, {
+        [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayUnion(boardId),
+        [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
 
       // Keep board_invites as a pending-only collection.
       // Once accepted, remove the invite document.

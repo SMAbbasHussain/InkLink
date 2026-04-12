@@ -17,6 +17,10 @@ class LocalFriendProfile {
 
   String? photoURL;
 
+  int friendCount = 0;
+
+  int boardCount = 0;
+
   String? lastSource;
 
   DateTime? lastSeenAt;
@@ -30,6 +34,8 @@ class LocalFriendProfile {
     this.email,
     this.bio,
     this.photoURL,
+    this.friendCount = 0,
+    this.boardCount = 0,
     this.lastSource,
     this.lastSeenAt,
   });

@@ -288,6 +288,9 @@ class InvitationRepositoryImpl implements InvitationRepository {
       model.photoURL = photoUrl.isEmpty ? null : photoUrl;
     }
 
+    model.friendCount = _toInt(userData['friendCount']);
+    model.boardCount = _toInt(userData['boardCount']);
+
     final createdAt = _toDateTime(userData['createdAt']);
     if (createdAt != null) {
       model.createdAt = createdAt;
@@ -329,6 +332,9 @@ class InvitationRepositoryImpl implements InvitationRepository {
       model.photoURL = photoUrl.isEmpty ? null : photoUrl;
     }
 
+    model.friendCount = _toInt(userData['friendCount']);
+    model.boardCount = _toInt(userData['boardCount']);
+
     model.lastSource = source;
     model.lastSeenAt = DateTime.now();
     model.cachedAt = DateTime.now();
@@ -343,10 +349,11 @@ class InvitationRepositoryImpl implements InvitationRepository {
     return null;
   }
 
-  int? _toInt(dynamic value) {
+  int _toInt(dynamic value) {
     if (value is int) return value;
     if (value is num) return value.toInt();
-    return null;
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
   }
 
   int _timestampToMillis(dynamic value) {

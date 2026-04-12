@@ -162,6 +162,23 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
       }
     });
 
+    on<CancelFriendRequestRequested>((event, emit) async {
+      try {
+        await friendsService.cancelFriendRequest(
+          event.requestId,
+          event.targetUid,
+        );
+        if (_isOffline) {
+          add(FriendsConnectivityUpdated(false));
+        }
+      } catch (e) {
+        if (_looksOffline(e)) {
+          add(FriendsConnectivityUpdated(true));
+        }
+        emit(FriendsError("Failed to cancel request"));
+      }
+    });
+
     on<SendFriendRequestRequested>((event, emit) async {
       try {
         await friendsService.sendFriendRequest(event.targetUid);

@@ -92,31 +92,82 @@ class FriendRequestsScreen extends StatelessWidget {
       children: [
         if (state.isOffline) _buildOfflineBanner(),
         ...outgoing.map((req) {
-          final toUid = req['toUid']?.toString() ?? '';
-          final sentName =
-              req['recipientName']?.toString() ??
-              (toUid.isNotEmpty ? toUid : 'Unknown user');
-
-          return Card(
-            margin: const EdgeInsets.only(bottom: 10),
-            child: ListTile(
-              onTap: toUid.isEmpty
-                  ? null
-                  : () => Navigator.push(
-                      context,
-                      buildProfileRoute(context, userId: toUid),
-                    ),
-              leading: const Icon(Icons.schedule),
-              title: Text(sentName),
-              subtitle: const Text('Request pending'),
-              trailing: const Text(
-                'Pending',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-          );
+          return _buildOutgoingRequestCard(context, req);
         }),
       ],
+    );
+  }
+
+  Widget _buildOutgoingRequestCard(
+    BuildContext context,
+    Map<String, dynamic> request,
+  ) {
+    final toUid = request['toUid']?.toString() ?? '';
+    final recipientName = request['recipientName']?.toString();
+    final recipientPic = request['recipientPic']?.toString();
+    final displayName = recipientName?.isNotEmpty == true
+        ? recipientName!
+        : (toUid.isNotEmpty ? toUid : 'Unknown user');
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: ListTile(
+        onTap: toUid.isEmpty
+            ? null
+            : () => Navigator.push(
+                context,
+                buildProfileRoute(context, userId: toUid),
+              ),
+        leading: CircleAvatar(
+          radius: 24,
+          backgroundColor: Colors.blueGrey.withOpacity(0.12),
+          backgroundImage: recipientPic != null && recipientPic.isNotEmpty
+              ? NetworkImage(recipientPic)
+              : null,
+          child: recipientPic == null || recipientPic.isEmpty
+              ? const Icon(Icons.person, color: Colors.blueGrey)
+              : null,
+        ),
+        title: Text(displayName),
+        subtitle: const Text('Request pending'),
+        trailing: IconButton(
+          tooltip: 'Cancel request',
+          icon: const Icon(Icons.cancel_outlined),
+          onPressed: toUid.isEmpty
+              ? null
+              : () async {
+                  final shouldCancel = await showDialog<bool>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      title: const Text('Cancel request?'),
+                      content: Text('Cancel the request to $displayName?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: const Text('Keep'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          child: const Text('Cancel request'),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (!context.mounted) return;
+                  if (shouldCancel != true) return;
+
+                  context.read<FriendsBloc>().add(
+                    CancelFriendRequestRequested(
+                      request['requestId']?.toString() ??
+                          request['id']?.toString() ??
+                          '',
+                      toUid,
+                    ),
+                  );
+                },
+        ),
+      ),
     );
   }
 

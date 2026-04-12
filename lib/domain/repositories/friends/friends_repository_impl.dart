@@ -231,6 +231,21 @@ class FriendsRepositoryImpl implements FriendsRepository {
                     .map((doc) => _toRequestMap(doc.id, doc.data()))
                     .toList(),
               );
+
+              final recipientUids = requests
+                  .map((request) => request['toUid']?.toString() ?? '')
+                  .where((id) => id.isNotEmpty)
+                  .toSet()
+                  .toList();
+              if (recipientUids.isNotEmpty) {
+                final recipients = await _fetchUsersByIds(recipientUids);
+                await _cacheProfileSnapshots(
+                  recipients,
+                  source: 'outgoing_request',
+                  forceNonFriend: true,
+                );
+              }
+
               await _upsertFriendRequests(
                 requests,
                 uid: uid,
@@ -382,6 +397,8 @@ class FriendsRepositoryImpl implements FriendsRepository {
         final fromUid = request['fromUid']?.toString();
         final toUid = request['toUid']?.toString();
         final senderName = request['senderName']?.toString();
+        final recipientNameRaw = request['recipientName']?.toString();
+        final recipientPicRaw = request['recipientPic']?.toString();
         final status = request['status']?.toString() ?? 'pending';
         final timestamp = _toDateTime(request['timestamp']) ?? DateTime.now();
 
@@ -401,6 +418,19 @@ class FriendsRepositoryImpl implements FriendsRepository {
             ? senderName!
             : 'User';
         model.senderPic = request['senderPic']?.toString();
+
+        if (recipientNameRaw != null && recipientNameRaw.isNotEmpty) {
+          model.recipientName = recipientNameRaw;
+        } else {
+          model.recipientName = await _resolveDisplayName(isar, toUid);
+        }
+
+        if (recipientPicRaw != null && recipientPicRaw.isNotEmpty) {
+          model.recipientPic = recipientPicRaw;
+        } else {
+          model.recipientPic = await _resolvePhotoUrl(isar, toUid);
+        }
+
         model.status = status;
         model.timestamp = timestamp;
         model.cachedAt = DateTime.now();
@@ -429,6 +459,8 @@ class FriendsRepositoryImpl implements FriendsRepository {
       'toUid': item.toUid,
       'senderName': item.senderName,
       'senderPic': item.senderPic,
+      'recipientName': item.recipientName,
+      'recipientPic': item.recipientPic,
       'status': item.status,
       'timestamp': item.timestamp,
       'cachedAt': item.cachedAt,
@@ -570,6 +602,9 @@ class FriendsRepositoryImpl implements FriendsRepository {
       model.photoURL = photoUrl.isEmpty ? null : photoUrl;
     }
 
+    model.friendCount = _toInt(userData['friendCount']);
+    model.boardCount = _toInt(userData['boardCount']);
+
     final createdAt = _toDateTime(userData['createdAt']);
     if (createdAt != null) {
       model.createdAt = createdAt;
@@ -638,6 +673,9 @@ class FriendsRepositoryImpl implements FriendsRepository {
       model.photoURL = photoUrl.isEmpty ? null : photoUrl;
     }
 
+    model.friendCount = _toInt(userData['friendCount']);
+    model.boardCount = _toInt(userData['boardCount']);
+
     model.lastSource = source;
     model.lastSeenAt = DateTime.now();
     model.cachedAt = DateTime.now();
@@ -650,10 +688,19 @@ class FriendsRepositoryImpl implements FriendsRepository {
       'email': profile.email,
       'bio': profile.bio,
       'photoURL': profile.photoURL,
+      'friendCount': profile.friendCount,
+      'boardCount': profile.boardCount,
       'cachedAt': profile.cachedAt,
       'lastSeenAt': profile.lastSeenAt,
       'lastSource': profile.lastSource,
     };
+  }
+
+  int _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
   }
 
   Future<bool> _isCachedFriend(Isar isar, String uid) async {

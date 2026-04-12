@@ -227,6 +227,8 @@ class ProfileRepositoryImpl implements ProfileRepository {
     model.email = (data['email'] as String?) ?? model.email;
     model.bio = (data['bio'] as String?) ?? model.bio;
     model.photoURL = (data['photoURL'] as String?) ?? model.photoURL;
+    model.friendCount = _toInt(data['friendCount']);
+    model.boardCount = _toInt(data['boardCount']);
     model.isOnline = data['isOnline'] as bool? ?? model.isOnline;
     model.lastActive = _toDateTime(data['lastActive']) ?? model.lastActive;
 
@@ -249,6 +251,8 @@ class ProfileRepositoryImpl implements ProfileRepository {
       'bio': user.bio,
       'email': user.email,
       'photoURL': user.photoURL,
+      'friendCount': user.friendCount,
+      'boardCount': user.boardCount,
       'createdAt': user.createdAt,
       'updatedAt': user.updatedAt,
       'isOnline': user.isOnline,
@@ -262,6 +266,8 @@ class ProfileRepositoryImpl implements ProfileRepository {
       'bio': profile.bio,
       'email': profile.email,
       'photoURL': profile.photoURL,
+      'friendCount': profile.friendCount,
+      'boardCount': profile.boardCount,
       'cachedAt': profile.cachedAt,
       'lastSeenAt': profile.lastSeenAt,
       'lastSource': profile.lastSource,
@@ -274,6 +280,8 @@ class ProfileRepositoryImpl implements ProfileRepository {
       'bio': profile.bio,
       'email': profile.email,
       'photoURL': profile.photoURL,
+      'friendCount': profile.friendCount,
+      'boardCount': profile.boardCount,
       'cachedAt': profile.cachedAt,
       'lastSeenAt': profile.lastSeenAt,
       'lastSource': profile.lastSource,
@@ -309,6 +317,9 @@ class ProfileRepositoryImpl implements ProfileRepository {
       model.photoURL = photoUrl.isEmpty ? null : photoUrl;
     }
 
+    model.friendCount = _toInt(data['friendCount']);
+    model.boardCount = _toInt(data['boardCount']);
+
     model.lastSource = source;
     model.lastSeenAt = timestamp;
     model.cachedAt = timestamp;
@@ -330,5 +341,12 @@ class ProfileRepositoryImpl implements ProfileRepository {
     final isar = await _localDatabaseService.database;
     final profile = await isar.localFriendProfiles.getByUid(targetUid);
     return profile != null;
+  }
+
+  int _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
   }
 }

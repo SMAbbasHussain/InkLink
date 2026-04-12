@@ -18,6 +18,9 @@ class LocalFriendRequest {
   late String senderName;
   String? senderPic;
 
+  String? recipientName;
+  String? recipientPic;
+
   @Index()
   late String status;
 

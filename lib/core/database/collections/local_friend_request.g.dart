@@ -24,28 +24,38 @@ const LocalFriendRequestSchema = CollectionSchema(
       type: IsarType.dateTime,
     ),
     r'fromUid': PropertySchema(id: 1, name: r'fromUid', type: IsarType.string),
-    r'requestId': PropertySchema(
+    r'recipientName': PropertySchema(
       id: 2,
+      name: r'recipientName',
+      type: IsarType.string,
+    ),
+    r'recipientPic': PropertySchema(
+      id: 3,
+      name: r'recipientPic',
+      type: IsarType.string,
+    ),
+    r'requestId': PropertySchema(
+      id: 4,
       name: r'requestId',
       type: IsarType.string,
     ),
     r'senderName': PropertySchema(
-      id: 3,
+      id: 5,
       name: r'senderName',
       type: IsarType.string,
     ),
     r'senderPic': PropertySchema(
-      id: 4,
+      id: 6,
       name: r'senderPic',
       type: IsarType.string,
     ),
-    r'status': PropertySchema(id: 5, name: r'status', type: IsarType.string),
+    r'status': PropertySchema(id: 7, name: r'status', type: IsarType.string),
     r'timestamp': PropertySchema(
-      id: 6,
+      id: 8,
       name: r'timestamp',
       type: IsarType.dateTime,
     ),
-    r'toUid': PropertySchema(id: 7, name: r'toUid', type: IsarType.string),
+    r'toUid': PropertySchema(id: 9, name: r'toUid', type: IsarType.string),
   },
 
   estimateSize: _localFriendRequestEstimateSize,
@@ -136,6 +146,18 @@ int _localFriendRequestEstimateSize(
 ) {
   var bytesCount = offsets.last;
   bytesCount += 3 + object.fromUid.length * 3;
+  {
+    final value = object.recipientName;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
+  {
+    final value = object.recipientPic;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
   bytesCount += 3 + object.requestId.length * 3;
   bytesCount += 3 + object.senderName.length * 3;
   {
@@ -157,12 +179,14 @@ void _localFriendRequestSerialize(
 ) {
   writer.writeDateTime(offsets[0], object.cachedAt);
   writer.writeString(offsets[1], object.fromUid);
-  writer.writeString(offsets[2], object.requestId);
-  writer.writeString(offsets[3], object.senderName);
-  writer.writeString(offsets[4], object.senderPic);
-  writer.writeString(offsets[5], object.status);
-  writer.writeDateTime(offsets[6], object.timestamp);
-  writer.writeString(offsets[7], object.toUid);
+  writer.writeString(offsets[2], object.recipientName);
+  writer.writeString(offsets[3], object.recipientPic);
+  writer.writeString(offsets[4], object.requestId);
+  writer.writeString(offsets[5], object.senderName);
+  writer.writeString(offsets[6], object.senderPic);
+  writer.writeString(offsets[7], object.status);
+  writer.writeDateTime(offsets[8], object.timestamp);
+  writer.writeString(offsets[9], object.toUid);
 }
 
 LocalFriendRequest _localFriendRequestDeserialize(
@@ -175,12 +199,14 @@ LocalFriendRequest _localFriendRequestDeserialize(
   object.cachedAt = reader.readDateTime(offsets[0]);
   object.fromUid = reader.readString(offsets[1]);
   object.id = id;
-  object.requestId = reader.readString(offsets[2]);
-  object.senderName = reader.readString(offsets[3]);
-  object.senderPic = reader.readStringOrNull(offsets[4]);
-  object.status = reader.readString(offsets[5]);
-  object.timestamp = reader.readDateTime(offsets[6]);
-  object.toUid = reader.readString(offsets[7]);
+  object.recipientName = reader.readStringOrNull(offsets[2]);
+  object.recipientPic = reader.readStringOrNull(offsets[3]);
+  object.requestId = reader.readString(offsets[4]);
+  object.senderName = reader.readString(offsets[5]);
+  object.senderPic = reader.readStringOrNull(offsets[6]);
+  object.status = reader.readString(offsets[7]);
+  object.timestamp = reader.readDateTime(offsets[8]);
+  object.toUid = reader.readString(offsets[9]);
   return object;
 }
 
@@ -196,16 +222,20 @@ P _localFriendRequestDeserializeProp<P>(
     case 1:
       return (reader.readString(offset)) as P;
     case 2:
-      return (reader.readString(offset)) as P;
-    case 3:
-      return (reader.readString(offset)) as P;
-    case 4:
       return (reader.readStringOrNull(offset)) as P;
+    case 3:
+      return (reader.readStringOrNull(offset)) as P;
+    case 4:
+      return (reader.readString(offset)) as P;
     case 5:
       return (reader.readString(offset)) as P;
     case 6:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 7:
+      return (reader.readString(offset)) as P;
+    case 8:
+      return (reader.readDateTime(offset)) as P;
+    case 9:
       return (reader.readString(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -936,6 +966,324 @@ extension LocalFriendRequestQueryFilter
           upper: upper,
           includeUpper: includeUpper,
         ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientNameIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'recipientName'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientNameIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'recipientName'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientNameEqualTo(String? value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'recipientName',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientNameGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'recipientName',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientNameLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'recipientName',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientNameBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'recipientName',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientNameStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'recipientName',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientNameEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'recipientName',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientNameContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'recipientName',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientNameMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'recipientName',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientNameIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'recipientName', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientNameIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'recipientName', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientPicIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'recipientPic'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientPicIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'recipientPic'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientPicEqualTo(String? value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'recipientPic',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientPicGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'recipientPic',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientPicLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'recipientPic',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientPicBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'recipientPic',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientPicStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'recipientPic',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientPicEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'recipientPic',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientPicContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'recipientPic',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientPicMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'recipientPic',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientPicIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'recipientPic', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterFilterCondition>
+  recipientPicIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'recipientPic', value: ''),
       );
     });
   }
@@ -1756,6 +2104,34 @@ extension LocalFriendRequestQuerySortBy
   }
 
   QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterSortBy>
+  sortByRecipientName() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'recipientName', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterSortBy>
+  sortByRecipientNameDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'recipientName', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterSortBy>
+  sortByRecipientPic() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'recipientPic', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterSortBy>
+  sortByRecipientPicDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'recipientPic', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterSortBy>
   sortByRequestId() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'requestId', Sort.asc);
@@ -1885,6 +2261,34 @@ extension LocalFriendRequestQuerySortThenBy
   }
 
   QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterSortBy>
+  thenByRecipientName() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'recipientName', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterSortBy>
+  thenByRecipientNameDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'recipientName', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterSortBy>
+  thenByRecipientPic() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'recipientPic', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterSortBy>
+  thenByRecipientPicDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'recipientPic', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QAfterSortBy>
   thenByRequestId() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'requestId', Sort.asc);
@@ -1986,6 +2390,23 @@ extension LocalFriendRequestQueryWhereDistinct
   }
 
   QueryBuilder<LocalFriendRequest, LocalFriendRequest, QDistinct>
+  distinctByRecipientName({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(
+        r'recipientName',
+        caseSensitive: caseSensitive,
+      );
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QDistinct>
+  distinctByRecipientPic({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'recipientPic', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, LocalFriendRequest, QDistinct>
   distinctByRequestId({bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'requestId', caseSensitive: caseSensitive);
@@ -2046,6 +2467,20 @@ extension LocalFriendRequestQueryProperty
   QueryBuilder<LocalFriendRequest, String, QQueryOperations> fromUidProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'fromUid');
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, String?, QQueryOperations>
+  recipientNameProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'recipientName');
+    });
+  }
+
+  QueryBuilder<LocalFriendRequest, String?, QQueryOperations>
+  recipientPicProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'recipientPic');
     });
   }
 

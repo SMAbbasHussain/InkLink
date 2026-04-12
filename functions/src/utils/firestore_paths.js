@@ -28,6 +28,10 @@ const FirestorePaths = {
   SEARCH_KEYWORDS: 'searchKeywords',
   FCM_TOKEN: 'fcmToken',
   FCM_TOKENS: 'fcmTokens',
+  FRIEND_COUNT: 'friendCount',
+  BOARD_COUNT: 'boardCount',
+  OWNED_BOARDS: 'ownedBoards',
+  JOINED_BOARDS: 'joinedBoards',
   
   // Friend request fields
   FROM_UID: 'fromUid',

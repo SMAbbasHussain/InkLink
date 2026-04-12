@@ -23,6 +23,12 @@ class DeclineFriendRequestRequested extends FriendsEvent {
   DeclineFriendRequestRequested(this.requestId);
 }
 
+class CancelFriendRequestRequested extends FriendsEvent {
+  final String requestId;
+  final String targetUid;
+  CancelFriendRequestRequested(this.requestId, this.targetUid);
+}
+
 // FIX: Use named parameters here
 class UpdateFriendsLists extends FriendsEvent {
   final List<Map<String, dynamic>> friends;

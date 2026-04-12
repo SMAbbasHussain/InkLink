@@ -25,6 +25,12 @@ class UserModel {
   /// URL to user's profile photo stored in Cloudflare R2
   String? photoURL;
 
+  /// Cached count of friends.
+  int friendCount = 0;
+
+  /// Cached count of owned boards.
+  int boardCount = 0;
+
   /// Timestamp when the user was created
   late DateTime createdAt;
 
@@ -44,6 +50,8 @@ class UserModel {
     required this.email,
     this.bio,
     this.photoURL,
+    this.friendCount = 0,
+    this.boardCount = 0,
     required this.createdAt,
     this.updatedAt,
     this.isOnline,
@@ -58,6 +66,8 @@ class UserModel {
       email: data['email'] ?? '',
       bio: data['bio'],
       photoURL: data['photoURL'],
+      friendCount: (data['friendCount'] as num?)?.toInt() ?? 0,
+      boardCount: (data['boardCount'] as num?)?.toInt() ?? 0,
       createdAt: (data['createdAt'] as dynamic)?.toDate() ?? DateTime.now(),
       updatedAt: (data['updatedAt'] as dynamic)?.toDate(),
       isOnline: data['isOnline'] as bool?,
@@ -72,6 +82,8 @@ class UserModel {
       'email': email,
       'bio': bio,
       'photoURL': photoURL,
+      'friendCount': friendCount,
+      'boardCount': boardCount,
       'updatedAt': updatedAt ?? DateTime.now(),
       'isOnline': isOnline,
       'lastActive': lastActive,
