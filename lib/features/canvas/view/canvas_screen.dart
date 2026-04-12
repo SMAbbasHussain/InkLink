@@ -118,7 +118,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 _canvasBloc.add(
                   CanvasRenameBoardRequested(controller.text.trim()),
                 );
-                Navigator.pop(dialogContext);
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
               }
             },
             child: const Text('Rename'),

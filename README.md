@@ -15,7 +15,14 @@ InkLink is a Flutter app for real-time collaborative canvas workspaces with Fire
 
 The app follows this flow:
 
-`UI (screens/widgets)` -> `BLoC` -> `Service` -> `Repository` -> `Backend (Firebase Functions)` -> `Database`
+`UI (screens/widgets)` -> `BLoC` -> `Service`
+
+Service layer rules:
+
+- Services can call repositories for direct DB reads/writes that contain no business logic.
+- Services can call `CloudFunctionsService` for server-side function orchestration.
+- Services must not directly read/write databases.
+- Repositories and Cloud Functions are the only layers that interact with DB APIs.
 
 Composition happens at app and route boundaries:
 
@@ -61,11 +68,14 @@ Architecture checks live in:
 Current enforced rules include:
 
 1. No direct Firebase singleton access outside approved core paths.
-2. No direct repository mutation calls from view files.
-3. No direct repository/service reads from feature screen files.
-4. No direct repository/service imports in feature screen files.
-5. No Cloud Functions imports or callable invocations from repository files.
-6. No repository imports of domain services.
+2. Services cannot import/use direct Firestore/RTDB DB access APIs.
+3. Services must use repositories or CloudFunctionsService for backend interactions.
+4. Blocs cannot import repositories or core DB services.
+5. No direct repository mutation calls from view files.
+6. No direct repository/service reads from feature screen files.
+7. No direct repository/service imports in feature screen files.
+8. No Cloud Functions imports or callable invocations from repository files.
+9. No repository imports of domain services.
 
 ## CI Behavior
 

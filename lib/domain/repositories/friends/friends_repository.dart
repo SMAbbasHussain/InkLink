@@ -2,6 +2,7 @@ abstract class FriendsRepository {
   // Search
   Future<List<Map<String, dynamic>>> searchUsersByEmail(String email);
   Future<int> countFriendsForUser(String userId);
+  Future<void> probeServerAvailability();
 
   // Block Status
   Future<bool> hasUserBlockedTarget(String targetUid);

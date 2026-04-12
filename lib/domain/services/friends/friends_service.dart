@@ -1,11 +1,9 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:rxdart/rxdart.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'dart:developer' as developer;
 
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/cloud_functions_service.dart';
-import '../../../core/services/firestore_service.dart';
 import '../../repositories/friends/friends_repository.dart';
 
 class FriendsInfoSnapshot {
@@ -38,17 +36,14 @@ class FriendsServiceImpl implements FriendsService {
   final FriendsRepository _friendsRepository;
   final AuthService _authService;
   final CloudFunctionsService _cloudFunctionsService;
-  final FirestoreService _firestoreService;
 
   FriendsServiceImpl({
     required FriendsRepository friendsRepository,
     required AuthService authService,
     required CloudFunctionsService cloudFunctionsService,
-    required FirestoreService firestoreService,
   }) : _friendsRepository = friendsRepository,
        _authService = authService,
-       _cloudFunctionsService = cloudFunctionsService,
-       _firestoreService = firestoreService;
+       _cloudFunctionsService = cloudFunctionsService;
 
   @override
   Stream<FriendsInfoSnapshot> watchFriendsInfo() {
@@ -87,7 +82,7 @@ class FriendsServiceImpl implements FriendsService {
   @override
   Future<bool> isOnline() async {
     try {
-      await _probeServerAvailability();
+      await _friendsRepository.probeServerAvailability();
       return true;
     } catch (_) {
       return false;
@@ -221,17 +216,9 @@ class FriendsServiceImpl implements FriendsService {
 
   Future<void> _ensureOnlineForActions() async {
     try {
-      await _probeServerAvailability();
+      await _friendsRepository.probeServerAvailability();
     } catch (_) {
       throw Exception('You are offline. Reconnect to manage friend requests.');
     }
-  }
-
-  Future<void> _probeServerAvailability() {
-    return _firestoreService
-        .collection('users')
-        .limit(1)
-        .get(const GetOptions(source: Source.server))
-        .timeout(const Duration(seconds: 4));
   }
 }

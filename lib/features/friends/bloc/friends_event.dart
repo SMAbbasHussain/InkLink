@@ -35,3 +35,9 @@ class UpdateFriendsLists extends FriendsEvent {
     required this.outgoingRequests,
   });
 }
+
+class FriendsConnectivityUpdated extends FriendsEvent {
+  final bool isOffline;
+
+  FriendsConnectivityUpdated(this.isOffline);
+}

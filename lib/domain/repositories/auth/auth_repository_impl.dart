@@ -59,6 +59,49 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   @override
+  Future<void> syncFcmToken(String uid, String token) {
+    return upsertUserData(uid, {
+      'fcmToken': token,
+      'fcmTokens': FieldValue.arrayUnion([token]),
+      'lastActive': FieldValue.serverTimestamp(),
+    });
+  }
+
+  @override
+  Future<void> removeFcmTokenOnSignOut(String uid, {String? token}) {
+    final userUpdates = <String, dynamic>{
+      'fcmToken': FieldValue.delete(),
+      'lastActive': FieldValue.serverTimestamp(),
+    };
+
+    if (token != null && token.isNotEmpty) {
+      userUpdates['fcmTokens'] = FieldValue.arrayRemove([token]);
+    }
+
+    return upsertUserData(uid, userUpdates);
+  }
+
+  @override
+  Future<void> upsertUserProfile({
+    required String uid,
+    required String? email,
+    required String displayName,
+    required String photoURL,
+    required List<String> searchKeywords,
+    required bool isNewUser,
+  }) {
+    return upsertUserData(uid, {
+      'uid': uid,
+      'email': email,
+      'displayName': displayName,
+      'photoURL': photoURL,
+      'lastActive': FieldValue.serverTimestamp(),
+      'searchKeywords': searchKeywords,
+      if (isNewUser) 'createdAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  @override
   Future<User?> signUp(String name, String email, String password) async {
     try {
       final credential = await _authService

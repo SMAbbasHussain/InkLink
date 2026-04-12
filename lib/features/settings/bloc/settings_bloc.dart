@@ -1,6 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../domain/repositories/settings/settings_repository.dart';
+import '../../../domain/services/settings/settings_service.dart';
 
 abstract class SettingsEvent {
   const SettingsEvent();
@@ -76,10 +76,10 @@ class SettingsState {
 const Object _unset = Object();
 
 class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
-  final SettingsRepository _settingsRepository;
+  final SettingsService _settingsService;
 
-  SettingsBloc({required SettingsRepository settingsRepository})
-    : _settingsRepository = settingsRepository,
+  SettingsBloc({required SettingsService settingsService})
+    : _settingsService = settingsService,
       super(const SettingsState()) {
     on<SettingsLoadRequested>(_onLoadRequested);
     on<SettingsTrayTipsToggled>(_onTrayTipsToggled);
@@ -95,9 +95,9 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
     SettingsLoadRequested event,
     Emitter<SettingsState> emit,
   ) async {
-    final value = await _settingsRepository.getShowTrayTips();
-    final quality = await _settingsRepository.getBoardPreviewQuality();
-    final compression = await _settingsRepository
+    final value = await _settingsService.getShowTrayTips();
+    final quality = await _settingsService.getBoardPreviewQuality();
+    final compression = await _settingsService
         .getBoardPreviewCompressionEnabled();
     emit(
       state.copyWith(
@@ -116,7 +116,7 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
     emit(
       state.copyWith(showTrayTips: event.value, message: null, isError: false),
     );
-    await _settingsRepository.setShowTrayTips(event.value);
+    await _settingsService.setShowTrayTips(event.value);
     emit(
       state.copyWith(
         message: event.value
@@ -132,7 +132,7 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
     Emitter<SettingsState> emit,
   ) async {
     try {
-      await _settingsRepository.clearLocalCache();
+      await _settingsService.clearLocalCache();
       emit(
         state.copyWith(
           message: 'Local cache cleared successfully.',
@@ -157,7 +157,7 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
         isError: false,
       ),
     );
-    await _settingsRepository.setBoardPreviewQuality(event.quality);
+    await _settingsService.setBoardPreviewQuality(event.quality);
     emit(
       state.copyWith(message: 'Board preview quality updated.', isError: false),
     );
@@ -174,7 +174,7 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
         isError: false,
       ),
     );
-    await _settingsRepository.setBoardPreviewCompressionEnabled(event.enabled);
+    await _settingsService.setBoardPreviewCompressionEnabled(event.enabled);
     emit(
       state.copyWith(
         message: event.enabled

@@ -19,6 +19,8 @@ import 'package:inklink/domain/repositories/invitation/invitation_repository.dar
 import 'package:inklink/domain/repositories/invitation/invitation_repository_impl.dart';
 import 'package:inklink/domain/repositories/notification/notification_repository.dart';
 import 'package:inklink/domain/repositories/notification/notification_repository_impl.dart';
+import 'package:inklink/domain/repositories/presence/presence_repository.dart';
+import 'package:inklink/domain/repositories/presence/presence_repository_impl.dart';
 import 'package:inklink/core/database/local_database_service.dart';
 import 'package:inklink/domain/repositories/profile/profile_repository_impl.dart';
 import 'package:inklink/domain/repositories/friends/friends_repository.dart';
@@ -31,14 +33,19 @@ import 'package:inklink/domain/services/auth/auth_session_service.dart';
 import 'package:inklink/domain/services/board/board_service.dart';
 import 'package:inklink/domain/services/friends/friends_service.dart';
 import 'package:inklink/domain/services/invitation/invitation_service.dart';
+import 'package:inklink/domain/services/notification/notification_service.dart';
 import 'package:inklink/domain/services/presence/presence_service.dart';
 import 'package:inklink/domain/services/profile/profile_service.dart';
+import 'package:inklink/domain/services/settings/settings_service.dart';
+import 'package:inklink/domain/services/theme/theme_service.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:inklink/features/friends/bloc/friends_bloc.dart';
 import 'package:inklink/features/navigation/bloc/nav_bloc.dart';
 import 'package:inklink/features/theme/bloc/theme_bloc.dart';
+import 'package:inklink/features/notifications/bloc/notifications_bloc.dart';
+import 'package:inklink/features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'package:inklink/firebase_options.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
@@ -55,7 +62,8 @@ void main() async {
   );
 
   final themeRepository = ThemeRepositoryImpl();
-  final initialThemeMode = await themeRepository.getThemeMode();
+  final themeService = ThemeServiceImpl(themeRepository: themeRepository);
+  final initialThemeMode = await themeService.getThemeMode();
 
   final localDatabaseService = LocalDatabaseService();
   // Ensure DB drops tables or is initialized
@@ -70,19 +78,11 @@ void main() async {
           create: (context) => FirestoreServiceImpl(),
         ),
         RepositoryProvider<AuthService>(create: (context) => AuthServiceImpl()),
-        RepositoryProvider<PresenceService>(
-          create: (context) => PresenceServiceImpl(
-            authService: context.read<AuthService>(),
-            database: FirebaseDatabase.instanceFor(
-              app: Firebase.app(),
-              databaseURL: dotenv.env['FIREBASE_RTDB_URL'],
-            ),
-          ),
-        ),
         RepositoryProvider<CloudFunctionsService>(
           create: (context) => CloudFunctionsServiceImpl(),
         ),
         RepositoryProvider<MessagingService>.value(value: messagingService),
+        RepositoryProvider<ThemeService>.value(value: themeService),
         // Other services
         RepositoryProvider<LocalDatabaseService>.value(
           value: localDatabaseService,
@@ -92,6 +92,14 @@ void main() async {
           create: (context) => FirebaseAuthRepository(
             authService: context.read<AuthService>(),
             firestoreService: context.read<FirestoreService>(),
+          ),
+        ),
+        RepositoryProvider<PresenceRepository>(
+          create: (context) => FirebasePresenceRepository(
+            database: FirebaseDatabase.instanceFor(
+              app: Firebase.app(),
+              databaseURL: dotenv.env['FIREBASE_RTDB_URL'],
+            ),
           ),
         ),
         RepositoryProvider<FriendsRepository>(
@@ -141,6 +149,12 @@ void main() async {
           ),
         ),
         // 2. Domain services (depend on repositories)
+        RepositoryProvider<PresenceService>(
+          create: (context) => PresenceServiceImpl(
+            presenceRepository: context.read<PresenceRepository>(),
+            authService: context.read<AuthService>(),
+          ),
+        ),
         RepositoryProvider<AuthSessionService>(
           create: (context) => AuthSessionServiceImpl(
             authRepository: context.read<AuthRepository>(),
@@ -155,14 +169,22 @@ void main() async {
             friendsRepository: context.read<FriendsRepository>(),
             authService: context.read<AuthService>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
-            firestoreService: context.read<FirestoreService>(),
+          ),
+        ),
+        RepositoryProvider<SettingsService>(
+          create: (context) => SettingsServiceImpl(
+            settingsRepository: context.read<SettingsRepository>(),
+          ),
+        ),
+        RepositoryProvider<NotificationService>(
+          create: (context) => NotificationServiceImpl(
+            notificationRepository: context.read<NotificationRepository>(),
           ),
         ),
         RepositoryProvider<InvitationService>(
           create: (context) => InvitationServiceImpl(
             invitationRepository: context.read<InvitationRepository>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
-            firestoreService: context.read<FirestoreService>(),
           ),
         ),
         RepositoryProvider<BoardService>(
@@ -187,7 +209,7 @@ void main() async {
           BlocProvider(
             create: (context) =>
                 ThemeBloc(
-                  themeRepository: themeRepository,
+                  themeService: context.read<ThemeService>(),
                   initialMode: initialThemeMode,
                 )..add(
                   LoadTheme(),
@@ -211,6 +233,16 @@ void main() async {
               friendsService: context
                   .read<FriendsService>(), // Reads from service provider
             ),
+          ),
+          BlocProvider(
+            create: (context) => NotificationsBloc(
+              notificationService: context.read<NotificationService>(),
+            )..add(const NotificationsLoadRequested()),
+          ),
+          BlocProvider(
+            create: (context) => BoardInvitationsBloc(
+              invitationService: context.read<InvitationService>(),
+            )..add(const BoardInvitationsLoadRequested()),
           ),
         ],
         child: const MyApp(),

@@ -6,7 +6,6 @@ import '../../../core/database/local_database_service.dart';
 import '../../../core/utils/helpers.dart';
 import '../../repositories/auth/auth_repository.dart';
 import '../presence/presence_service.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 abstract class AuthSessionService {
   Stream<User?> get user;
@@ -78,15 +77,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
       await _presenceService.setUserOffline();
 
       final token = await _messagingService.getToken();
-      final userUpdates = <String, dynamic>{
-        'fcmToken': FieldValue.delete(),
-        'lastActive': FieldValue.serverTimestamp(),
-      };
-      if (token != null && token.isNotEmpty) {
-        userUpdates['fcmTokens'] = FieldValue.arrayRemove([token]);
-      }
-
-      await _authRepository.upsertUserData(current.uid, userUpdates);
+      await _authRepository.removeFcmTokenOnSignOut(current.uid, token: token);
       await _messagingService.deleteToken();
     }
 
@@ -102,11 +93,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
     await _messagingService.requestPermission();
     final token = await _messagingService.getToken();
     if (token != null && token.isNotEmpty && _lastSyncedToken != token) {
-      await _authRepository.upsertUserData(current.uid, {
-        'fcmToken': token,
-        'fcmTokens': FieldValue.arrayUnion([token]),
-        'lastActive': FieldValue.serverTimestamp(),
-      });
+      await _authRepository.syncFcmToken(current.uid, token);
       _lastSyncedToken = token;
     }
 
@@ -118,11 +105,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
         return;
       }
 
-      await _authRepository.upsertUserData(user.uid, {
-        'fcmToken': newToken,
-        'fcmTokens': FieldValue.arrayUnion([newToken]),
-        'lastActive': FieldValue.serverTimestamp(),
-      });
+      await _authRepository.syncFcmToken(user.uid, newToken);
       _lastSyncedToken = newToken;
     });
   }
@@ -136,14 +119,13 @@ class AuthSessionServiceImpl implements AuthSessionService {
         user.displayName ??
         'InkLink Creator';
 
-    await _authRepository.upsertUserData(user.uid, {
-      'uid': user.uid,
-      'email': user.email,
-      'displayName': finalName,
-      'photoURL': user.photoURL ?? '',
-      'lastActive': FieldValue.serverTimestamp(),
-      'searchKeywords': generateSearchKeywords(finalName),
-      if (existingData == null) 'createdAt': FieldValue.serverTimestamp(),
-    });
+    await _authRepository.upsertUserProfile(
+      uid: user.uid,
+      email: user.email,
+      displayName: finalName,
+      photoURL: user.photoURL ?? '',
+      searchKeywords: generateSearchKeywords(finalName),
+      isNewUser: existingData == null,
+    );
   }
 }

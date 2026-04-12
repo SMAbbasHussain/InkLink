@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/utils/notification_preferences.dart';
-import '../../../domain/repositories/notification/notification_repository.dart';
+import '../../../domain/services/notification/notification_service.dart';
 
 abstract class NotificationsEvent {
   const NotificationsEvent();
@@ -37,25 +37,10 @@ class NotificationsLoading extends NotificationsState {
   const NotificationsLoading();
 }
 
-class NotificationGroup {
-  final String key;
-  final Map<String, dynamic> latestNotification;
-  final List<Map<String, dynamic>> items;
-
-  const NotificationGroup({
-    required this.key,
-    required this.latestNotification,
-    required this.items,
-  });
-
-  int get count => items.length;
-  bool get hasUnread => items.any((item) => item['isRead'] != true);
-}
-
 class NotificationsLoaded extends NotificationsState {
-  final List<NotificationGroup> groups;
+  final List<Map<String, dynamic>> notifications;
 
-  const NotificationsLoaded(this.groups);
+  const NotificationsLoaded(this.notifications);
 }
 
 class NotificationsError extends NotificationsState {
@@ -65,13 +50,13 @@ class NotificationsError extends NotificationsState {
 }
 
 class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
-  final NotificationRepository _notificationRepository;
+  final NotificationService _notificationService;
   StreamSubscription<List<Map<String, dynamic>>>? _notificationsSub;
   Set<String> _readIds = <String>{};
   List<Map<String, dynamic>> _rawNotifications = <Map<String, dynamic>>[];
 
-  NotificationsBloc({required NotificationRepository notificationRepository})
-    : _notificationRepository = notificationRepository,
+  NotificationsBloc({required NotificationService notificationService})
+    : _notificationService = notificationService,
       super(const NotificationsInitial()) {
     on<NotificationsLoadRequested>(_onLoadRequested);
     on<_NotificationsUpdated>(_onNotificationsUpdated);
@@ -85,7 +70,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     emit(const NotificationsLoading());
     await _notificationsSub?.cancel();
     _readIds = await NotificationPreferences.getReadNotificationIds();
-    _notificationsSub = _notificationRepository.watchNotifications().listen((
+    _notificationsSub = _notificationService.watchNotifications().listen((
       items,
     ) {
       _rawNotifications = items;
@@ -98,31 +83,11 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     _NotificationsUpdated event,
     Emitter<NotificationsState> emit,
   ) {
-    final grouped = <String, List<Map<String, dynamic>>>{};
+    final sorted = List<Map<String, dynamic>>.from(
+      event.notifications,
+    )..sort((left, right) => _timestampOf(right).compareTo(_timestampOf(left)));
 
-    for (final item in event.notifications) {
-      final type = item['type']?.toString() ?? 'general';
-      final fromUid = item['fromUid']?.toString() ?? 'system';
-      final explicitGroup = item['groupingKey']?.toString();
-      final key = explicitGroup ?? '$type:$fromUid:${_groupTargetId(item)}';
-      grouped.putIfAbsent(key, () => []).add(item);
-    }
-
-    final groups =
-        grouped.entries.map((entry) {
-          final items = entry.value;
-          return NotificationGroup(
-            key: entry.key,
-            latestNotification: items.first,
-            items: items,
-          );
-        }).toList()..sort((left, right) {
-          return _timestampOf(
-            right.latestNotification,
-          ).compareTo(_timestampOf(left.latestNotification));
-        });
-
-    emit(NotificationsLoaded(groups));
+    emit(NotificationsLoaded(sorted));
   }
 
   Future<void> markNotificationRead(String notificationId) async {
@@ -134,12 +99,25 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     }
   }
 
+  Future<void> markAllNotificationsRead() async {
+    if (_rawNotifications.isEmpty) return;
+
+    for (final item in _rawNotifications) {
+      final id = item['id']?.toString() ?? '';
+      if (id.isEmpty || _readIds.contains(id)) continue;
+      await NotificationPreferences.markAsRead(id);
+      _readIds.add(id);
+    }
+
+    add(_NotificationsUpdated(_normalizeNotifications(_rawNotifications)));
+  }
+
   Future<void> _onDeleteRequested(
     NotificationsDeleteRequested event,
     Emitter<NotificationsState> emit,
   ) async {
     try {
-      await _notificationRepository.deleteNotification(event.notificationId);
+      await _notificationService.deleteNotification(event.notificationId);
       await NotificationPreferences.remove(event.notificationId);
       _readIds.remove(event.notificationId);
       _rawNotifications.removeWhere(
@@ -164,27 +142,21 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
         .toList(growable: false);
   }
 
-  String _groupTargetId(Map<String, dynamic> item) {
-    final extraData = item['extraData'];
-    if (extraData is Map) {
-      final inviteId = extraData['inviteId']?.toString();
-      if (inviteId != null && inviteId.isNotEmpty) return inviteId;
-
-      final requestId = extraData['requestId']?.toString();
-      if (requestId != null && requestId.isNotEmpty) return requestId;
-
-      final boardId = extraData['boardId']?.toString();
-      if (boardId != null && boardId.isNotEmpty) return boardId;
-    }
-
-    final targetId = item['targetId']?.toString();
-    return targetId == null || targetId.isEmpty ? 'all' : targetId;
-  }
-
   DateTime _timestampOf(Map<String, dynamic> item) {
     final raw = item['timestamp'];
     if (raw is DateTime) return raw;
     if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
+    if (raw is num) return DateTime.fromMillisecondsSinceEpoch(raw.toInt());
+
+    try {
+      final millis = (raw as dynamic).millisecondsSinceEpoch;
+      if (millis is int) {
+        return DateTime.fromMillisecondsSinceEpoch(millis);
+      }
+      if (millis is num) {
+        return DateTime.fromMillisecondsSinceEpoch(millis.toInt());
+      }
+    } catch (_) {}
 
     final parsed = raw?.toString();
     if (parsed == null || parsed.isEmpty) {

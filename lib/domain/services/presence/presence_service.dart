@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_database/firebase_database.dart';
 
 import '../../../core/services/auth_service.dart';
+import '../../repositories/presence/presence_repository.dart';
 
 class UserPresence {
   final String state;
@@ -17,28 +17,6 @@ class UserPresence {
   factory UserPresence.offline() {
     return const UserPresence(state: 'offline');
   }
-
-  factory UserPresence.fromSnapshot(DataSnapshot snapshot) {
-    final value = snapshot.value;
-    if (value is! Map<Object?, Object?>) {
-      return UserPresence.offline();
-    }
-
-    final state = (value['state']?.toString() ?? 'offline').toLowerCase();
-    final rawLastChanged = value['last_changed'];
-
-    DateTime? parsedLastChanged;
-    if (rawLastChanged is int) {
-      parsedLastChanged = DateTime.fromMillisecondsSinceEpoch(rawLastChanged);
-    } else if (rawLastChanged is String) {
-      parsedLastChanged = DateTime.tryParse(rawLastChanged);
-    }
-
-    return UserPresence(
-      state: state == 'online' ? 'online' : 'offline',
-      lastChanged: parsedLastChanged,
-    );
-  }
 }
 
 abstract class PresenceService {
@@ -49,16 +27,16 @@ abstract class PresenceService {
 }
 
 class PresenceServiceImpl implements PresenceService {
-  final FirebaseDatabase _database;
+  final PresenceRepository _presenceRepository;
   final AuthService _authService;
 
-  StreamSubscription<DatabaseEvent>? _connectedSubscription;
+  StreamSubscription<bool>? _connectedSubscription;
 
   PresenceServiceImpl({
+    required PresenceRepository presenceRepository,
     required AuthService authService,
-    FirebaseDatabase? database,
-  }) : _authService = authService,
-       _database = database ?? FirebaseDatabase.instance;
+  }) : _presenceRepository = presenceRepository,
+       _authService = authService;
 
   @override
   Future<void> setUserOnline() async {
@@ -76,13 +54,12 @@ class PresenceServiceImpl implements PresenceService {
 
       await _armOnDisconnectAndMarkOnline(uid);
 
-      _connectedSubscription = _database.ref('.info/connected').onValue.listen((
-        event,
-      ) async {
-        final connected = event.snapshot.value == true;
-        if (!connected) return;
-        await _armOnDisconnectAndMarkOnline(uid);
-      });
+      _connectedSubscription = _presenceRepository
+          .watchConnectionStatus()
+          .listen((connected) async {
+            if (!connected) return;
+            await _armOnDisconnectAndMarkOnline(uid);
+          });
     } catch (e, st) {
       _logPresenceFailure(
         action: 'setUserOnline',
@@ -105,9 +82,8 @@ class PresenceServiceImpl implements PresenceService {
     }
 
     try {
-      final userPresenceRef = _database.ref('presence/$uid');
-      await userPresenceRef.onDisconnect().cancel();
-      await userPresenceRef.set(_offlinePayload());
+      await _presenceRepository.cancelOnDisconnect(uid);
+      await _presenceRepository.setOffline(uid);
 
       await _connectedSubscription?.cancel();
       _connectedSubscription = null;
@@ -128,8 +104,15 @@ class PresenceServiceImpl implements PresenceService {
       return Stream<UserPresence>.value(UserPresence.offline());
     }
 
-    return _database.ref('presence/$normalizedUid').onValue.map((event) {
-      return UserPresence.fromSnapshot(event.snapshot);
+    return _presenceRepository.watchUserPresence(normalizedUid).map((snapshot) {
+      if (snapshot == null) {
+        return UserPresence.offline();
+      }
+
+      return UserPresence(
+        state: snapshot.state,
+        lastChanged: snapshot.lastChanged,
+      );
     });
   }
 
@@ -140,17 +123,8 @@ class PresenceServiceImpl implements PresenceService {
   }
 
   Future<void> _armOnDisconnectAndMarkOnline(String uid) async {
-    final userPresenceRef = _database.ref('presence/$uid');
-    await userPresenceRef.onDisconnect().set(_offlinePayload());
-    await userPresenceRef.set(_onlinePayload());
-  }
-
-  Map<String, dynamic> _onlinePayload() {
-    return {'state': 'online', 'last_changed': ServerValue.timestamp};
-  }
-
-  Map<String, dynamic> _offlinePayload() {
-    return {'state': 'offline', 'last_changed': ServerValue.timestamp};
+    await _presenceRepository.armOnDisconnectOffline(uid);
+    await _presenceRepository.setOnline(uid);
   }
 
   void _logPresenceFailure({

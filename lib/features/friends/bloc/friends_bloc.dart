@@ -14,11 +14,15 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     on<LoadFriendsInfo>((event, emit) async {
       emit(FriendsLoading());
       await _friendsSubscription?.cancel();
-      _isOffline = !(await friendsService.isOnline());
+      add(FriendsConnectivityUpdated(false));
+      _refreshConnectivity();
 
       // In a full implementation, you'd combine streams.
       // For now, let's fix the syntax error.
       _friendsSubscription = friendsService.watchFriendsInfo().listen((info) {
+        if (_isOffline) {
+          add(FriendsConnectivityUpdated(false));
+        }
         add(
           UpdateFriendsLists(
             friends: info.friends,
@@ -45,10 +49,38 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
       );
     });
 
+    on<FriendsConnectivityUpdated>((event, emit) {
+      _isOffline = event.isOffline;
+
+      final current = state;
+      if (current is FriendsLoaded) {
+        emit(
+          FriendsLoaded(
+            friends: current.friends,
+            incomingRequests: current.incomingRequests,
+            outgoingRequests: current.outgoingRequests,
+            isOffline: _isOffline,
+          ),
+        );
+      } else if (current is EmailSearchResultsLoaded) {
+        emit(
+          EmailSearchResultsLoaded(
+            result: current.result,
+            friendUids: current.friendUids,
+            pendingOutgoingUids: current.pendingOutgoingUids,
+            isOffline: _isOffline,
+          ),
+        );
+      }
+    });
+
     on<SearchUserByEmailRequested>((event, emit) async {
       emit(EmailSearchInProgress());
       try {
         final results = await friendsService.searchUsersByEmail(event.email);
+        if (_isOffline) {
+          add(FriendsConnectivityUpdated(false));
+        }
 
         if (results.isEmpty) {
           emit(EmailSearchEmpty());
@@ -75,6 +107,11 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           ),
         );
       } catch (e) {
+        if (_looksOffline(e)) {
+          add(FriendsConnectivityUpdated(true));
+          emit(FriendsError('You are offline. Reconnect to search users.'));
+          return;
+        }
         emit(FriendsError("User not found"));
       }
     });
@@ -88,10 +125,13 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           event.requestId,
           event.senderUid,
         );
+        if (_isOffline) {
+          add(FriendsConnectivityUpdated(false));
+        }
         // Success! The stream from Firestore will automatically update the list.
       } catch (e) {
         if (_looksOffline(e)) {
-          _isOffline = true;
+          add(FriendsConnectivityUpdated(true));
         }
         // Restore previous state so the list doesn't vanish
         if (currentState is FriendsLoaded) {
@@ -111,9 +151,12 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     on<DeclineFriendRequestRequested>((event, emit) async {
       try {
         await friendsService.declineFriendRequest(event.requestId);
+        if (_isOffline) {
+          add(FriendsConnectivityUpdated(false));
+        }
       } catch (e) {
         if (_looksOffline(e)) {
-          _isOffline = true;
+          add(FriendsConnectivityUpdated(true));
         }
         emit(FriendsError("Request declined"));
       }
@@ -122,13 +165,21 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     on<SendFriendRequestRequested>((event, emit) async {
       try {
         await friendsService.sendFriendRequest(event.targetUid);
+        if (_isOffline) {
+          add(FriendsConnectivityUpdated(false));
+        }
       } catch (e) {
         if (_looksOffline(e)) {
-          _isOffline = true;
+          add(FriendsConnectivityUpdated(true));
         }
         emit(FriendsError(e.toString()));
       }
     });
+  }
+
+  Future<void> _refreshConnectivity() async {
+    final isOnline = await friendsService.isOnline();
+    add(FriendsConnectivityUpdated(!isOnline));
   }
 
   bool _looksOffline(Object error) {

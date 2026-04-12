@@ -9,9 +9,6 @@ import '../../repositories/canvas/canvas_sync_repository.dart';
 
 abstract class CanvasService {
   bool get canSync;
-  Future<String> createBoard();
-  Future<void> startBoardsSync();
-  Future<void> renameBoard(String boardId, String newName);
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes);
   Stream<Board?> watchBoardById(String boardId);
   Stream<List<LocalCrdtUpdate>> listenToCrdtUpdates(String boardId);
@@ -36,17 +33,6 @@ class CanvasServiceImpl implements CanvasService {
 
   @override
   bool get canSync => _syncRepository.currentUserId != null;
-
-  @override
-  Future<String> createBoard() => _boardRepository.createNewBoard();
-
-  @override
-  Future<void> startBoardsSync() => _boardRepository.startBoardsSync();
-
-  @override
-  Future<void> renameBoard(String boardId, String newName) {
-    return _boardRepository.renameBoard(boardId, newName);
-  }
 
   @override
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes) {

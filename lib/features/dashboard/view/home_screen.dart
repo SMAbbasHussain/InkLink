@@ -11,6 +11,7 @@ import 'package:inklink/features/friends/bloc/friends_event.dart';
 import 'package:inklink/features/friends/bloc/friends_state.dart';
 import 'package:inklink/features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'package:inklink/features/board_invitations/view/board_invites_screen.dart';
+import 'package:inklink/features/notifications/bloc/notifications_bloc.dart';
 import 'package:inklink/features/notifications/view/notifications_route.dart';
 import 'package:inklink/features/profile/view/profile_route.dart';
 import '../../../core/constants/app_colors.dart';
@@ -332,10 +333,28 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
                 Padding(
                   padding: const EdgeInsets.only(right: 4.0),
-                  child: IconButton(
-                    icon: const Icon(Icons.notifications_none),
-                    onPressed: () {
-                      Navigator.push(context, buildNotificationsRoute(context));
+                  child: BlocBuilder<NotificationsBloc, NotificationsState>(
+                    builder: (context, state) {
+                      final hasUnread =
+                          state is NotificationsLoaded &&
+                          state.notifications.any(
+                            (item) => item['isRead'] != true,
+                          );
+
+                      return IconButton(
+                        icon: Badge(
+                          isLabelVisible: hasUnread,
+                          smallSize: 8,
+                          backgroundColor: Colors.redAccent,
+                          child: const Icon(Icons.notifications_none),
+                        ),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            buildNotificationsRoute(context),
+                          );
+                        },
+                      );
                     },
                   ),
                 ),

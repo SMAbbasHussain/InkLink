@@ -57,6 +57,15 @@ class FriendsRepositoryImpl implements FriendsRepository {
   }
 
   @override
+  Future<void> probeServerAvailability() {
+    return _firestoreService
+        .collection('users')
+        .limit(1)
+        .get(const GetOptions(source: Source.server))
+        .timeout(const Duration(seconds: 4));
+  }
+
+  @override
   Future<bool> hasUserBlockedTarget(String targetUid) async {
     final normalizedTargetUid = targetUid.trim();
     if (normalizedTargetUid.isEmpty) return false;

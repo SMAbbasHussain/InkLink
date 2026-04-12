@@ -87,6 +87,15 @@ class InvitationRepositoryImpl implements InvitationRepository {
     });
   }
 
+  @override
+  Future<void> probeServerAvailability() {
+    return _firestoreService
+        .collection('users')
+        .limit(1)
+        .get(const GetOptions(source: Source.server))
+        .timeout(const Duration(seconds: 4));
+  }
+
   Future<void> _upsertInvites(
     List<Map<String, dynamic>> invites, {
     required String uid,

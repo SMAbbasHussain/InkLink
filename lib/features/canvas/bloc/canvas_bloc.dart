@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 import '../../../core/crdt/canvas_crdt_adapter.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../domain/models/board.dart';
+import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
 import '../view/trays/canvas_shape_type.dart';
 
@@ -18,6 +19,7 @@ part 'canvas_state.dart';
 
 class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final CanvasService? _canvasService;
+  final BoardService? _boardService;
   final Uuid _uuid = const Uuid();
   final math.Random _random = math.Random();
 
@@ -28,12 +30,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final Set<String> _appliedCrdtUpdateIds = <String>{};
   String _boardId;
 
-  CanvasBloc({CanvasService? canvasService, String boardId = ''})
-    : _canvasService = canvasService,
-      _boardId = boardId,
-      super(CanvasInitial()) {
-    on<CreateBoardRequested>(_onCreateBoardRequested);
-    on<CanvasStartBoardSyncRequested>(_onCanvasStartBoardSyncRequested);
+  CanvasBloc({
+    CanvasService? canvasService,
+    BoardService? boardService,
+    String boardId = '',
+  }) : _canvasService = canvasService,
+       _boardService = boardService,
+       _boardId = boardId,
+       super(CanvasInitial()) {
     on<CanvasRenameBoardRequested>(_onCanvasRenameBoardRequested);
     on<CanvasBoardTitleUpdated>(_onCanvasBoardTitleUpdated);
     on<CanvasInitializeCrdt>(_onInitializeCrdt);
@@ -57,48 +61,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
   bool get _canSync => _canvasService != null && _boardId.isNotEmpty;
 
-  Future<void> _onCreateBoardRequested(
-    CreateBoardRequested event,
-    Emitter<CanvasState> emit,
-  ) async {
-    final canvasService = _canvasService;
-    if (canvasService == null) {
-      emit(CanvasErrorState('Board repository is not configured.'));
-      return;
-    }
-
-    emit(CanvasCreating());
-    try {
-      final boardId = await canvasService.createBoard();
-      emit(CanvasReady(boardId));
-    } catch (e) {
-      emit(CanvasErrorState(e.toString()));
-    }
-  }
-
-  Future<void> _onCanvasStartBoardSyncRequested(
-    CanvasStartBoardSyncRequested event,
-    Emitter<CanvasState> emit,
-  ) async {
-    final canvasService = _canvasService;
-    if (canvasService == null) return;
-
-    try {
-      await canvasService.startBoardsSync();
-    } catch (e) {
-      emit(state.copyWith(error: 'Failed to sync boards: $e'));
-    }
-  }
-
   Future<void> _onCanvasRenameBoardRequested(
     CanvasRenameBoardRequested event,
     Emitter<CanvasState> emit,
   ) async {
-    final canvasService = _canvasService;
-    if (canvasService == null || _boardId.isEmpty) return;
+    final boardService = _boardService;
+    if (boardService == null || _boardId.isEmpty) return;
 
     try {
-      await canvasService.renameBoard(_boardId, event.newName);
+      await boardService.renameBoard(_boardId, event.newName);
       emit(state.copyWith(error: null));
     } catch (e) {
       emit(state.copyWith(error: 'Failed to rename board: $e'));

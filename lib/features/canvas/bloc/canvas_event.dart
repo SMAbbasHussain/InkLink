@@ -5,17 +5,7 @@ abstract class CanvasEvent {
   const CanvasEvent();
 }
 
-/// Create a new board (used by dashboard)
-class CreateBoardRequested extends CanvasEvent {
-  const CreateBoardRequested();
-}
-
-/// Start board metadata sync (title, ownership, etc.)
-class CanvasStartBoardSyncRequested extends CanvasEvent {
-  const CanvasStartBoardSyncRequested();
-}
-
-/// Rename current board
+/// Rename current board through BoardService.
 class CanvasRenameBoardRequested extends CanvasEvent {
   final String newName;
 

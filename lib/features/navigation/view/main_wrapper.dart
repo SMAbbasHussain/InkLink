@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/domain/services/invitation/invitation_service.dart';
 import 'package:inklink/domain/services/presence/presence_service.dart';
-import 'package:inklink/domain/repositories/settings/settings_repository.dart';
+import 'package:inklink/domain/services/settings/settings_service.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../board_invitations/bloc/board_invitations_bloc.dart';
 import '../../friends/view/friends_screen.dart';
@@ -92,7 +92,7 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
       const FriendsScreen(),
       BlocProvider(
         create: (context) =>
-            SettingsBloc(settingsRepository: context.read<SettingsRepository>())
+            SettingsBloc(settingsService: context.read<SettingsService>())
               ..add(const SettingsLoadRequested()),
         child: const SettingsScreen(),
       ),

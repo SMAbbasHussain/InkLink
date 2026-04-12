@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../domain/repositories/board/board_repository.dart';
 import '../../../domain/repositories/canvas/canvas_sync_repository.dart';
 import '../../../domain/repositories/settings/settings_repository.dart';
+import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
 import '../bloc/canvas_bloc.dart';
 import 'canvas_screen.dart';
@@ -58,16 +59,14 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
       builder: (context, snapshot) {
         final data = snapshot.data;
         return BlocProvider(
-          create: (_) =>
-              CanvasBloc(
-                  canvasService: CanvasServiceImpl(
-                    boardRepository: context.read<BoardRepository>(),
-                    syncRepository: context.read<CanvasSyncRepository>(),
-                  ),
-                  boardId: widget.boardId,
-                )
-                ..add(const CanvasStartBoardSyncRequested())
-                ..add(CanvasInitializeCrdt(widget.boardId)),
+          create: (_) => CanvasBloc(
+            canvasService: CanvasServiceImpl(
+              boardRepository: context.read<BoardRepository>(),
+              syncRepository: context.read<CanvasSyncRepository>(),
+            ),
+            boardService: context.read<BoardService>(),
+            boardId: widget.boardId,
+          )..add(CanvasInitializeCrdt(widget.boardId)),
           child: CanvasScreen(
             boardId: widget.boardId,
             showTrayTipsOnEntry: widget.showTrayTipsOnEntry,

@@ -17,6 +17,8 @@ void main() {
     final source = entity.readAsStringSync();
 
     _checkFirebaseSingletonUsage(relativePath, source, violations);
+    _checkServiceDataAccessBoundaries(relativePath, source, violations);
+    _checkBlocLayerBoundaries(relativePath, source, violations);
     _checkRepositoryLayerBoundaries(relativePath, source, violations);
     _checkRepositoryUsageInViews(relativePath, source, violations);
     _checkScreenLayerBoundaries(relativePath, source, violations);
@@ -32,6 +34,76 @@ void main() {
     stderr.writeln(' - $violation');
   }
   exit(1);
+}
+
+void _checkServiceDataAccessBoundaries(
+  String path,
+  String source,
+  List<String> violations,
+) {
+  final isServiceFile = path.startsWith('lib/domain/services/');
+  if (!isServiceFile) return;
+
+  final forbiddenImportPatterns = <RegExp>[
+    RegExp(r"import\s+'package:cloud_firestore/cloud_firestore\.dart'"),
+    RegExp(r"import\s+'package:firebase_database/firebase_database\.dart'"),
+    RegExp(r"import\s+'package:inklink/core/services/firestore_service\.dart'"),
+    RegExp(r"import\s+'\.\./\.\./\.\./core/services/firestore_service\.dart'"),
+  ];
+
+  for (final importPattern in forbiddenImportPatterns) {
+    if (importPattern.hasMatch(source)) {
+      violations.add(
+        '$path imports direct database access in service layer. Services must call repositories or CloudFunctionsService.',
+      );
+      break;
+    }
+  }
+
+  final forbiddenDbCallPatterns = <RegExp>[
+    RegExp(r'\.collection\s*\('),
+    RegExp(r'\.doc\s*\('),
+    RegExp(r'\.ref\s*\('),
+  ];
+
+  for (final callPattern in forbiddenDbCallPatterns) {
+    if (callPattern.hasMatch(source)) {
+      violations.add(
+        '$path appears to execute direct database calls in service layer. Move DB access to repositories.',
+      );
+      break;
+    }
+  }
+}
+
+void _checkBlocLayerBoundaries(
+  String path,
+  String source,
+  List<String> violations,
+) {
+  final isBlocFile =
+      path.startsWith('lib/features/') && path.endsWith('_bloc.dart');
+  if (!isBlocFile) return;
+
+  final forbiddenImportPatterns = <RegExp>[
+    RegExp(r"import\s+'package:inklink/domain/repositories/"),
+    RegExp(r"import\s+'\.\./\.\./\.\./domain/repositories/"),
+    RegExp(
+      r"import\s+'package:inklink/core/services/(?!cloud_functions_service\.dart)",
+    ),
+    RegExp(
+      r"import\s+'\.\./\.\./\.\./core/services/(?!cloud_functions_service\.dart)",
+    ),
+  ];
+
+  for (final importPattern in forbiddenImportPatterns) {
+    if (importPattern.hasMatch(source)) {
+      violations.add(
+        '$path crosses bloc boundary. Blocs should depend on domain services, not repositories/core DB services.',
+      );
+      break;
+    }
+  }
 }
 
 void _checkRepositoryLayerBoundaries(

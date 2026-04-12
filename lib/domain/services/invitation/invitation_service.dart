@@ -1,8 +1,6 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../../core/services/cloud_functions_service.dart';
-import '../../../core/services/firestore_service.dart';
 import '../../repositories/invitation/invitation_repository.dart';
 
 abstract class InvitationService {
@@ -15,15 +13,12 @@ abstract class InvitationService {
 class InvitationServiceImpl implements InvitationService {
   final InvitationRepository _invitationRepository;
   final CloudFunctionsService _cloudFunctionsService;
-  final FirestoreService _firestoreService;
 
   InvitationServiceImpl({
     required InvitationRepository invitationRepository,
     required CloudFunctionsService cloudFunctionsService,
-    required FirestoreService firestoreService,
   }) : _invitationRepository = invitationRepository,
-       _cloudFunctionsService = cloudFunctionsService,
-       _firestoreService = firestoreService;
+       _cloudFunctionsService = cloudFunctionsService;
 
   @override
   Stream<List<Map<String, dynamic>>> watchPendingInvites() {
@@ -33,7 +28,7 @@ class InvitationServiceImpl implements InvitationService {
   @override
   Future<bool> isOnline() async {
     try {
-      await _probeServerAvailability();
+      await _invitationRepository.probeServerAvailability();
       return true;
     } catch (_) {
       return false;
@@ -84,17 +79,9 @@ class InvitationServiceImpl implements InvitationService {
 
   Future<void> _ensureOnlineForActions() async {
     try {
-      await _probeServerAvailability();
+      await _invitationRepository.probeServerAvailability();
     } catch (_) {
       throw Exception('You are offline. Reconnect to manage board invites.');
     }
-  }
-
-  Future<void> _probeServerAvailability() {
-    return _firestoreService
-        .collection('users')
-        .limit(1)
-        .get(const GetOptions(source: Source.server))
-        .timeout(const Duration(seconds: 4));
   }
 }
