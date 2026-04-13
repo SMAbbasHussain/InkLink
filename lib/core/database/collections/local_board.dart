@@ -13,6 +13,10 @@ class LocalBoard {
   late String ownerId;
   late List<String> members;
   late String engine;
+  late String visibility;
+  late String privateJoinPolicy;
+  late List<String> tags;
+  bool joinViaCodeEnabled = false;
   String? previewPath;
   late DateTime createdAt;
   late DateTime updatedAt;

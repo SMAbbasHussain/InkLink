@@ -163,6 +163,10 @@ class FirestoreBoardRepository implements BoardRepository {
                     ownerId: lb.ownerId,
                     members: lb.members,
                     previewPath: lb.previewPath,
+                    visibility: lb.visibility,
+                    privateJoinPolicy: lb.privateJoinPolicy,
+                    tags: lb.tags,
+                    joinViaCodeEnabled: lb.joinViaCodeEnabled,
                     createdAt: lb.createdAt,
                     updatedAt: lb.updatedAt,
                   ),
@@ -189,6 +193,10 @@ class FirestoreBoardRepository implements BoardRepository {
             ownerId: lb.ownerId,
             members: lb.members,
             previewPath: lb.previewPath,
+            visibility: lb.visibility,
+            privateJoinPolicy: lb.privateJoinPolicy,
+            tags: lb.tags,
+            joinViaCodeEnabled: lb.joinViaCodeEnabled,
             createdAt: lb.createdAt,
             updatedAt: lb.updatedAt,
           );
@@ -292,6 +300,13 @@ class FirestoreBoardRepository implements BoardRepository {
         ..ownerId = data['ownerId'] ?? ''
         ..members = List<String>.from(data['members'] ?? [])
         ..engine = data['engine'] ?? crdtEngine
+        ..visibility =
+            (data['visibility'] as String?) ?? Board.visibilityPrivate
+        ..privateJoinPolicy =
+            (data['privateJoinPolicy'] as String?) ??
+            Board.policyOwnerOnlyInvite
+        ..tags = List<String>.from(data['tags'] ?? const <String>[])
+        ..joinViaCodeEnabled = (data['joinViaCodeEnabled'] as bool?) ?? false
         ..previewPath = (await isar.localBoards.getByBoardId(
           boardId,
         ))?.previewPath
@@ -333,6 +348,9 @@ class FirestoreBoardRepository implements BoardRepository {
   @override
   Future<String> createNewBoard({
     String name = 'Untitled Board',
+    required String visibility,
+    required String privateJoinPolicy,
+    required List<String> tags,
     List<String> invitedUserIds = const [],
     int inviteExpiryHours = 72,
   }) async {
@@ -343,18 +361,42 @@ class FirestoreBoardRepository implements BoardRepository {
     final docRef = _firestoreService.collection('boards').doc();
     final userRef = firestore.collection('users').doc(uid);
     final now = DateTime.now();
+    final normalizedVisibility = visibility == Board.visibilityPublic
+        ? Board.visibilityPublic
+        : Board.visibilityPrivate;
+    final normalizedPrivatePolicy = privateJoinPolicy == Board.policyLinkCanJoin
+        ? Board.policyLinkCanJoin
+        : Board.policyOwnerOnlyInvite;
+    final normalizedTags = tags
+        .map((tag) => tag.trim().toLowerCase())
+        .where((tag) => tag.isNotEmpty)
+        .toSet()
+        .take(5)
+        .toList(growable: false);
+    final joinViaCodeEnabled =
+        normalizedVisibility == Board.visibilityPublic ||
+        normalizedPrivatePolicy == Board.policyLinkCanJoin;
 
-    final boardData = {
+    final boardData = <String, dynamic>{
       'boardId': docRef.id,
       'title': name,
       'name': name,
       'ownerId': uid,
       'members': [uid],
       'engine': crdtEngine,
+      'visibility': normalizedVisibility,
+      'privateJoinPolicy': normalizedPrivatePolicy,
+      'tags': normalizedTags,
+      'joinViaCodeEnabled': joinViaCodeEnabled,
+      'joinCode': docRef.id,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
       'lastEditedBy': uid,
     };
+
+    if (normalizedVisibility == Board.visibilityPrivate) {
+      boardData['privateJoinPolicy'] = normalizedPrivatePolicy;
+    }
 
     await firestore.runTransaction((transaction) async {
       transaction.set(docRef, boardData);
@@ -373,6 +415,10 @@ class FirestoreBoardRepository implements BoardRepository {
       ..ownerId = uid
       ..members = [uid]
       ..engine = crdtEngine
+      ..visibility = normalizedVisibility
+      ..privateJoinPolicy = normalizedPrivatePolicy
+      ..tags = normalizedTags
+      ..joinViaCodeEnabled = joinViaCodeEnabled
       ..previewPath = null
       ..createdAt = now
       ..updatedAt = now
@@ -432,6 +478,66 @@ class FirestoreBoardRepository implements BoardRepository {
       }
       rethrow;
     }
+  }
+
+  @override
+  Future<void> ensureBoardCached(String boardId) async {
+    final uid = currentUserId;
+    if (uid == null || boardId.trim().isEmpty) {
+      return;
+    }
+
+    final boardSnapshot = await _firestoreService
+        .collection('boards')
+        .doc(boardId)
+        .get();
+    if (!boardSnapshot.exists) {
+      return;
+    }
+
+    final boardData = boardSnapshot.data() ?? const <String, dynamic>{};
+    final isar = await _localDatabaseService.database;
+    final existingBoard = await isar.localBoards.getByBoardId(boardId);
+    final members = List<String>.from(boardData['members'] ?? const <String>[]);
+    final localBoard = existingBoard ?? LocalBoard();
+
+    localBoard
+      ..boardId = boardId
+      ..title = boardData['title'] ?? boardData['name'] ?? 'Untitled Board'
+      ..ownerId = boardData['ownerId'] ?? ''
+      ..members = members
+      ..engine = boardData['engine'] ?? crdtEngine
+      ..visibility =
+          (boardData['visibility'] as String?) ?? Board.visibilityPrivate
+      ..privateJoinPolicy =
+          (boardData['privateJoinPolicy'] as String?) ??
+          Board.policyOwnerOnlyInvite
+      ..tags = List<String>.from(boardData['tags'] ?? const <String>[])
+      ..joinViaCodeEnabled = (boardData['joinViaCodeEnabled'] as bool?) ?? false
+      ..previewPath = existingBoard?.previewPath
+      ..createdAt =
+          (boardData['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()
+      ..updatedAt =
+          (boardData['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now()
+      ..isSynced = true;
+
+    await isar.writeTxn(() async {
+      await isar.localBoards.putByBoardId(localBoard);
+    });
+  }
+
+  @override
+  Future<void> removeBoardSync(String boardId) async {
+    if (boardId.trim().isEmpty) {
+      return;
+    }
+
+    await _ownedBoardDocSubs.remove(boardId)?.cancel();
+    await _joinedBoardDocSubs.remove(boardId)?.cancel();
+    _ownedBoardDocs.remove(boardId);
+    _joinedBoardDocs.remove(boardId);
+    _ownedBoardIds.remove(boardId);
+    _joinedBoardIds.remove(boardId);
   }
 
   @override

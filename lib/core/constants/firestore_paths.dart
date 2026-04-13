@@ -27,4 +27,11 @@ class FirestorePaths {
   static const String senderPic = 'senderPic';
   static const String timestamp = 'timestamp';
   static const String status = 'status';
+
+  // Board fields
+  static const String visibility = 'visibility';
+  static const String privateJoinPolicy = 'privateJoinPolicy';
+  static const String joinViaCodeEnabled = 'joinViaCodeEnabled';
+  static const String joinCode = 'joinCode';
+  static const String tags = 'tags';
 }

@@ -1,6 +1,7 @@
 import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../../core/services/cloud_functions_service.dart';
+import '../../repositories/board/board_repository.dart';
 import '../../repositories/invitation/invitation_repository.dart';
 
 abstract class InvitationService {
@@ -12,12 +13,15 @@ abstract class InvitationService {
 
 class InvitationServiceImpl implements InvitationService {
   final InvitationRepository _invitationRepository;
+  final BoardRepository _boardRepository;
   final CloudFunctionsService _cloudFunctionsService;
 
   InvitationServiceImpl({
     required InvitationRepository invitationRepository,
+    required BoardRepository boardRepository,
     required CloudFunctionsService cloudFunctionsService,
   }) : _invitationRepository = invitationRepository,
+       _boardRepository = boardRepository,
        _cloudFunctionsService = cloudFunctionsService;
 
   @override
@@ -38,11 +42,15 @@ class InvitationServiceImpl implements InvitationService {
   @override
   Future<void> acceptInvite(String inviteId) async {
     await _ensureOnlineForActions();
-    await _callInviteFunction(
+    final result = await _callInviteFunction(
       functionName: 'acceptBoardInvite',
       inviteId: inviteId,
       failureMessage: 'Server failed to accept invite',
     );
+    final boardId = result is Map ? result['boardId']?.toString() : null;
+    if (boardId != null && boardId.isNotEmpty) {
+      await _boardRepository.ensureBoardCached(boardId);
+    }
     await _invitationRepository.removeHandledInvite(inviteId);
   }
 
@@ -57,7 +65,7 @@ class InvitationServiceImpl implements InvitationService {
     await _invitationRepository.removeHandledInvite(inviteId);
   }
 
-  Future<void> _callInviteFunction({
+  Future<dynamic> _callInviteFunction({
     required String functionName,
     required String inviteId,
     required String failureMessage,
@@ -70,6 +78,7 @@ class InvitationServiceImpl implements InvitationService {
       if (result.data['success'] != true) {
         throw Exception(failureMessage);
       }
+      return result.data;
     } on FirebaseFunctionsException catch (e) {
       throw Exception(e.message ?? 'Cloud function call failed');
     } catch (_) {

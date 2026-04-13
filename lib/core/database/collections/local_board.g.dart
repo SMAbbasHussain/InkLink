@@ -25,22 +25,38 @@ const LocalBoardSchema = CollectionSchema(
     ),
     r'engine': PropertySchema(id: 2, name: r'engine', type: IsarType.string),
     r'isSynced': PropertySchema(id: 3, name: r'isSynced', type: IsarType.bool),
-    r'members': PropertySchema(
+    r'joinViaCodeEnabled': PropertySchema(
       id: 4,
+      name: r'joinViaCodeEnabled',
+      type: IsarType.bool,
+    ),
+    r'members': PropertySchema(
+      id: 5,
       name: r'members',
       type: IsarType.stringList,
     ),
-    r'ownerId': PropertySchema(id: 5, name: r'ownerId', type: IsarType.string),
+    r'ownerId': PropertySchema(id: 6, name: r'ownerId', type: IsarType.string),
     r'previewPath': PropertySchema(
-      id: 6,
+      id: 7,
       name: r'previewPath',
       type: IsarType.string,
     ),
-    r'title': PropertySchema(id: 7, name: r'title', type: IsarType.string),
-    r'updatedAt': PropertySchema(
+    r'privateJoinPolicy': PropertySchema(
       id: 8,
+      name: r'privateJoinPolicy',
+      type: IsarType.string,
+    ),
+    r'tags': PropertySchema(id: 9, name: r'tags', type: IsarType.stringList),
+    r'title': PropertySchema(id: 10, name: r'title', type: IsarType.string),
+    r'updatedAt': PropertySchema(
+      id: 11,
       name: r'updatedAt',
       type: IsarType.dateTime,
+    ),
+    r'visibility': PropertySchema(
+      id: 12,
+      name: r'visibility',
+      type: IsarType.string,
     ),
   },
 
@@ -95,7 +111,16 @@ int _localBoardEstimateSize(
       bytesCount += 3 + value.length * 3;
     }
   }
+  bytesCount += 3 + object.privateJoinPolicy.length * 3;
+  bytesCount += 3 + object.tags.length * 3;
+  {
+    for (var i = 0; i < object.tags.length; i++) {
+      final value = object.tags[i];
+      bytesCount += value.length * 3;
+    }
+  }
   bytesCount += 3 + object.title.length * 3;
+  bytesCount += 3 + object.visibility.length * 3;
   return bytesCount;
 }
 
@@ -109,11 +134,15 @@ void _localBoardSerialize(
   writer.writeDateTime(offsets[1], object.createdAt);
   writer.writeString(offsets[2], object.engine);
   writer.writeBool(offsets[3], object.isSynced);
-  writer.writeStringList(offsets[4], object.members);
-  writer.writeString(offsets[5], object.ownerId);
-  writer.writeString(offsets[6], object.previewPath);
-  writer.writeString(offsets[7], object.title);
-  writer.writeDateTime(offsets[8], object.updatedAt);
+  writer.writeBool(offsets[4], object.joinViaCodeEnabled);
+  writer.writeStringList(offsets[5], object.members);
+  writer.writeString(offsets[6], object.ownerId);
+  writer.writeString(offsets[7], object.previewPath);
+  writer.writeString(offsets[8], object.privateJoinPolicy);
+  writer.writeStringList(offsets[9], object.tags);
+  writer.writeString(offsets[10], object.title);
+  writer.writeDateTime(offsets[11], object.updatedAt);
+  writer.writeString(offsets[12], object.visibility);
 }
 
 LocalBoard _localBoardDeserialize(
@@ -128,11 +157,15 @@ LocalBoard _localBoardDeserialize(
   object.engine = reader.readString(offsets[2]);
   object.id = id;
   object.isSynced = reader.readBool(offsets[3]);
-  object.members = reader.readStringList(offsets[4]) ?? [];
-  object.ownerId = reader.readString(offsets[5]);
-  object.previewPath = reader.readStringOrNull(offsets[6]);
-  object.title = reader.readString(offsets[7]);
-  object.updatedAt = reader.readDateTime(offsets[8]);
+  object.joinViaCodeEnabled = reader.readBool(offsets[4]);
+  object.members = reader.readStringList(offsets[5]) ?? [];
+  object.ownerId = reader.readString(offsets[6]);
+  object.previewPath = reader.readStringOrNull(offsets[7]);
+  object.privateJoinPolicy = reader.readString(offsets[8]);
+  object.tags = reader.readStringList(offsets[9]) ?? [];
+  object.title = reader.readString(offsets[10]);
+  object.updatedAt = reader.readDateTime(offsets[11]);
+  object.visibility = reader.readString(offsets[12]);
   return object;
 }
 
@@ -152,15 +185,23 @@ P _localBoardDeserializeProp<P>(
     case 3:
       return (reader.readBool(offset)) as P;
     case 4:
-      return (reader.readStringList(offset) ?? []) as P;
+      return (reader.readBool(offset)) as P;
     case 5:
-      return (reader.readString(offset)) as P;
+      return (reader.readStringList(offset) ?? []) as P;
     case 6:
-      return (reader.readStringOrNull(offset)) as P;
-    case 7:
       return (reader.readString(offset)) as P;
+    case 7:
+      return (reader.readStringOrNull(offset)) as P;
     case 8:
+      return (reader.readString(offset)) as P;
+    case 9:
+      return (reader.readStringList(offset) ?? []) as P;
+    case 10:
+      return (reader.readString(offset)) as P;
+    case 11:
       return (reader.readDateTime(offset)) as P;
+    case 12:
+      return (reader.readString(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
   }
@@ -793,6 +834,15 @@ extension LocalBoardQueryFilter
   }
 
   QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  joinViaCodeEnabledEqualTo(bool value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'joinViaCodeEnabled', value: value),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
   membersElementEqualTo(String value, {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(
@@ -1292,6 +1342,339 @@ extension LocalBoardQueryFilter
     });
   }
 
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  privateJoinPolicyEqualTo(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'privateJoinPolicy',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  privateJoinPolicyGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'privateJoinPolicy',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  privateJoinPolicyLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'privateJoinPolicy',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  privateJoinPolicyBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'privateJoinPolicy',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  privateJoinPolicyStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'privateJoinPolicy',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  privateJoinPolicyEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'privateJoinPolicy',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  privateJoinPolicyContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'privateJoinPolicy',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  privateJoinPolicyMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'privateJoinPolicy',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  privateJoinPolicyIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'privateJoinPolicy', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  privateJoinPolicyIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'privateJoinPolicy', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  tagsElementEqualTo(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'tags',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  tagsElementGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'tags',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  tagsElementLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'tags',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  tagsElementBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'tags',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  tagsElementStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'tags',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  tagsElementEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'tags',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  tagsElementContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'tags',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  tagsElementMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'tags',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  tagsElementIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'tags', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  tagsElementIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'tags', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> tagsLengthEqualTo(
+    int length,
+  ) {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(r'tags', length, true, length, true);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> tagsIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(r'tags', 0, true, 0, true);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> tagsIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(r'tags', 0, false, 999999, true);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  tagsLengthLessThan(int length, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(r'tags', 0, true, length, include);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  tagsLengthGreaterThan(int length, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(r'tags', length, include, 999999, true);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> tagsLengthBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(
+        r'tags',
+        lower,
+        includeLower,
+        upper,
+        includeUpper,
+      );
+    });
+  }
+
   QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> titleEqualTo(
     String value, {
     bool caseSensitive = true,
@@ -1495,6 +1878,150 @@ extension LocalBoardQueryFilter
       );
     });
   }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> visibilityEqualTo(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'visibility',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  visibilityGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'visibility',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  visibilityLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'visibility',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> visibilityBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'visibility',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  visibilityStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'visibility',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  visibilityEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'visibility',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  visibilityContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'visibility',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition> visibilityMatches(
+    String pattern, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'visibility',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  visibilityIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'visibility', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  visibilityIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'visibility', value: ''),
+      );
+    });
+  }
 }
 
 extension LocalBoardQueryObject
@@ -1553,6 +2080,20 @@ extension LocalBoardQuerySortBy
     });
   }
 
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy>
+  sortByJoinViaCodeEnabled() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'joinViaCodeEnabled', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy>
+  sortByJoinViaCodeEnabledDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'joinViaCodeEnabled', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByOwnerId() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'ownerId', Sort.asc);
@@ -1577,6 +2118,19 @@ extension LocalBoardQuerySortBy
     });
   }
 
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByPrivateJoinPolicy() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'privateJoinPolicy', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy>
+  sortByPrivateJoinPolicyDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'privateJoinPolicy', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByTitle() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'title', Sort.asc);
@@ -1598,6 +2152,18 @@ extension LocalBoardQuerySortBy
   QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByUpdatedAtDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'updatedAt', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByVisibility() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'visibility', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByVisibilityDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'visibility', Sort.desc);
     });
   }
 }
@@ -1664,6 +2230,20 @@ extension LocalBoardQuerySortThenBy
     });
   }
 
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy>
+  thenByJoinViaCodeEnabled() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'joinViaCodeEnabled', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy>
+  thenByJoinViaCodeEnabledDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'joinViaCodeEnabled', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByOwnerId() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'ownerId', Sort.asc);
@@ -1688,6 +2268,19 @@ extension LocalBoardQuerySortThenBy
     });
   }
 
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByPrivateJoinPolicy() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'privateJoinPolicy', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy>
+  thenByPrivateJoinPolicyDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'privateJoinPolicy', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByTitle() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'title', Sort.asc);
@@ -1709,6 +2302,18 @@ extension LocalBoardQuerySortThenBy
   QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByUpdatedAtDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'updatedAt', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByVisibility() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'visibility', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByVisibilityDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'visibility', Sort.desc);
     });
   }
 }
@@ -1743,6 +2348,13 @@ extension LocalBoardQueryWhereDistinct
     });
   }
 
+  QueryBuilder<LocalBoard, LocalBoard, QDistinct>
+  distinctByJoinViaCodeEnabled() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'joinViaCodeEnabled');
+    });
+  }
+
   QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByMembers() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'members');
@@ -1765,6 +2377,23 @@ extension LocalBoardQueryWhereDistinct
     });
   }
 
+  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByPrivateJoinPolicy({
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(
+        r'privateJoinPolicy',
+        caseSensitive: caseSensitive,
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByTags() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'tags');
+    });
+  }
+
   QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByTitle({
     bool caseSensitive = true,
   }) {
@@ -1776,6 +2405,14 @@ extension LocalBoardQueryWhereDistinct
   QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByUpdatedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'updatedAt');
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByVisibility({
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'visibility', caseSensitive: caseSensitive);
     });
   }
 }
@@ -1812,6 +2449,13 @@ extension LocalBoardQueryProperty
     });
   }
 
+  QueryBuilder<LocalBoard, bool, QQueryOperations>
+  joinViaCodeEnabledProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'joinViaCodeEnabled');
+    });
+  }
+
   QueryBuilder<LocalBoard, List<String>, QQueryOperations> membersProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'members');
@@ -1830,6 +2474,19 @@ extension LocalBoardQueryProperty
     });
   }
 
+  QueryBuilder<LocalBoard, String, QQueryOperations>
+  privateJoinPolicyProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'privateJoinPolicy');
+    });
+  }
+
+  QueryBuilder<LocalBoard, List<String>, QQueryOperations> tagsProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'tags');
+    });
+  }
+
   QueryBuilder<LocalBoard, String, QQueryOperations> titleProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'title');
@@ -1839,6 +2496,12 @@ extension LocalBoardQueryProperty
   QueryBuilder<LocalBoard, DateTime, QQueryOperations> updatedAtProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'updatedAt');
+    });
+  }
+
+  QueryBuilder<LocalBoard, String, QQueryOperations> visibilityProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'visibility');
     });
   }
 }

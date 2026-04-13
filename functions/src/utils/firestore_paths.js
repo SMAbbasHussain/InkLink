@@ -46,6 +46,11 @@ const FirestorePaths = {
   BOARD_TITLE: 'boardTitle',
   EXPIRES_AT: 'expiresAt',
   INVITE_EXPIRY_HOURS: 'inviteExpiryHours',
+  VISIBILITY: 'visibility',
+  PRIVATE_JOIN_POLICY: 'privateJoinPolicy',
+  JOIN_VIA_CODE_ENABLED: 'joinViaCodeEnabled',
+  JOIN_CODE: 'joinCode',
+  TAGS: 'tags',
 
   // Notification fields
   TYPE: 'type',

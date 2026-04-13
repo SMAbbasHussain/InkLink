@@ -4,11 +4,9 @@ import 'package:inklink/features/canvas/view/canvas_route.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
 import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
+import 'package:inklink/features/dashboard/view/create_board_route.dart';
 import 'package:inklink/features/dashboard/view/widgets/board_card.dart';
 import 'package:inklink/features/dashboard/view/widgets/quick_action_button.dart';
-import 'package:inklink/features/friends/bloc/friends_bloc.dart';
-import 'package:inklink/features/friends/bloc/friends_event.dart';
-import 'package:inklink/features/friends/bloc/friends_state.dart';
 import 'package:inklink/features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'package:inklink/features/board_invitations/view/board_invites_screen.dart';
 import 'package:inklink/features/notifications/bloc/notifications_bloc.dart';
@@ -28,6 +26,7 @@ class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   late TabController _tabController;
   String? _watchedProfileUserId;
+  bool _isNavigatingToCanvas = false;
 
   @override
   bool get wantKeepAlive => true; // Preserves tab state
@@ -89,170 +88,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _showCreateBoardDialog() {
-    final nameController = TextEditingController();
-    final inviteesController = TextEditingController();
-    final selectedFriendIds = <String>{};
-    int inviteExpiryHours = 72;
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setState) {
-          return AlertDialog(
-            title: const Text('Create Board'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Board name',
-                      hintText: 'Enter board name',
-                    ),
-                    autofocus: true,
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: inviteesController,
-                    decoration: const InputDecoration(
-                      labelText: 'Invite users (optional)',
-                      hintText: 'Comma-separated emails or user IDs',
-                    ),
-                    maxLines: 2,
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Select from friends (optional)',
-                          style: TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          context.read<FriendsBloc>().add(LoadFriendsInfo());
-                        },
-                        child: const Text('Load'),
-                      ),
-                    ],
-                  ),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 140),
-                    child: BlocBuilder<FriendsBloc, FriendsState>(
-                      builder: (context, friendsState) {
-                        if (friendsState is FriendsLoading) {
-                          return const Center(
-                            child: Padding(
-                              padding: EdgeInsets.all(8.0),
-                              child: CircularProgressIndicator(),
-                            ),
-                          );
-                        }
-
-                        if (friendsState is! FriendsLoaded ||
-                            friendsState.friends.isEmpty) {
-                          return const Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              'No friends loaded yet.',
-                              style: TextStyle(color: Colors.grey),
-                            ),
-                          );
-                        }
-
-                        return SingleChildScrollView(
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: friendsState.friends.map((friend) {
-                              final uid = friend['uid']?.toString() ?? '';
-                              if (uid.isEmpty) {
-                                return const SizedBox.shrink();
-                              }
-                              final name =
-                                  friend['displayName']?.toString() ?? 'Friend';
-                              final selected = selectedFriendIds.contains(uid);
-                              return FilterChip(
-                                selected: selected,
-                                label: Text(name),
-                                onSelected: (value) {
-                                  setState(() {
-                                    if (value) {
-                                      selectedFriendIds.add(uid);
-                                    } else {
-                                      selectedFriendIds.remove(uid);
-                                    }
-                                  });
-                                },
-                              );
-                            }).toList(),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text('Invite expiration'),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<int>(
-                    value: inviteExpiryHours,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 24, child: Text('24 hours')),
-                      DropdownMenuItem(value: 72, child: Text('3 days')),
-                      DropdownMenuItem(value: 168, child: Text('7 days')),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() {
-                        inviteExpiryHours = value;
-                      });
-                    },
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () {
-                  final invitees = inviteesController.text
-                      .split(',')
-                      .map((e) => e.trim())
-                      .where((e) => e.isNotEmpty)
-                      .toSet()
-                      .toList();
-
-                  invitees.addAll(selectedFriendIds);
-
-                  context.read<DashboardBloc>().add(
-                    DashboardCreateBoardRequested(
-                      title: nameController.text.trim().isEmpty
-                          ? 'Untitled Board'
-                          : nameController.text.trim(),
-                      invitedUserIds: invitees,
-                      inviteExpiryHours: inviteExpiryHours,
-                    ),
-                  );
-
-                  Navigator.pop(dialogContext);
-                },
-                child: const Text('Create'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
+    Navigator.push(context, buildCreateBoardRoute(context));
   }
 
   void _syncProfileWatch(String? userId) {
@@ -276,9 +112,20 @@ class _HomeScreenState extends State<HomeScreen>
         BlocListener<DashboardBloc, DashboardState>(
           listenWhen: (previous, current) =>
               current is DashboardLoaded &&
-              (current.joinedBoardId != null ||
-                  current.createdBoardId != null ||
-                  current.actionError != null),
+              ((previous is DashboardLoaded &&
+                      ((previous.joinedBoardId != current.joinedBoardId &&
+                              current.joinedBoardId != null) ||
+                          (previous.createdBoardId != current.createdBoardId &&
+                              current.createdBoardId != null) ||
+                          (previous.actionError != current.actionError &&
+                              current.actionError != null) ||
+                          (previous.actionInfo != current.actionInfo &&
+                              current.actionInfo != null))) ||
+                  (previous is! DashboardLoaded &&
+                      (current.joinedBoardId != null ||
+                          current.createdBoardId != null ||
+                          current.actionError != null ||
+                          current.actionInfo != null))),
           listener: (context, state) async {
             if (state is! DashboardLoaded) return;
             final dashboardBloc = this.context.read<DashboardBloc>();
@@ -296,19 +143,44 @@ class _HomeScreenState extends State<HomeScreen>
               return;
             }
 
-            final boardId = state.createdBoardId ?? state.joinedBoardId;
-            if (boardId == null) return;
+            if (state.actionInfo != null) {
+              scaffoldMessenger.showSnackBar(
+                SnackBar(
+                  content: Text(state.actionInfo!),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
 
-            await navigator.push(
-              buildCanvasRoute(
-                this.context,
-                boardId: boardId,
-                showTrayTipsOnEntry: true,
-              ),
-            );
+            final boardId = state.createdBoardId ?? state.joinedBoardId;
+            if (boardId == null) {
+              if (state.actionInfo != null) {
+                dashboardBloc.add(DashboardConsumeEffects());
+              }
+              return;
+            }
+
+            if (_isNavigatingToCanvas) return;
+            _isNavigatingToCanvas = true;
+
+            // Consume effect before navigation so state refreshes cannot
+            // retrigger additional pushes while the canvas route is open.
+            dashboardBloc.add(DashboardConsumeEffects());
+
+            try {
+              await navigator.push(
+                buildCanvasRoute(
+                  this.context,
+                  boardId: boardId,
+                  showTrayTipsOnEntry: true,
+                ),
+              );
+            } finally {
+              _isNavigatingToCanvas = false;
+            }
+
             if (!mounted) return;
             _tabController.animateTo(1);
-            dashboardBloc.add(DashboardConsumeEffects());
           },
         ),
       ],

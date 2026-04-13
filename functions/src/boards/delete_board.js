@@ -52,8 +52,8 @@ module.exports = async (request) => {
 
       transaction.set(ownerRef, {
         [FirestorePaths.BOARD_COUNT]: Math.max(0, ownerCount - 1),
-        [FirestorePaths.OWNED_BOARDS]: admin.firestore.FieldValue.arrayRemove([boardId.trim()]),
-        [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove([boardId.trim()]),
+        [FirestorePaths.OWNED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
+        [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
         [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
 
@@ -65,7 +65,7 @@ module.exports = async (request) => {
         transaction.set(
           firestore.collection(FirestorePaths.USERS).doc(memberUid.trim()),
           {
-            [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove([boardId.trim()]),
+            [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
             [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },

@@ -15,10 +15,15 @@ abstract class BoardRepository {
 
   Future<String> createNewBoard({
     String name = 'Untitled Board',
+    required String visibility,
+    required String privateJoinPolicy,
+    required List<String> tags,
     List<String> invitedUserIds = const [],
     int inviteExpiryHours = 72,
   });
   Future<void> joinBoard(String boardId);
+  Future<void> ensureBoardCached(String boardId);
+  Future<void> removeBoardSync(String boardId);
   Future<void> renameBoard(String boardId, String newName);
   Future<void> deleteBoard(String boardId);
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes);

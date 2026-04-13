@@ -83,19 +83,29 @@ class CanvasServiceImpl implements CanvasService {
         )
         .then((_) async {
           if (userId == null) return;
-          await _syncRepository.writeRemoteCrdtUpdate(
-            boardId: boardId,
-            updateId: updateId,
-            payloadBase64: payloadBase64,
-            sourceClientId: userId,
-          );
-          await _syncRepository.markCrdtUpdateSynced(updateId);
-          await _syncPendingLocalUpdates(boardId, userId);
+          try {
+            await _syncRepository.writeRemoteCrdtUpdate(
+              boardId: boardId,
+              updateId: updateId,
+              payloadBase64: payloadBase64,
+              sourceClientId: userId,
+            );
+            await _syncRepository.markCrdtUpdateSynced(updateId);
+            await _syncPendingLocalUpdates(boardId, userId);
+          } catch (error) {
+            if (_isPermissionDenied(error)) {
+              await stopCrdtRemoteSync(boardId);
+              return;
+            }
+            rethrow;
+          }
         });
   }
 
   Future<void> _hydrateAndStartRemoteSync(String boardId, String userId) async {
     if (_remoteSubs.containsKey(boardId)) return;
+
+    await _boardRepository.ensureBoardCached(boardId);
 
     final remoteUpdates = await _syncRepository.fetchRemoteCrdtUpdates(boardId);
     if (remoteUpdates.isNotEmpty) {
@@ -123,13 +133,27 @@ class CanvasServiceImpl implements CanvasService {
     final pending = await _syncRepository.getLocalCrdtUpdates(boardId);
     for (final local in pending) {
       if (local.isSynced) continue;
-      await _syncRepository.writeRemoteCrdtUpdate(
-        boardId: boardId,
-        updateId: local.updateId,
-        payloadBase64: local.payloadBase64,
-        sourceClientId: userId,
-      );
-      await _syncRepository.markCrdtUpdateSynced(local.updateId);
+      try {
+        await _syncRepository.writeRemoteCrdtUpdate(
+          boardId: boardId,
+          updateId: local.updateId,
+          payloadBase64: local.payloadBase64,
+          sourceClientId: userId,
+        );
+        await _syncRepository.markCrdtUpdateSynced(local.updateId);
+      } catch (error) {
+        if (_isPermissionDenied(error)) {
+          await stopCrdtRemoteSync(boardId);
+          return;
+        }
+        rethrow;
+      }
     }
+  }
+
+  bool _isPermissionDenied(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('permission-denied') ||
+        message.contains('missing or insufficient permissions');
   }
 }

@@ -26,6 +26,13 @@ class CanvasBoardTitleUpdated extends CanvasEvent {
   const CanvasBoardTitleUpdated(this.title);
 }
 
+/// Board metadata is no longer available (deleted or access lost).
+class CanvasBoardUnavailable extends CanvasEvent {
+  final String message;
+
+  const CanvasBoardUnavailable(this.message);
+}
+
 /// Update canvas from remote CRDT changes
 class CanvasApplyRemoteUpdate extends CanvasEvent {
   final List<LocalCrdtUpdate> updates;

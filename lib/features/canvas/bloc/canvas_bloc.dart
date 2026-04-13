@@ -28,6 +28,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   CanvasDocAdapter? _crdtAdapter;
   Future<void>? _crdtInitFuture;
   final Set<String> _appliedCrdtUpdateIds = <String>{};
+  bool _hasSeenBoardMetadata = false;
   String _boardId;
 
   CanvasBloc({
@@ -40,6 +41,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
        super(CanvasInitial()) {
     on<CanvasRenameBoardRequested>(_onCanvasRenameBoardRequested);
     on<CanvasBoardTitleUpdated>(_onCanvasBoardTitleUpdated);
+    on<CanvasBoardUnavailable>(_onCanvasBoardUnavailable);
     on<CanvasInitializeCrdt>(_onInitializeCrdt);
     on<CanvasApplyRemoteUpdate>(_onApplyRemoteUpdate);
     on<CanvasStartStroke>(_onStartStroke);
@@ -81,6 +83,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     _boardId = event.boardId;
+    _hasSeenBoardMetadata = false;
     emit(state.copyWith(isLoading: true, error: null));
 
     try {
@@ -99,6 +102,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     emit(state.copyWith(boardTitle: event.title));
+  }
+
+  void _onCanvasBoardUnavailable(
+    CanvasBoardUnavailable event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(error: event.message, isLoading: false));
   }
 
   Future<void> _onApplyRemoteUpdate(
@@ -362,7 +372,20 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
     _boardMetaSub?.cancel();
     _boardMetaSub = canvasService.watchBoardById(_boardId).listen((board) {
-      add(CanvasBoardTitleUpdated(board?.title));
+      if (board == null) {
+        if (!_hasSeenBoardMetadata) {
+          return;
+        }
+        add(
+          CanvasBoardUnavailable(
+            'This board is no longer available. Returning to the home screen.',
+          ),
+        );
+        return;
+      }
+
+      _hasSeenBoardMetadata = true;
+      add(CanvasBoardTitleUpdated(board.title));
     });
   }
 

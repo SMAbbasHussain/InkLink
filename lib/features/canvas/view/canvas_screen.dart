@@ -182,112 +182,132 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
     return BlocProvider.value(
       value: _canvasBloc,
-      child: BlocBuilder<CanvasBloc, CanvasState>(
-        builder: (context, state) {
-          final mappedElements = _mapElements(state.elements);
-          final title =
-              state.boardTitle ??
-              'Board ${widget.boardId.substring(0, math.min(6, widget.boardId.length))}';
+      child: BlocListener<CanvasBloc, CanvasState>(
+        listenWhen: (previous, current) => previous.error != current.error,
+        listener: (context, state) async {
+          final message = state.error;
+          if (message == null || message.isEmpty) return;
 
-          return WillPopScope(
-            onWillPop: () async {
-              await _savePreview();
-              return true;
-            },
-            child: Scaffold(
-              backgroundColor: isDark
-                  ? AppColors.bgDark
-                  : const Color(0xFFF5F5F5),
-              resizeToAvoidBottomInset: false,
-              appBar: AppBar(
-                title: Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                centerTitle: true,
-                elevation: 0,
-                backgroundColor: Colors.transparent,
-                actions: [
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert),
-                    onSelected: (value) {
-                      if (value == 'rename') {
-                        _showRenameDialog();
-                      } else if (value == 'copy') {
-                        Clipboard.setData(ClipboardData(text: widget.boardId));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Join Code copied to clipboard!'),
-                          ),
-                        );
-                      } else if (value == 'exit') {
-                        _exitCanvas();
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(
-                        value: 'rename',
-                        child: Text('Rename Board'),
-                      ),
-                      const PopupMenuItem(
-                        value: 'copy',
-                        child: Text('Copy Join Code'),
-                      ),
-                      const PopupMenuDivider(),
-                      const PopupMenuItem(
-                        value: 'exit',
-                        child: Text(
-                          'Exit Canvas',
-                          style: TextStyle(color: Colors.red),
-                        ),
-                      ),
-                    ],
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message), backgroundColor: Colors.red),
+          );
+
+          if (message.contains('no longer available') ||
+              message.contains('access lost')) {
+            await _exitCanvas();
+          }
+        },
+        child: BlocBuilder<CanvasBloc, CanvasState>(
+          builder: (context, state) {
+            final mappedElements = _mapElements(state.elements);
+            final title =
+                state.boardTitle ??
+                'Board ${widget.boardId.substring(0, math.min(6, widget.boardId.length))}';
+
+            return WillPopScope(
+              onWillPop: () async {
+                await _savePreview();
+                return true;
+              },
+              child: Scaffold(
+                backgroundColor: isDark
+                    ? AppColors.bgDark
+                    : const Color(0xFFF5F5F5),
+                resizeToAvoidBottomInset: false,
+                appBar: AppBar(
+                  title: Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                ],
-              ),
-              body: RepaintBoundary(
-                key: _canvasPreviewKey,
-                child: Stack(
-                  children: [
-                    GestureDetector(
-                      onTap: () {
-                        if (state.activeTray != null) {
-                          _canvasBloc.add(CanvasToggleTray(state.activeTray!));
+                  centerTitle: true,
+                  elevation: 0,
+                  backgroundColor: Colors.transparent,
+                  actions: [
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert),
+                      onSelected: (value) {
+                        if (value == 'rename') {
+                          _showRenameDialog();
+                        } else if (value == 'copy') {
+                          Clipboard.setData(
+                            ClipboardData(text: widget.boardId),
+                          );
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Join Code copied to clipboard!'),
+                            ),
+                          );
+                        } else if (value == 'exit') {
+                          _exitCanvas();
                         }
                       },
-                      onPanStart: (details) =>
-                          _startStroke(details.localPosition),
-                      onPanUpdate: (details) =>
-                          _appendStroke(details.localPosition),
-                      onPanEnd: (_) => _endStroke(),
-                      behavior: HitTestBehavior.translucent,
-                      child: SizedBox.expand(
-                        child: CustomPaint(
-                          painter: _CanvasPainter(
-                            elements: mappedElements,
-                            currentPoints: state.currentStroke,
-                            currentColor: state.selectedColor,
-                            currentStrokeWidth: state.strokeWidth,
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'rename',
+                          child: Text('Rename Board'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'copy',
+                          child: Text('Copy Join Code'),
+                        ),
+                        const PopupMenuDivider(),
+                        const PopupMenuItem(
+                          value: 'exit',
+                          child: Text(
+                            'Exit Canvas',
+                            style: TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                body: RepaintBoundary(
+                  key: _canvasPreviewKey,
+                  child: Stack(
+                    children: [
+                      GestureDetector(
+                        onTap: () {
+                          if (state.activeTray != null) {
+                            _canvasBloc.add(
+                              CanvasToggleTray(state.activeTray!),
+                            );
+                          }
+                        },
+                        onPanStart: (details) =>
+                            _startStroke(details.localPosition),
+                        onPanUpdate: (details) =>
+                            _appendStroke(details.localPosition),
+                        onPanEnd: (_) => _endStroke(),
+                        behavior: HitTestBehavior.translucent,
+                        child: SizedBox.expand(
+                          child: CustomPaint(
+                            painter: _CanvasPainter(
+                              elements: mappedElements,
+                              currentPoints: state.currentStroke,
+                              currentColor: state.selectedColor,
+                              currentStrokeWidth: state.strokeWidth,
+                            ),
                           ),
                         ),
                       ),
-                    ),
 
-                    _buildAllTrays(state),
-                    _buildEdgeTriggers(),
+                      _buildAllTrays(state),
+                      _buildEdgeTriggers(),
 
-                    if (state.showTrayTips)
-                      TrayTipsOverlay(
-                        onDismiss: () {
-                          _canvasBloc.add(const CanvasDismissTrayTips());
-                        },
-                      ),
-                  ],
+                      if (state.showTrayTips)
+                        TrayTipsOverlay(
+                          onDismiss: () {
+                            _canvasBloc.add(const CanvasDismissTrayTips());
+                          },
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

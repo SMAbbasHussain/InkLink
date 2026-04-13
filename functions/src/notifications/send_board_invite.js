@@ -64,19 +64,42 @@ module.exports = async (request) => {
       .filter((value) => value !== senderUid);
 
     const resolvedRecipientUids = [];
+    const unresolvedEmails = [];
+    const unresolvedUids = [];
     for (const identifier of inviteIdentifiers) {
       if (identifier.includes('@')) {
-        const userByEmail = await firestore
+        const normalizedEmail = identifier.toLowerCase();
+
+        let userByEmail = await firestore
           .collection(FirestorePaths.USERS)
-          .where(FirestorePaths.EMAIL, '==', identifier.toLowerCase())
+          .where(FirestorePaths.EMAIL, '==', normalizedEmail)
           .limit(1)
           .get();
 
+        // Fallback for historical records that may not have lowercased emails.
+        if (userByEmail.docs.isEmpty && identifier != normalizedEmail) {
+          userByEmail = await firestore
+            .collection(FirestorePaths.USERS)
+            .where(FirestorePaths.EMAIL, '==', identifier)
+            .limit(1)
+            .get();
+        }
+
         if (userByEmail.docs.isEmpty) {
+          unresolvedEmails.push(identifier);
           continue;
         }
 
         resolvedRecipientUids.push(userByEmail.docs.first.id);
+        continue;
+      }
+
+      const userDoc = await firestore
+        .collection(FirestorePaths.USERS)
+        .doc(identifier)
+        .get();
+      if (!userDoc.exists) {
+        unresolvedUids.push(identifier);
         continue;
       }
 
@@ -136,6 +159,8 @@ module.exports = async (request) => {
       success: true,
       invitedCount: results.length,
       results,
+      unresolvedEmails,
+      unresolvedUids,
     };
   } catch (error) {
     if (error instanceof HttpsError) {

@@ -184,6 +184,7 @@ void main() async {
         RepositoryProvider<InvitationService>(
           create: (context) => InvitationServiceImpl(
             invitationRepository: context.read<InvitationRepository>(),
+            boardRepository: context.read<BoardRepository>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
           ),
         ),

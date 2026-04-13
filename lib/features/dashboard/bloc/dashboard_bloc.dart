@@ -15,6 +15,7 @@ class DashboardLoaded extends DashboardState {
   final List<Board> joinedBoards;
   final Map<String, dynamic>? currentUserProfile;
   final String? actionError;
+  final String? actionInfo;
   final String? joinedBoardId;
   final String? createdBoardId;
 
@@ -23,6 +24,7 @@ class DashboardLoaded extends DashboardState {
     required this.joinedBoards,
     this.currentUserProfile,
     this.actionError,
+    this.actionInfo,
     this.joinedBoardId,
     this.createdBoardId,
   });
@@ -32,6 +34,7 @@ class DashboardLoaded extends DashboardState {
     List<Board>? joinedBoards,
     Object? currentUserProfile = _unset,
     Object? actionError = _unset,
+    Object? actionInfo = _unset,
     Object? joinedBoardId = _unset,
     Object? createdBoardId = _unset,
   }) {
@@ -44,6 +47,9 @@ class DashboardLoaded extends DashboardState {
       actionError: actionError == _unset
           ? this.actionError
           : actionError as String?,
+      actionInfo: actionInfo == _unset
+          ? this.actionInfo
+          : actionInfo as String?,
       joinedBoardId: joinedBoardId == _unset
           ? this.joinedBoardId
           : joinedBoardId as String?,
@@ -72,11 +78,17 @@ class DashboardJoinBoardRequested extends DashboardEvent {
 
 class DashboardCreateBoardRequested extends DashboardEvent {
   final String? title;
+  final String visibility;
+  final String privateJoinPolicy;
+  final List<String> tags;
   final List<String> invitedUserIds;
   final int inviteExpiryHours;
 
   DashboardCreateBoardRequested({
     this.title,
+    required this.visibility,
+    required this.privateJoinPolicy,
+    this.tags = const [],
     this.invitedUserIds = const [],
     this.inviteExpiryHours = 72,
   });
@@ -165,6 +177,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           ownedBoards: event.owned,
           joinedBoards: event.joined,
           actionError: null,
+          actionInfo: null,
         ),
       );
       return;
@@ -221,7 +234,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     } catch (e) {
       final current = state;
       if (current is DashboardLoaded) {
-        emit(current.copyWith(actionError: 'Failed to join: $e'));
+        emit(current.copyWith(actionError: _humanizeError(e)));
       }
     }
   }
@@ -231,20 +244,33 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     Emitter<DashboardState> emit,
   ) async {
     try {
-      final boardId = await boardService.createBoard(
+      final createResult = await boardService.createBoard(
         title: event.title,
+        visibility: event.visibility,
+        privateJoinPolicy: event.privateJoinPolicy,
+        tags: event.tags,
         invitedUserIds: event.invitedUserIds,
         inviteExpiryHours: event.inviteExpiryHours,
       );
 
       final current = state;
       if (current is DashboardLoaded) {
-        emit(current.copyWith(createdBoardId: boardId, actionError: null));
+        final warningText = createResult.unresolvedEmails.isEmpty
+            ? null
+            : 'Board created, but these emails were not found: ${createResult.unresolvedEmails.join(', ')}';
+
+        emit(
+          current.copyWith(
+            createdBoardId: createResult.boardId,
+            actionError: null,
+            actionInfo: warningText,
+          ),
+        );
       }
     } catch (e) {
       final current = state;
       if (current is DashboardLoaded) {
-        emit(current.copyWith(actionError: 'Failed to create board: $e'));
+        emit(current.copyWith(actionError: _humanizeError(e)));
       }
     }
   }
@@ -262,7 +288,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     } catch (e) {
       final current = state;
       if (current is DashboardLoaded) {
-        emit(current.copyWith(actionError: 'Failed to rename board: $e'));
+        emit(current.copyWith(actionError: _humanizeError(e)));
       }
     }
   }
@@ -280,7 +306,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     } catch (e) {
       final current = state;
       if (current is DashboardLoaded) {
-        emit(current.copyWith(actionError: 'Failed to delete board: $e'));
+        emit(current.copyWith(actionError: _humanizeError(e)));
       }
     }
   }
@@ -294,11 +320,20 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       emit(
         current.copyWith(
           actionError: null,
+          actionInfo: null,
           joinedBoardId: null,
           createdBoardId: null,
         ),
       );
     }
+  }
+
+  String _humanizeError(Object error) {
+    final raw = error.toString().trim();
+    if (raw.startsWith('Exception:')) {
+      return raw.replaceFirst('Exception:', '').trim();
+    }
+    return raw;
   }
 
   @override
