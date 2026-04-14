@@ -25,6 +25,8 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
   String _visibility = Board.visibilityPrivate;
   String _privateJoinPolicy = Board.policyOwnerOnlyInvite;
 
+  bool get _canSubmit => _titleController.text.trim().isNotEmpty;
+
   @override
   void initState() {
     super.initState();
@@ -78,6 +80,14 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
   }
 
   void _submit() {
+    final title = _titleController.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a board name.')),
+      );
+      return;
+    }
+
     final invitees = _inviteesController.text
         .split(',')
         .map((e) => e.trim())
@@ -89,9 +99,7 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
 
     context.read<DashboardBloc>().add(
       DashboardCreateBoardRequested(
-        title: _titleController.text.trim().isEmpty
-            ? 'Untitled Board'
-            : _titleController.text.trim(),
+        title: title,
         visibility: _visibility,
         privateJoinPolicy: _privateJoinPolicy,
         tags: _tags,
@@ -119,6 +127,7 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                   labelText: 'Board name',
                   hintText: 'Enter board name',
                 ),
+                onChanged: (_) => setState(() {}),
                 autofocus: true,
               ),
               const SizedBox(height: 16),
@@ -321,7 +330,7 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: _submit,
+                  onPressed: _canSubmit ? _submit : null,
                   child: const Text('Create Board'),
                 ),
               ),
