@@ -33,6 +33,7 @@ class CanvasState {
   final bool showTrayTips;
   final bool isLoading;
   final String? error;
+  final String currentUserRole;
 
   CanvasState({
     this.boardTitle,
@@ -44,6 +45,7 @@ class CanvasState {
     this.showTrayTips = false,
     this.isLoading = false,
     this.error,
+    this.currentUserRole = 'viewer',
   });
 
   /// Create a copy with optional field overrides
@@ -57,6 +59,7 @@ class CanvasState {
     bool? showTrayTips,
     bool? isLoading,
     Object? error = _unset,
+    String? currentUserRole,
   }) {
     return CanvasState(
       boardTitle: boardTitle == _unset
@@ -72,6 +75,7 @@ class CanvasState {
       showTrayTips: showTrayTips ?? this.showTrayTips,
       isLoading: isLoading ?? this.isLoading,
       error: error == _unset ? this.error : error as String?,
+      currentUserRole: currentUserRole ?? this.currentUserRole,
     );
   }
 
@@ -88,7 +92,8 @@ class CanvasState {
           activeTray == other.activeTray &&
           showTrayTips == other.showTrayTips &&
           isLoading == other.isLoading &&
-          error == other.error;
+          error == other.error &&
+          currentUserRole == other.currentUserRole;
 
   @override
   int get hashCode =>
@@ -100,7 +105,8 @@ class CanvasState {
       activeTray.hashCode ^
       showTrayTips.hashCode ^
       isLoading.hashCode ^
-      error.hashCode;
+      error.hashCode ^
+      currentUserRole.hashCode;
 }
 
 /// Old-style states for board creation (backward compatibility)

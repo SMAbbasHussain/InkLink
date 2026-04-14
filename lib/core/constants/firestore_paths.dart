@@ -4,10 +4,14 @@
 class FirestorePaths {
   // Collections
   static const String users = 'users';
+  static const String boards = 'boards';
+  static const String boardInvites = 'board_invites';
   static const String friendRequests = 'friend_requests';
 
   // User subcollections
   static const String friendsSubcollection = 'friends';
+  static const String notificationsSubcollection = 'notifications';
+  static const String boardMembersSubcollection = 'members';
 
   // User document fields
   static const String uid = 'uid';
@@ -19,6 +23,9 @@ class FirestorePaths {
   static const String createdAt = 'createdAt';
   static const String lastActive = 'lastActive';
   static const String searchKeywords = 'searchKeywords';
+  static const String ownedBoards = 'ownedBoards';
+  static const String joinedBoards = 'joinedBoards';
+  static const String boardCount = 'boardCount';
 
   // Friend request fields
   static const String fromUid = 'fromUid';
@@ -34,4 +41,12 @@ class FirestorePaths {
   static const String joinViaCodeEnabled = 'joinViaCodeEnabled';
   static const String joinCode = 'joinCode';
   static const String tags = 'tags';
+  static const String ownerId = 'ownerId';
+  static const String title = 'title';
+  static const String boardId = 'boardId';
+  static const String updatedAt = 'updatedAt';
+  static const String invitePolicy = 'invitePolicy';
+  static const String whoCanInvite = 'whoCanInvite';
+  static const String defaultLinkJoinRole = 'defaultLinkJoinRole';
+  static const String targetRole = 'targetRole';
 }

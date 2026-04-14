@@ -22,8 +22,9 @@ class CanvasInitializeCrdt extends CanvasEvent {
 /// Internal board metadata update from repository stream
 class CanvasBoardTitleUpdated extends CanvasEvent {
   final String? title;
+  final String currentUserRole;
 
-  const CanvasBoardTitleUpdated(this.title);
+  const CanvasBoardTitleUpdated(this.title, {this.currentUserRole = 'viewer'});
 }
 
 /// Board metadata is no longer available (deleted or access lost).

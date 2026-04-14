@@ -25,12 +25,17 @@ class LocalInvitation {
 
   @Index()
   late String status;
+  String targetRole = 'viewer';
+  String? inviterRoleSnapshot;
 
   @Index()
   late DateTime timestamp;
 
   DateTime? expiresAt;
   int? inviteExpiryHours;
+  DateTime? acceptedAt;
+  DateTime? rejectedAt;
+  DateTime? resolvedAt;
 
   late DateTime cachedAt;
 }

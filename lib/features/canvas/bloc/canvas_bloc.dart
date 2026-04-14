@@ -27,9 +27,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   StreamSubscription<Board?>? _boardMetaSub;
   CanvasDocAdapter? _crdtAdapter;
   Future<void>? _crdtInitFuture;
+  Timer? _boardUnavailableTimer;
   final Set<String> _appliedCrdtUpdateIds = <String>{};
   bool _hasSeenBoardMetadata = false;
   String _boardId;
+  String _currentUserRole = Board.roleViewer;
+  DateTime? _lastViewerWarningAt;
 
   CanvasBloc({
     CanvasService? canvasService,
@@ -83,7 +86,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     _boardId = event.boardId;
+    _currentUserRole = Board.roleViewer;
     _hasSeenBoardMetadata = false;
+    _boardUnavailableTimer?.cancel();
+    _boardUnavailableTimer = null;
     emit(state.copyWith(isLoading: true, error: null));
 
     try {
@@ -101,7 +107,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasBoardTitleUpdated event,
     Emitter<CanvasState> emit,
   ) {
-    emit(state.copyWith(boardTitle: event.title));
+    _currentUserRole = event.currentUserRole;
+    emit(
+      state.copyWith(
+        boardTitle: event.title,
+        currentUserRole: event.currentUserRole,
+      ),
+    );
   }
 
   void _onCanvasBoardUnavailable(
@@ -132,10 +144,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   }
 
   void _onStartStroke(CanvasStartStroke event, Emitter<CanvasState> emit) {
+    if (!_ensureCanEditWithOptions(emit, clearStroke: true)) {
+      return;
+    }
     emit(state.copyWith(currentStroke: [event.point]));
   }
 
   void _onAppendStroke(CanvasAppendStroke event, Emitter<CanvasState> emit) {
+    if (!_ensureCanEditWithOptions(emit, clearStroke: true)) {
+      return;
+    }
+
     final updated = List<Offset>.from(state.currentStroke)..add(event.point);
     emit(state.copyWith(currentStroke: updated));
   }
@@ -144,6 +163,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasEndStroke event,
     Emitter<CanvasState> emit,
   ) async {
+    if (!_ensureCanEditWithOptions(emit, clearStroke: true)) {
+      return;
+    }
+
     if (state.currentStroke.length < 2) {
       emit(state.copyWith(currentStroke: const []));
       return;
@@ -180,6 +203,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasAddShape event,
     Emitter<CanvasState> emit,
   ) async {
+    if (!_ensureCanEdit(emit)) {
+      return;
+    }
+
     final shapeId = _uuid.v4();
     final shapeData = {
       'z': _nextZIndex(),
@@ -209,6 +236,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasAddAiText event,
     Emitter<CanvasState> emit,
   ) async {
+    if (!_ensureCanEdit(emit)) {
+      return;
+    }
+
     final prompt = event.prompt.trim();
     if (prompt.isEmpty) return;
 
@@ -237,6 +268,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   }
 
   Future<void> _onUndo(CanvasUndo event, Emitter<CanvasState> emit) async {
+    if (!_ensureCanEdit(emit)) {
+      return;
+    }
+
     final adapter = _crdtAdapter;
     if (adapter == null || !_canSync) return;
 
@@ -249,6 +284,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   }
 
   Future<void> _onRedo(CanvasRedo event, Emitter<CanvasState> emit) async {
+    if (!_ensureCanEdit(emit)) {
+      return;
+    }
+
     final adapter = _crdtAdapter;
     if (adapter == null || !_canSync) return;
 
@@ -264,6 +303,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasClearAll event,
     Emitter<CanvasState> emit,
   ) async {
+    if (!_ensureCanEdit(emit)) {
+      return;
+    }
+
     if (state.elements.isEmpty) return;
 
     emit(state.copyWith(elements: const [], activeTray: null));
@@ -280,6 +323,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasDeleteElement event,
     Emitter<CanvasState> emit,
   ) async {
+    if (!_ensureCanEdit(emit)) {
+      return;
+    }
+
     final nextElements = state.elements
         .where((e) => e.id != event.elementId)
         .toList(growable: false);
@@ -376,17 +423,83 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         if (!_hasSeenBoardMetadata) {
           return;
         }
+        _scheduleBoardUnavailableCheck();
+        return;
+      }
+
+      _boardUnavailableTimer?.cancel();
+      _boardUnavailableTimer = null;
+      _hasSeenBoardMetadata = true;
+      add(
+        CanvasBoardTitleUpdated(
+          board.title,
+          currentUserRole: board.currentUserRole,
+        ),
+      );
+    });
+  }
+
+  bool _ensureCanEdit(Emitter<CanvasState> emit) {
+    return _ensureCanEditWithOptions(emit, clearStroke: false);
+  }
+
+  bool _ensureCanEditWithOptions(
+    Emitter<CanvasState> emit, {
+    required bool clearStroke,
+  }) {
+    if (_currentUserRole != Board.roleViewer) {
+      return true;
+    }
+
+    const warningMessage =
+        'You are a viewer. Request editor role from the owner to edit this board.';
+
+    if (clearStroke && state.currentStroke.isNotEmpty) {
+      emit(state.copyWith(currentStroke: const []));
+    }
+
+    final now = DateTime.now();
+    final shouldShowWarning =
+        _lastViewerWarningAt == null ||
+        now.difference(_lastViewerWarningAt!).inMilliseconds > 1200;
+
+    if (shouldShowWarning) {
+      _lastViewerWarningAt = now;
+      emit(state.copyWith(error: null));
+      emit(state.copyWith(error: warningMessage));
+    }
+
+    return false;
+  }
+
+  void _scheduleBoardUnavailableCheck() {
+    _boardUnavailableTimer?.cancel();
+    _boardUnavailableTimer = Timer(
+      const Duration(milliseconds: 1400),
+      () async {
+        final canvasService = _canvasService;
+        if (canvasService == null || _boardId.isEmpty || isClosed) {
+          return;
+        }
+
+        try {
+          await canvasService.ensureBoardCached(_boardId);
+        } catch (_) {
+          // If recache fails, fallback to local check below.
+        }
+
+        final latestBoard = await canvasService.watchBoardById(_boardId).first;
+        if (latestBoard != null || isClosed) {
+          return;
+        }
+
         add(
           CanvasBoardUnavailable(
             'This board is no longer available. Returning to the home screen.',
           ),
         );
-        return;
-      }
-
-      _hasSeenBoardMetadata = true;
-      add(CanvasBoardTitleUpdated(board.title));
-    });
+      },
+    );
   }
 
   Future<void> _saveCrdtOperation({
@@ -593,6 +706,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
   @override
   Future<void> close() async {
+    _boardUnavailableTimer?.cancel();
+    _boardUnavailableTimer = null;
     await _boardMetaSub?.cancel();
     await _crdtUpdatesSub?.cancel();
     if (_canSync) {

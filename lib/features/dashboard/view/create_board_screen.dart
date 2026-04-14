@@ -24,6 +24,9 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
   int _inviteExpiryHours = 72;
   String _visibility = Board.visibilityPrivate;
   String _privateJoinPolicy = Board.policyOwnerOnlyInvite;
+  String _whoCanInvite = Board.inviteOwnerOnly;
+  String _defaultLinkJoinRole = Board.roleViewer;
+  String _inviteTargetRole = Board.roleViewer;
 
   bool get _canSubmit => _titleController.text.trim().isNotEmpty;
 
@@ -102,6 +105,9 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
         title: title,
         visibility: _visibility,
         privateJoinPolicy: _privateJoinPolicy,
+        whoCanInvite: _whoCanInvite,
+        defaultLinkJoinRole: _defaultLinkJoinRole,
+        inviteTargetRole: _inviteTargetRole,
         tags: _tags,
         invitedUserIds: invitees,
         inviteExpiryHours: _inviteExpiryHours,
@@ -109,6 +115,132 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
     );
 
     Navigator.pop(context);
+  }
+
+  Future<void> _openInviteSettings() async {
+    final result = await showModalBottomSheet<Map<String, String>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        String whoCanInvite = _whoCanInvite;
+        String defaultLinkJoinRole = _defaultLinkJoinRole;
+        String inviteTargetRole = _inviteTargetRole;
+
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 16,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Invite Settings',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: whoCanInvite,
+                    decoration: const InputDecoration(
+                      labelText: 'Who can send invites',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: Board.inviteOwnerOnly,
+                        child: Text('Owner only'),
+                      ),
+                      DropdownMenuItem(
+                        value: Board.inviteOwnerEditor,
+                        child: Text('Owner + Editors'),
+                      ),
+                      DropdownMenuItem(
+                        value: Board.inviteAllMembers,
+                        child: Text('All members'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setSheetState(() => whoCanInvite = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: defaultLinkJoinRole,
+                    decoration: const InputDecoration(
+                      labelText: 'Default role for link/code joins',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: Board.roleViewer,
+                        child: Text('Viewer (default)'),
+                      ),
+                      DropdownMenuItem(
+                        value: Board.roleEditor,
+                        child: Text('Editor'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setSheetState(() => defaultLinkJoinRole = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: inviteTargetRole,
+                    decoration: const InputDecoration(
+                      labelText: 'Role for invited users',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: Board.roleViewer,
+                        child: Text('Viewer'),
+                      ),
+                      DropdownMenuItem(
+                        value: Board.roleEditor,
+                        child: Text('Editor'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setSheetState(() => inviteTargetRole = value);
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () {
+                        Navigator.pop(context, {
+                          'whoCanInvite': whoCanInvite,
+                          'defaultLinkJoinRole': defaultLinkJoinRole,
+                          'inviteTargetRole': inviteTargetRole,
+                        });
+                      },
+                      child: const Text('Save Settings'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (result == null) return;
+    setState(() {
+      _whoCanInvite = result['whoCanInvite'] ?? Board.inviteOwnerOnly;
+      _defaultLinkJoinRole = result['defaultLinkJoinRole'] ?? Board.roleViewer;
+      _inviteTargetRole = result['inviteTargetRole'] ?? Board.roleViewer;
+    });
   }
 
   @override
@@ -223,6 +355,18 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                       ),
                     )
                     .toList(),
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: _openInviteSettings,
+                icon: const Icon(Icons.tune),
+                label: const Text('Configure Invite Settings'),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Who can invite: ${_whoCanInvite.replaceAll('_', ' ')} | '
+                'Link role: $_defaultLinkJoinRole | Invite role: $_inviteTargetRole',
+                style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
               ),
               const SizedBox(height: 16),
               TextField(

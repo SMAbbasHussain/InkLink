@@ -10,6 +10,7 @@ import '../../repositories/canvas/canvas_sync_repository.dart';
 abstract class CanvasService {
   bool get canSync;
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes);
+  Future<void> ensureBoardCached(String boardId);
   Stream<Board?> watchBoardById(String boardId);
   Stream<List<LocalCrdtUpdate>> listenToCrdtUpdates(String boardId);
   Future<void> stopCrdtRemoteSync(String boardId);
@@ -37,6 +38,11 @@ class CanvasServiceImpl implements CanvasService {
   @override
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes) {
     return _boardRepository.saveBoardPreview(boardId, pngBytes);
+  }
+
+  @override
+  Future<void> ensureBoardCached(String boardId) {
+    return _boardRepository.ensureBoardCached(boardId);
   }
 
   @override

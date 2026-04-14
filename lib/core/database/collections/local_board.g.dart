@@ -23,39 +23,54 @@ const LocalBoardSchema = CollectionSchema(
       name: r'createdAt',
       type: IsarType.dateTime,
     ),
-    r'engine': PropertySchema(id: 2, name: r'engine', type: IsarType.string),
-    r'isSynced': PropertySchema(id: 3, name: r'isSynced', type: IsarType.bool),
+    r'currentUserRole': PropertySchema(
+      id: 2,
+      name: r'currentUserRole',
+      type: IsarType.string,
+    ),
+    r'defaultLinkJoinRole': PropertySchema(
+      id: 3,
+      name: r'defaultLinkJoinRole',
+      type: IsarType.string,
+    ),
+    r'engine': PropertySchema(id: 4, name: r'engine', type: IsarType.string),
+    r'isSynced': PropertySchema(id: 5, name: r'isSynced', type: IsarType.bool),
     r'joinViaCodeEnabled': PropertySchema(
-      id: 4,
+      id: 6,
       name: r'joinViaCodeEnabled',
       type: IsarType.bool,
     ),
     r'members': PropertySchema(
-      id: 5,
+      id: 7,
       name: r'members',
       type: IsarType.stringList,
     ),
-    r'ownerId': PropertySchema(id: 6, name: r'ownerId', type: IsarType.string),
+    r'ownerId': PropertySchema(id: 8, name: r'ownerId', type: IsarType.string),
     r'previewPath': PropertySchema(
-      id: 7,
+      id: 9,
       name: r'previewPath',
       type: IsarType.string,
     ),
     r'privateJoinPolicy': PropertySchema(
-      id: 8,
+      id: 10,
       name: r'privateJoinPolicy',
       type: IsarType.string,
     ),
-    r'tags': PropertySchema(id: 9, name: r'tags', type: IsarType.stringList),
-    r'title': PropertySchema(id: 10, name: r'title', type: IsarType.string),
+    r'tags': PropertySchema(id: 11, name: r'tags', type: IsarType.stringList),
+    r'title': PropertySchema(id: 12, name: r'title', type: IsarType.string),
     r'updatedAt': PropertySchema(
-      id: 11,
+      id: 13,
       name: r'updatedAt',
       type: IsarType.dateTime,
     ),
     r'visibility': PropertySchema(
-      id: 12,
+      id: 14,
       name: r'visibility',
+      type: IsarType.string,
+    ),
+    r'whoCanInvite': PropertySchema(
+      id: 15,
+      name: r'whoCanInvite',
       type: IsarType.string,
     ),
   },
@@ -96,6 +111,8 @@ int _localBoardEstimateSize(
 ) {
   var bytesCount = offsets.last;
   bytesCount += 3 + object.boardId.length * 3;
+  bytesCount += 3 + object.currentUserRole.length * 3;
+  bytesCount += 3 + object.defaultLinkJoinRole.length * 3;
   bytesCount += 3 + object.engine.length * 3;
   bytesCount += 3 + object.members.length * 3;
   {
@@ -121,6 +138,7 @@ int _localBoardEstimateSize(
   }
   bytesCount += 3 + object.title.length * 3;
   bytesCount += 3 + object.visibility.length * 3;
+  bytesCount += 3 + object.whoCanInvite.length * 3;
   return bytesCount;
 }
 
@@ -132,17 +150,20 @@ void _localBoardSerialize(
 ) {
   writer.writeString(offsets[0], object.boardId);
   writer.writeDateTime(offsets[1], object.createdAt);
-  writer.writeString(offsets[2], object.engine);
-  writer.writeBool(offsets[3], object.isSynced);
-  writer.writeBool(offsets[4], object.joinViaCodeEnabled);
-  writer.writeStringList(offsets[5], object.members);
-  writer.writeString(offsets[6], object.ownerId);
-  writer.writeString(offsets[7], object.previewPath);
-  writer.writeString(offsets[8], object.privateJoinPolicy);
-  writer.writeStringList(offsets[9], object.tags);
-  writer.writeString(offsets[10], object.title);
-  writer.writeDateTime(offsets[11], object.updatedAt);
-  writer.writeString(offsets[12], object.visibility);
+  writer.writeString(offsets[2], object.currentUserRole);
+  writer.writeString(offsets[3], object.defaultLinkJoinRole);
+  writer.writeString(offsets[4], object.engine);
+  writer.writeBool(offsets[5], object.isSynced);
+  writer.writeBool(offsets[6], object.joinViaCodeEnabled);
+  writer.writeStringList(offsets[7], object.members);
+  writer.writeString(offsets[8], object.ownerId);
+  writer.writeString(offsets[9], object.previewPath);
+  writer.writeString(offsets[10], object.privateJoinPolicy);
+  writer.writeStringList(offsets[11], object.tags);
+  writer.writeString(offsets[12], object.title);
+  writer.writeDateTime(offsets[13], object.updatedAt);
+  writer.writeString(offsets[14], object.visibility);
+  writer.writeString(offsets[15], object.whoCanInvite);
 }
 
 LocalBoard _localBoardDeserialize(
@@ -154,18 +175,21 @@ LocalBoard _localBoardDeserialize(
   final object = LocalBoard();
   object.boardId = reader.readString(offsets[0]);
   object.createdAt = reader.readDateTime(offsets[1]);
-  object.engine = reader.readString(offsets[2]);
+  object.currentUserRole = reader.readString(offsets[2]);
+  object.defaultLinkJoinRole = reader.readString(offsets[3]);
+  object.engine = reader.readString(offsets[4]);
   object.id = id;
-  object.isSynced = reader.readBool(offsets[3]);
-  object.joinViaCodeEnabled = reader.readBool(offsets[4]);
-  object.members = reader.readStringList(offsets[5]) ?? [];
-  object.ownerId = reader.readString(offsets[6]);
-  object.previewPath = reader.readStringOrNull(offsets[7]);
-  object.privateJoinPolicy = reader.readString(offsets[8]);
-  object.tags = reader.readStringList(offsets[9]) ?? [];
-  object.title = reader.readString(offsets[10]);
-  object.updatedAt = reader.readDateTime(offsets[11]);
-  object.visibility = reader.readString(offsets[12]);
+  object.isSynced = reader.readBool(offsets[5]);
+  object.joinViaCodeEnabled = reader.readBool(offsets[6]);
+  object.members = reader.readStringList(offsets[7]) ?? [];
+  object.ownerId = reader.readString(offsets[8]);
+  object.previewPath = reader.readStringOrNull(offsets[9]);
+  object.privateJoinPolicy = reader.readString(offsets[10]);
+  object.tags = reader.readStringList(offsets[11]) ?? [];
+  object.title = reader.readString(offsets[12]);
+  object.updatedAt = reader.readDateTime(offsets[13]);
+  object.visibility = reader.readString(offsets[14]);
+  object.whoCanInvite = reader.readString(offsets[15]);
   return object;
 }
 
@@ -183,24 +207,30 @@ P _localBoardDeserializeProp<P>(
     case 2:
       return (reader.readString(offset)) as P;
     case 3:
-      return (reader.readBool(offset)) as P;
-    case 4:
-      return (reader.readBool(offset)) as P;
-    case 5:
-      return (reader.readStringList(offset) ?? []) as P;
-    case 6:
       return (reader.readString(offset)) as P;
+    case 4:
+      return (reader.readString(offset)) as P;
+    case 5:
+      return (reader.readBool(offset)) as P;
+    case 6:
+      return (reader.readBool(offset)) as P;
     case 7:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readStringList(offset) ?? []) as P;
     case 8:
       return (reader.readString(offset)) as P;
     case 9:
-      return (reader.readStringList(offset) ?? []) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 10:
       return (reader.readString(offset)) as P;
     case 11:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readStringList(offset) ?? []) as P;
     case 12:
+      return (reader.readString(offset)) as P;
+    case 13:
+      return (reader.readDateTime(offset)) as P;
+    case 14:
+      return (reader.readString(offset)) as P;
+    case 15:
       return (reader.readString(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -612,6 +642,291 @@ extension LocalBoardQueryFilter
           includeLower: includeLower,
           upper: upper,
           includeUpper: includeUpper,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  currentUserRoleEqualTo(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'currentUserRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  currentUserRoleGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'currentUserRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  currentUserRoleLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'currentUserRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  currentUserRoleBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'currentUserRole',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  currentUserRoleStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'currentUserRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  currentUserRoleEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'currentUserRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  currentUserRoleContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'currentUserRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  currentUserRoleMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'currentUserRole',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  currentUserRoleIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'currentUserRole', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  currentUserRoleIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'currentUserRole', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  defaultLinkJoinRoleEqualTo(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'defaultLinkJoinRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  defaultLinkJoinRoleGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'defaultLinkJoinRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  defaultLinkJoinRoleLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'defaultLinkJoinRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  defaultLinkJoinRoleBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'defaultLinkJoinRole',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  defaultLinkJoinRoleStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'defaultLinkJoinRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  defaultLinkJoinRoleEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'defaultLinkJoinRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  defaultLinkJoinRoleContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'defaultLinkJoinRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  defaultLinkJoinRoleMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'defaultLinkJoinRole',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  defaultLinkJoinRoleIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'defaultLinkJoinRole', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  defaultLinkJoinRoleIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          property: r'defaultLinkJoinRole',
+          value: '',
         ),
       );
     });
@@ -2022,6 +2337,147 @@ extension LocalBoardQueryFilter
       );
     });
   }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  whoCanInviteEqualTo(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'whoCanInvite',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  whoCanInviteGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'whoCanInvite',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  whoCanInviteLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'whoCanInvite',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  whoCanInviteBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'whoCanInvite',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  whoCanInviteStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'whoCanInvite',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  whoCanInviteEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'whoCanInvite',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  whoCanInviteContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'whoCanInvite',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  whoCanInviteMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'whoCanInvite',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  whoCanInviteIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'whoCanInvite', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterFilterCondition>
+  whoCanInviteIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'whoCanInvite', value: ''),
+      );
+    });
+  }
 }
 
 extension LocalBoardQueryObject
@@ -2053,6 +2509,33 @@ extension LocalBoardQuerySortBy
   QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByCreatedAtDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'createdAt', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByCurrentUserRole() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'currentUserRole', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy>
+  sortByCurrentUserRoleDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'currentUserRole', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy>
+  sortByDefaultLinkJoinRole() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'defaultLinkJoinRole', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy>
+  sortByDefaultLinkJoinRoleDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'defaultLinkJoinRole', Sort.desc);
     });
   }
 
@@ -2166,6 +2649,18 @@ extension LocalBoardQuerySortBy
       return query.addSortBy(r'visibility', Sort.desc);
     });
   }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByWhoCanInvite() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'whoCanInvite', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> sortByWhoCanInviteDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'whoCanInvite', Sort.desc);
+    });
+  }
 }
 
 extension LocalBoardQuerySortThenBy
@@ -2191,6 +2686,33 @@ extension LocalBoardQuerySortThenBy
   QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByCreatedAtDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'createdAt', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByCurrentUserRole() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'currentUserRole', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy>
+  thenByCurrentUserRoleDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'currentUserRole', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy>
+  thenByDefaultLinkJoinRole() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'defaultLinkJoinRole', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy>
+  thenByDefaultLinkJoinRoleDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'defaultLinkJoinRole', Sort.desc);
     });
   }
 
@@ -2316,6 +2838,18 @@ extension LocalBoardQuerySortThenBy
       return query.addSortBy(r'visibility', Sort.desc);
     });
   }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByWhoCanInvite() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'whoCanInvite', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QAfterSortBy> thenByWhoCanInviteDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'whoCanInvite', Sort.desc);
+    });
+  }
 }
 
 extension LocalBoardQueryWhereDistinct
@@ -2331,6 +2865,27 @@ extension LocalBoardQueryWhereDistinct
   QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByCreatedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'createdAt');
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByCurrentUserRole({
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(
+        r'currentUserRole',
+        caseSensitive: caseSensitive,
+      );
+    });
+  }
+
+  QueryBuilder<LocalBoard, LocalBoard, QDistinct>
+  distinctByDefaultLinkJoinRole({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(
+        r'defaultLinkJoinRole',
+        caseSensitive: caseSensitive,
+      );
     });
   }
 
@@ -2415,6 +2970,14 @@ extension LocalBoardQueryWhereDistinct
       return query.addDistinctBy(r'visibility', caseSensitive: caseSensitive);
     });
   }
+
+  QueryBuilder<LocalBoard, LocalBoard, QDistinct> distinctByWhoCanInvite({
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'whoCanInvite', caseSensitive: caseSensitive);
+    });
+  }
 }
 
 extension LocalBoardQueryProperty
@@ -2434,6 +2997,19 @@ extension LocalBoardQueryProperty
   QueryBuilder<LocalBoard, DateTime, QQueryOperations> createdAtProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'createdAt');
+    });
+  }
+
+  QueryBuilder<LocalBoard, String, QQueryOperations> currentUserRoleProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'currentUserRole');
+    });
+  }
+
+  QueryBuilder<LocalBoard, String, QQueryOperations>
+  defaultLinkJoinRoleProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'defaultLinkJoinRole');
     });
   }
 
@@ -2502,6 +3078,12 @@ extension LocalBoardQueryProperty
   QueryBuilder<LocalBoard, String, QQueryOperations> visibilityProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'visibility');
+    });
+  }
+
+  QueryBuilder<LocalBoard, String, QQueryOperations> whoCanInviteProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'whoCanInvite');
     });
   }
 }

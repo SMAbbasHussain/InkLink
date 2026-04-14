@@ -17,6 +17,8 @@ abstract class BoardRepository {
     String name = 'Untitled Board',
     required String visibility,
     required String privateJoinPolicy,
+    required String whoCanInvite,
+    required String defaultLinkJoinRole,
     required List<String> tags,
     List<String> invitedUserIds = const [],
     int inviteExpiryHours = 72,

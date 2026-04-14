@@ -11,6 +11,7 @@ import '../../friends/view/friends_screen.dart';
 import '../../settings/bloc/settings_bloc.dart';
 import '../../settings/view/settings_screen.dart';
 import '../../dashboard/view/home_screen.dart';
+import '../../workspaces/view/workspaces_screen.dart';
 import '../bloc/nav_bloc.dart';
 
 class MainWrapper extends StatefulWidget {
@@ -90,6 +91,7 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
         child: const HomeScreen(),
       ),
       const FriendsScreen(),
+      const WorkspacesScreen(),
       BlocProvider(
         create: (context) =>
             SettingsBloc(settingsService: context.read<SettingsService>())
@@ -127,6 +129,14 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
                   selectedIcon: Icon(Icons.people, color: AppColors.primary),
                   icon: Icon(Icons.people_outline),
                   label: 'Friends',
+                ),
+                NavigationDestination(
+                  selectedIcon: Icon(
+                    Icons.workspaces,
+                    color: AppColors.primary,
+                  ),
+                  icon: Icon(Icons.workspaces_outline),
+                  label: 'Workspaces',
                 ),
                 NavigationDestination(
                   selectedIcon: Icon(Icons.settings, color: AppColors.primary),

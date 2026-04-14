@@ -80,6 +80,9 @@ class DashboardCreateBoardRequested extends DashboardEvent {
   final String? title;
   final String visibility;
   final String privateJoinPolicy;
+  final String whoCanInvite;
+  final String defaultLinkJoinRole;
+  final String inviteTargetRole;
   final List<String> tags;
   final List<String> invitedUserIds;
   final int inviteExpiryHours;
@@ -88,9 +91,28 @@ class DashboardCreateBoardRequested extends DashboardEvent {
     this.title,
     required this.visibility,
     required this.privateJoinPolicy,
+    this.whoCanInvite = Board.inviteOwnerOnly,
+    this.defaultLinkJoinRole = Board.roleViewer,
+    this.inviteTargetRole = Board.roleViewer,
     this.tags = const [],
     this.invitedUserIds = const [],
     this.inviteExpiryHours = 72,
+  });
+}
+
+class DashboardUpdateBoardSettingsRequested extends DashboardEvent {
+  final String boardId;
+  final String visibility;
+  final String privateJoinPolicy;
+  final String whoCanInvite;
+  final String defaultLinkJoinRole;
+
+  DashboardUpdateBoardSettingsRequested({
+    required this.boardId,
+    required this.visibility,
+    required this.privateJoinPolicy,
+    required this.whoCanInvite,
+    required this.defaultLinkJoinRole,
   });
 }
 
@@ -142,6 +164,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     on<DashboardJoinBoardRequested>(_onDashboardJoinBoardRequested);
     on<DashboardRenameBoardRequested>(_onDashboardRenameBoardRequested);
     on<DashboardDeleteBoardRequested>(_onDashboardDeleteBoardRequested);
+    on<DashboardUpdateBoardSettingsRequested>(
+      _onDashboardUpdateBoardSettingsRequested,
+    );
     on<DashboardConsumeEffects>(_onDashboardConsumeEffects);
     on<DashboardWatchCurrentUserProfileRequested>(
       _onDashboardWatchCurrentUserProfileRequested,
@@ -248,6 +273,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         title: event.title,
         visibility: event.visibility,
         privateJoinPolicy: event.privateJoinPolicy,
+        whoCanInvite: event.whoCanInvite,
+        defaultLinkJoinRole: event.defaultLinkJoinRole,
+        inviteTargetRole: event.inviteTargetRole,
         tags: event.tags,
         invitedUserIds: event.invitedUserIds,
         inviteExpiryHours: event.inviteExpiryHours,
@@ -264,6 +292,36 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
             createdBoardId: createResult.boardId,
             actionError: null,
             actionInfo: warningText,
+          ),
+        );
+      }
+    } catch (e) {
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(current.copyWith(actionError: _humanizeError(e)));
+      }
+    }
+  }
+
+  Future<void> _onDashboardUpdateBoardSettingsRequested(
+    DashboardUpdateBoardSettingsRequested event,
+    Emitter<DashboardState> emit,
+  ) async {
+    try {
+      await boardService.updateBoardSettings(
+        boardId: event.boardId,
+        visibility: event.visibility,
+        privateJoinPolicy: event.privateJoinPolicy,
+        whoCanInvite: event.whoCanInvite,
+        defaultLinkJoinRole: event.defaultLinkJoinRole,
+      );
+
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(
+          current.copyWith(
+            actionError: null,
+            actionInfo: 'Board settings updated.',
           ),
         );
       }

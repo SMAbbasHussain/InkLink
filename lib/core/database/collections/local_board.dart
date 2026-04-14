@@ -17,6 +17,9 @@ class LocalBoard {
   late String privateJoinPolicy;
   late List<String> tags;
   bool joinViaCodeEnabled = false;
+  String whoCanInvite = 'owner_only';
+  String defaultLinkJoinRole = 'viewer';
+  String currentUserRole = 'viewer';
   String? previewPath;
   late DateTime createdAt;
   late DateTime updatedAt;

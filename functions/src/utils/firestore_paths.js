@@ -11,10 +11,14 @@ const FirestorePaths = {
   BOARD_INVITES: 'board_invites',
   BLOCKED_USERS: 'blocked_users',
   USER_REPORTS: 'user_reports',
+  WORKSPACES: 'workspaces',
+  WORKSPACE_INVITES: 'workspace_invites',
   
   // User subcollections
   FRIENDS_SUBCOLLECTION: 'friends',
   NOTIFICATIONS_SUBCOLLECTION: 'notifications',
+  BOARD_MEMBERS_SUBCOLLECTION: 'members',
+  WORKSPACE_BOARDS_SUBCOLLECTION: 'boards',
   
   // User document fields
   UID: 'uid',
@@ -51,6 +55,17 @@ const FirestorePaths = {
   JOIN_VIA_CODE_ENABLED: 'joinViaCodeEnabled',
   JOIN_CODE: 'joinCode',
   TAGS: 'tags',
+  INVITE_POLICY: 'invitePolicy',
+  WHO_CAN_INVITE: 'whoCanInvite',
+  DEFAULT_LINK_JOIN_ROLE: 'defaultLinkJoinRole',
+  TARGET_ROLE: 'targetRole',
+  INVITER_ROLE_SNAPSHOT: 'inviterRoleSnapshot',
+  RESOLVED_AT: 'resolvedAt',
+  ACCEPTED_AT: 'acceptedAt',
+  REJECTED_AT: 'rejectedAt',
+  UPDATED_AT: 'updatedAt',
+  NAME: 'name',
+  DESCRIPTION: 'description',
 
   // Notification fields
   TYPE: 'type',

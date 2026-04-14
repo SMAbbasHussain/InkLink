@@ -7,6 +7,20 @@ const VISIBILITY_PUBLIC = 'public';
 const VISIBILITY_PRIVATE = 'private';
 const POLICY_OWNER_ONLY = 'owner_only_invite';
 const POLICY_LINK_CAN_JOIN = 'link_can_join';
+const ROLE_OWNER = 'owner';
+const ROLE_EDITOR = 'editor';
+const ROLE_VIEWER = 'viewer';
+
+function resolveDefaultJoinRole(boardData) {
+  const invitePolicy = boardData[FirestorePaths.INVITE_POLICY] || {};
+  const configured = invitePolicy[FirestorePaths.DEFAULT_LINK_JOIN_ROLE];
+  if (typeof configured !== 'string') return ROLE_VIEWER;
+  const normalized = configured.trim().toLowerCase();
+  if (normalized === ROLE_EDITOR || normalized === ROLE_VIEWER) {
+    return normalized;
+  }
+  return ROLE_VIEWER;
+}
 
 module.exports = async (request) => {
   const uid = request.auth?.uid;
@@ -43,7 +57,14 @@ module.exports = async (request) => {
               ? boardData[FirestorePaths.JOIN_VIA_CODE_ENABLED]
               : (visibility === VISIBILITY_PUBLIC || privatePolicy === POLICY_LINK_CAN_JOIN);
     
-          if (ownerId === uid || members.includes(uid)) {
+          const memberRef = boardRef
+            .collection(FirestorePaths.BOARD_MEMBERS_SUBCOLLECTION)
+            .doc(uid);
+          const memberDoc = await transaction.get(memberRef);
+          const memberData = memberDoc.data() || {};
+          const activeMember = memberDoc.exists && memberData.status === 'active';
+
+          if (ownerId === uid || activeMember || members.includes(uid)) {
             const userBoardUpdate = ownerId === uid
               ? {
                   joinedBoards: admin.firestore.FieldValue.arrayRemove(joinCode),
@@ -61,6 +82,16 @@ module.exports = async (request) => {
               userBoardUpdate,
               { merge: true },
             );
+
+            if (!memberDoc.exists) {
+              transaction.set(memberRef, {
+                uid,
+                role: ownerId === uid ? ROLE_OWNER : ROLE_VIEWER,
+                status: 'active',
+                joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              }, { merge: true });
+            }
     
             return {
               success: true,
@@ -81,11 +112,21 @@ module.exports = async (request) => {
               'This private board only allows owner invites.',
             );
           }
+
+          const resolvedRole = resolveDefaultJoinRole(boardData);
     
           transaction.update(boardRef, {
             members: admin.firestore.FieldValue.arrayUnion(uid),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
+
+          transaction.set(memberRef, {
+            uid,
+            role: resolvedRole,
+            status: 'active',
+            joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
     
           transaction.set(
             userRef,
@@ -100,6 +141,7 @@ module.exports = async (request) => {
           return {
             success: true,
             boardId: joinCode,
+            role: resolvedRole,
           };
         });
   } catch (error) {

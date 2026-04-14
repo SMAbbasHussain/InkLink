@@ -188,8 +188,18 @@ class _CanvasScreenState extends State<CanvasScreen> {
           final message = state.error;
           if (message == null || message.isEmpty) return;
 
+          final isViewerWarning = message.toLowerCase().contains(
+            'you are a viewer',
+          );
+
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(message), backgroundColor: Colors.red),
+            SnackBar(
+              content: Text(message),
+              backgroundColor: isViewerWarning ? Colors.orange : Colors.red,
+              duration: isViewerWarning
+                  ? const Duration(seconds: 2)
+                  : const Duration(seconds: 4),
+            ),
           );
 
           if (message.contains('no longer available') ||

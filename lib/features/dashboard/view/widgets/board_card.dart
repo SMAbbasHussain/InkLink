@@ -11,6 +11,7 @@ class BoardCard extends StatelessWidget {
   final bool isOwner;
   final Function(String, String) onRename;
   final Function(String) onDelete;
+  final VoidCallback? onOpenSettings;
 
   const BoardCard({
     super.key,
@@ -18,6 +19,7 @@ class BoardCard extends StatelessWidget {
     required this.isOwner,
     required this.onRename,
     required this.onDelete,
+    this.onOpenSettings,
   });
 
   @override
@@ -47,7 +49,8 @@ class BoardCard extends StatelessWidget {
                     top: Radius.circular(15),
                   ),
                 ),
-                child: board.previewPath != null && board.previewPath!.isNotEmpty
+                child:
+                    board.previewPath != null && board.previewPath!.isNotEmpty
                     ? ClipRRect(
                         borderRadius: const BorderRadius.vertical(
                           top: Radius.circular(15),
@@ -121,9 +124,15 @@ class BoardCard extends StatelessWidget {
                         );
                       } else if (value == 'delete') {
                         onDelete(board.id);
+                      } else if (value == 'settings') {
+                        onOpenSettings?.call();
                       }
                     },
                     itemBuilder: (context) => [
+                      const PopupMenuItem(
+                        value: 'settings',
+                        child: Text('Settings'),
+                      ),
                       const PopupMenuItem(
                         value: 'rename',
                         child: Text('Rename'),

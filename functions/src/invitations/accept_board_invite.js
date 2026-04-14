@@ -4,6 +4,19 @@ const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
 const { updateUserNotificationStatus } = require('../utils/notification_sender');
 
+const ROLE_OWNER = 'owner';
+const ROLE_EDITOR = 'editor';
+const ROLE_VIEWER = 'viewer';
+
+function normalizeInviteRole(role) {
+  if (typeof role !== 'string') return ROLE_VIEWER;
+  const normalized = role.trim().toLowerCase();
+  if (normalized === ROLE_EDITOR || normalized === ROLE_VIEWER) {
+    return normalized;
+  }
+  return ROLE_VIEWER;
+}
+
 module.exports = async (request) => {
   const uid = request.auth?.uid;
   const inviteId = request.data?.inviteId;
@@ -44,7 +57,7 @@ module.exports = async (request) => {
       ) {
         transaction.update(inviteRef, {
           status: 'expired',
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
         });
         throw new HttpsError('deadline-exceeded', 'Invite has expired.');
       }
@@ -54,11 +67,30 @@ module.exports = async (request) => {
       if (!boardDoc.exists) {
         throw new HttpsError('not-found', 'Board not found.');
       }
+
+      const boardData = boardDoc.data() || {};
+      const roleFromInvite = normalizeInviteRole(invite[FirestorePaths.TARGET_ROLE]);
+      const resolvedRole = boardData.ownerId === uid ? ROLE_OWNER : roleFromInvite;
+
+      const memberRef = boardRef
+        .collection(FirestorePaths.BOARD_MEMBERS_SUBCOLLECTION)
+        .doc(uid);
+
+      transaction.set(memberRef, {
+        uid,
+        role: resolvedRole,
+        status: 'active',
+        joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+        invitedBy: invite[FirestorePaths.FROM_UID] || null,
+        invitedAt: invite[FirestorePaths.TIMESTAMP] || null,
+        [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
       const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
 
       transaction.update(boardRef, {
         members: admin.firestore.FieldValue.arrayUnion(uid),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
       });
       transaction.set(userRef, {
         [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayUnion(boardId),
@@ -69,7 +101,12 @@ module.exports = async (request) => {
       // Once accepted, remove the invite document.
       transaction.delete(inviteRef);
 
-      return { success: true, boardId, inviteId };
+      return {
+        success: true,
+        boardId,
+        inviteId,
+        role: resolvedRole,
+      };
     });
 
     await updateUserNotificationStatus({

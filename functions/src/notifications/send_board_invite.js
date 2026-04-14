@@ -5,6 +5,44 @@ const FirestorePaths = require('../utils/firestore_paths');
 const { sendUserNotification } = require('../utils/notification_sender');
 const logger = require('../utils/logger');
 
+const ROLE_OWNER = 'owner';
+const ROLE_EDITOR = 'editor';
+const ROLE_VIEWER = 'viewer';
+const INVITE_OWNER_ONLY = 'owner_only';
+const INVITE_OWNER_EDITOR = 'owner_editor';
+const INVITE_ALL_MEMBERS = 'all_members';
+
+function normalizeRole(role, fallback = ROLE_VIEWER) {
+  if (typeof role !== 'string') return fallback;
+  const normalized = role.trim().toLowerCase();
+  if (
+    normalized === ROLE_OWNER ||
+    normalized === ROLE_EDITOR ||
+    normalized === ROLE_VIEWER
+  ) {
+    return normalized;
+  }
+  return fallback;
+}
+
+function canSendInvite(invitePolicy, senderRole) {
+  const policy = (invitePolicy || INVITE_OWNER_ONLY).toLowerCase();
+  if (policy === INVITE_OWNER_ONLY) {
+    return senderRole === ROLE_OWNER;
+  }
+  if (policy === INVITE_OWNER_EDITOR) {
+    return senderRole === ROLE_OWNER || senderRole === ROLE_EDITOR;
+  }
+  if (policy === INVITE_ALL_MEMBERS) {
+    return (
+      senderRole === ROLE_OWNER ||
+      senderRole === ROLE_EDITOR ||
+      senderRole === ROLE_VIEWER
+    );
+  }
+  return senderRole === ROLE_OWNER;
+}
+
 module.exports = async (request) => {
   const { auth, data } = request;
   const senderUid = auth?.uid;
@@ -23,6 +61,7 @@ module.exports = async (request) => {
       boardTitle,
       invitedUserIds,
       inviteExpiryHours = 72,
+      targetRole,
     } = data;
 
     validateString(boardId, 'boardId');
@@ -44,10 +83,32 @@ module.exports = async (request) => {
     }
 
     const boardData = boardDoc.data() || {};
-    if (boardData.ownerId !== senderUid) {
+    const { ownerId } = boardData;
+    const senderMemberRef = boardRef
+      .collection(FirestorePaths.BOARD_MEMBERS_SUBCOLLECTION)
+      .doc(senderUid);
+    const senderMemberDoc = await senderMemberRef.get();
+    const senderMemberData = senderMemberDoc.data() || {};
+    const senderRole = ownerId === senderUid
+      ? ROLE_OWNER
+      : normalizeRole(senderMemberData.role, ROLE_VIEWER);
+
+    const invitePolicyMap = boardData[FirestorePaths.INVITE_POLICY] || {};
+    const whoCanInvite =
+      invitePolicyMap[FirestorePaths.WHO_CAN_INVITE] || INVITE_OWNER_ONLY;
+
+    if (!canSendInvite(whoCanInvite, senderRole)) {
       throw new HttpsError(
         'permission-denied',
-        'Only the board owner can send invites.',
+        'You do not have permission to send invites for this board.',
+      );
+    }
+
+    const resolvedTargetRole = normalizeRole(targetRole, ROLE_VIEWER);
+    if (resolvedTargetRole === ROLE_OWNER) {
+      throw new HttpsError(
+        'invalid-argument',
+        'Invites cannot assign owner role.',
       );
     }
 
@@ -77,7 +138,7 @@ module.exports = async (request) => {
           .get();
 
         // Fallback for historical records that may not have lowercased emails.
-        if (userByEmail.docs.isEmpty && identifier != normalizedEmail) {
+        if (userByEmail.docs.length === 0 && identifier != normalizedEmail) {
           userByEmail = await firestore
             .collection(FirestorePaths.USERS)
             .where(FirestorePaths.EMAIL, '==', identifier)
@@ -85,12 +146,12 @@ module.exports = async (request) => {
             .get();
         }
 
-        if (userByEmail.docs.isEmpty) {
+        if (userByEmail.docs.length === 0) {
           unresolvedEmails.push(identifier);
           continue;
         }
 
-        resolvedRecipientUids.push(userByEmail.docs.first.id);
+        resolvedRecipientUids.push(userByEmail.docs[0].id);
         continue;
       }
 
@@ -127,6 +188,8 @@ module.exports = async (request) => {
           [FirestorePaths.SENDER_NAME]: senderData.displayName || 'InkLink User',
           [FirestorePaths.SENDER_PIC]: senderData.photoURL || null,
           [FirestorePaths.STATUS]: 'pending',
+          [FirestorePaths.TARGET_ROLE]: resolvedTargetRole,
+          [FirestorePaths.INVITER_ROLE_SNAPSHOT]: senderRole,
           [FirestorePaths.EXPIRES_AT]: admin.firestore.Timestamp.fromDate(expiresAt),
           [FirestorePaths.INVITE_EXPIRY_HOURS]: Number(inviteExpiryHours),
           [FirestorePaths.TIMESTAMP]: admin.firestore.FieldValue.serverTimestamp(),
@@ -149,6 +212,7 @@ module.exports = async (request) => {
           boardId,
           boardTitle,
           inviteId: inviteRef.id,
+          targetRole: resolvedTargetRole,
         },
       });
 
@@ -161,6 +225,7 @@ module.exports = async (request) => {
       results,
       unresolvedEmails,
       unresolvedUids,
+      targetRole: resolvedTargetRole,
     };
   } catch (error) {
     if (error instanceof HttpsError) {

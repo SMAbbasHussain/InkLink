@@ -139,9 +139,16 @@ class InvitationRepositoryImpl implements InvitationRepository {
             : 'InkLink User';
         model.senderPic = invite['senderPic']?.toString();
         model.status = status;
+        model.targetRole = _normalizeTargetRole(
+          invite['targetRole']?.toString(),
+        );
+        model.inviterRoleSnapshot = invite['inviterRoleSnapshot']?.toString();
         model.timestamp = timestamp;
         model.expiresAt = _toDateTime(invite['expiresAt']);
         model.inviteExpiryHours = _toInt(invite['inviteExpiryHours']);
+        model.acceptedAt = _toDateTime(invite['acceptedAt']);
+        model.rejectedAt = _toDateTime(invite['rejectedAt']);
+        model.resolvedAt = _toDateTime(invite['resolvedAt']);
         model.cachedAt = DateTime.now();
 
         await isar.localInvitations.putByInviteId(model);
@@ -235,11 +242,21 @@ class InvitationRepositoryImpl implements InvitationRepository {
       'senderName': item.senderName,
       'senderPic': item.senderPic,
       'status': item.status,
+      'targetRole': item.targetRole,
+      'inviterRoleSnapshot': item.inviterRoleSnapshot,
       'timestamp': item.timestamp,
       'expiresAt': item.expiresAt,
       'inviteExpiryHours': item.inviteExpiryHours,
+      'acceptedAt': item.acceptedAt,
+      'rejectedAt': item.rejectedAt,
+      'resolvedAt': item.resolvedAt,
       'cachedAt': item.cachedAt,
     };
+  }
+
+  String _normalizeTargetRole(String? role) {
+    if (role == 'editor') return 'editor';
+    return 'viewer';
   }
 
   List<Map<String, dynamic>> _sortInvitesByTimestampDesc(

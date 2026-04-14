@@ -18,6 +18,7 @@ class FirestoreBoardRepository implements BoardRepository {
   final AuthService _authService;
   final LocalDatabaseService _localDatabaseService;
   static const String crdtEngine = 'crdt_v1';
+  static const String _membersSubcollection = 'members';
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   _userBoardIndexSub;
   final Map<String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>
@@ -167,6 +168,9 @@ class FirestoreBoardRepository implements BoardRepository {
                     privateJoinPolicy: lb.privateJoinPolicy,
                     tags: lb.tags,
                     joinViaCodeEnabled: lb.joinViaCodeEnabled,
+                    whoCanInvite: lb.whoCanInvite,
+                    defaultLinkJoinRole: lb.defaultLinkJoinRole,
+                    currentUserRole: lb.currentUserRole,
                     createdAt: lb.createdAt,
                     updatedAt: lb.updatedAt,
                   ),
@@ -197,6 +201,9 @@ class FirestoreBoardRepository implements BoardRepository {
             privateJoinPolicy: lb.privateJoinPolicy,
             tags: lb.tags,
             joinViaCodeEnabled: lb.joinViaCodeEnabled,
+            whoCanInvite: lb.whoCanInvite,
+            defaultLinkJoinRole: lb.defaultLinkJoinRole,
+            currentUserRole: lb.currentUserRole,
             createdAt: lb.createdAt,
             updatedAt: lb.updatedAt,
           );
@@ -307,6 +314,20 @@ class FirestoreBoardRepository implements BoardRepository {
             Board.policyOwnerOnlyInvite
         ..tags = List<String>.from(data['tags'] ?? const <String>[])
         ..joinViaCodeEnabled = (data['joinViaCodeEnabled'] as bool?) ?? false
+        ..whoCanInvite =
+            ((data['invitePolicy'] as Map<String, dynamic>?)?['whoCanInvite']
+                as String?) ??
+            Board.inviteOwnerOnly
+        ..defaultLinkJoinRole =
+            ((data['invitePolicy']
+                    as Map<String, dynamic>?)?['defaultLinkJoinRole']
+                as String?) ??
+            Board.roleViewer
+        ..currentUserRole = await _resolveCurrentUserRole(
+          boardId: boardId,
+          ownerId: (data['ownerId'] as String?) ?? '',
+          uid: uid,
+        )
         ..previewPath = (await isar.localBoards.getByBoardId(
           boardId,
         ))?.previewPath
@@ -350,6 +371,8 @@ class FirestoreBoardRepository implements BoardRepository {
     String name = 'Untitled Board',
     required String visibility,
     required String privateJoinPolicy,
+    required String whoCanInvite,
+    required String defaultLinkJoinRole,
     required List<String> tags,
     List<String> invitedUserIds = const [],
     int inviteExpiryHours = 72,
@@ -373,6 +396,15 @@ class FirestoreBoardRepository implements BoardRepository {
         .toSet()
         .take(5)
         .toList(growable: false);
+    final normalizedWhoCanInvite = whoCanInvite == Board.inviteOwnerEditor
+        ? Board.inviteOwnerEditor
+        : whoCanInvite == Board.inviteAllMembers
+        ? Board.inviteAllMembers
+        : Board.inviteOwnerOnly;
+    final normalizedDefaultLinkJoinRole =
+        defaultLinkJoinRole == Board.roleEditor
+        ? Board.roleEditor
+        : Board.roleViewer;
     final joinViaCodeEnabled =
         normalizedVisibility == Board.visibilityPublic ||
         normalizedPrivatePolicy == Board.policyLinkCanJoin;
@@ -389,6 +421,10 @@ class FirestoreBoardRepository implements BoardRepository {
       'tags': normalizedTags,
       'joinViaCodeEnabled': joinViaCodeEnabled,
       'joinCode': docRef.id,
+      'invitePolicy': {
+        'whoCanInvite': normalizedWhoCanInvite,
+        'defaultLinkJoinRole': normalizedDefaultLinkJoinRole,
+      },
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
       'lastEditedBy': uid,
@@ -400,6 +436,13 @@ class FirestoreBoardRepository implements BoardRepository {
 
     await firestore.runTransaction((transaction) async {
       transaction.set(docRef, boardData);
+      transaction.set(docRef.collection(_membersSubcollection).doc(uid), {
+        'uid': uid,
+        'role': Board.roleOwner,
+        'status': 'active',
+        'joinedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
       transaction.set(userRef, {
         'boardCount': FieldValue.increment(1),
         'ownedBoards': FieldValue.arrayUnion([docRef.id]),
@@ -419,6 +462,9 @@ class FirestoreBoardRepository implements BoardRepository {
       ..privateJoinPolicy = normalizedPrivatePolicy
       ..tags = normalizedTags
       ..joinViaCodeEnabled = joinViaCodeEnabled
+      ..whoCanInvite = normalizedWhoCanInvite
+      ..defaultLinkJoinRole = normalizedDefaultLinkJoinRole
+      ..currentUserRole = Board.roleOwner
       ..previewPath = null
       ..createdAt = now
       ..updatedAt = now
@@ -514,6 +560,20 @@ class FirestoreBoardRepository implements BoardRepository {
           Board.policyOwnerOnlyInvite
       ..tags = List<String>.from(boardData['tags'] ?? const <String>[])
       ..joinViaCodeEnabled = (boardData['joinViaCodeEnabled'] as bool?) ?? false
+      ..whoCanInvite =
+          ((boardData['invitePolicy'] as Map<String, dynamic>?)?['whoCanInvite']
+              as String?) ??
+          Board.inviteOwnerOnly
+      ..defaultLinkJoinRole =
+          ((boardData['invitePolicy']
+                  as Map<String, dynamic>?)?['defaultLinkJoinRole']
+              as String?) ??
+          Board.roleViewer
+      ..currentUserRole = await _resolveCurrentUserRole(
+        boardId: boardId,
+        ownerId: (boardData['ownerId'] as String?) ?? '',
+        uid: uid,
+      )
       ..previewPath = existingBoard?.previewPath
       ..createdAt =
           (boardData['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()
@@ -591,13 +651,18 @@ class FirestoreBoardRepository implements BoardRepository {
     final isar = await _localDatabaseService.database;
     final localBoard = await isar.localBoards.getByBoardId(boardId);
     if (localBoard == null) return;
+    final canUpdateBoardMetadata =
+        localBoard.currentUserRole == Board.roleOwner ||
+        localBoard.currentUserRole == Board.roleEditor;
 
     localBoard.previewPath = previewFile.path;
     localBoard.updatedAt = DateTime.now();
 
-    await _firestoreService.collection('boards').doc(boardId).update({
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+    if (canUpdateBoardMetadata) {
+      await _firestoreService.collection('boards').doc(boardId).update({
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }
 
     await isar.writeTxn(() async {
       await isar.localBoards.putByBoardId(localBoard);
@@ -630,5 +695,35 @@ class FirestoreBoardRepository implements BoardRepository {
     if (value is num) return value.toInt();
     if (value is String) return int.tryParse(value) ?? 0;
     return 0;
+  }
+
+  Future<String> _resolveCurrentUserRole({
+    required String boardId,
+    required String ownerId,
+    required String uid,
+  }) async {
+    if (ownerId == uid) {
+      return Board.roleOwner;
+    }
+
+    try {
+      final memberDoc = await _firestoreService
+          .collection('boards')
+          .doc(boardId)
+          .collection(_membersSubcollection)
+          .doc(uid)
+          .get();
+      if (!memberDoc.exists) {
+        return Board.roleViewer;
+      }
+
+      final role = (memberDoc.data() ?? const <String, dynamic>{})['role'];
+      if (role == Board.roleEditor || role == Board.roleOwner) {
+        return role as String;
+      }
+      return Board.roleViewer;
+    } catch (_) {
+      return Board.roleViewer;
+    }
   }
 }

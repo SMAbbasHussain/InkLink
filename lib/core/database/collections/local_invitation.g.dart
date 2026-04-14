@@ -17,50 +17,75 @@ const LocalInvitationSchema = CollectionSchema(
   name: r'LocalInvitation',
   id: 7748707148538851085,
   properties: {
-    r'boardId': PropertySchema(id: 0, name: r'boardId', type: IsarType.string),
+    r'acceptedAt': PropertySchema(
+      id: 0,
+      name: r'acceptedAt',
+      type: IsarType.dateTime,
+    ),
+    r'boardId': PropertySchema(id: 1, name: r'boardId', type: IsarType.string),
     r'boardTitle': PropertySchema(
-      id: 1,
+      id: 2,
       name: r'boardTitle',
       type: IsarType.string,
     ),
     r'cachedAt': PropertySchema(
-      id: 2,
+      id: 3,
       name: r'cachedAt',
       type: IsarType.dateTime,
     ),
     r'expiresAt': PropertySchema(
-      id: 3,
+      id: 4,
       name: r'expiresAt',
       type: IsarType.dateTime,
     ),
-    r'fromUid': PropertySchema(id: 4, name: r'fromUid', type: IsarType.string),
+    r'fromUid': PropertySchema(id: 5, name: r'fromUid', type: IsarType.string),
     r'inviteExpiryHours': PropertySchema(
-      id: 5,
+      id: 6,
       name: r'inviteExpiryHours',
       type: IsarType.long,
     ),
     r'inviteId': PropertySchema(
-      id: 6,
+      id: 7,
       name: r'inviteId',
       type: IsarType.string,
     ),
+    r'inviterRoleSnapshot': PropertySchema(
+      id: 8,
+      name: r'inviterRoleSnapshot',
+      type: IsarType.string,
+    ),
+    r'rejectedAt': PropertySchema(
+      id: 9,
+      name: r'rejectedAt',
+      type: IsarType.dateTime,
+    ),
+    r'resolvedAt': PropertySchema(
+      id: 10,
+      name: r'resolvedAt',
+      type: IsarType.dateTime,
+    ),
     r'senderName': PropertySchema(
-      id: 7,
+      id: 11,
       name: r'senderName',
       type: IsarType.string,
     ),
     r'senderPic': PropertySchema(
-      id: 8,
+      id: 12,
       name: r'senderPic',
       type: IsarType.string,
     ),
-    r'status': PropertySchema(id: 9, name: r'status', type: IsarType.string),
+    r'status': PropertySchema(id: 13, name: r'status', type: IsarType.string),
+    r'targetRole': PropertySchema(
+      id: 14,
+      name: r'targetRole',
+      type: IsarType.string,
+    ),
     r'timestamp': PropertySchema(
-      id: 10,
+      id: 15,
       name: r'timestamp',
       type: IsarType.dateTime,
     ),
-    r'toUid': PropertySchema(id: 11, name: r'toUid', type: IsarType.string),
+    r'toUid': PropertySchema(id: 16, name: r'toUid', type: IsarType.string),
   },
 
   estimateSize: _localInvitationEstimateSize,
@@ -167,6 +192,12 @@ int _localInvitationEstimateSize(
   bytesCount += 3 + object.boardTitle.length * 3;
   bytesCount += 3 + object.fromUid.length * 3;
   bytesCount += 3 + object.inviteId.length * 3;
+  {
+    final value = object.inviterRoleSnapshot;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
   bytesCount += 3 + object.senderName.length * 3;
   {
     final value = object.senderPic;
@@ -175,6 +206,7 @@ int _localInvitationEstimateSize(
     }
   }
   bytesCount += 3 + object.status.length * 3;
+  bytesCount += 3 + object.targetRole.length * 3;
   bytesCount += 3 + object.toUid.length * 3;
   return bytesCount;
 }
@@ -185,18 +217,23 @@ void _localInvitationSerialize(
   List<int> offsets,
   Map<Type, List<int>> allOffsets,
 ) {
-  writer.writeString(offsets[0], object.boardId);
-  writer.writeString(offsets[1], object.boardTitle);
-  writer.writeDateTime(offsets[2], object.cachedAt);
-  writer.writeDateTime(offsets[3], object.expiresAt);
-  writer.writeString(offsets[4], object.fromUid);
-  writer.writeLong(offsets[5], object.inviteExpiryHours);
-  writer.writeString(offsets[6], object.inviteId);
-  writer.writeString(offsets[7], object.senderName);
-  writer.writeString(offsets[8], object.senderPic);
-  writer.writeString(offsets[9], object.status);
-  writer.writeDateTime(offsets[10], object.timestamp);
-  writer.writeString(offsets[11], object.toUid);
+  writer.writeDateTime(offsets[0], object.acceptedAt);
+  writer.writeString(offsets[1], object.boardId);
+  writer.writeString(offsets[2], object.boardTitle);
+  writer.writeDateTime(offsets[3], object.cachedAt);
+  writer.writeDateTime(offsets[4], object.expiresAt);
+  writer.writeString(offsets[5], object.fromUid);
+  writer.writeLong(offsets[6], object.inviteExpiryHours);
+  writer.writeString(offsets[7], object.inviteId);
+  writer.writeString(offsets[8], object.inviterRoleSnapshot);
+  writer.writeDateTime(offsets[9], object.rejectedAt);
+  writer.writeDateTime(offsets[10], object.resolvedAt);
+  writer.writeString(offsets[11], object.senderName);
+  writer.writeString(offsets[12], object.senderPic);
+  writer.writeString(offsets[13], object.status);
+  writer.writeString(offsets[14], object.targetRole);
+  writer.writeDateTime(offsets[15], object.timestamp);
+  writer.writeString(offsets[16], object.toUid);
 }
 
 LocalInvitation _localInvitationDeserialize(
@@ -206,19 +243,24 @@ LocalInvitation _localInvitationDeserialize(
   Map<Type, List<int>> allOffsets,
 ) {
   final object = LocalInvitation();
-  object.boardId = reader.readString(offsets[0]);
-  object.boardTitle = reader.readString(offsets[1]);
-  object.cachedAt = reader.readDateTime(offsets[2]);
-  object.expiresAt = reader.readDateTimeOrNull(offsets[3]);
-  object.fromUid = reader.readString(offsets[4]);
+  object.acceptedAt = reader.readDateTimeOrNull(offsets[0]);
+  object.boardId = reader.readString(offsets[1]);
+  object.boardTitle = reader.readString(offsets[2]);
+  object.cachedAt = reader.readDateTime(offsets[3]);
+  object.expiresAt = reader.readDateTimeOrNull(offsets[4]);
+  object.fromUid = reader.readString(offsets[5]);
   object.id = id;
-  object.inviteExpiryHours = reader.readLongOrNull(offsets[5]);
-  object.inviteId = reader.readString(offsets[6]);
-  object.senderName = reader.readString(offsets[7]);
-  object.senderPic = reader.readStringOrNull(offsets[8]);
-  object.status = reader.readString(offsets[9]);
-  object.timestamp = reader.readDateTime(offsets[10]);
-  object.toUid = reader.readString(offsets[11]);
+  object.inviteExpiryHours = reader.readLongOrNull(offsets[6]);
+  object.inviteId = reader.readString(offsets[7]);
+  object.inviterRoleSnapshot = reader.readStringOrNull(offsets[8]);
+  object.rejectedAt = reader.readDateTimeOrNull(offsets[9]);
+  object.resolvedAt = reader.readDateTimeOrNull(offsets[10]);
+  object.senderName = reader.readString(offsets[11]);
+  object.senderPic = reader.readStringOrNull(offsets[12]);
+  object.status = reader.readString(offsets[13]);
+  object.targetRole = reader.readString(offsets[14]);
+  object.timestamp = reader.readDateTime(offsets[15]);
+  object.toUid = reader.readString(offsets[16]);
   return object;
 }
 
@@ -230,28 +272,38 @@ P _localInvitationDeserializeProp<P>(
 ) {
   switch (propertyId) {
     case 0:
-      return (reader.readString(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 1:
       return (reader.readString(offset)) as P;
     case 2:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 3:
-      return (reader.readDateTimeOrNull(offset)) as P;
+      return (reader.readDateTime(offset)) as P;
     case 4:
-      return (reader.readString(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 5:
-      return (reader.readLongOrNull(offset)) as P;
-    case 6:
       return (reader.readString(offset)) as P;
+    case 6:
+      return (reader.readLongOrNull(offset)) as P;
     case 7:
       return (reader.readString(offset)) as P;
     case 8:
       return (reader.readStringOrNull(offset)) as P;
     case 9:
-      return (reader.readString(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 10:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 11:
+      return (reader.readString(offset)) as P;
+    case 12:
+      return (reader.readStringOrNull(offset)) as P;
+    case 13:
+      return (reader.readString(offset)) as P;
+    case 14:
+      return (reader.readString(offset)) as P;
+    case 15:
+      return (reader.readDateTime(offset)) as P;
+    case 16:
       return (reader.readString(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -782,6 +834,79 @@ extension LocalInvitationQueryWhere
 
 extension LocalInvitationQueryFilter
     on QueryBuilder<LocalInvitation, LocalInvitation, QFilterCondition> {
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  acceptedAtIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'acceptedAt'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  acceptedAtIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'acceptedAt'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  acceptedAtEqualTo(DateTime? value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'acceptedAt', value: value),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  acceptedAtGreaterThan(DateTime? value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'acceptedAt',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  acceptedAtLessThan(DateTime? value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'acceptedAt',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  acceptedAtBetween(
+    DateTime? lower,
+    DateTime? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'acceptedAt',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+        ),
+      );
+    });
+  }
+
   QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
   boardIdEqualTo(String value, {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
@@ -1603,6 +1728,314 @@ extension LocalInvitationQueryFilter
   }
 
   QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  inviterRoleSnapshotIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'inviterRoleSnapshot'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  inviterRoleSnapshotIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'inviterRoleSnapshot'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  inviterRoleSnapshotEqualTo(String? value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'inviterRoleSnapshot',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  inviterRoleSnapshotGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'inviterRoleSnapshot',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  inviterRoleSnapshotLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'inviterRoleSnapshot',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  inviterRoleSnapshotBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'inviterRoleSnapshot',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  inviterRoleSnapshotStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'inviterRoleSnapshot',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  inviterRoleSnapshotEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'inviterRoleSnapshot',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  inviterRoleSnapshotContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'inviterRoleSnapshot',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  inviterRoleSnapshotMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'inviterRoleSnapshot',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  inviterRoleSnapshotIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'inviterRoleSnapshot', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  inviterRoleSnapshotIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          property: r'inviterRoleSnapshot',
+          value: '',
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  rejectedAtIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'rejectedAt'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  rejectedAtIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'rejectedAt'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  rejectedAtEqualTo(DateTime? value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'rejectedAt', value: value),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  rejectedAtGreaterThan(DateTime? value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'rejectedAt',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  rejectedAtLessThan(DateTime? value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'rejectedAt',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  rejectedAtBetween(
+    DateTime? lower,
+    DateTime? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'rejectedAt',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  resolvedAtIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'resolvedAt'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  resolvedAtIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'resolvedAt'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  resolvedAtEqualTo(DateTime? value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'resolvedAt', value: value),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  resolvedAtGreaterThan(DateTime? value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'resolvedAt',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  resolvedAtLessThan(DateTime? value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'resolvedAt',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  resolvedAtBetween(
+    DateTime? lower,
+    DateTime? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'resolvedAt',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
   senderNameEqualTo(String value, {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(
@@ -2044,6 +2477,147 @@ extension LocalInvitationQueryFilter
   }
 
   QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  targetRoleEqualTo(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'targetRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  targetRoleGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'targetRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  targetRoleLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'targetRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  targetRoleBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'targetRole',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  targetRoleStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'targetRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  targetRoleEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'targetRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  targetRoleContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'targetRole',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  targetRoleMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'targetRole',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  targetRoleIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'targetRole', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
+  targetRoleIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'targetRole', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterFilterCondition>
   timestampEqualTo(DateTime value) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(
@@ -2248,6 +2822,20 @@ extension LocalInvitationQueryLinks
 
 extension LocalInvitationQuerySortBy
     on QueryBuilder<LocalInvitation, LocalInvitation, QSortBy> {
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  sortByAcceptedAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'acceptedAt', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  sortByAcceptedAtDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'acceptedAt', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy> sortByBoardId() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'boardId', Sort.asc);
@@ -2345,6 +2933,48 @@ extension LocalInvitationQuerySortBy
   }
 
   QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  sortByInviterRoleSnapshot() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'inviterRoleSnapshot', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  sortByInviterRoleSnapshotDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'inviterRoleSnapshot', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  sortByRejectedAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'rejectedAt', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  sortByRejectedAtDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'rejectedAt', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  sortByResolvedAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'resolvedAt', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  sortByResolvedAtDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'resolvedAt', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
   sortBySenderName() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'senderName', Sort.asc);
@@ -2386,6 +3016,20 @@ extension LocalInvitationQuerySortBy
   }
 
   QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  sortByTargetRole() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'targetRole', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  sortByTargetRoleDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'targetRole', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
   sortByTimestamp() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'timestamp', Sort.asc);
@@ -2415,6 +3059,20 @@ extension LocalInvitationQuerySortBy
 
 extension LocalInvitationQuerySortThenBy
     on QueryBuilder<LocalInvitation, LocalInvitation, QSortThenBy> {
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  thenByAcceptedAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'acceptedAt', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  thenByAcceptedAtDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'acceptedAt', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy> thenByBoardId() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'boardId', Sort.asc);
@@ -2524,6 +3182,48 @@ extension LocalInvitationQuerySortThenBy
   }
 
   QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  thenByInviterRoleSnapshot() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'inviterRoleSnapshot', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  thenByInviterRoleSnapshotDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'inviterRoleSnapshot', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  thenByRejectedAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'rejectedAt', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  thenByRejectedAtDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'rejectedAt', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  thenByResolvedAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'resolvedAt', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  thenByResolvedAtDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'resolvedAt', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
   thenBySenderName() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'senderName', Sort.asc);
@@ -2565,6 +3265,20 @@ extension LocalInvitationQuerySortThenBy
   }
 
   QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  thenByTargetRole() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'targetRole', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
+  thenByTargetRoleDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'targetRole', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QAfterSortBy>
   thenByTimestamp() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'timestamp', Sort.asc);
@@ -2594,6 +3308,13 @@ extension LocalInvitationQuerySortThenBy
 
 extension LocalInvitationQueryWhereDistinct
     on QueryBuilder<LocalInvitation, LocalInvitation, QDistinct> {
+  QueryBuilder<LocalInvitation, LocalInvitation, QDistinct>
+  distinctByAcceptedAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'acceptedAt');
+    });
+  }
+
   QueryBuilder<LocalInvitation, LocalInvitation, QDistinct> distinctByBoardId({
     bool caseSensitive = true,
   }) {
@@ -2647,6 +3368,30 @@ extension LocalInvitationQueryWhereDistinct
   }
 
   QueryBuilder<LocalInvitation, LocalInvitation, QDistinct>
+  distinctByInviterRoleSnapshot({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(
+        r'inviterRoleSnapshot',
+        caseSensitive: caseSensitive,
+      );
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QDistinct>
+  distinctByRejectedAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'rejectedAt');
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QDistinct>
+  distinctByResolvedAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'resolvedAt');
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QDistinct>
   distinctBySenderName({bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'senderName', caseSensitive: caseSensitive);
@@ -2665,6 +3410,13 @@ extension LocalInvitationQueryWhereDistinct
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'status', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<LocalInvitation, LocalInvitation, QDistinct>
+  distinctByTargetRole({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'targetRole', caseSensitive: caseSensitive);
     });
   }
 
@@ -2689,6 +3441,13 @@ extension LocalInvitationQueryProperty
   QueryBuilder<LocalInvitation, int, QQueryOperations> idProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'id');
+    });
+  }
+
+  QueryBuilder<LocalInvitation, DateTime?, QQueryOperations>
+  acceptedAtProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'acceptedAt');
     });
   }
 
@@ -2736,6 +3495,27 @@ extension LocalInvitationQueryProperty
     });
   }
 
+  QueryBuilder<LocalInvitation, String?, QQueryOperations>
+  inviterRoleSnapshotProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'inviterRoleSnapshot');
+    });
+  }
+
+  QueryBuilder<LocalInvitation, DateTime?, QQueryOperations>
+  rejectedAtProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'rejectedAt');
+    });
+  }
+
+  QueryBuilder<LocalInvitation, DateTime?, QQueryOperations>
+  resolvedAtProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'resolvedAt');
+    });
+  }
+
   QueryBuilder<LocalInvitation, String, QQueryOperations> senderNameProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'senderName');
@@ -2751,6 +3531,12 @@ extension LocalInvitationQueryProperty
   QueryBuilder<LocalInvitation, String, QQueryOperations> statusProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'status');
+    });
+  }
+
+  QueryBuilder<LocalInvitation, String, QQueryOperations> targetRoleProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'targetRole');
     });
   }
 

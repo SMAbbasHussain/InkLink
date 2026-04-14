@@ -5,6 +5,7 @@ import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
 import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:inklink/features/dashboard/view/create_board_route.dart';
+import 'package:inklink/features/dashboard/view/board_settings_screen.dart';
 import 'package:inklink/features/dashboard/view/widgets/board_card.dart';
 import 'package:inklink/features/dashboard/view/widgets/quick_action_button.dart';
 import 'package:inklink/features/board_invitations/bloc/board_invitations_bloc.dart';
@@ -435,6 +436,19 @@ class _HomeScreenState extends State<HomeScreen>
             onDelete: (id) => context.read<DashboardBloc>().add(
               DashboardDeleteBoardRequested(id),
             ),
+            onOpenSettings: isOwner
+                ? () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => BlocProvider.value(
+                          value: context.read<DashboardBloc>(),
+                          child: BoardSettingsScreen(board: board),
+                        ),
+                      ),
+                    );
+                  }
+                : null,
           );
         },
       );

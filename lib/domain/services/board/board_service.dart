@@ -22,9 +22,19 @@ abstract class BoardService {
     String? title,
     required String visibility,
     required String privateJoinPolicy,
+    required String whoCanInvite,
+    required String defaultLinkJoinRole,
+    required String inviteTargetRole,
     required List<String> tags,
     List<String> invitedUserIds,
     int inviteExpiryHours,
+  });
+  Future<void> updateBoardSettings({
+    required String boardId,
+    required String visibility,
+    required String privateJoinPolicy,
+    required String whoCanInvite,
+    required String defaultLinkJoinRole,
   });
   Future<void> joinBoard(String boardId);
   Future<void> renameBoard(String boardId, String newName);
@@ -58,6 +68,9 @@ class BoardServiceImpl implements BoardService {
     String? title,
     required String visibility,
     required String privateJoinPolicy,
+    required String whoCanInvite,
+    required String defaultLinkJoinRole,
+    required String inviteTargetRole,
     required List<String> tags,
     List<String> invitedUserIds = const [],
     int inviteExpiryHours = 72,
@@ -70,6 +83,8 @@ class BoardServiceImpl implements BoardService {
       name: resolvedTitle,
       visibility: visibility,
       privateJoinPolicy: privateJoinPolicy,
+      whoCanInvite: whoCanInvite,
+      defaultLinkJoinRole: defaultLinkJoinRole,
       tags: tags,
       invitedUserIds: const [],
       inviteExpiryHours: inviteExpiryHours,
@@ -86,6 +101,7 @@ class BoardServiceImpl implements BoardService {
               'boardTitle': resolvedTitle,
               'invitedUserIds': invitedUserIds,
               'inviteExpiryHours': inviteExpiryHours,
+              'targetRole': inviteTargetRole,
             });
 
         final data = response.data;
@@ -103,6 +119,23 @@ class BoardServiceImpl implements BoardService {
       boardId: boardId,
       unresolvedEmails: unresolvedEmails,
     );
+  }
+
+  @override
+  Future<void> updateBoardSettings({
+    required String boardId,
+    required String visibility,
+    required String privateJoinPolicy,
+    required String whoCanInvite,
+    required String defaultLinkJoinRole,
+  }) async {
+    await _cloudFunctionsService.httpsCallable('updateBoardSettings').call({
+      'boardId': boardId,
+      'visibility': visibility,
+      'privateJoinPolicy': privateJoinPolicy,
+      'whoCanInvite': whoCanInvite,
+      'defaultLinkJoinRole': defaultLinkJoinRole,
+    });
   }
 
   @override
