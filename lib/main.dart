@@ -28,6 +28,8 @@ import 'package:inklink/domain/repositories/profile/profile_repository.dart';
 import 'package:inklink/domain/repositories/friends/friends_repository_impl.dart';
 import 'package:inklink/domain/repositories/settings/settings_repository.dart';
 import 'package:inklink/domain/repositories/settings/settings_repository_impl.dart';
+import 'package:inklink/domain/repositories/workspace/workspace_repository.dart';
+import 'package:inklink/domain/repositories/workspace/workspace_repository_impl.dart';
 import 'package:inklink/domain/repositories/theme/theme_repository_impl.dart';
 import 'package:inklink/domain/services/auth/auth_session_service.dart';
 import 'package:inklink/domain/services/board/board_service.dart';
@@ -38,11 +40,13 @@ import 'package:inklink/domain/services/presence/presence_service.dart';
 import 'package:inklink/domain/services/profile/profile_service.dart';
 import 'package:inklink/domain/services/settings/settings_service.dart';
 import 'package:inklink/domain/services/theme/theme_service.dart';
+import 'package:inklink/domain/services/workspace/workspace_service.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:inklink/features/friends/bloc/friends_bloc.dart';
 import 'package:inklink/features/navigation/bloc/nav_bloc.dart';
+import 'package:inklink/features/workspaces/bloc/workspace_bloc.dart';
 import 'package:inklink/features/theme/bloc/theme_bloc.dart';
 import 'package:inklink/features/notifications/bloc/notifications_bloc.dart';
 import 'package:inklink/features/board_invitations/bloc/board_invitations_bloc.dart';
@@ -148,6 +152,13 @@ void main() async {
             localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
+        RepositoryProvider<WorkspaceRepository>(
+          create: (context) => FirestoreWorkspaceRepository(
+            firestoreService: context.read<FirestoreService>(),
+            authService: context.read<AuthService>(),
+            localDatabaseService: context.read<LocalDatabaseService>(),
+          ),
+        ),
         // 2. Domain services (depend on repositories)
         RepositoryProvider<PresenceService>(
           create: (context) => PresenceServiceImpl(
@@ -191,6 +202,12 @@ void main() async {
         RepositoryProvider<BoardService>(
           create: (context) => BoardServiceImpl(
             boardRepository: context.read<BoardRepository>(),
+            cloudFunctionsService: context.read<CloudFunctionsService>(),
+          ),
+        ),
+        RepositoryProvider<WorkspaceService>(
+          create: (context) => WorkspaceServiceImpl(
+            repository: context.read<WorkspaceRepository>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
           ),
         ),
@@ -243,6 +260,11 @@ void main() async {
             create: (context) => BoardInvitationsBloc(
               invitationService: context.read<InvitationService>(),
             )..add(const BoardInvitationsLoadRequested()),
+          ),
+          BlocProvider(
+            create: (context) => WorkspaceBloc(
+              workspaceService: context.read<WorkspaceService>(),
+            ),
           ),
         ],
         child: const MyApp(),

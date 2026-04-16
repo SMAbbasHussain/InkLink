@@ -212,12 +212,18 @@ class BoardInvitationsBloc
 
   @override
   Future<void> close() async {
-    await _invitesSub?.cancel();
+    await stopForLogout();
     return super.close();
   }
 
   bool _looksOffline(Object error) {
     final message = error.toString().toLowerCase();
     return message.contains('offline') || message.contains('connection error');
+  }
+
+  Future<void> stopForLogout() async {
+    await _invitesSub?.cancel();
+    _invitesSub = null;
+    _isOffline = false;
   }
 }

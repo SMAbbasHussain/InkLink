@@ -2,6 +2,8 @@ abstract class FriendsEvent {}
 
 class LoadFriendsInfo extends FriendsEvent {}
 
+class StopFriendsInfo extends FriendsEvent {}
+
 class SearchUserByEmailRequested extends FriendsEvent {
   final String email;
   SearchUserByEmailRequested(this.email);

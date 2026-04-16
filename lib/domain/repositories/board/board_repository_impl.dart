@@ -241,16 +241,25 @@ class FirestoreBoardRepository implements BoardRepository {
           .collection('boards')
           .doc(boardId)
           .snapshots()
-          .listen((doc) {
-            if (doc.exists) {
-              _ownedBoardDocs[boardId] =
-                  doc.data() ?? const <String, dynamic>{};
-            } else {
-              _ownedBoardDocs.remove(boardId);
-              _ownedBoardIds.remove(boardId);
-            }
-            _syncCachedBoardsToLocal();
-          });
+          .listen(
+            (doc) {
+              try {
+                if (doc.exists) {
+                  _ownedBoardDocs[boardId] =
+                      doc.data() ?? const <String, dynamic>{};
+                } else {
+                  _ownedBoardDocs.remove(boardId);
+                  _ownedBoardIds.remove(boardId);
+                }
+                _syncCachedBoardsToLocal();
+              } catch (e) {
+                // Silent fail
+              }
+            },
+            onError: (error, stackTrace) {
+              // Silently ignore permission errors during logout
+            },
+          );
     }
   }
 
@@ -272,16 +281,25 @@ class FirestoreBoardRepository implements BoardRepository {
           .collection('boards')
           .doc(boardId)
           .snapshots()
-          .listen((doc) {
-            if (doc.exists) {
-              _joinedBoardDocs[boardId] =
-                  doc.data() ?? const <String, dynamic>{};
-            } else {
-              _joinedBoardDocs.remove(boardId);
-              _joinedBoardIds.remove(boardId);
-            }
-            _syncCachedBoardsToLocal();
-          });
+          .listen(
+            (doc) {
+              try {
+                if (doc.exists) {
+                  _joinedBoardDocs[boardId] =
+                      doc.data() ?? const <String, dynamic>{};
+                } else {
+                  _joinedBoardDocs.remove(boardId);
+                  _joinedBoardIds.remove(boardId);
+                }
+                _syncCachedBoardsToLocal();
+              } catch (e) {
+                // Silent fail
+              }
+            },
+            onError: (error, stackTrace) {
+              // Silently ignore permission errors during logout
+            },
+          );
     }
   }
 

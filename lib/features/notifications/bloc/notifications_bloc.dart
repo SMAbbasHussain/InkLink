@@ -166,9 +166,16 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     return DateTime.tryParse(parsed) ?? DateTime.fromMillisecondsSinceEpoch(0);
   }
 
+  Future<void> stopForLogout() async {
+    await _notificationsSub?.cancel();
+    _notificationsSub = null;
+    _readIds = <String>{};
+    _rawNotifications = <Map<String, dynamic>>[];
+  }
+
   @override
   Future<void> close() async {
-    await _notificationsSub?.cancel();
+    await stopForLogout();
     return super.close();
   }
 }

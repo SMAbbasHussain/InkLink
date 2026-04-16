@@ -7,6 +7,7 @@ import 'collections/local_friend_request.dart';
 import 'collections/local_friend_profile.dart';
 import 'collections/local_invitation.dart';
 import 'collections/local_non_friend_profile.dart';
+import 'collections/local_workspace.dart';
 import '../../domain/models/user_model.dart';
 
 class LocalDatabaseService {
@@ -28,6 +29,8 @@ class LocalDatabaseService {
           LocalFriendProfileSchema,
           LocalInvitationSchema,
           LocalNonFriendProfileSchema,
+          LocalWorkspaceSchema,
+          LocalWorkspaceInviteSchema,
           UserModelSchema,
         ],
         directory: dir.path,
@@ -49,6 +52,8 @@ class LocalDatabaseService {
       await isar.localFriendProfiles.clear();
       await isar.localInvitations.clear();
       await isar.localNonFriendProfiles.clear();
+      await isar.localWorkspaces.clear();
+      await isar.localWorkspaceInvites.clear();
       await isar.userModels.clear();
     });
   }

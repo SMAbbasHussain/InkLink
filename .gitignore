@@ -121,3 +121,5 @@ android/app/google-services.json
 firestore.rules
 .env
 database.rules.json
+db_plan.md
+requirements.txt

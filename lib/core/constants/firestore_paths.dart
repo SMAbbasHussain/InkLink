@@ -7,11 +7,15 @@ class FirestorePaths {
   static const String boards = 'boards';
   static const String boardInvites = 'board_invites';
   static const String friendRequests = 'friend_requests';
+  static const String workspaces = 'workspaces';
+  static const String workspaceInvites = 'workspace_invites';
 
   // User subcollections
   static const String friendsSubcollection = 'friends';
   static const String notificationsSubcollection = 'notifications';
   static const String boardMembersSubcollection = 'members';
+  static const String workspaceMembersSubcollection = 'members';
+  static const String workspaceBoardsSubcollection = 'boards';
 
   // User document fields
   static const String uid = 'uid';
@@ -26,6 +30,7 @@ class FirestorePaths {
   static const String ownedBoards = 'ownedBoards';
   static const String joinedBoards = 'joinedBoards';
   static const String boardCount = 'boardCount';
+  static const String workspaceIds = 'workspaceIds';
 
   // Friend request fields
   static const String fromUid = 'fromUid';
@@ -49,4 +54,10 @@ class FirestorePaths {
   static const String whoCanInvite = 'whoCanInvite';
   static const String defaultLinkJoinRole = 'defaultLinkJoinRole';
   static const String targetRole = 'targetRole';
+
+  // Workspace fields
+  static const String workspaceId = 'workspaceId';
+  static const String name = 'name';
+  static const String description = 'description';
+  static const String memberCount = 'memberCount';
 }

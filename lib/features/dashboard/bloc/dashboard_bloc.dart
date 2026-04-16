@@ -394,10 +394,16 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     return raw;
   }
 
+  Future<void> stopForLogout() async {
+    await _dashboardSub?.cancel();
+    await _profileSub?.cancel();
+    _dashboardSub = null;
+    _profileSub = null;
+  }
+
   @override
-  Future<void> close() {
-    _dashboardSub?.cancel();
-    _profileSub?.cancel();
+  Future<void> close() async {
+    await stopForLogout();
     return super.close();
   }
 }

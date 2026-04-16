@@ -14,23 +14,47 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     on<LoadFriendsInfo>((event, emit) async {
       emit(FriendsLoading());
       await _friendsSubscription?.cancel();
+      _friendsSubscription = null;
       add(FriendsConnectivityUpdated(false));
       _refreshConnectivity();
 
       // In a full implementation, you'd combine streams.
       // For now, let's fix the syntax error.
-      _friendsSubscription = friendsService.watchFriendsInfo().listen((info) {
-        if (_isOffline) {
-          add(FriendsConnectivityUpdated(false));
-        }
-        add(
-          UpdateFriendsLists(
-            friends: info.friends,
-            incomingRequests: info.incomingRequests,
-            outgoingRequests: info.outgoingRequests,
-          ),
-        );
-      });
+      _friendsSubscription = friendsService.watchFriendsInfo().listen(
+        (info) {
+          if (_isOffline) {
+            add(FriendsConnectivityUpdated(false));
+          }
+          add(
+            UpdateFriendsLists(
+              friends: info.friends,
+              incomingRequests: info.incomingRequests,
+              outgoingRequests: info.outgoingRequests,
+            ),
+          );
+        },
+        onError: (error) async {
+          await _friendsSubscription?.cancel();
+          _friendsSubscription = null;
+
+          final message = error.toString().toLowerCase();
+          if (message.contains('permission-denied') ||
+              message.contains('permission denied')) {
+            emit(FriendsInitial());
+            return;
+          }
+
+          emit(FriendsError(error.toString()));
+        },
+      );
+    });
+
+    on<StopFriendsInfo>((event, emit) async {
+      await _friendsSubscription?.cancel();
+      _friendsSubscription = null;
+      _pendingOutgoingTargetUids = <String>{};
+      _isOffline = false;
+      emit(FriendsInitial());
     });
 
     on<UpdateFriendsLists>((event, emit) {
@@ -208,6 +232,13 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     return friendsService.sendFriendRequest(targetUid);
   }
 
+  Future<void> stopForLogout() async {
+    await _friendsSubscription?.cancel();
+    _friendsSubscription = null;
+    _pendingOutgoingTargetUids = <String>{};
+    _isOffline = false;
+  }
+
   Future<void> unfriendUser(String targetUid) {
     return friendsService.unfriendUser(targetUid);
   }
@@ -229,8 +260,8 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
   }
 
   @override
-  Future<void> close() {
-    _friendsSubscription?.cancel();
+  Future<void> close() async {
+    await stopForLogout();
     return super.close();
   }
 }
