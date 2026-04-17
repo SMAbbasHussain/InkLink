@@ -1,6 +1,7 @@
 const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
+const { sendUserNotification } = require('../utils/notification_sender');
 const logger = require('../utils/logger');
 
 module.exports = async (request) => {
@@ -13,7 +14,7 @@ module.exports = async (request) => {
       throw new HttpsError('unauthenticated', 'User must be logged in.');
     }
 
-    if (typeof workspaceId !== 'string' || workspaceId.trim().isEmpty) {
+    if (typeof workspaceId !== 'string' || workspaceId.trim().length === 0) {
       throw new HttpsError('invalid-argument', 'workspaceId is required.');
     }
 
@@ -34,6 +35,12 @@ module.exports = async (request) => {
       throw new HttpsError('permission-denied', 'Only workspace owner can invite users.');
     }
 
+    const senderDoc = await firestore.collection(FirestorePaths.USERS).doc(uid).get();
+    const senderData = senderDoc.data() || {};
+    const senderName = senderData.displayName || 'InkLink User';
+    const senderPhotoUrl = senderData.photoURL || null;
+    const workspaceName = (workspaceData[FirestorePaths.NAME] || '').toString().trim() || 'workspace';
+
     const results = [];
     for (const targetUidRaw of invitedUserIds) {
       if (typeof targetUidRaw !== 'string') continue;
@@ -49,11 +56,32 @@ module.exports = async (request) => {
           workspaceId: workspaceId.trim(),
           [FirestorePaths.FROM_UID]: uid,
           [FirestorePaths.TO_UID]: targetUid,
+          [FirestorePaths.SENDER_NAME]: senderName,
+          [FirestorePaths.SENDER_PIC]: senderPhotoUrl,
+          [FirestorePaths.NAME]: workspaceName,
           [FirestorePaths.STATUS]: 'pending',
           [FirestorePaths.TIMESTAMP]: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true },
       );
+
+      await sendUserNotification({
+        recipientUid: targetUid,
+        title: `${senderName} invited you to a workspace`,
+        body: `Invitation to join "${workspaceName}"`,
+        type: 'workspace_invite',
+        action: 'open_workspace_invites',
+        targetId: inviteRef.id,
+        senderUid: uid,
+        senderName,
+        senderPhotoUrl,
+        groupingKey: `workspace_invite:${uid}:${targetUid}`,
+        extraData: {
+          workspaceId: workspaceId.trim(),
+          workspaceName,
+          inviteId: inviteRef.id,
+        },
+      });
 
       results.push({ targetUid, inviteId: inviteRef.id });
     }

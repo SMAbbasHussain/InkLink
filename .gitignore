@@ -123,3 +123,6 @@ firestore.rules
 database.rules.json
 db_plan.md
 requirements.txt
+requirements-analysis.md
+firebase_optimizations.md
+firebase_queries_reference.md

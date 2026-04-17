@@ -12,7 +12,7 @@ module.exports = async (request) => {
       throw new HttpsError('unauthenticated', 'User must be logged in.');
     }
 
-    if (typeof inviteId !== 'string' || inviteId.trim().isEmpty) {
+    if (typeof inviteId !== 'string' || inviteId.trim().length === 0) {
       throw new HttpsError('invalid-argument', 'inviteId is required.');
     }
 
@@ -35,15 +35,24 @@ module.exports = async (request) => {
         throw new HttpsError('failed-precondition', 'Invite is no longer pending.');
       }
 
-      const { workspaceId } = invite;
+      const workspaceId = (invite.workspaceId || '').toString().trim();
+      if (!workspaceId) {
+        throw new HttpsError('failed-precondition', 'Invite does not include a valid workspaceId.');
+      }
+
       const workspaceRef = firestore.collection(FirestorePaths.WORKSPACES).doc(workspaceId);
       const workspaceDoc = await transaction.get(workspaceRef);
       if (!workspaceDoc.exists) {
         throw new HttpsError('not-found', 'Workspace not found.');
       }
 
+      const memberRef = workspaceRef
+        .collection(FirestorePaths.WORKSPACE_MEMBERS_SUBCOLLECTION)
+        .doc(uid);
+      const memberDoc = await transaction.get(memberRef);
+
       transaction.set(
-        workspaceRef.collection(FirestorePaths.BOARD_MEMBERS_SUBCOLLECTION).doc(uid),
+        memberRef,
         {
           uid,
           role: 'member',
@@ -55,10 +64,21 @@ module.exports = async (request) => {
         { merge: true },
       );
 
+      if (!memberDoc.exists) {
+        transaction.set(
+          workspaceRef,
+          {
+            memberCount: admin.firestore.FieldValue.increment(1),
+            [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+
       transaction.set(
-        workspaceRef,
+        firestore.collection(FirestorePaths.USERS).doc(uid),
         {
-          memberCount: admin.firestore.FieldValue.increment(1),
+          [FirestorePaths.WORKSPACE_IDS]: admin.firestore.FieldValue.arrayUnion(workspaceId),
           [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true },

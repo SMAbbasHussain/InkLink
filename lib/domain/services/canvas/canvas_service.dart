@@ -65,7 +65,13 @@ class CanvasServiceImpl implements CanvasService {
   @override
   Future<void> stopCrdtRemoteSync(String boardId) {
     final sub = _remoteSubs.remove(boardId);
-    return sub?.cancel() ?? Future.value();
+    return () async {
+      try {
+        await sub?.cancel();
+      } finally {
+        await _boardRepository.deactivateBoard();
+      }
+    }();
   }
 
   @override

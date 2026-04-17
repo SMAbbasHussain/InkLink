@@ -65,10 +65,6 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
         description: description,
       ),
     );
-    await Future.delayed(const Duration(milliseconds: 350));
-    if (mounted) {
-      setState(() => _isSaving = false);
-    }
   }
 
   Future<void> _inviteMember(String targetUid) async {
@@ -78,9 +74,6 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
         invitedUserIds: [targetUid],
       ),
     );
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Invitation sent.')));
   }
 
   Widget _buildAvatar(Map<String, dynamic> friend, String fallbackLabel) {
@@ -98,6 +91,141 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
         fallbackLabel.isEmpty
             ? 'U'
             : fallbackLabel.substring(0, 1).toUpperCase(),
+      ),
+    );
+  }
+
+  Widget _buildMemberAvatar(WorkspaceMember member) {
+    final url = (member.photoUrl ?? '').trim();
+    if (url.isNotEmpty) {
+      return CircleAvatar(
+        radius: 24,
+        backgroundImage: NetworkImage(url),
+        onBackgroundImageError: (_, __) {},
+      );
+    }
+
+    final label = member.label.trim();
+    return CircleAvatar(
+      radius: 24,
+      backgroundColor: Colors.indigo.withOpacity(0.12),
+      child: Text(
+        label.isEmpty ? 'U' : label.substring(0, 1).toUpperCase(),
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Color _roleChipColor(BuildContext context, String role) {
+    switch (role.toLowerCase()) {
+      case 'owner':
+        return Colors.deepPurple;
+      case 'editor':
+        return Colors.teal;
+      case 'viewer':
+        return Colors.blueGrey;
+      default:
+        return Theme.of(context).colorScheme.primary;
+    }
+  }
+
+  Widget _buildMemberTile(
+    BuildContext context,
+    WorkspaceMember member, {
+    required bool canRemove,
+  }) {
+    final roleColor = _roleChipColor(context, member.role);
+    final secondary = member.email != null && member.email!.trim().isNotEmpty
+        ? member.email!.trim()
+        : member.uid;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        color: Theme.of(context).cardColor,
+        border: Border.all(
+          color: Theme.of(context).dividerColor.withOpacity(0.2),
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () {
+          Navigator.push(
+            context,
+            buildProfileRoute(context, userId: member.uid),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              _buildMemberAvatar(member),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      member.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      secondary,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Theme.of(context).textTheme.bodySmall?.color,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: roleColor.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            member.role.toUpperCase(),
+                            style: TextStyle(
+                              color: roleColor,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          member.status,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).textTheme.bodySmall?.color,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              if (canRemove)
+                IconButton(
+                  icon: const Icon(Icons.person_remove_outlined),
+                  onPressed: () => _removeMember(member.uid),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -191,7 +319,27 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Workspace Settings')),
-      body: BlocBuilder<WorkspaceBloc, WorkspaceState>(
+      body: BlocConsumer<WorkspaceBloc, WorkspaceState>(
+        listener: (context, state) {
+          if (state is! WorkspaceLoaded) return;
+
+          if (state.actionError != null && state.actionError!.isNotEmpty) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(state.actionError!)));
+          }
+
+          if (state.actionInfo != null && state.actionInfo!.isNotEmpty) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(state.actionInfo!)));
+          }
+
+          if (_isSaving &&
+              (state.actionInfo != null || state.actionError != null)) {
+            setState(() => _isSaving = false);
+          }
+        },
         builder: (context, state) {
           if (state is! WorkspaceLoaded) {
             return const Center(child: CircularProgressIndicator());
@@ -293,30 +441,10 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                 else
                   ...members.map((member) {
                     final canRemove = isOwner && member.role != 'owner';
-                    return Card(
-                      child: ListTile(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            buildProfileRoute(context, userId: member.uid),
-                          );
-                        },
-                        leading: CircleAvatar(
-                          child: Text(
-                            member.label.isEmpty
-                                ? 'U'
-                                : member.label.substring(0, 1).toUpperCase(),
-                          ),
-                        ),
-                        title: Text(member.label),
-                        subtitle: Text('${member.role} • ${member.status}'),
-                        trailing: canRemove
-                            ? IconButton(
-                                icon: const Icon(Icons.person_remove_outlined),
-                                onPressed: () => _removeMember(member.uid),
-                              )
-                            : null,
-                      ),
+                    return _buildMemberTile(
+                      context,
+                      member,
+                      canRemove: canRemove,
                     );
                   }),
                 const SizedBox(height: 24),
@@ -379,6 +507,9 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                                 .toString();
                             final email = (friend['email'] ?? '').toString();
                             final isAlreadyMember = memberUids.contains(uid);
+                            final isInviting = state.invitingUserIds.contains(
+                              uid,
+                            );
                             final title = displayName.isNotEmpty
                                 ? displayName
                                 : (email.isNotEmpty ? email : uid);
@@ -391,10 +522,20 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                                 trailing: isAlreadyMember
                                     ? const Text('Member')
                                     : FilledButton(
-                                        onPressed: uid.isEmpty
+                                        onPressed: uid.isEmpty || isInviting
                                             ? null
                                             : () => _inviteMember(uid),
-                                        child: const Text('Invite'),
+                                        child: isInviting
+                                            ? const SizedBox(
+                                                height: 16,
+                                                width: 16,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      color: Colors.white,
+                                                    ),
+                                              )
+                                            : const Text('Invite'),
                                       ),
                               ),
                             );
@@ -410,6 +551,9 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                                 .toString();
                             final email = (friend['email'] ?? '').toString();
                             final isAlreadyMember = memberUids.contains(uid);
+                            final isInviting = state.invitingUserIds.contains(
+                              uid,
+                            );
                             final title = displayName.isNotEmpty
                                 ? displayName
                                 : (email.isNotEmpty ? email : uid);
@@ -422,10 +566,20 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                                 trailing: isAlreadyMember
                                     ? const Text('Member')
                                     : FilledButton(
-                                        onPressed: uid.isEmpty
+                                        onPressed: uid.isEmpty || isInviting
                                             ? null
                                             : () => _inviteMember(uid),
-                                        child: const Text('Invite'),
+                                        child: isInviting
+                                            ? const SizedBox(
+                                                height: 16,
+                                                width: 16,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      color: Colors.white,
+                                                    ),
+                                              )
+                                            : const Text('Invite'),
                                       ),
                               ),
                             );
@@ -434,18 +588,31 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                       }
 
                       if (isValidEmail(query)) {
+                        final typedEmail = _inviteSearchController.text.trim();
+                        final isInviting = state.invitingUserIds.contains(
+                          typedEmail,
+                        );
                         return Card(
                           child: ListTile(
                             leading: const CircleAvatar(
                               child: Icon(Icons.mail_outline),
                             ),
-                            title: Text(_inviteSearchController.text.trim()),
+                            title: Text(typedEmail),
                             subtitle: const Text('Invite by email address'),
                             trailing: FilledButton(
-                              onPressed: () => _inviteMember(
-                                _inviteSearchController.text.trim(),
-                              ),
-                              child: const Text('Invite'),
+                              onPressed: isInviting
+                                  ? null
+                                  : () => _inviteMember(typedEmail),
+                              child: isInviting
+                                  ? const SizedBox(
+                                      height: 16,
+                                      width: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Text('Invite'),
                             ),
                           ),
                         );

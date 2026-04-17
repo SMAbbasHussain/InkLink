@@ -417,6 +417,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
                     final isPending = state.pendingOutgoingUids.contains(
                       searchedUid,
                     );
+                    final isSending = state.sendingRequestTargetUids.contains(
+                      searchedUid,
+                    );
                     final int gradientIdx =
                         name.length % _avatarGradients.length;
 
@@ -480,20 +483,11 @@ class _FriendsScreenState extends State<FriendsScreen> {
                           style: const TextStyle(fontSize: 13),
                         ),
                         trailing: ElevatedButton(
-                          onPressed: (isAlreadyFriend || isPending)
+                          onPressed: (isAlreadyFriend || isPending || isSending)
                               ? null
                               : () {
                                   context.read<FriendsBloc>().add(
                                     SendFriendRequestRequested(user['uid']),
-                                  );
-                                  Navigator.pop(context);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                        "Collaboration request sent!",
-                                      ),
-                                      backgroundColor: Colors.green,
-                                    ),
                                   );
                                 },
                           style: ElevatedButton.styleFrom(
@@ -506,13 +500,22 @@ class _FriendsScreenState extends State<FriendsScreen> {
                             ),
                             elevation: 0,
                           ),
-                          child: Text(
-                            isAlreadyFriend
-                                ? "Message"
-                                : isPending
-                                ? "Pending"
-                                : "Add",
-                          ),
+                          child: isSending
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Text(
+                                  isAlreadyFriend
+                                      ? "Message"
+                                      : isPending
+                                      ? "Pending"
+                                      : "Add",
+                                ),
                         ),
                       ),
                     );

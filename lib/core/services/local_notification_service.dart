@@ -9,6 +9,7 @@ import '../../domain/services/invitation/invitation_service.dart';
 import '../../features/friends/view/friend_requests_screen.dart';
 import '../../features/board_invitations/bloc/board_invitations_bloc.dart';
 import '../../features/board_invitations/view/board_invites_screen.dart';
+import '../../features/workspaces/view/workspace_invites_screen.dart';
 
 class LocalNotificationService {
   static bool _initialized = false;
@@ -61,6 +62,13 @@ class LocalNotificationService {
     if (type == 'friend_request' || type == 'friend_request_accepted') {
       navigator.push(
         MaterialPageRoute(builder: (_) => const FriendRequestsScreen()),
+      );
+      return;
+    }
+
+    if (type == 'workspace_invite') {
+      navigator.push(
+        MaterialPageRoute(builder: (_) => const WorkspaceInvitesScreen()),
       );
     }
   }

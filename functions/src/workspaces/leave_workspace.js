@@ -12,7 +12,7 @@ module.exports = async (request) => {
       throw new HttpsError('unauthenticated', 'User must be logged in.');
     }
 
-    if (typeof workspaceId !== 'string' || workspaceId.trim().isEmpty) {
+    if (typeof workspaceId !== 'string' || workspaceId.trim().length === 0) {
       throw new HttpsError('invalid-argument', 'workspaceId is required.');
     }
 
@@ -29,16 +29,33 @@ module.exports = async (request) => {
       throw new HttpsError('failed-precondition', 'Workspace owner cannot leave. Delete workspace or transfer ownership first.');
     }
 
-    const memberRef = workspaceRef.collection(FirestorePaths.BOARD_MEMBERS_SUBCOLLECTION).doc(uid);
-    await memberRef.delete();
+    await firestore.runTransaction(async (transaction) => {
+      const memberRef = workspaceRef
+        .collection(FirestorePaths.WORKSPACE_MEMBERS_SUBCOLLECTION)
+        .doc(uid);
+      const memberDoc = await transaction.get(memberRef);
 
-    await workspaceRef.set(
-      {
-        memberCount: admin.firestore.FieldValue.increment(-1),
-        [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+      if (memberDoc.exists) {
+        transaction.delete(memberRef);
+        transaction.set(
+          workspaceRef,
+          {
+            memberCount: admin.firestore.FieldValue.increment(-1),
+            [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+
+      transaction.set(
+        firestore.collection(FirestorePaths.USERS).doc(uid),
+        {
+          [FirestorePaths.WORKSPACE_IDS]: admin.firestore.FieldValue.arrayRemove(workspaceId.trim()),
+          [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    });
 
     return { success: true, workspaceId: workspaceId.trim() };
   } catch (error) {

@@ -710,9 +710,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _boardUnavailableTimer = null;
     await _boardMetaSub?.cancel();
     await _crdtUpdatesSub?.cancel();
-    if (_canSync) {
-      await _canvasService?.stopCrdtRemoteSync(_boardId);
-    }
+    await _canvasService?.stopCrdtRemoteSync(_boardId);
     return super.close();
   }
 }

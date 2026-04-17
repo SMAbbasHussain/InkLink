@@ -21,13 +21,10 @@ class FirestoreBoardRepository implements BoardRepository {
   static const String _membersSubcollection = 'members';
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   _userBoardIndexSub;
-  final Map<String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>
-  _ownedBoardDocSubs =
-      <String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>{};
-  final Map<String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>
-  _joinedBoardDocSubs =
-      <String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>{};
   String? _syncUserId;
+  String? _activeBoardId;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _activeBoardSub;
+  StreamController<Board?>? _activeBoardController;
   Set<String> _ownedBoardIds = <String>{};
   Set<String> _joinedBoardIds = <String>{};
   final Map<String, Map<String, dynamic>> _ownedBoardDocs =
@@ -61,11 +58,12 @@ class FirestoreBoardRepository implements BoardRepository {
         }
       }
 
-      final ownedSnapshot = await _firestoreService
+      final aggregate = await _firestoreService
           .collection('boards')
           .where('ownerId', isEqualTo: userId)
+          .count()
           .get();
-      return ownedSnapshot.docs.length;
+      return aggregate.count ?? 0;
     } catch (_) {
       return 0;
     }
@@ -92,15 +90,28 @@ class FirestoreBoardRepository implements BoardRepository {
         .snapshots()
         .listen(
           (snapshot) async {
-            final data = snapshot.data() ?? const <String, dynamic>{};
-            final ownedIds = _toStringSet(data['ownedBoards']);
-            final joinedIds = _toStringSet(data['joinedBoards'])
-              ..removeAll(ownedIds);
+            try {
+              final data = snapshot.data() ?? const <String, dynamic>{};
+              final ownedIds = _toStringSet(data['ownedBoards']);
+              final joinedIds = _toStringSet(data['joinedBoards'])
+                ..removeAll(ownedIds);
 
-            await _reconcileBoardListeners(
-              ownedIds: ownedIds,
-              joinedIds: joinedIds,
-            );
+              _ownedBoardIds = ownedIds;
+              _joinedBoardIds = joinedIds;
+
+              final activeBoardId = _activeBoardId;
+              if (activeBoardId != null &&
+                  !_ownedBoardIds.contains(activeBoardId) &&
+                  !_joinedBoardIds.contains(activeBoardId)) {
+                await deactivateBoard();
+              }
+
+              await _syncVisibleBoardsToLocal(
+                visibleBoardIds: {..._ownedBoardIds, ..._joinedBoardIds},
+              );
+            } catch (_) {
+              // Keep the previous sync state on transient snapshot issues.
+            }
           },
           onError: (error, stackTrace) {
             if (error is FirebaseException &&
@@ -113,21 +124,81 @@ class FirestoreBoardRepository implements BoardRepository {
 
   @override
   Future<void> stopBoardsSync() async {
+    await deactivateBoard();
     await _userBoardIndexSub?.cancel();
     _userBoardIndexSub = null;
-    for (final sub in _ownedBoardDocSubs.values) {
-      await sub.cancel();
-    }
-    for (final sub in _joinedBoardDocSubs.values) {
-      await sub.cancel();
-    }
-    _ownedBoardDocSubs.clear();
-    _joinedBoardDocSubs.clear();
     _ownedBoardDocs.clear();
     _joinedBoardDocs.clear();
     _syncUserId = null;
     _ownedBoardIds = <String>{};
     _joinedBoardIds = <String>{};
+  }
+
+  @override
+  Future<void> activateBoard(String boardId) async {
+    final trimmedBoardId = boardId.trim();
+    if (trimmedBoardId.isEmpty) {
+      return;
+    }
+
+    if (_activeBoardId == trimmedBoardId && _activeBoardSub != null) {
+      return;
+    }
+
+    await deactivateBoard();
+
+    _activeBoardId = trimmedBoardId;
+    _activeBoardController = StreamController<Board?>.broadcast();
+    _activeBoardSub = _firestoreService
+        .collection('boards')
+        .doc(trimmedBoardId)
+        .snapshots()
+        .listen(
+          (doc) async {
+            try {
+              if (!doc.exists) {
+                _ownedBoardDocs.remove(trimmedBoardId);
+                _joinedBoardDocs.remove(trimmedBoardId);
+                _activeBoardController?.add(null);
+                await _deleteLocalBoard(trimmedBoardId);
+                return;
+              }
+
+              final data = doc.data() ?? const <String, dynamic>{};
+              if (_ownedBoardIds.contains(trimmedBoardId)) {
+                _ownedBoardDocs[trimmedBoardId] = data;
+              } else {
+                _joinedBoardDocs[trimmedBoardId] = data;
+              }
+
+              await _syncSingleBoardToLocal(trimmedBoardId, data);
+              _activeBoardController?.add(
+                await _loadLocalBoard(trimmedBoardId),
+              );
+            } catch (_) {
+              // Keep the active board stream alive on transient failures.
+            }
+          },
+          onError: (error, stackTrace) {
+            _activeBoardController?.add(null);
+          },
+        );
+  }
+
+  @override
+  Future<void> deactivateBoard() async {
+    final activeBoardId = _activeBoardId;
+    await _activeBoardSub?.cancel();
+    _activeBoardSub = null;
+    if (_activeBoardController != null && !_activeBoardController!.isClosed) {
+      await _activeBoardController!.close();
+    }
+    _activeBoardController = null;
+    if (activeBoardId != null) {
+      _ownedBoardDocs.remove(activeBoardId);
+      _joinedBoardDocs.remove(activeBoardId);
+    }
+    _activeBoardId = null;
   }
 
   @override
@@ -182,6 +253,7 @@ class FirestoreBoardRepository implements BoardRepository {
 
   @override
   Stream<Board?> getBoardById(String boardId) async* {
+    await activateBoard(boardId);
     final isar = await _localDatabaseService.database;
 
     yield* isar.localBoards
@@ -211,177 +283,215 @@ class FirestoreBoardRepository implements BoardRepository {
         .asBroadcastStream();
   }
 
-  Future<void> _reconcileBoardListeners({
-    required Set<String> ownedIds,
-    required Set<String> joinedIds,
-  }) async {
-    _ownedBoardIds = ownedIds;
-    _joinedBoardIds = joinedIds;
-
-    await _reconcileOwnedListeners(ownedIds);
-    await _reconcileJoinedListeners(joinedIds);
-    await _syncCachedBoardsToLocal();
-  }
-
-  Future<void> _reconcileOwnedListeners(Set<String> ownedIds) async {
-    final staleOwned = _ownedBoardDocSubs.keys
-        .where((boardId) => !ownedIds.contains(boardId))
-        .toList(growable: false);
-    for (final boardId in staleOwned) {
-      await _ownedBoardDocSubs.remove(boardId)?.cancel();
-      _ownedBoardDocs.remove(boardId);
-    }
-
-    for (final boardId in ownedIds) {
-      if (_ownedBoardDocSubs.containsKey(boardId)) {
-        continue;
-      }
-
-      _ownedBoardDocSubs[boardId] = _firestoreService
-          .collection('boards')
-          .doc(boardId)
-          .snapshots()
-          .listen(
-            (doc) {
-              try {
-                if (doc.exists) {
-                  _ownedBoardDocs[boardId] =
-                      doc.data() ?? const <String, dynamic>{};
-                } else {
-                  _ownedBoardDocs.remove(boardId);
-                  _ownedBoardIds.remove(boardId);
-                }
-                _syncCachedBoardsToLocal();
-              } catch (e) {
-                // Silent fail
-              }
-            },
-            onError: (error, stackTrace) {
-              // Silently ignore permission errors during logout
-            },
-          );
-    }
-  }
-
-  Future<void> _reconcileJoinedListeners(Set<String> joinedIds) async {
-    final staleJoined = _joinedBoardDocSubs.keys
-        .where((boardId) => !joinedIds.contains(boardId))
-        .toList(growable: false);
-    for (final boardId in staleJoined) {
-      await _joinedBoardDocSubs.remove(boardId)?.cancel();
-      _joinedBoardDocs.remove(boardId);
-    }
-
-    for (final boardId in joinedIds) {
-      if (_joinedBoardDocSubs.containsKey(boardId)) {
-        continue;
-      }
-
-      _joinedBoardDocSubs[boardId] = _firestoreService
-          .collection('boards')
-          .doc(boardId)
-          .snapshots()
-          .listen(
-            (doc) {
-              try {
-                if (doc.exists) {
-                  _joinedBoardDocs[boardId] =
-                      doc.data() ?? const <String, dynamic>{};
-                } else {
-                  _joinedBoardDocs.remove(boardId);
-                  _joinedBoardIds.remove(boardId);
-                }
-                _syncCachedBoardsToLocal();
-              } catch (e) {
-                // Silent fail
-              }
-            },
-            onError: (error, stackTrace) {
-              // Silently ignore permission errors during logout
-            },
-          );
-    }
-  }
-
-  Future<void> _syncCachedBoardsToLocal() async {
+  Future<void> _syncSingleBoardToLocal(
+    String boardId,
+    Map<String, dynamic> data,
+  ) async {
     final uid = _syncUserId;
     if (uid == null) return;
 
     final isar = await _localDatabaseService.database;
-    final updates = <String, LocalBoard>{};
+    final existingBoard = await isar.localBoards.getByBoardId(boardId);
+    final localBoard = existingBoard ?? LocalBoard();
 
-    final visibleBoardIds = <String>{..._ownedBoardIds, ..._joinedBoardIds};
-    for (final boardId in visibleBoardIds) {
-      final data =
-          _ownedBoardDocs[boardId] ??
-          _joinedBoardDocs[boardId] ??
-          const <String, dynamic>{};
-      if (data.isEmpty) {
-        continue;
-      }
-      final board = LocalBoard()
-        ..boardId = boardId
-        ..title = data['title'] ?? data['name'] ?? 'Untitled Board'
-        ..ownerId = data['ownerId'] ?? ''
-        ..members = List<String>.from(data['members'] ?? [])
-        ..engine = data['engine'] ?? crdtEngine
-        ..visibility =
-            (data['visibility'] as String?) ?? Board.visibilityPrivate
-        ..privateJoinPolicy =
-            (data['privateJoinPolicy'] as String?) ??
-            Board.policyOwnerOnlyInvite
-        ..tags = List<String>.from(data['tags'] ?? const <String>[])
-        ..joinViaCodeEnabled = (data['joinViaCodeEnabled'] as bool?) ?? false
-        ..whoCanInvite =
-            ((data['invitePolicy'] as Map<String, dynamic>?)?['whoCanInvite']
-                as String?) ??
-            Board.inviteOwnerOnly
-        ..defaultLinkJoinRole =
-            ((data['invitePolicy']
-                    as Map<String, dynamic>?)?['defaultLinkJoinRole']
-                as String?) ??
-            Board.roleViewer
-        ..currentUserRole = await _resolveCurrentUserRole(
-          boardId: boardId,
-          ownerId: (data['ownerId'] as String?) ?? '',
-          uid: uid,
-        )
-        ..previewPath = (await isar.localBoards.getByBoardId(
-          boardId,
-        ))?.previewPath
-        ..createdAt =
-            (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()
-        ..updatedAt =
-            (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now()
-        ..isSynced = true;
-      updates[boardId] = board;
+    localBoard
+      ..boardId = boardId
+      ..title = data['title'] ?? data['name'] ?? 'Untitled Board'
+      ..ownerId = data['ownerId'] ?? ''
+      ..members = List<String>.from(data['members'] ?? const <String>[])
+      ..engine = data['engine'] ?? crdtEngine
+      ..visibility = (data['visibility'] as String?) ?? Board.visibilityPrivate
+      ..privateJoinPolicy =
+          (data['privateJoinPolicy'] as String?) ?? Board.policyOwnerOnlyInvite
+      ..tags = List<String>.from(data['tags'] ?? const <String>[])
+      ..joinViaCodeEnabled = (data['joinViaCodeEnabled'] as bool?) ?? false
+      ..whoCanInvite =
+          ((data['invitePolicy'] as Map<String, dynamic>?)?['whoCanInvite']
+              as String?) ??
+          Board.inviteOwnerOnly
+      ..defaultLinkJoinRole =
+          ((data['invitePolicy']
+                  as Map<String, dynamic>?)?['defaultLinkJoinRole']
+              as String?) ??
+          Board.roleViewer
+      ..currentUserRole = await _resolveCurrentUserRole(
+        boardId: boardId,
+        ownerId: (data['ownerId'] as String?) ?? '',
+        uid: uid,
+      )
+      ..previewPath = existingBoard?.previewPath
+      ..createdAt =
+          (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()
+      ..updatedAt =
+          (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now()
+      ..isSynced = true;
+
+    await isar.writeTxn(() async {
+      await isar.localBoards.putByBoardId(localBoard);
+    });
+  }
+
+  Future<Board?> _loadLocalBoard(String boardId) async {
+    final isar = await _localDatabaseService.database;
+    final localBoard = await isar.localBoards.getByBoardId(boardId);
+    if (localBoard == null) {
+      return null;
+    }
+    return _mapLocalBoard(localBoard);
+  }
+
+  Future<void> _deleteLocalBoard(String boardId) async {
+    final isar = await _localDatabaseService.database;
+    final localBoard = await isar.localBoards.getByBoardId(boardId);
+    if (localBoard == null) {
+      return;
     }
 
     await isar.writeTxn(() async {
-      for (final board in updates.values) {
-        await isar.localBoards.putByBoardId(board);
+      await isar.localBoards.delete(localBoard.id);
+    });
+  }
+
+  Future<void> _syncVisibleBoardsToLocal({
+    required Set<String> visibleBoardIds,
+  }) async {
+    if (visibleBoardIds.isEmpty) {
+      _ownedBoardDocs.clear();
+      _joinedBoardDocs.clear();
+      await _pruneLocalBoards(visibleBoardIds: visibleBoardIds);
+      return;
+    }
+
+    final fetchResult = await _fetchBoardDocumentsByIdSet(
+      ids: visibleBoardIds.toList(growable: false),
+    );
+
+    for (final entry in fetchResult.docsById.entries) {
+      final boardId = entry.key;
+      final boardData = entry.value;
+
+      if (_ownedBoardIds.contains(boardId)) {
+        _ownedBoardDocs[boardId] = boardData;
+        _joinedBoardDocs.remove(boardId);
+      } else {
+        _joinedBoardDocs[boardId] = boardData;
+        _ownedBoardDocs.remove(boardId);
       }
 
-      final ownedLocals = await isar.localBoards
-          .filter()
-          .ownerIdEqualTo(uid)
-          .findAll();
-      final memberLocals = await isar.localBoards
-          .filter()
-          .membersElementEqualTo(uid)
-          .findAll();
+      await _syncSingleBoardToLocal(boardId, boardData);
+    }
 
-      final potentiallyVisibleLocals = <int, LocalBoard>{
-        for (final board in ownedLocals) board.id: board,
-        for (final board in memberLocals) board.id: board,
-      }.values;
+    for (final missingBoardId in fetchResult.missingIds) {
+      _ownedBoardDocs.remove(missingBoardId);
+      _joinedBoardDocs.remove(missingBoardId);
+      await _deleteLocalBoard(missingBoardId);
+    }
 
-      for (final localBoard in potentiallyVisibleLocals) {
-        if (!updates.containsKey(localBoard.boardId)) {
-          await isar.localBoards.delete(localBoard.id);
+    final prunableBoardIds = Set<String>.from(visibleBoardIds)
+      ..removeAll(fetchResult.missingIds);
+    await _pruneLocalBoards(visibleBoardIds: prunableBoardIds);
+  }
+
+  Future<_BoardFetchResult> _fetchBoardDocumentsByIdSet({
+    required List<String> ids,
+  }) async {
+    final docsById = <String, Map<String, dynamic>>{};
+    final missingIds = <String>{};
+    final uniqueIds = ids.toSet().toList(growable: false);
+    const chunkSize = 30;
+
+    for (var i = 0; i < uniqueIds.length; i += chunkSize) {
+      final chunk = uniqueIds.sublist(
+        i,
+        (i + chunkSize).clamp(0, uniqueIds.length),
+      );
+
+      try {
+        final snapshot = await _firestoreService
+            .collection('boards')
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get();
+
+        for (final doc in snapshot.docs) {
+          docsById[doc.id] = doc.data();
+        }
+
+        final foundIds = snapshot.docs.map((doc) => doc.id).toSet();
+        final missingChunkIds = chunk
+            .where((id) => !foundIds.contains(id))
+            .toList(growable: false);
+
+        for (final id in missingChunkIds) {
+          try {
+            final doc = await _firestoreService
+                .collection('boards')
+                .doc(id)
+                .get();
+            if (doc.exists) {
+              docsById[id] = doc.data() ?? const <String, dynamic>{};
+            } else {
+              missingIds.add(id);
+            }
+          } catch (_) {
+            // Keep existing local data when doc checks fail transiently.
+          }
+        }
+      } catch (_) {
+        for (final id in chunk) {
+          try {
+            final doc = await _firestoreService
+                .collection('boards')
+                .doc(id)
+                .get();
+            if (doc.exists) {
+              docsById[id] = doc.data() ?? const <String, dynamic>{};
+            } else {
+              missingIds.add(id);
+            }
+          } catch (_) {
+            // Keep existing local data when doc checks fail transiently.
+          }
         }
       }
+    }
+
+    return _BoardFetchResult(docsById: docsById, missingIds: missingIds);
+  }
+
+  Future<void> _pruneLocalBoards({required Set<String> visibleBoardIds}) async {
+    final isar = await _localDatabaseService.database;
+    final localBoards = await isar.localBoards.where().findAll();
+    final toDelete = localBoards
+        .where((board) => !visibleBoardIds.contains(board.boardId))
+        .map((board) => board.id)
+        .toList(growable: false);
+
+    if (toDelete.isEmpty) {
+      return;
+    }
+
+    await isar.writeTxn(() async {
+      await isar.localBoards.deleteAll(toDelete);
     });
+  }
+
+  Board _mapLocalBoard(LocalBoard lb) {
+    return Board(
+      id: lb.boardId,
+      title: lb.title,
+      ownerId: lb.ownerId,
+      members: lb.members,
+      previewPath: lb.previewPath,
+      visibility: lb.visibility,
+      privateJoinPolicy: lb.privateJoinPolicy,
+      tags: lb.tags,
+      joinViaCodeEnabled: lb.joinViaCodeEnabled,
+      whoCanInvite: lb.whoCanInvite,
+      defaultLinkJoinRole: lb.defaultLinkJoinRole,
+      currentUserRole: lb.currentUserRole,
+      createdAt: lb.createdAt,
+      updatedAt: lb.updatedAt,
+    );
   }
 
   @override
@@ -610,8 +720,9 @@ class FirestoreBoardRepository implements BoardRepository {
       return;
     }
 
-    await _ownedBoardDocSubs.remove(boardId)?.cancel();
-    await _joinedBoardDocSubs.remove(boardId)?.cancel();
+    if (_activeBoardId == boardId) {
+      await deactivateBoard();
+    }
     _ownedBoardDocs.remove(boardId);
     _joinedBoardDocs.remove(boardId);
     _ownedBoardIds.remove(boardId);
@@ -744,4 +855,11 @@ class FirestoreBoardRepository implements BoardRepository {
       return Board.roleViewer;
     }
   }
+}
+
+class _BoardFetchResult {
+  final Map<String, Map<String, dynamic>> docsById;
+  final Set<String> missingIds;
+
+  const _BoardFetchResult({required this.docsById, required this.missingIds});
 }

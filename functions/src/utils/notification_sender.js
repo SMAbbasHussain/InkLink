@@ -25,7 +25,9 @@ async function sendUserNotification({
   extraData = {},
 }) {
   const actionStatus =
-    type === 'friend_request' || type === 'board_invite' ? 'pending' : 'info';
+    type === 'friend_request' || type === 'board_invite' || type === 'workspace_invite'
+      ? 'pending'
+      : 'info';
 
   const firestore = admin.firestore();
 

@@ -8,6 +8,10 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
   final FriendsService friendsService;
   StreamSubscription? _friendsSubscription;
   Set<String> _pendingOutgoingTargetUids = <String>{};
+  Set<String> _sendingRequestTargetUids = <String>{};
+  Set<String> _acceptingRequestIds = <String>{};
+  Set<String> _decliningRequestIds = <String>{};
+  Set<String> _cancelingRequestIds = <String>{};
   bool _isOffline = false;
 
   FriendsBloc({required this.friendsService}) : super(FriendsInitial()) {
@@ -53,6 +57,10 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
       await _friendsSubscription?.cancel();
       _friendsSubscription = null;
       _pendingOutgoingTargetUids = <String>{};
+      _sendingRequestTargetUids = <String>{};
+      _acceptingRequestIds = <String>{};
+      _decliningRequestIds = <String>{};
+      _cancelingRequestIds = <String>{};
       _isOffline = false;
       emit(FriendsInitial());
     });
@@ -68,6 +76,10 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           friends: event.friends,
           incomingRequests: event.incomingRequests,
           outgoingRequests: event.outgoingRequests,
+          sendingRequestTargetUids: _sendingRequestTargetUids,
+          acceptingRequestIds: _acceptingRequestIds,
+          decliningRequestIds: _decliningRequestIds,
+          cancelingRequestIds: _cancelingRequestIds,
           isOffline: _isOffline,
         ),
       );
@@ -78,20 +90,14 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
 
       final current = state;
       if (current is FriendsLoaded) {
-        emit(
-          FriendsLoaded(
-            friends: current.friends,
-            incomingRequests: current.incomingRequests,
-            outgoingRequests: current.outgoingRequests,
-            isOffline: _isOffline,
-          ),
-        );
+        emit(current.copyWith(isOffline: _isOffline));
       } else if (current is EmailSearchResultsLoaded) {
         emit(
           EmailSearchResultsLoaded(
             result: current.result,
             friendUids: current.friendUids,
             pendingOutgoingUids: current.pendingOutgoingUids,
+            sendingRequestTargetUids: _sendingRequestTargetUids,
             isOffline: _isOffline,
           ),
         );
@@ -127,6 +133,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
             result: results.first,
             friendUids: friendUids,
             pendingOutgoingUids: _pendingOutgoingTargetUids,
+            sendingRequestTargetUids: _sendingRequestTargetUids,
             isOffline: _isOffline,
           ),
         );
@@ -141,6 +148,17 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     });
 
     on<AcceptFriendRequestRequested>((event, emit) async {
+      if (event.requestId.isEmpty ||
+          _acceptingRequestIds.contains(event.requestId)) {
+        return;
+      }
+      _acceptingRequestIds = Set<String>.from(_acceptingRequestIds)
+        ..add(event.requestId);
+      final before = state;
+      if (before is FriendsLoaded) {
+        emit(before.copyWith(acceptingRequestIds: _acceptingRequestIds));
+      }
+
       // Capture current state to restore it if needed
       final currentState = state;
 
@@ -159,20 +177,31 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
         }
         // Restore previous state so the list doesn't vanish
         if (currentState is FriendsLoaded) {
-          emit(
-            FriendsLoaded(
-              friends: currentState.friends,
-              incomingRequests: currentState.incomingRequests,
-              outgoingRequests: currentState.outgoingRequests,
-              isOffline: _isOffline,
-            ),
-          );
+          emit(currentState.copyWith(isOffline: _isOffline));
         }
         emit(FriendsError("Failed to accept: ${e.toString()}"));
+      } finally {
+        _acceptingRequestIds = Set<String>.from(_acceptingRequestIds)
+          ..remove(event.requestId);
+        final current = state;
+        if (current is FriendsLoaded) {
+          emit(current.copyWith(acceptingRequestIds: _acceptingRequestIds));
+        }
       }
     });
 
     on<DeclineFriendRequestRequested>((event, emit) async {
+      if (event.requestId.isEmpty ||
+          _decliningRequestIds.contains(event.requestId)) {
+        return;
+      }
+      _decliningRequestIds = Set<String>.from(_decliningRequestIds)
+        ..add(event.requestId);
+      final before = state;
+      if (before is FriendsLoaded) {
+        emit(before.copyWith(decliningRequestIds: _decliningRequestIds));
+      }
+
       try {
         await friendsService.declineFriendRequest(event.requestId);
         if (_isOffline) {
@@ -183,10 +212,28 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           add(FriendsConnectivityUpdated(true));
         }
         emit(FriendsError("Request declined"));
+      } finally {
+        _decliningRequestIds = Set<String>.from(_decliningRequestIds)
+          ..remove(event.requestId);
+        final current = state;
+        if (current is FriendsLoaded) {
+          emit(current.copyWith(decliningRequestIds: _decliningRequestIds));
+        }
       }
     });
 
     on<CancelFriendRequestRequested>((event, emit) async {
+      if (event.requestId.isEmpty ||
+          _cancelingRequestIds.contains(event.requestId)) {
+        return;
+      }
+      _cancelingRequestIds = Set<String>.from(_cancelingRequestIds)
+        ..add(event.requestId);
+      final before = state;
+      if (before is FriendsLoaded) {
+        emit(before.copyWith(cancelingRequestIds: _cancelingRequestIds));
+      }
+
       try {
         await friendsService.cancelFriendRequest(
           event.requestId,
@@ -200,10 +247,41 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           add(FriendsConnectivityUpdated(true));
         }
         emit(FriendsError("Failed to cancel request"));
+      } finally {
+        _cancelingRequestIds = Set<String>.from(_cancelingRequestIds)
+          ..remove(event.requestId);
+        final current = state;
+        if (current is FriendsLoaded) {
+          emit(current.copyWith(cancelingRequestIds: _cancelingRequestIds));
+        }
       }
     });
 
     on<SendFriendRequestRequested>((event, emit) async {
+      if (event.targetUid.isEmpty ||
+          _sendingRequestTargetUids.contains(event.targetUid)) {
+        return;
+      }
+      _sendingRequestTargetUids = Set<String>.from(_sendingRequestTargetUids)
+        ..add(event.targetUid);
+      final before = state;
+      if (before is FriendsLoaded) {
+        emit(
+          before.copyWith(sendingRequestTargetUids: _sendingRequestTargetUids),
+        );
+      }
+      if (before is EmailSearchResultsLoaded) {
+        emit(
+          EmailSearchResultsLoaded(
+            result: before.result,
+            friendUids: before.friendUids,
+            pendingOutgoingUids: before.pendingOutgoingUids,
+            sendingRequestTargetUids: _sendingRequestTargetUids,
+            isOffline: before.isOffline,
+          ),
+        );
+      }
+
       try {
         await friendsService.sendFriendRequest(event.targetUid);
         if (_isOffline) {
@@ -214,6 +292,28 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           add(FriendsConnectivityUpdated(true));
         }
         emit(FriendsError(e.toString()));
+      } finally {
+        _sendingRequestTargetUids = Set<String>.from(_sendingRequestTargetUids)
+          ..remove(event.targetUid);
+        final current = state;
+        if (current is FriendsLoaded) {
+          emit(
+            current.copyWith(
+              sendingRequestTargetUids: _sendingRequestTargetUids,
+            ),
+          );
+        }
+        if (current is EmailSearchResultsLoaded) {
+          emit(
+            EmailSearchResultsLoaded(
+              result: current.result,
+              friendUids: current.friendUids,
+              pendingOutgoingUids: current.pendingOutgoingUids,
+              sendingRequestTargetUids: _sendingRequestTargetUids,
+              isOffline: current.isOffline,
+            ),
+          );
+        }
       }
     });
   }
@@ -236,6 +336,10 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     await _friendsSubscription?.cancel();
     _friendsSubscription = null;
     _pendingOutgoingTargetUids = <String>{};
+    _sendingRequestTargetUids = <String>{};
+    _acceptingRequestIds = <String>{};
+    _decliningRequestIds = <String>{};
+    _cancelingRequestIds = <String>{};
     _isOffline = false;
   }
 

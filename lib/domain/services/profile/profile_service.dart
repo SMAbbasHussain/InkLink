@@ -70,16 +70,12 @@ class ProfileServiceImpl implements ProfileService {
     var isFriend = false;
     var isBlocked = false;
     if (!isSelf) {
-      try {
-        isFriend = await _profileRepository.checkFriendshipStatus(userId);
-      } catch (_) {
-        isFriend = false;
-      }
-      try {
-        isBlocked = await _friendsRepository.hasUserBlockedTarget(userId);
-      } catch (_) {
-        isBlocked = false;
-      }
+      final results = await Future.wait([
+        _profileRepository.checkFriendshipStatus(userId),
+        _friendsRepository.hasUserBlockedTarget(userId),
+      ]);
+      isFriend = results[0];
+      isBlocked = results[1];
     }
 
     final userData = await _profileRepository.getUserById(userId);

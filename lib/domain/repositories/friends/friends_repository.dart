@@ -14,4 +14,9 @@ abstract class FriendsRepository {
   Stream<List<Map<String, dynamic>>> watchIncomingRequests();
   Stream<List<Map<String, dynamic>>> watchOutgoingRequests();
   Stream<List<Map<String, dynamic>>> watchFriendsList();
+
+  Future<bool> removePendingFriendRequestBetweenUsers({
+    required String firstUid,
+    required String secondUid,
+  });
 }

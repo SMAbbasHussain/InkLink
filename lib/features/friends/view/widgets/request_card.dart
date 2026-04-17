@@ -5,12 +5,16 @@ class RequestCard extends StatelessWidget {
   final Map<String, dynamic> request;
   final VoidCallback onAccept;
   final VoidCallback onDecline;
+  final bool isAccepting;
+  final bool isDeclining;
 
   const RequestCard({
     super.key,
     required this.request,
     required this.onAccept,
     required this.onDecline,
+    this.isAccepting = false,
+    this.isDeclining = false,
   });
 
   @override
@@ -80,20 +84,22 @@ class RequestCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: _actionButton(
-                    label: "Accept",
+                    label: isAccepting ? "Accepting..." : "Accept",
                     icon: Icons.check,
                     color: Colors.green,
-                    onTap: onAccept,
+                    onTap: isAccepting || isDeclining ? null : onAccept,
+                    isLoading: isAccepting,
                     isDark: isDark,
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: _actionButton(
-                    label: "Decline",
+                    label: isDeclining ? "Declining..." : "Decline",
                     icon: Icons.close,
                     color: Colors.redAccent,
-                    onTap: onDecline,
+                    onTap: isAccepting || isDeclining ? null : onDecline,
+                    isLoading: isDeclining,
                     isDark: isDark,
                   ),
                 ),
@@ -109,7 +115,8 @@ class RequestCard extends StatelessWidget {
     required String label,
     required IconData icon,
     required Color color,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
+    required bool isLoading,
     required bool isDark,
   }) {
     return InkWell(
@@ -125,7 +132,14 @@ class RequestCard extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: color, size: 18),
+            if (isLoading)
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2, color: color),
+              )
+            else
+              Icon(icon, color: color, size: 18),
             const SizedBox(width: 8),
             Text(
               label,

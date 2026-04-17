@@ -57,6 +57,7 @@ class FriendRequestsScreen extends StatelessWidget {
       children: [
         if (state.isOffline) _buildOfflineBanner(),
         ...incoming.map((req) {
+          final requestId = req['id']?.toString() ?? '';
           return GestureDetector(
             onTap: () => Navigator.push(
               context,
@@ -64,6 +65,8 @@ class FriendRequestsScreen extends StatelessWidget {
             ),
             child: RequestCard(
               request: req,
+              isAccepting: state.acceptingRequestIds.contains(requestId),
+              isDeclining: state.decliningRequestIds.contains(requestId),
               onAccept: () => context.read<FriendsBloc>().add(
                 AcceptFriendRequestRequested(req['id'], req['fromUid']),
               ),
@@ -92,7 +95,7 @@ class FriendRequestsScreen extends StatelessWidget {
       children: [
         if (state.isOffline) _buildOfflineBanner(),
         ...outgoing.map((req) {
-          return _buildOutgoingRequestCard(context, req);
+          return _buildOutgoingRequestCard(context, req, state);
         }),
       ],
     );
@@ -101,10 +104,15 @@ class FriendRequestsScreen extends StatelessWidget {
   Widget _buildOutgoingRequestCard(
     BuildContext context,
     Map<String, dynamic> request,
+    FriendsLoaded state,
   ) {
     final toUid = request['toUid']?.toString() ?? '';
     final recipientName = request['recipientName']?.toString();
     final recipientPic = request['recipientPic']?.toString();
+    final requestId =
+        request['requestId']?.toString() ?? request['id']?.toString() ?? '';
+    final isCanceling =
+        requestId.isNotEmpty && state.cancelingRequestIds.contains(requestId);
     final displayName = recipientName?.isNotEmpty == true
         ? recipientName!
         : (toUid.isNotEmpty ? toUid : 'Unknown user');
@@ -132,8 +140,14 @@ class FriendRequestsScreen extends StatelessWidget {
         subtitle: const Text('Request pending'),
         trailing: IconButton(
           tooltip: 'Cancel request',
-          icon: const Icon(Icons.cancel_outlined),
-          onPressed: toUid.isEmpty
+          icon: isCanceling
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.cancel_outlined),
+          onPressed: toUid.isEmpty || isCanceling
               ? null
               : () async {
                   final shouldCancel = await showDialog<bool>(

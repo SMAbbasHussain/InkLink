@@ -102,6 +102,13 @@ class FriendsServiceImpl implements FriendsService {
 
     await _ensureOnlineForActions();
 
+    if (currentUid != null) {
+      await _friendsRepository.removePendingFriendRequestBetweenUsers(
+        firstUid: currentUid,
+        secondUid: normalizedTargetUid,
+      );
+    }
+
     await _callFriendFunction(
       functionName: 'sendFriendRequest',
       payload: {'targetUid': normalizedTargetUid},

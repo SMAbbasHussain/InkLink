@@ -140,12 +140,18 @@ class WorkspaceServiceImpl implements WorkspaceService {
       _repository.getIncomingWorkspaceInvites();
 
   @override
-  Future<void> acceptWorkspaceInvite(String inviteId) =>
-      _repository.acceptWorkspaceInvite(inviteId);
+  Future<void> acceptWorkspaceInvite(String inviteId) async {
+    await _cloudFunctionsService.httpsCallable('acceptWorkspaceInvite').call({
+      'inviteId': inviteId,
+    });
+  }
 
   @override
-  Future<void> rejectWorkspaceInvite(String inviteId) =>
-      _repository.rejectWorkspaceInvite(inviteId);
+  Future<void> rejectWorkspaceInvite(String inviteId) async {
+    await _cloudFunctionsService.httpsCallable('rejectWorkspaceInvite').call({
+      'inviteId': inviteId,
+    });
+  }
 
   @override
   Future<void> addBoardToWorkspace({

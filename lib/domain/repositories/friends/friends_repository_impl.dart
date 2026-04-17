@@ -33,6 +33,7 @@ class FriendsRepositoryImpl implements FriendsRepository {
     final snap = await _firestoreService
         .collection('users')
         .where('email', isEqualTo: email)
+        .limit(1)
         .get();
 
     final users = snap.docs
@@ -45,12 +46,13 @@ class FriendsRepositoryImpl implements FriendsRepository {
   @override
   Future<int> countFriendsForUser(String userId) async {
     try {
-      final snapshot = await _firestoreService
+      final aggregate = await _firestoreService
           .collection('users')
           .doc(userId)
           .collection('friends')
+          .count()
           .get();
-      return snapshot.docs.length;
+      return aggregate.count ?? 0;
     } catch (_) {
       return 0;
     }
@@ -107,8 +109,9 @@ class FriendsRepositoryImpl implements FriendsRepository {
     if (normalizedTargetUid.isEmpty) return;
 
     final isar = await _localDatabaseService.database;
-    final displayName = await _resolveDisplayName(isar, normalizedTargetUid);
-    final photoUrl = await _resolvePhotoUrl(isar, normalizedTargetUid);
+    final profileInfo = await _resolveProfileInfo(isar, normalizedTargetUid);
+    final displayName = profileInfo.$1;
+    final photoUrl = profileInfo.$2;
 
     await isar.writeTxn(() async {
       final existing = await isar.localBlockedUsers.getByBlockedUid(
@@ -141,6 +144,36 @@ class FriendsRepositoryImpl implements FriendsRepository {
     await isar.writeTxn(() async {
       await isar.localBlockedUsers.deleteByBlockedUid(normalizedTargetUid);
     });
+  }
+
+  @override
+  Future<bool> removePendingFriendRequestBetweenUsers({
+    required String firstUid,
+    required String secondUid,
+  }) async {
+    final normalizedFirstUid = firstUid.trim();
+    final normalizedSecondUid = secondUid.trim();
+    if (normalizedFirstUid.isEmpty || normalizedSecondUid.isEmpty) {
+      return false;
+    }
+
+    final requestIdParts = <String>[normalizedFirstUid, normalizedSecondUid]
+      ..sort();
+    final normalizedRequestId = requestIdParts.join('_');
+
+    final isar = await _localDatabaseService.database;
+    final existingRequest = await isar.localFriendRequests
+        .filter()
+        .requestIdEqualTo(normalizedRequestId)
+        .findFirst();
+    if (existingRequest == null) {
+      return false;
+    }
+
+    await isar.writeTxn(() async {
+      await isar.localFriendRequests.delete(existingRequest.id);
+    });
+    return true;
   }
 
   @override
@@ -271,11 +304,25 @@ class FriendsRepositoryImpl implements FriendsRepository {
     }
 
     final controller = StreamController<List<Map<String, dynamic>>>.broadcast();
+    StreamSubscription<List<LocalFriendProfile>>? localSub;
     StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? remoteSub;
 
     controller.onListen = () {
       () async {
-        await _emitCachedFriendProfiles(controller);
+        final isar = await _localDatabaseService.database;
+
+        localSub = isar.localFriendProfiles
+            .where()
+            .anyId()
+            .watch(fireImmediately: true)
+            .listen((items) {
+              if (controller.isClosed) return;
+              controller.add(
+                _sortProfilesByDisplayName(
+                  items.map(_friendProfileToMap).toList(),
+                ),
+              );
+            }, onError: controller.addError);
 
         remoteSub = _firestoreService
             .collection('users')
@@ -287,18 +334,17 @@ class FriendsRepositoryImpl implements FriendsRepository {
 
               if (friendUids.isEmpty) {
                 await _clearFriendProfiles();
-                await _emitCachedFriendProfiles(controller);
                 return;
               }
 
               final users = await _fetchUsersByIds(friendUids);
               await _cacheFriendProfiles(users);
-              await _emitCachedFriendProfiles(controller);
             }, onError: controller.addError);
       }();
     };
 
     controller.onCancel = () async {
+      await localSub?.cancel();
       await remoteSub?.cancel();
     };
 
@@ -310,20 +356,6 @@ class FriendsRepositoryImpl implements FriendsRepository {
     await isar.writeTxn(() async {
       await isar.localFriendProfiles.clear();
     });
-  }
-
-  Future<void> _emitCachedFriendProfiles(
-    StreamController<List<Map<String, dynamic>>> controller,
-  ) async {
-    if (controller.isClosed) return;
-
-    final isar = await _localDatabaseService.database;
-    final items = await isar.localFriendProfiles.where().anyId().findAll();
-
-    if (controller.isClosed) return;
-    controller.add(
-      _sortProfilesByDisplayName(items.map(_friendProfileToMap).toList()),
-    );
   }
 
   List<Map<String, dynamic>> _sortRequestsByTimestampDesc(
@@ -385,11 +417,33 @@ class FriendsRepositoryImpl implements FriendsRepository {
     required String uid,
     required bool isIncoming,
   }) async {
+    if (requests.isEmpty) {
+      return;
+    }
+
     final isar = await _localDatabaseService.database;
-    final seenRequestIds = requests
+    final requestIds = requests
         .map((request) => request['id']?.toString())
         .whereType<String>()
-        .toSet();
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    final toUids = requests
+        .map((request) => request['toUid']?.toString())
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+
+    final existingRequests = await isar.localFriendRequests.getAllByRequestId(
+      requestIds,
+    );
+    final existingRequestMap = <String, LocalFriendRequest?>{
+      for (var i = 0; i < requestIds.length; i++)
+        requestIds[i]: existingRequests[i],
+    };
+
+    final resolvedNames = await _resolveDisplayNamesBulk(isar, toUids);
+    final resolvedPhotos = await _resolvePhotoUrlsBulk(isar, toUids);
+    final seenRequestIds = <String>{};
 
     await isar.writeTxn(() async {
       for (final request in requests) {
@@ -406,10 +460,9 @@ class FriendsRepositoryImpl implements FriendsRepository {
         if (fromUid == null || fromUid.isEmpty) continue;
         if (toUid == null || toUid.isEmpty) continue;
 
-        final existing = await isar.localFriendRequests.getByRequestId(
-          requestId,
-        );
-        final model = existing ?? LocalFriendRequest();
+        seenRequestIds.add(requestId);
+
+        final model = existingRequestMap[requestId] ?? LocalFriendRequest();
 
         model.requestId = requestId;
         model.fromUid = fromUid;
@@ -422,13 +475,13 @@ class FriendsRepositoryImpl implements FriendsRepository {
         if (recipientNameRaw != null && recipientNameRaw.isNotEmpty) {
           model.recipientName = recipientNameRaw;
         } else {
-          model.recipientName = await _resolveDisplayName(isar, toUid);
+          model.recipientName = resolvedNames[toUid] ?? 'User';
         }
 
         if (recipientPicRaw != null && recipientPicRaw.isNotEmpty) {
           model.recipientPic = recipientPicRaw;
         } else {
-          model.recipientPic = await _resolvePhotoUrl(isar, toUid);
+          model.recipientPic = resolvedPhotos[toUid];
         }
 
         model.status = status;
@@ -482,7 +535,7 @@ class FriendsRepositoryImpl implements FriendsRepository {
     if (friendUids.isEmpty) return <Map<String, dynamic>>[];
 
     final users = <Map<String, dynamic>>[];
-    const batchSize = 10;
+    const batchSize = 30;
 
     for (var index = 0; index < friendUids.length; index += batchSize) {
       final end = index + batchSize > friendUids.length
@@ -507,6 +560,50 @@ class FriendsRepositoryImpl implements FriendsRepository {
       source: 'friend_list',
       forceFriend: true,
     );
+
+    final friendUids = users
+        .map((user) => user['uid']?.toString() ?? '')
+        .where((uid) => uid.isNotEmpty && uid != _currentUid)
+        .toSet()
+        .toList(growable: false);
+    await _deletePendingRequestsForFriendships(friendUids);
+  }
+
+  Future<void> _deletePendingRequestsForFriendships(
+    List<String> friendUids,
+  ) async {
+    if (friendUids.isEmpty) {
+      return;
+    }
+
+    final requestIds = friendUids
+        .map((friendUid) => _buildFriendRequestId(_currentUid, friendUid))
+        .toSet()
+        .toList(growable: false);
+    if (requestIds.isEmpty) {
+      return;
+    }
+
+    final isar = await _localDatabaseService.database;
+    final existingRequests = await isar.localFriendRequests.getAllByRequestId(
+      requestIds,
+    );
+    final toDeleteIds = existingRequests
+        .whereType<LocalFriendRequest>()
+        .map((request) => request.id)
+        .toList(growable: false);
+    if (toDeleteIds.isEmpty) {
+      return;
+    }
+
+    await isar.writeTxn(() async {
+      await isar.localFriendRequests.deleteAll(toDeleteIds);
+    });
+  }
+
+  String _buildFriendRequestId(String firstUid, String secondUid) {
+    final ordered = <String>[firstUid, secondUid]..sort();
+    return ordered.join('_');
   }
 
   Future<void> _cacheProfileSnapshots(
@@ -515,7 +612,38 @@ class FriendsRepositoryImpl implements FriendsRepository {
     bool forceFriend = false,
     bool forceNonFriend = false,
   }) async {
+    if (users.isEmpty) {
+      return;
+    }
+
     final isar = await _localDatabaseService.database;
+    final uids = users
+        .map((user) => user['uid']?.toString())
+        .whereType<String>()
+        .where((uid) => uid.isNotEmpty && uid != _currentUid)
+        .toList(growable: false);
+
+    if (uids.isEmpty) {
+      return;
+    }
+
+    final existingUserModels = await isar.userModels.getAllByUid(uids);
+    final existingFriendProfiles = await isar.localFriendProfiles.getAllByUid(
+      uids,
+    );
+    final existingNonFriendProfiles = await isar.localNonFriendProfiles
+        .getAllByUid(uids);
+
+    final userModelMap = <String, UserModel?>{
+      for (var i = 0; i < uids.length; i++) uids[i]: existingUserModels[i],
+    };
+    final friendMap = <String, LocalFriendProfile?>{
+      for (var i = 0; i < uids.length; i++) uids[i]: existingFriendProfiles[i],
+    };
+    final nonFriendMap = <String, LocalNonFriendProfile?>{
+      for (var i = 0; i < uids.length; i++)
+        uids[i]: existingNonFriendProfiles[i],
+    };
     final seenUids = <String>{};
 
     await isar.writeTxn(() async {
@@ -526,26 +654,26 @@ class FriendsRepositoryImpl implements FriendsRepository {
 
         seenUids.add(uid);
 
-        await _upsertUserModel(isar, uid, userData);
+        await _upsertUserModelSync(isar, uid, userData, userModelMap[uid]);
 
         final shouldUseFriendBucket = forceFriend
             ? true
             : forceNonFriend
             ? false
-            : await _isCachedFriend(isar, uid);
+            : friendMap[uid] != null;
 
         if (shouldUseFriendBucket) {
-          final existing = await isar.localFriendProfiles.getByUid(uid);
           final model =
-              existing ?? LocalFriendProfile(uid: uid, displayName: 'User');
+              friendMap[uid] ??
+              LocalFriendProfile(uid: uid, displayName: 'User');
 
           _populateFriendProfile(model, uid, userData, source: source);
           await isar.localFriendProfiles.putByUid(model);
           await isar.localNonFriendProfiles.deleteByUid(uid);
         } else {
-          final existing = await isar.localNonFriendProfiles.getByUid(uid);
           final model =
-              existing ?? LocalNonFriendProfile(uid: uid, displayName: 'User');
+              nonFriendMap[uid] ??
+              LocalNonFriendProfile(uid: uid, displayName: 'User');
 
           _populateNonFriendProfile(model, uid, userData, source);
           await isar.localNonFriendProfiles.putByUid(model);
@@ -554,11 +682,8 @@ class FriendsRepositoryImpl implements FriendsRepository {
       }
 
       if (forceFriend) {
-        final existingFriendProfiles = await isar.localFriendProfiles
-            .where()
-            .anyId()
-            .findAll();
-        for (final profile in existingFriendProfiles) {
+        for (final profile
+            in existingFriendProfiles.whereType<LocalFriendProfile>()) {
           if (!seenUids.contains(profile.uid) && profile.uid != _currentUid) {
             await isar.localFriendProfiles.deleteByUid(profile.uid);
           }
@@ -567,12 +692,12 @@ class FriendsRepositoryImpl implements FriendsRepository {
     });
   }
 
-  Future<void> _upsertUserModel(
+  Future<void> _upsertUserModelSync(
     Isar isar,
     String uid,
     Map<String, dynamic> userData,
+    UserModel? existing,
   ) async {
-    final existing = await isar.userModels.getByUid(uid);
     final model =
         existing ??
         UserModel(
@@ -703,9 +828,92 @@ class FriendsRepositoryImpl implements FriendsRepository {
     return 0;
   }
 
-  Future<bool> _isCachedFriend(Isar isar, String uid) async {
-    final profile = await isar.localFriendProfiles.getByUid(uid);
-    return profile != null;
+  Future<Map<String, String>> _resolveDisplayNamesBulk(
+    Isar isar,
+    List<String> uids,
+  ) async {
+    if (uids.isEmpty) return <String, String>{};
+
+    final friends = await isar.localFriendProfiles.getAllByUid(uids);
+    final nonFriends = await isar.localNonFriendProfiles.getAllByUid(uids);
+    final models = await isar.userModels.getAllByUid(uids);
+
+    final result = <String, String>{};
+    for (var index = 0; index < uids.length; index++) {
+      final uid = uids[index];
+      final friend = friends[index];
+      final nonFriend = nonFriends[index];
+      final model = models[index];
+
+      result[uid] = friend?.displayName.isNotEmpty == true
+          ? friend!.displayName
+          : nonFriend?.displayName.isNotEmpty == true
+          ? nonFriend!.displayName
+          : model?.displayName.isNotEmpty == true
+          ? model!.displayName
+          : 'User';
+    }
+
+    return result;
+  }
+
+  Future<Map<String, String?>> _resolvePhotoUrlsBulk(
+    Isar isar,
+    List<String> uids,
+  ) async {
+    if (uids.isEmpty) return <String, String?>{};
+
+    final friends = await isar.localFriendProfiles.getAllByUid(uids);
+    final nonFriends = await isar.localNonFriendProfiles.getAllByUid(uids);
+    final models = await isar.userModels.getAllByUid(uids);
+
+    final result = <String, String?>{};
+    for (var index = 0; index < uids.length; index++) {
+      final uid = uids[index];
+      final friend = friends[index];
+      final nonFriend = nonFriends[index];
+      final model = models[index];
+
+      result[uid] = friend?.photoURL?.isNotEmpty == true
+          ? friend!.photoURL
+          : nonFriend?.photoURL?.isNotEmpty == true
+          ? nonFriend!.photoURL
+          : model?.photoURL?.isNotEmpty == true
+          ? model!.photoURL
+          : null;
+    }
+
+    return result;
+  }
+
+  Future<(String, String?)> _resolveProfileInfo(Isar isar, String uid) async {
+    final results = await Future.wait([
+      isar.localFriendProfiles.getByUid(uid),
+      isar.localNonFriendProfiles.getByUid(uid),
+      isar.userModels.getByUid(uid),
+    ]);
+
+    final friend = results[0] as LocalFriendProfile?;
+    final nonFriend = results[1] as LocalNonFriendProfile?;
+    final model = results[2] as UserModel?;
+
+    final name = friend?.displayName.isNotEmpty == true
+        ? friend!.displayName
+        : nonFriend?.displayName.isNotEmpty == true
+        ? nonFriend!.displayName
+        : model?.displayName.isNotEmpty == true
+        ? model!.displayName
+        : 'User';
+
+    final photo = friend?.photoURL?.isNotEmpty == true
+        ? friend!.photoURL
+        : nonFriend?.photoURL?.isNotEmpty == true
+        ? nonFriend!.photoURL
+        : model?.photoURL?.isNotEmpty == true
+        ? model!.photoURL
+        : null;
+
+    return (name, photo);
   }
 
   Map<String, dynamic> _blockedUserToMap(LocalBlockedUser item) {
@@ -717,45 +925,5 @@ class FriendsRepositoryImpl implements FriendsRepository {
       'cachedAt': item.cachedAt,
       'lastSource': item.lastSource,
     };
-  }
-
-  Future<String> _resolveDisplayName(Isar isar, String uid) async {
-    final friendProfile = await isar.localFriendProfiles.getByUid(uid);
-    if (friendProfile != null && friendProfile.displayName.isNotEmpty) {
-      return friendProfile.displayName;
-    }
-
-    final nonFriendProfile = await isar.localNonFriendProfiles.getByUid(uid);
-    if (nonFriendProfile != null && nonFriendProfile.displayName.isNotEmpty) {
-      return nonFriendProfile.displayName;
-    }
-
-    final userModel = await isar.userModels.getByUid(uid);
-    if (userModel != null && userModel.displayName.isNotEmpty) {
-      return userModel.displayName;
-    }
-
-    return 'User';
-  }
-
-  Future<String?> _resolvePhotoUrl(Isar isar, String uid) async {
-    final friendProfile = await isar.localFriendProfiles.getByUid(uid);
-    if (friendProfile?.photoURL != null &&
-        friendProfile!.photoURL!.isNotEmpty) {
-      return friendProfile.photoURL;
-    }
-
-    final nonFriendProfile = await isar.localNonFriendProfiles.getByUid(uid);
-    if (nonFriendProfile?.photoURL != null &&
-        nonFriendProfile!.photoURL!.isNotEmpty) {
-      return nonFriendProfile.photoURL;
-    }
-
-    final userModel = await isar.userModels.getByUid(uid);
-    if (userModel?.photoURL != null && userModel!.photoURL!.isNotEmpty) {
-      return userModel.photoURL;
-    }
-
-    return null;
   }
 }

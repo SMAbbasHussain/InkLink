@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/models/board.dart';
@@ -165,6 +167,8 @@ class WorkspaceLoaded extends WorkspaceState {
   final Map<String, List<Board>> previewBoardsByWorkspace;
   final Map<String, List<Board>> boardsByWorkspace;
   final Map<String, List<WorkspaceMember>> membersByWorkspace;
+  final Set<String> processingInviteDecisionIds;
+  final Set<String> invitingUserIds;
   final String? actionError;
   final String? actionInfo;
 
@@ -175,6 +179,8 @@ class WorkspaceLoaded extends WorkspaceState {
     required this.previewBoardsByWorkspace,
     required this.boardsByWorkspace,
     required this.membersByWorkspace,
+    this.processingInviteDecisionIds = const <String>{},
+    this.invitingUserIds = const <String>{},
     this.actionError,
     this.actionInfo,
   });
@@ -186,6 +192,8 @@ class WorkspaceLoaded extends WorkspaceState {
     Map<String, List<Board>>? previewBoardsByWorkspace,
     Map<String, List<Board>>? boardsByWorkspace,
     Map<String, List<WorkspaceMember>>? membersByWorkspace,
+    Set<String>? processingInviteDecisionIds,
+    Set<String>? invitingUserIds,
     Object? actionError = _unset,
     Object? actionInfo = _unset,
   }) {
@@ -197,6 +205,9 @@ class WorkspaceLoaded extends WorkspaceState {
           previewBoardsByWorkspace ?? this.previewBoardsByWorkspace,
       boardsByWorkspace: boardsByWorkspace ?? this.boardsByWorkspace,
       membersByWorkspace: membersByWorkspace ?? this.membersByWorkspace,
+      processingInviteDecisionIds:
+          processingInviteDecisionIds ?? this.processingInviteDecisionIds,
+      invitingUserIds: invitingUserIds ?? this.invitingUserIds,
       actionError: actionError == _unset
           ? this.actionError
           : actionError as String?,
@@ -252,6 +263,8 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       previewBoardsByWorkspace: const {},
       boardsByWorkspace: const {},
       membersByWorkspace: const {},
+      processingInviteDecisionIds: const <String>{},
+      invitingUserIds: const <String>{},
     );
   }
 
@@ -524,15 +537,31 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     final service = _workspaceService;
     if (service == null) return;
 
+    final current = state;
+    if (current is WorkspaceLoaded) {
+      final nextInviting = Set<String>.from(current.invitingUserIds)
+        ..addAll(event.invitedUserIds);
+      emit(
+        current.copyWith(
+          invitingUserIds: nextInviting,
+          actionError: null,
+          actionInfo: null,
+        ),
+      );
+    }
+
     try {
       await service.inviteToWorkspace(
         workspaceId: event.workspaceId,
         invitedUserIds: event.invitedUserIds,
       );
-      final current = state;
-      if (current is WorkspaceLoaded) {
+      final updated = state;
+      if (updated is WorkspaceLoaded) {
+        final nextInviting = Set<String>.from(updated.invitingUserIds)
+          ..removeAll(event.invitedUserIds);
         emit(
-          current.copyWith(
+          updated.copyWith(
+            invitingUserIds: nextInviting,
             actionInfo:
                 'Invitations sent to ${event.invitedUserIds.length} user(s).',
             actionError: null,
@@ -540,9 +569,16 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
         );
       }
     } catch (e) {
-      final current = state;
-      if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to send invitations: $e'));
+      final updated = state;
+      if (updated is WorkspaceLoaded) {
+        final nextInviting = Set<String>.from(updated.invitingUserIds)
+          ..removeAll(event.invitedUserIds);
+        emit(
+          updated.copyWith(
+            invitingUserIds: nextInviting,
+            actionError: 'Failed to send invitations: $e',
+          ),
+        );
       }
     }
   }
@@ -616,13 +652,31 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     final service = _workspaceService;
     if (service == null) return;
 
+    final current = state;
+    if (current is WorkspaceLoaded) {
+      final nextProcessing = Set<String>.from(
+        current.processingInviteDecisionIds,
+      )..add(event.inviteId);
+      emit(
+        current.copyWith(
+          processingInviteDecisionIds: nextProcessing,
+          actionError: null,
+          actionInfo: null,
+        ),
+      );
+    }
+
     try {
       await service.acceptWorkspaceInvite(event.inviteId);
-      final current = state;
-      if (current is WorkspaceLoaded) {
+      final updated = state;
+      if (updated is WorkspaceLoaded) {
+        final nextProcessing = Set<String>.from(
+          updated.processingInviteDecisionIds,
+        )..remove(event.inviteId);
         emit(
-          current.copyWith(
-            incomingInvites: current.incomingInvites
+          updated.copyWith(
+            processingInviteDecisionIds: nextProcessing,
+            incomingInvites: updated.incomingInvites
                 .where((i) => i.id != event.inviteId)
                 .toList(),
             actionInfo: 'Invite accepted.',
@@ -630,10 +684,27 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
           ),
         );
       }
-    } catch (e) {
-      final current = state;
-      if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to accept invite: $e'));
+    } catch (e, st) {
+      _logWorkspaceInviteError(
+        action: 'accept',
+        inviteId: event.inviteId,
+        error: e,
+        stackTrace: st,
+      );
+      final updated = state;
+      if (updated is WorkspaceLoaded) {
+        final nextProcessing = Set<String>.from(
+          updated.processingInviteDecisionIds,
+        )..remove(event.inviteId);
+        emit(
+          updated.copyWith(
+            processingInviteDecisionIds: nextProcessing,
+            actionError: _buildWorkspaceInviteErrorMessage(
+              action: 'accept',
+              error: e,
+            ),
+          ),
+        );
       }
     }
   }
@@ -645,13 +716,31 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     final service = _workspaceService;
     if (service == null) return;
 
+    final current = state;
+    if (current is WorkspaceLoaded) {
+      final nextProcessing = Set<String>.from(
+        current.processingInviteDecisionIds,
+      )..add(event.inviteId);
+      emit(
+        current.copyWith(
+          processingInviteDecisionIds: nextProcessing,
+          actionError: null,
+          actionInfo: null,
+        ),
+      );
+    }
+
     try {
       await service.rejectWorkspaceInvite(event.inviteId);
-      final current = state;
-      if (current is WorkspaceLoaded) {
+      final updated = state;
+      if (updated is WorkspaceLoaded) {
+        final nextProcessing = Set<String>.from(
+          updated.processingInviteDecisionIds,
+        )..remove(event.inviteId);
         emit(
-          current.copyWith(
-            incomingInvites: current.incomingInvites
+          updated.copyWith(
+            processingInviteDecisionIds: nextProcessing,
+            incomingInvites: updated.incomingInvites
                 .where((i) => i.id != event.inviteId)
                 .toList(),
             actionInfo: 'Invite rejected.',
@@ -659,10 +748,27 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
           ),
         );
       }
-    } catch (e) {
-      final current = state;
-      if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to reject invite: $e'));
+    } catch (e, st) {
+      _logWorkspaceInviteError(
+        action: 'reject',
+        inviteId: event.inviteId,
+        error: e,
+        stackTrace: st,
+      );
+      final updated = state;
+      if (updated is WorkspaceLoaded) {
+        final nextProcessing = Set<String>.from(
+          updated.processingInviteDecisionIds,
+        )..remove(event.inviteId);
+        emit(
+          updated.copyWith(
+            processingInviteDecisionIds: nextProcessing,
+            actionError: _buildWorkspaceInviteErrorMessage(
+              action: 'reject',
+              error: e,
+            ),
+          ),
+        );
       }
     }
   }
@@ -787,5 +893,36 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
   Future<void> close() async {
     await stopForLogout();
     return super.close();
+  }
+
+  String _buildWorkspaceInviteErrorMessage({
+    required String action,
+    required Object error,
+  }) {
+    if (error is FirebaseFunctionsException) {
+      return 'Failed to $action invite (${error.code}): ${error.message ?? 'Unknown Cloud Function error'}';
+    }
+    return 'Failed to $action invite: $error';
+  }
+
+  void _logWorkspaceInviteError({
+    required String action,
+    required String inviteId,
+    required Object error,
+    required StackTrace stackTrace,
+  }) {
+    developer.log(
+      'Workspace invite $action failed for inviteId=$inviteId',
+      name: 'WorkspaceBloc',
+      error: error,
+      stackTrace: stackTrace,
+    );
+
+    if (error is FirebaseFunctionsException) {
+      developer.log(
+        'Cloud Function details for $action inviteId=$inviteId | code=${error.code} | message=${error.message} | details=${error.details}',
+        name: 'WorkspaceBloc',
+      );
+    }
   }
 }

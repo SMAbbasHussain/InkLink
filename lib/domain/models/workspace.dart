@@ -82,6 +82,9 @@ class WorkspaceInvite {
   final String workspaceId;
   final String fromUid;
   final String toUid;
+  final String senderName;
+  final String? senderPhotoUrl;
+  final String workspaceName;
   final String status; // 'pending', 'accepted', 'rejected'
   final DateTime timestamp;
   final DateTime? acceptedAt;
@@ -92,6 +95,9 @@ class WorkspaceInvite {
     required this.workspaceId,
     required this.fromUid,
     required this.toUid,
+    this.senderName = 'InkLink User',
+    this.senderPhotoUrl,
+    this.workspaceName = 'Workspace',
     required this.status,
     required this.timestamp,
     this.acceptedAt,
@@ -103,6 +109,9 @@ class WorkspaceInvite {
     String? workspaceId,
     String? fromUid,
     String? toUid,
+    String? senderName,
+    String? senderPhotoUrl,
+    String? workspaceName,
     String? status,
     DateTime? timestamp,
     DateTime? acceptedAt,
@@ -113,6 +122,9 @@ class WorkspaceInvite {
       workspaceId: workspaceId ?? this.workspaceId,
       fromUid: fromUid ?? this.fromUid,
       toUid: toUid ?? this.toUid,
+      senderName: senderName ?? this.senderName,
+      senderPhotoUrl: senderPhotoUrl ?? this.senderPhotoUrl,
+      workspaceName: workspaceName ?? this.workspaceName,
       status: status ?? this.status,
       timestamp: timestamp ?? this.timestamp,
       acceptedAt: acceptedAt ?? this.acceptedAt,
@@ -129,6 +141,9 @@ class WorkspaceInvite {
           workspaceId == other.workspaceId &&
           fromUid == other.fromUid &&
           toUid == other.toUid &&
+          senderName == other.senderName &&
+          senderPhotoUrl == other.senderPhotoUrl &&
+          workspaceName == other.workspaceName &&
           status == other.status &&
           timestamp == other.timestamp &&
           acceptedAt == other.acceptedAt &&
@@ -140,6 +155,9 @@ class WorkspaceInvite {
       workspaceId.hashCode ^
       fromUid.hashCode ^
       toUid.hashCode ^
+      senderName.hashCode ^
+      senderPhotoUrl.hashCode ^
+      workspaceName.hashCode ^
       status.hashCode ^
       timestamp.hashCode ^
       acceptedAt.hashCode ^
@@ -147,7 +165,7 @@ class WorkspaceInvite {
 
   @override
   String toString() =>
-      'WorkspaceInvite(id: $id, workspaceId: $workspaceId, fromUid: $fromUid, toUid: $toUid, status: $status)';
+      'WorkspaceInvite(id: $id, workspaceId: $workspaceId, fromUid: $fromUid, toUid: $toUid, senderName: $senderName, workspaceName: $workspaceName, status: $status)';
 }
 
 class WorkspaceMember {

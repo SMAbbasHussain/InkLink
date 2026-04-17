@@ -8,6 +8,8 @@ abstract class BoardRepository {
 
   Future<void> startBoardsSync();
   Future<void> stopBoardsSync();
+  Future<void> activateBoard(String boardId);
+  Future<void> deactivateBoard();
 
   Stream<List<Board>> getOwnedBoards();
   Stream<List<Board>> getJoinedBoards();

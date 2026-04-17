@@ -2,9 +2,25 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const { validateUID, validateDifferentUIDs } = require('../utils/validation');
 const FirestorePaths = require('../utils/firestore_paths');
-const { sendUserNotification } = require('../utils/notification_sender');
+const {
+  sendUserNotification,
+  updateUserNotificationStatus,
+} = require('../utils/notification_sender');
 const { hasAnyBlock, getFriendRef, getRequestRef } = require('./relationship_utils');
 const logger = require('../utils/logger');
+
+function toNonNegativeInt(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 0 ? 0 : Math.trunc(value);
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isNaN(parsed)) {
+      return parsed < 0 ? 0 : parsed;
+    }
+  }
+  return 0;
+}
 
 module.exports = async (request) => {
   const { auth, data } = request;
@@ -26,7 +42,7 @@ module.exports = async (request) => {
     const firestore = admin.firestore();
     const requestId = getRequestRef(firestore, senderUid, targetUid).id;
 
-    await firestore.runTransaction(async (transaction) => {
+    const transactionResult = await firestore.runTransaction(async (transaction) => {
       const senderFriendRef = getFriendRef(firestore, senderUid, targetUid);
 
       const senderFriendDoc = await transaction.get(senderFriendRef);
@@ -41,10 +57,6 @@ module.exports = async (request) => {
       const requestRef = getRequestRef(firestore, senderUid, targetUid);
 
       const existingRequest = await transaction.get(requestRef);
-      if (existingRequest.exists) {
-        return;
-      }
-
       const senderDoc = await transaction.get(
         firestore.collection(FirestorePaths.USERS).doc(senderUid),
       );
@@ -62,6 +74,78 @@ module.exports = async (request) => {
       const senderData = senderDoc.data() || {};
       const targetData = targetDoc.data() || {};
 
+      if (existingRequest.exists) {
+        const existingData = existingRequest.data() || {};
+        const isReciprocalPending =
+          existingData[FirestorePaths.FROM_UID] === targetUid &&
+          existingData[FirestorePaths.TO_UID] === senderUid &&
+          existingData[FirestorePaths.STATUS] === 'pending';
+
+        if (!isReciprocalPending) {
+          return {
+            mode: 'already_pending',
+            requestId,
+            senderName: senderData.displayName || 'InkLink User',
+            senderPhotoUrl: senderData.photoURL || null,
+          };
+        }
+
+        const targetFriendRef = getFriendRef(firestore, targetUid, senderUid);
+        const targetFriendDoc = await transaction.get(targetFriendRef);
+        if (!targetFriendDoc.exists) {
+          transaction.set(targetFriendRef, {
+            [FirestorePaths.UID]: senderUid,
+            [FirestorePaths.SINCE]: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+
+        if (!senderFriendDoc.exists) {
+          transaction.set(senderFriendRef, {
+            [FirestorePaths.UID]: targetUid,
+            [FirestorePaths.SINCE]: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+
+        const senderFriendCount = toNonNegativeInt(
+          senderData[FirestorePaths.FRIEND_COUNT],
+        );
+        const targetFriendCount = toNonNegativeInt(
+          targetData[FirestorePaths.FRIEND_COUNT],
+        );
+
+        if (!senderFriendDoc.exists) {
+          transaction.update(
+            firestore.collection(FirestorePaths.USERS).doc(senderUid),
+            {
+              [FirestorePaths.FRIEND_COUNT]: senderFriendCount + 1,
+              [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
+            },
+          );
+        }
+
+        if (!targetFriendDoc.exists) {
+          transaction.update(
+            firestore.collection(FirestorePaths.USERS).doc(targetUid),
+            {
+              [FirestorePaths.FRIEND_COUNT]: targetFriendCount + 1,
+              [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
+            },
+          );
+        }
+
+        // Remove the pending request only after friendship is established.
+        transaction.delete(requestRef);
+
+        return {
+          mode: 'accepted_reciprocal',
+          requestId,
+          senderName: senderData.displayName || 'InkLink User',
+          senderPhotoUrl: senderData.photoURL || null,
+          targetName: targetData.displayName || 'InkLink User',
+          targetPhotoUrl: targetData.photoURL || null,
+        };
+      }
+
       transaction.set(requestRef, {
         [FirestorePaths.FROM_UID]: senderUid,
         [FirestorePaths.TO_UID]: targetUid,
@@ -72,21 +156,68 @@ module.exports = async (request) => {
         [FirestorePaths.TIMESTAMP]: admin.firestore.FieldValue.serverTimestamp(),
         [FirestorePaths.STATUS]: 'pending',
       });
+
+      return {
+        mode: 'new_request',
+        requestId,
+        senderName: senderData.displayName || 'InkLink User',
+        senderPhotoUrl: senderData.photoURL || null,
+      };
     });
 
-    const senderDoc = await firestore.collection(FirestorePaths.USERS).doc(senderUid).get();
-    const senderData = senderDoc.data() || {};
+    if (transactionResult.mode === 'already_pending') {
+      return {
+        success: true,
+        requestId,
+        alreadyPending: true,
+      };
+    }
+
+    if (transactionResult.mode === 'accepted_reciprocal') {
+      await updateUserNotificationStatus({
+        recipientUid: senderUid,
+        type: 'friend_request',
+        targetId: requestId,
+        status: 'accepted',
+        title: 'Friend request accepted',
+        body: `You accepted ${transactionResult.targetName || 'this'} friend request.`,
+      });
+
+      const notificationResult = await sendUserNotification({
+        recipientUid: targetUid,
+        title: `${transactionResult.senderName} accepted your friend request`,
+        body: 'You are now friends on InkLink.',
+        type: 'friend_request_accepted',
+        action: 'open_friends',
+        targetId: senderUid,
+        senderUid,
+        senderName: transactionResult.senderName,
+        senderPhotoUrl: transactionResult.senderPhotoUrl,
+        groupingKey: `friend_request_accepted:${senderUid}:${targetUid}`,
+        extraData: {
+          friendUid: senderUid,
+          requestId,
+        },
+      });
+
+      return {
+        success: true,
+        requestId,
+        autoAccepted: true,
+        ...notificationResult,
+      };
+    }
 
     const notificationResult = await sendUserNotification({
       recipientUid: targetUid,
-      title: `${senderData.displayName || 'Someone'} sent you a friend request`,
+      title: `${transactionResult.senderName || 'Someone'} sent you a friend request`,
       body: 'Open requests to accept or decline.',
       type: 'friend_request',
       action: 'open_friend_requests',
       targetId: requestId,
       senderUid,
-      senderName: senderData.displayName || 'InkLink User',
-      senderPhotoUrl: senderData.photoURL || null,
+      senderName: transactionResult.senderName || 'InkLink User',
+      senderPhotoUrl: transactionResult.senderPhotoUrl || null,
       groupingKey: `friend_request:${senderUid}:${targetUid}`,
       extraData: {
         requestId,

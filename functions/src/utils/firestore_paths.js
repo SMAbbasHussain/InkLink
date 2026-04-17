@@ -18,6 +18,7 @@ const FirestorePaths = {
   FRIENDS_SUBCOLLECTION: 'friends',
   NOTIFICATIONS_SUBCOLLECTION: 'notifications',
   BOARD_MEMBERS_SUBCOLLECTION: 'members',
+  WORKSPACE_MEMBERS_SUBCOLLECTION: 'members',
   WORKSPACE_BOARDS_SUBCOLLECTION: 'boards',
   
   // User document fields
@@ -36,6 +37,7 @@ const FirestorePaths = {
   BOARD_COUNT: 'boardCount',
   OWNED_BOARDS: 'ownedBoards',
   JOINED_BOARDS: 'joinedBoards',
+  WORKSPACE_IDS: 'workspaceIds',
   
   // Friend request fields
   FROM_UID: 'fromUid',

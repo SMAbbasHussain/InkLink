@@ -10,6 +10,7 @@ import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
 import '../../models/board.dart';
+import '../../models/user_model.dart';
 import '../../models/workspace.dart';
 import 'workspace_repository.dart';
 
@@ -19,15 +20,13 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
   final LocalDatabaseService _localDatabaseService;
 
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userWorkspaceSub;
-  final Map<String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>
-  _ownedWorkspaceDocSubs = {};
-  final Map<String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>
-  _memberWorkspaceDocSubs = {};
   String? _syncUserId;
   Set<String> _ownedWorkspaceIds = {};
   Set<String> _memberWorkspaceIds = {};
   final Map<String, Map<String, dynamic>> _ownedWorkspaceDocs = {};
   final Map<String, Map<String, dynamic>> _memberWorkspaceDocs = {};
+  StreamController<List<Workspace>>? _ownedWorkspacesController;
+  StreamController<List<Workspace>>? _memberWorkspacesController;
 
   FirestoreWorkspaceRepository({
     required FirestoreService firestoreService,
@@ -54,6 +53,7 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
 
     await stopWorkspaceSync();
     _syncUserId = uid;
+    _ensureWorkspaceStreamControllers();
 
     // Listen to user document for workspaceIds array
     _userWorkspaceSub = _firestoreService
@@ -64,7 +64,9 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
           (userSnapshot) async {
             try {
               if (!userSnapshot.exists) {
-                await _reconcileWorkspaceListeners(ownedIds: {}, memberIds: {});
+                await _reconcileWorkspaceListeners(
+                  workspaceIds: const <String>{},
+                );
                 return;
               }
 
@@ -76,43 +78,19 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
 
               // If no workspaceIds, no workspaces to sync
               if (workspaceIds.isEmpty) {
-                await _reconcileWorkspaceListeners(ownedIds: {}, memberIds: {});
+                await _reconcileWorkspaceListeners(
+                  workspaceIds: const <String>{},
+                );
                 return;
               }
 
               try {
-                // Read each workspace individually (collection queries not allowed by rules)
-                final ownedIds = <String>{};
-                final memberIds = <String>{};
-
-                for (final wsId in workspaceIds) {
-                  try {
-                    final wsDoc = await _firestoreService
-                        .collection(FirestorePaths.workspaces)
-                        .doc(wsId)
-                        .get();
-
-                    if (wsDoc.exists) {
-                      final data = wsDoc.data() ?? {};
-                      if (data[FirestorePaths.ownerId] == uid) {
-                        ownedIds.add(wsId);
-                      } else {
-                        memberIds.add(wsId);
-                      }
-                    }
-                  } catch (e) {
-                    // Skip workspaces user doesn't have access to
-                    continue;
-                  }
-                }
-
-                await _reconcileWorkspaceListeners(
-                  ownedIds: ownedIds,
-                  memberIds: memberIds,
-                );
+                await _reconcileWorkspaceListeners(workspaceIds: workspaceIds);
               } catch (e) {
                 // Handle permission errors gracefully - reconcile with empty to show local cache
-                await _reconcileWorkspaceListeners(ownedIds: {}, memberIds: {});
+                await _reconcileWorkspaceListeners(
+                  workspaceIds: const <String>{},
+                );
               }
             } catch (e) {
               // Silent fail on listener errors to prevent crashes
@@ -128,54 +106,63 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
   Future<void> stopWorkspaceSync() async {
     await _userWorkspaceSub?.cancel();
     _userWorkspaceSub = null;
-    for (final sub in _ownedWorkspaceDocSubs.values) {
-      await sub.cancel();
-    }
-    for (final sub in _memberWorkspaceDocSubs.values) {
-      await sub.cancel();
-    }
-    _ownedWorkspaceDocSubs.clear();
-    _memberWorkspaceDocSubs.clear();
     _ownedWorkspaceDocs.clear();
     _memberWorkspaceDocs.clear();
     _syncUserId = null;
     _ownedWorkspaceIds = {};
     _memberWorkspaceIds = {};
+
+    await _ownedWorkspacesController?.close();
+    await _memberWorkspacesController?.close();
+    _ownedWorkspacesController = null;
+    _memberWorkspacesController = null;
+  }
+
+  void _ensureWorkspaceStreamControllers() {
+    _ownedWorkspacesController ??=
+        StreamController<List<Workspace>>.broadcast();
+    _memberWorkspacesController ??=
+        StreamController<List<Workspace>>.broadcast();
+  }
+
+  void _emitWorkspaceStreams() {
+    final ownedController = _ownedWorkspacesController;
+    final memberController = _memberWorkspacesController;
+    if (ownedController == null || memberController == null) {
+      return;
+    }
+
+    ownedController.add(_currentOwnedWorkspaces());
+    memberController.add(_currentMemberWorkspaces());
+  }
+
+  List<Workspace> _currentOwnedWorkspaces() {
+    return _ownedWorkspaceDocs.entries
+        .map((entry) => _mapFirestoreWorkspace(entry.key, entry.value))
+        .toList();
+  }
+
+  List<Workspace> _currentMemberWorkspaces() {
+    return _memberWorkspaceDocs.entries
+        .map((entry) => _mapFirestoreWorkspace(entry.key, entry.value))
+        .toList();
   }
 
   @override
   Stream<List<Workspace>> getOwnedWorkspaces() {
     return (() async* {
-      // Emit initial value first
-      yield _ownedWorkspaceDocs.entries
-          .map((entry) => _mapFirestoreWorkspace(entry.key, entry.value))
-          .toList();
-      // Then periodically emit updates
-      await for (final _ in Stream.periodic(
-        const Duration(milliseconds: 500),
-      )) {
-        yield _ownedWorkspaceDocs.entries
-            .map((entry) => _mapFirestoreWorkspace(entry.key, entry.value))
-            .toList();
-      }
+      _ensureWorkspaceStreamControllers();
+      yield _currentOwnedWorkspaces();
+      yield* _ownedWorkspacesController!.stream;
     })();
   }
 
   @override
   Stream<List<Workspace>> getMemberWorkspaces() {
     return (() async* {
-      // Emit initial value first
-      yield _memberWorkspaceDocs.entries
-          .map((entry) => _mapFirestoreWorkspace(entry.key, entry.value))
-          .toList();
-      // Then periodically emit updates
-      await for (final _ in Stream.periodic(
-        const Duration(milliseconds: 500),
-      )) {
-        yield _memberWorkspaceDocs.entries
-            .map((entry) => _mapFirestoreWorkspace(entry.key, entry.value))
-            .toList();
-      }
+      _ensureWorkspaceStreamControllers();
+      yield _currentMemberWorkspaces();
+      yield* _memberWorkspacesController!.stream;
     })();
   }
 
@@ -190,6 +177,48 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
           final data = snapshot.data() ?? {};
           return _mapFirestoreWorkspace(workspaceId, data);
         });
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _fetchDocumentsByIdSet({
+    required String collectionPath,
+    required List<String> ids,
+  }) async {
+    final documentsById = <String, Map<String, dynamic>>{};
+    final uniqueIds = ids.toSet().toList();
+    const chunkSize = 30;
+
+    for (var i = 0; i < uniqueIds.length; i += chunkSize) {
+      final chunk = uniqueIds.sublist(
+        i,
+        (i + chunkSize).clamp(0, uniqueIds.length),
+      );
+
+      try {
+        final snapshot = await _firestoreService
+            .collection(collectionPath)
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get();
+        for (final doc in snapshot.docs) {
+          documentsById[doc.id] = doc.data();
+        }
+      } catch (_) {
+        for (final id in chunk) {
+          try {
+            final doc = await _firestoreService
+                .collection(collectionPath)
+                .doc(id)
+                .get();
+            if (doc.exists) {
+              documentsById[id] = doc.data() ?? {};
+            }
+          } catch (_) {
+            // Keep missing or inaccessible documents out of the cache.
+          }
+        }
+      }
+    }
+
+    return documentsById;
   }
 
   @override
@@ -207,59 +236,66 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
             for (final localBoard in localBoards)
               localBoard.boardId: localBoard.previewPath,
           };
-          final boards = <Board>[];
-          final visibleLinks = snapshot.docs.where((doc) {
-            final data = doc.data();
-            if (!data.containsKey('visible')) {
-              return true;
-            }
-            return data['visible'] == true;
-          });
-
-          for (final linkDoc in visibleLinks) {
+          final visibleBoardIds = <String>[];
+          for (final linkDoc in snapshot.docs) {
             final linkData = linkDoc.data();
-            final linkedBoardId =
-                (linkData[FirestorePaths.boardId] as String?) ?? linkDoc.id;
-            try {
-              final boardSnapshot = await _firestoreService
-                  .collection(FirestorePaths.boards)
-                  .doc(linkedBoardId)
-                  .get();
-              if (!boardSnapshot.exists) {
-                continue;
-              }
-              final boardData = boardSnapshot.data() ?? {};
-              boardData['currentUserRole'] =
-                  boardData[FirestorePaths.ownerId] == currentUid
-                  ? Board.roleOwner
-                  : Board.roleViewer;
-              final firestoreBoard = Board.fromMap(boardData, linkedBoardId);
-              final localPreviewPath = localPreviewByBoardId[linkedBoardId];
-              boards.add(
-                Board(
-                  id: firestoreBoard.id,
-                  title: firestoreBoard.title,
-                  ownerId: firestoreBoard.ownerId,
-                  members: firestoreBoard.members,
-                  previewPath:
-                      (localPreviewPath != null && localPreviewPath.isNotEmpty)
-                      ? localPreviewPath
-                      : firestoreBoard.previewPath,
-                  visibility: firestoreBoard.visibility,
-                  privateJoinPolicy: firestoreBoard.privateJoinPolicy,
-                  tags: firestoreBoard.tags,
-                  joinViaCodeEnabled: firestoreBoard.joinViaCodeEnabled,
-                  whoCanInvite: firestoreBoard.whoCanInvite,
-                  defaultLinkJoinRole: firestoreBoard.defaultLinkJoinRole,
-                  currentUserRole: firestoreBoard.currentUserRole,
-                  createdAt: firestoreBoard.createdAt,
-                  updatedAt: firestoreBoard.updatedAt,
-                ),
-              );
-            } catch (_) {
-              // Skip boards not readable by current user.
+            if (linkData.containsKey('visible') &&
+                linkData['visible'] != true) {
               continue;
             }
+            final linkedBoardId =
+                (linkData[FirestorePaths.boardId] as String?) ?? linkDoc.id;
+            if (linkedBoardId.isNotEmpty) {
+              visibleBoardIds.add(linkedBoardId);
+            }
+          }
+
+          if (visibleBoardIds.isEmpty) {
+            return <Board>[];
+          }
+
+          final boardDataById = await _fetchDocumentsByIdSet(
+            collectionPath: FirestorePaths.boards,
+            ids: visibleBoardIds,
+          );
+
+          final boards = <Board>[];
+          for (final linkedBoardId in visibleBoardIds) {
+            final boardData = boardDataById[linkedBoardId];
+            if (boardData == null) {
+              continue;
+            }
+            final firestoreBoardData = Map<String, dynamic>.from(boardData);
+            firestoreBoardData['currentUserRole'] =
+                firestoreBoardData[FirestorePaths.ownerId] == currentUid
+                ? Board.roleOwner
+                : Board.roleViewer;
+            final firestoreBoard = Board.fromMap(
+              firestoreBoardData,
+              linkedBoardId,
+            );
+            final localPreviewPath = localPreviewByBoardId[linkedBoardId];
+            boards.add(
+              Board(
+                id: firestoreBoard.id,
+                title: firestoreBoard.title,
+                ownerId: firestoreBoard.ownerId,
+                members: firestoreBoard.members,
+                previewPath:
+                    (localPreviewPath != null && localPreviewPath.isNotEmpty)
+                    ? localPreviewPath
+                    : firestoreBoard.previewPath,
+                visibility: firestoreBoard.visibility,
+                privateJoinPolicy: firestoreBoard.privateJoinPolicy,
+                tags: firestoreBoard.tags,
+                joinViaCodeEnabled: firestoreBoard.joinViaCodeEnabled,
+                whoCanInvite: firestoreBoard.whoCanInvite,
+                defaultLinkJoinRole: firestoreBoard.defaultLinkJoinRole,
+                currentUserRole: firestoreBoard.currentUserRole,
+                createdAt: firestoreBoard.createdAt,
+                updatedAt: firestoreBoard.updatedAt,
+              ),
+            );
           }
 
           boards.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
@@ -278,6 +314,27 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
         .collection(FirestorePaths.workspaceMembersSubcollection)
         .snapshots()
         .asyncMap((snapshot) async {
+          final isar = await _localDatabaseService.database;
+          final uids = <String>[];
+          for (final memberDoc in snapshot.docs) {
+            final memberData = memberDoc.data();
+            final uid =
+                (memberData[FirestorePaths.uid] as String?) ?? memberDoc.id;
+            if (uid.isNotEmpty) {
+              uids.add(uid);
+            }
+          }
+
+          final userDataByUid = await _fetchDocumentsByIdSet(
+            collectionPath: FirestorePaths.users,
+            ids: uids,
+          );
+          final cachedUsers = await isar.userModels.getAllByUid(uids);
+          final cachedUserByUid = {
+            for (var index = 0; index < uids.length; index++)
+              uids[index]: cachedUsers[index],
+          };
+
           final members = <WorkspaceMember>[];
           for (final memberDoc in snapshot.docs) {
             final memberData = memberDoc.data();
@@ -287,19 +344,30 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
             String? email;
             String? photoUrl;
 
-            try {
-              final userSnapshot = await _firestoreService
-                  .collection(FirestorePaths.users)
-                  .doc(uid)
-                  .get();
-              if (userSnapshot.exists) {
-                final userData = userSnapshot.data() ?? {};
-                displayName = userData[FirestorePaths.displayName] as String?;
-                email = userData[FirestorePaths.email] as String?;
-                photoUrl = userData[FirestorePaths.photoURL] as String?;
-              }
-            } catch (_) {
-              // Member list should still render even if user profile read fails.
+            final cachedUser = cachedUserByUid[uid];
+            final userData = userDataByUid[uid];
+            final cachedDisplayName = cachedUser?.displayName;
+            final cachedEmail = cachedUser?.email;
+            final cachedPhotoUrl = cachedUser?.photoURL;
+
+            if (cachedDisplayName != null &&
+                cachedDisplayName.trim().isNotEmpty) {
+              displayName = cachedDisplayName;
+            }
+            if (cachedEmail != null && cachedEmail.trim().isNotEmpty) {
+              email = cachedEmail;
+            }
+            if (cachedPhotoUrl != null && cachedPhotoUrl.trim().isNotEmpty) {
+              photoUrl = cachedPhotoUrl;
+            }
+
+            if (userData != null) {
+              displayName =
+                  displayName ??
+                  userData[FirestorePaths.displayName] as String?;
+              email = email ?? userData[FirestorePaths.email] as String?;
+              photoUrl =
+                  photoUrl ?? userData[FirestorePaths.photoURL] as String?;
             }
 
             members.add(
@@ -459,23 +527,32 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
 
       if (identifier.contains('@')) {
         final normalizedEmail = identifier.toLowerCase();
-        final emailSnapshot = await firestore
-            .collection(FirestorePaths.users)
-            .where(FirestorePaths.email, isEqualTo: normalizedEmail)
-            .limit(1)
-            .get();
-        if (emailSnapshot.docs.isNotEmpty) {
-          normalizedInvitees.add(emailSnapshot.docs.first.id);
+        final lookups = <Future<QuerySnapshot<Map<String, dynamic>>>>[
+          firestore
+              .collection(FirestorePaths.users)
+              .where(FirestorePaths.email, isEqualTo: normalizedEmail)
+              .limit(1)
+              .get(),
+        ];
+        if (identifier != normalizedEmail) {
+          lookups.add(
+            firestore
+                .collection(FirestorePaths.users)
+                .where(FirestorePaths.email, isEqualTo: identifier)
+                .limit(1)
+                .get(),
+          );
+        }
+
+        final snapshots = await Future.wait(lookups);
+        final normalizedSnapshot = snapshots.first;
+        if (normalizedSnapshot.docs.isNotEmpty) {
+          normalizedInvitees.add(normalizedSnapshot.docs.first.id);
           continue;
         }
 
-        final fallbackSnapshot = await firestore
-            .collection(FirestorePaths.users)
-            .where(FirestorePaths.email, isEqualTo: identifier)
-            .limit(1)
-            .get();
-        if (fallbackSnapshot.docs.isNotEmpty) {
-          normalizedInvitees.add(fallbackSnapshot.docs.first.id);
+        if (snapshots.length > 1 && snapshots[1].docs.isNotEmpty) {
+          normalizedInvitees.add(snapshots[1].docs.first.id);
           continue;
         }
 
@@ -597,6 +674,13 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
                     (data[FirestorePaths.workspaceId] as String?) ?? '',
                 fromUid: (data[FirestorePaths.fromUid] as String?) ?? '',
                 toUid: (data[FirestorePaths.toUid] as String?) ?? '',
+                senderName:
+                    (data[FirestorePaths.senderName] as String?) ??
+                    (data[FirestorePaths.fromUid] as String?) ??
+                    'InkLink User',
+                senderPhotoUrl: data[FirestorePaths.senderPic] as String?,
+                workspaceName:
+                    (data[FirestorePaths.name] as String?) ?? 'Workspace',
                 status: (data[FirestorePaths.status] as String?) ?? 'pending',
                 timestamp:
                     (data[FirestorePaths.timestamp] as Timestamp?)?.toDate() ??
@@ -662,6 +746,15 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
           FirestorePaths.memberCount: FieldValue.increment(1),
           FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
         },
+      );
+
+      transaction.set(
+        firestore.collection(FirestorePaths.users).doc(toUid),
+        {
+          FirestorePaths.workspaceIds: FieldValue.arrayUnion([workspaceId]),
+          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
       );
     });
   }
@@ -745,89 +838,53 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
   }
 
   Future<void> _reconcileWorkspaceListeners({
-    required Set<String> ownedIds,
-    required Set<String> memberIds,
+    required Iterable<String> workspaceIds,
   }) async {
-    _ownedWorkspaceIds = ownedIds;
-    _memberWorkspaceIds = memberIds;
+    final currentUid = currentUserId;
+    final activeWorkspaceIds = workspaceIds.toSet();
 
-    // Remove stale owned listeners
-    final staleOwned = _ownedWorkspaceDocSubs.keys
-        .where((id) => !ownedIds.contains(id))
-        .toList();
-    for (final id in staleOwned) {
-      await _ownedWorkspaceDocSubs.remove(id)?.cancel();
-      _ownedWorkspaceDocs.remove(id);
+    _ownedWorkspaceIds = {};
+    _memberWorkspaceIds = {};
+    _ownedWorkspaceDocs.clear();
+    _memberWorkspaceDocs.clear();
+
+    if (activeWorkspaceIds.isEmpty) {
+      await _pruneLocalWorkspaces(visibleWorkspaceIds: const <String>{});
+      _emitWorkspaceStreams();
+      return;
     }
 
-    // Add new owned listeners
-    for (final wsId in ownedIds) {
-      if (_ownedWorkspaceDocSubs.containsKey(wsId)) continue;
-      _ownedWorkspaceDocSubs[wsId] = _firestoreService
-          .collection(FirestorePaths.workspaces)
-          .doc(wsId)
-          .snapshots()
-          .listen(
-            (doc) async {
-              try {
-                if (doc.exists) {
-                  _ownedWorkspaceDocs[wsId] = doc.data() ?? {};
-                  // Save to Isar
-                  await _saveWorkspaceToIsar(wsId, doc.data() ?? {}, 'owner');
-                } else {
-                  _ownedWorkspaceDocs.remove(wsId);
-                  _ownedWorkspaceIds.remove(wsId);
-                  // Remove from Isar
-                  await _removeWorkspaceFromIsar(wsId);
-                }
-              } catch (e) {
-                // Silent fail on listener errors
-              }
-            },
-            onError: (error) {
-              // Silently handle listener errors
-            },
-          );
+    final docsById = await _fetchDocumentsByIdSet(
+      collectionPath: FirestorePaths.workspaces,
+      ids: activeWorkspaceIds.toList(growable: false),
+    );
+
+    for (final wsId in activeWorkspaceIds) {
+      final data = docsById[wsId];
+      if (data == null) {
+        await _removeWorkspaceFromIsar(wsId);
+        continue;
+      }
+
+      final isOwner =
+          currentUid != null && data[FirestorePaths.ownerId] == currentUid;
+      if (isOwner) {
+        _ownedWorkspaceIds.add(wsId);
+        _ownedWorkspaceDocs[wsId] = data;
+        await _saveWorkspaceToIsar(wsId, data, 'owner');
+      } else {
+        _memberWorkspaceIds.add(wsId);
+        _memberWorkspaceDocs[wsId] = data;
+        await _saveWorkspaceToIsar(wsId, data, 'member');
+      }
     }
 
-    // Remove stale member listeners
-    final staleMember = _memberWorkspaceDocSubs.keys
-        .where((id) => !memberIds.contains(id))
-        .toList();
-    for (final id in staleMember) {
-      await _memberWorkspaceDocSubs.remove(id)?.cancel();
-      _memberWorkspaceDocs.remove(id);
-    }
-
-    // Add new member listeners
-    for (final wsId in memberIds) {
-      if (_memberWorkspaceDocSubs.containsKey(wsId)) continue;
-      _memberWorkspaceDocSubs[wsId] = _firestoreService
-          .collection(FirestorePaths.workspaces)
-          .doc(wsId)
-          .snapshots()
-          .listen(
-            (doc) async {
-              try {
-                if (doc.exists) {
-                  _memberWorkspaceDocs[wsId] = doc.data() ?? {};
-                  // Save to Isar
-                  await _saveWorkspaceToIsar(wsId, doc.data() ?? {}, 'member');
-                } else {
-                  _memberWorkspaceDocs.remove(wsId);
-                  _memberWorkspaceIds.remove(wsId);
-                  // Remove from Isar
-                  await _removeWorkspaceFromIsar(wsId);
-                }
-              } catch (e) {
-                // Silent fail on listener errors
-              }
-            },
-            onError: (error) {
-              // Silently handle listener errors
-            },
-          );
-    }
+    final visibleLocalWorkspaceIds = <String>{
+      ..._ownedWorkspaceDocs.keys,
+      ..._memberWorkspaceDocs.keys,
+    };
+    await _pruneLocalWorkspaces(visibleWorkspaceIds: visibleLocalWorkspaceIds);
+    _emitWorkspaceStreams();
   }
 
   Workspace _mapFirestoreWorkspace(String wsId, Map<String, dynamic> data) {
@@ -857,8 +914,12 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
   ) async {
     try {
       final isar = (await _localDatabaseService.database);
+      final existingWorkspace = await isar.localWorkspaces
+          .filter()
+          .workspaceIdEqualTo(wsId)
+          .findFirst();
 
-      final localWorkspace = LocalWorkspace()
+      final localWorkspace = existingWorkspace ?? LocalWorkspace()
         ..workspaceId = wsId
         ..ownerId = (data[FirestorePaths.ownerId] as String?) ?? ''
         ..name = (data[FirestorePaths.name] as String?) ?? ''
@@ -886,18 +947,43 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
     try {
       final isar = (await _localDatabaseService.database);
       await isar.writeTxn(() async {
-        // Query all workspaces and find the one to delete
-        final allWorkspaces = await isar.localWorkspaces.where().findAll();
-        final toDelete = allWorkspaces
-            .where((ws) => ws.workspaceId == wsId)
-            .map((ws) => ws.id)
-            .toList();
-        if (toDelete.isNotEmpty) {
-          await isar.localWorkspaces.deleteAll(toDelete);
+        final workspaces = await isar.localWorkspaces
+            .filter()
+            .workspaceIdEqualTo(wsId)
+            .findAll();
+        if (workspaces.isNotEmpty) {
+          await isar.localWorkspaces.deleteAll(
+            workspaces.map((workspace) => workspace.id).toList(growable: false),
+          );
         }
       });
     } catch (e) {
       // Silently fail if Isar is not available
+    }
+  }
+
+  Future<void> _pruneLocalWorkspaces({
+    required Set<String> visibleWorkspaceIds,
+  }) async {
+    try {
+      final isar = await _localDatabaseService.database;
+      final localWorkspaces = await isar.localWorkspaces.where().findAll();
+      final toDelete = localWorkspaces
+          .where(
+            (workspace) => !visibleWorkspaceIds.contains(workspace.workspaceId),
+          )
+          .map((workspace) => workspace.id)
+          .toList(growable: false);
+
+      if (toDelete.isEmpty) {
+        return;
+      }
+
+      await isar.writeTxn(() async {
+        await isar.localWorkspaces.deleteAll(toDelete);
+      });
+    } catch (_) {
+      // Keep local cache unchanged if pruning fails.
     }
   }
 }

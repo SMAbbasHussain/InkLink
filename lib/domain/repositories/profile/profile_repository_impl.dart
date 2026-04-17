@@ -122,9 +122,14 @@ class ProfileRepositoryImpl implements ProfileRepository {
   }) async {
     final isar = await _localDatabaseService.database;
     final timestamp = DateTime.now();
+    final existingUserModel = await isar.userModels.getByUid(uid);
+    final existingFriendProfile = await isar.localFriendProfiles.getByUid(uid);
+    final existingNonFriendProfile = await isar.localNonFriendProfiles.getByUid(
+      uid,
+    );
 
     await isar.writeTxn(() async {
-      await _upsertUserModel(isar, uid, data);
+      await _upsertUserModel(isar, uid, data, existingModel: existingUserModel);
 
       if (isSelf) {
         await isar.localFriendProfiles.deleteByUid(uid);
@@ -133,16 +138,16 @@ class ProfileRepositoryImpl implements ProfileRepository {
       }
 
       if (isFriend) {
-        final existing = await isar.localFriendProfiles.getByUid(uid);
         final model =
-            existing ?? LocalFriendProfile(uid: uid, displayName: 'User');
+            existingFriendProfile ??
+            LocalFriendProfile(uid: uid, displayName: 'User');
         _applyProfileFields(model, uid, data, source, timestamp);
         await isar.localFriendProfiles.putByUid(model);
         await isar.localNonFriendProfiles.deleteByUid(uid);
       } else {
-        final existing = await isar.localNonFriendProfiles.getByUid(uid);
         final model =
-            existing ?? LocalNonFriendProfile(uid: uid, displayName: 'User');
+            existingNonFriendProfile ??
+            LocalNonFriendProfile(uid: uid, displayName: 'User');
         _applyProfileFields(model, uid, data, source, timestamp);
         await isar.localNonFriendProfiles.putByUid(model);
         await isar.localFriendProfiles.deleteByUid(uid);
@@ -160,7 +165,13 @@ class ProfileRepositoryImpl implements ProfileRepository {
   Future<_CachedProfileHit?> _getCachedUserMap(String uid) async {
     final isar = await _localDatabaseService.database;
 
-    final friendProfile = await isar.localFriendProfiles.getByUid(uid);
+    final results = await Future.wait([
+      isar.localFriendProfiles.getByUid(uid),
+      isar.localNonFriendProfiles.getByUid(uid),
+      isar.userModels.getByUid(uid),
+    ]);
+
+    final friendProfile = results[0] as LocalFriendProfile?;
     if (friendProfile != null) {
       return _CachedProfileHit(
         _friendProfileToMap(friendProfile),
@@ -168,7 +179,7 @@ class ProfileRepositoryImpl implements ProfileRepository {
       );
     }
 
-    final nonFriendProfile = await isar.localNonFriendProfiles.getByUid(uid);
+    final nonFriendProfile = results[1] as LocalNonFriendProfile?;
     if (nonFriendProfile != null) {
       return _CachedProfileHit(
         _nonFriendProfileToMap(nonFriendProfile),
@@ -176,7 +187,7 @@ class ProfileRepositoryImpl implements ProfileRepository {
       );
     }
 
-    final user = await isar.userModels.getByUid(uid);
+    final user = results[2] as UserModel?;
     if (user == null) return null;
 
     return _CachedProfileHit(_userModelToMap(user), _ProfileBucket.self);
@@ -184,8 +195,9 @@ class ProfileRepositoryImpl implements ProfileRepository {
 
   Future<void> _upsertCachedUser(String uid, Map<String, dynamic> data) async {
     final isar = await _localDatabaseService.database;
+    final existingUserModel = await isar.userModels.getByUid(uid);
     await isar.writeTxn(() async {
-      await _upsertUserModel(isar, uid, data);
+      await _upsertUserModel(isar, uid, data, existingModel: existingUserModel);
     });
   }
 
@@ -209,10 +221,9 @@ class ProfileRepositoryImpl implements ProfileRepository {
   Future<void> _upsertUserModel(
     Isar isar,
     String uid,
-    Map<String, dynamic> data,
-  ) async {
-    final existingModel = await isar.userModels.getByUid(uid);
-
+    Map<String, dynamic> data, {
+    UserModel? existingModel,
+  }) async {
     final model =
         existingModel ??
         UserModel(
