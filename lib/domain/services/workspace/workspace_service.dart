@@ -26,7 +26,10 @@ abstract class WorkspaceService {
     required String workspaceId,
     required List<String> invitedUserIds,
   });
-  Future<void> leaveWorkspace(String workspaceId);
+  Future<void> leaveWorkspace({
+    String? workspaceId,
+    List<String>? importedBoardsToKeep,
+  });
   Future<void> removeMemberFromWorkspace({
     required String workspaceId,
     required String memberUid,
@@ -37,6 +40,12 @@ abstract class WorkspaceService {
   Future<void> addBoardToWorkspace({
     required String workspaceId,
     required String boardId,
+  });
+  Future<String> createBoardInWorkspace({
+    required String workspaceId,
+    required String title,
+    String? description,
+    String? visibility,
   });
   Future<void> removeBoardFromWorkspace({
     required String workspaceId,
@@ -123,8 +132,18 @@ class WorkspaceServiceImpl implements WorkspaceService {
   }
 
   @override
-  Future<void> leaveWorkspace(String workspaceId) =>
-      _repository.leaveWorkspace(workspaceId);
+  Future<void> leaveWorkspace({
+    String? workspaceId,
+    List<String>? importedBoardsToKeep,
+  }) async {
+    if (workspaceId == null || workspaceId.isEmpty) {
+      throw ArgumentError('workspaceId is required');
+    }
+    await _cloudFunctionsService.httpsCallable('leaveWorkspace').call({
+      'workspaceId': workspaceId,
+      'importedBoardsToKeep': importedBoardsToKeep ?? [],
+    });
+  }
 
   @override
   Future<void> removeMemberFromWorkspace({
@@ -157,10 +176,30 @@ class WorkspaceServiceImpl implements WorkspaceService {
   Future<void> addBoardToWorkspace({
     required String workspaceId,
     required String boardId,
-  }) => _repository.addBoardToWorkspace(
-    workspaceId: workspaceId,
-    boardId: boardId,
-  );
+  }) async {
+    await _cloudFunctionsService.httpsCallable('addBoardToWorkspace').call({
+      'workspaceId': workspaceId,
+      'boardId': boardId,
+    });
+  }
+
+  @override
+  Future<String> createBoardInWorkspace({
+    required String workspaceId,
+    required String title,
+    String? description,
+    String? visibility,
+  }) async {
+    final result = await _cloudFunctionsService
+        .httpsCallable('createWorkspaceBoard')
+        .call({
+          'workspaceId': workspaceId,
+          'title': title,
+          'description': description,
+          'visibility': visibility,
+        });
+    return result.data['boardId'] as String;
+  }
 
   @override
   Future<void> removeBoardFromWorkspace({

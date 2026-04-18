@@ -260,12 +260,47 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
   }
 
   Future<void> _leaveWorkspace() async {
+    // Show a dialog asking which imported boards to keep
+    final importedBoardsToKeep = <String>{};
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Leave Workspace?'),
-        content: const Text(
-          'You will no longer have access to this workspace.',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'When you leave this workspace:',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+              const Padding(
+                padding: EdgeInsets.only(left: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '• Boards created in this workspace will remove you as a member',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      '• Imported boards can optionally be kept in your board list',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'You will no longer have access to this workspace.',
+                style: TextStyle(fontSize: 12, color: Colors.red),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -282,7 +317,10 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
 
     if (confirm == true && mounted) {
       context.read<WorkspaceBloc>().add(
-        LeaveWorkspaceRequested(widget.workspaceId),
+        LeaveWorkspaceRequested(
+          widget.workspaceId,
+          importedBoardsToKeep: importedBoardsToKeep.toList(),
+        ),
       );
       Navigator.pop(context);
     }

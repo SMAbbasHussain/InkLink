@@ -108,8 +108,12 @@ class InviteToWorkspaceRequested extends WorkspaceEvent {
 
 class LeaveWorkspaceRequested extends WorkspaceEvent {
   final String workspaceId;
+  final List<String>? importedBoardsToKeep;
 
-  LeaveWorkspaceRequested(this.workspaceId);
+  LeaveWorkspaceRequested(
+    this.workspaceId, {
+    this.importedBoardsToKeep,
+  });
 }
 
 class RemoveWorkspaceMemberRequested extends WorkspaceEvent {
@@ -143,6 +147,20 @@ class AddBoardToWorkspaceRequested extends WorkspaceEvent {
   AddBoardToWorkspaceRequested({
     required this.workspaceId,
     required this.boardId,
+  });
+}
+
+class CreateBoardInWorkspaceRequested extends WorkspaceEvent {
+  final String workspaceId;
+  final String title;
+  final String? description;
+  final String? visibility;
+
+  CreateBoardInWorkspaceRequested({
+    required this.workspaceId,
+    required this.title,
+    this.description,
+    this.visibility,
   });
 }
 
@@ -246,6 +264,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     on<AcceptWorkspaceInviteRequested>(_onAcceptWorkspaceInviteRequested);
     on<RejectWorkspaceInviteRequested>(_onRejectWorkspaceInviteRequested);
     on<AddBoardToWorkspaceRequested>(_onAddBoardToWorkspaceRequested);
+    on<CreateBoardInWorkspaceRequested>(_onCreateBoardInWorkspaceRequested);
     on<RemoveBoardFromWorkspaceRequested>(_onRemoveBoardFromWorkspaceRequested);
     on<_OwnedWorkspacesUpdated>(_onOwnedWorkspacesUpdated);
     on<_MemberWorkspacesUpdated>(_onMemberWorkspacesUpdated);
@@ -591,7 +610,10 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     if (service == null) return;
 
     try {
-      await service.leaveWorkspace(event.workspaceId);
+      await service.leaveWorkspace(
+        workspaceId: event.workspaceId,
+        importedBoardsToKeep: event.importedBoardsToKeep,
+      );
       final current = state;
       if (current is WorkspaceLoaded) {
         emit(
@@ -798,6 +820,37 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       final current = state;
       if (current is WorkspaceLoaded) {
         emit(current.copyWith(actionError: 'Failed to add board: $e'));
+      }
+    }
+  }
+
+  Future<void> _onCreateBoardInWorkspaceRequested(
+    CreateBoardInWorkspaceRequested event,
+    Emitter<WorkspaceState> emit,
+  ) async {
+    final service = _workspaceService;
+    if (service == null) return;
+
+    try {
+      final boardId = await service.createBoardInWorkspace(
+        workspaceId: event.workspaceId,
+        title: event.title,
+        description: event.description,
+        visibility: event.visibility,
+      );
+      final current = state;
+      if (current is WorkspaceLoaded) {
+        emit(
+          current.copyWith(
+            actionInfo: 'Board created in workspace: $boardId',
+            actionError: null,
+          ),
+        );
+      }
+    } catch (e) {
+      final current = state;
+      if (current is WorkspaceLoaded) {
+        emit(current.copyWith(actionError: 'Failed to create board: $e'));
       }
     }
   }

@@ -176,6 +176,22 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  // Create new board option
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.add),
+                    label: const Text('Create new board in workspace'),
+                    onPressed: () {
+                      _showCreateBoardDialog(context);
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  Divider(color: Theme.of(context).dividerColor, height: 1),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Or add existing boards:',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: searchController,
@@ -290,6 +306,69 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
           },
         );
       },
+    );
+  }
+
+  void _showCreateBoardDialog(BuildContext context) {
+    final titleController = TextEditingController();
+    final descriptionController = TextEditingController();
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Create New Board'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: titleController,
+                decoration: const InputDecoration(
+                  labelText: 'Board title',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: descriptionController,
+                decoration: const InputDecoration(
+                  labelText: 'Description (optional)',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final title = titleController.text.trim();
+              if (title.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Board title is required')),
+                );
+                return;
+              }
+
+              context.read<WorkspaceBloc>().add(
+                CreateBoardInWorkspaceRequested(
+                  workspaceId: widget.workspaceId,
+                  title: title,
+                  description: descriptionController.text.trim(),
+                ),
+              );
+              Navigator.pop(context);
+              Navigator.pop(context); // Close the bottom sheet
+            },
+            child: const Text('Create'),
+          ),
+        ],
+      ),
     );
   }
 }

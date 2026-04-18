@@ -26,7 +26,10 @@ abstract class WorkspaceRepository {
     required String workspaceId,
     required List<String> invitedUserIds,
   });
-  Future<void> leaveWorkspace(String workspaceId);
+  Future<void> leaveWorkspace({
+    String? workspaceId,
+    List<String>? importedBoardsToKeep,
+  });
   Future<void> removeMemberFromWorkspace({
     required String workspaceId,
     required String memberUid,
@@ -37,6 +40,12 @@ abstract class WorkspaceRepository {
   Future<void> addBoardToWorkspace({
     required String workspaceId,
     required String boardId,
+  });
+  Future<String> createBoardInWorkspace({
+    required String workspaceId,
+    required String title,
+    String? description,
+    String? visibility,
   });
   Future<void> removeBoardFromWorkspace({
     required String workspaceId,

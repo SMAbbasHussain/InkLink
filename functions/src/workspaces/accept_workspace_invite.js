@@ -46,10 +46,45 @@ module.exports = async (request) => {
         throw new HttpsError('not-found', 'Workspace not found.');
       }
 
+      const workspaceBoardsSnapshot = await transaction.get(
+        workspaceRef.collection(FirestorePaths.WORKSPACE_BOARDS_SUBCOLLECTION),
+      );
+
       const memberRef = workspaceRef
         .collection(FirestorePaths.WORKSPACE_MEMBERS_SUBCOLLECTION)
         .doc(uid);
       const memberDoc = await transaction.get(memberRef);
+
+      const boardMembershipTargets = [];
+      for (const boardLinkDoc of workspaceBoardsSnapshot.docs) {
+        const boardLink = boardLinkDoc.data() || {};
+        const boardId = (boardLink[FirestorePaths.BOARD_ID] || boardLinkDoc.id)
+          .toString()
+          .trim();
+
+        if (!boardId) {
+          continue;
+        }
+
+        const boardRef = firestore.collection(FirestorePaths.BOARDS).doc(boardId);
+        const boardDoc = await transaction.get(boardRef);
+        if (!boardDoc.exists) {
+          continue;
+        }
+
+        const boardMemberRef = boardRef
+          .collection(FirestorePaths.BOARD_MEMBERS_SUBCOLLECTION)
+          .doc(uid);
+        const boardMemberDoc = await transaction.get(boardMemberRef);
+
+        boardMembershipTargets.push({
+          boardId,
+          boardRef,
+          boardDoc,
+          boardMemberRef,
+          boardMemberDoc,
+        });
+      }
 
       transaction.set(
         memberRef,
@@ -83,6 +118,54 @@ module.exports = async (request) => {
         },
         { merge: true },
       );
+
+      for (const target of boardMembershipTargets) {
+        const boardData = target.boardDoc.data() || {};
+        const boardOwnerId = boardData[FirestorePaths.OWNER_ID];
+
+        if (!target.boardMemberDoc.exists) {
+          transaction.set(
+            target.boardMemberRef,
+            {
+              uid,
+              role: boardOwnerId === uid ? 'owner' : 'viewer',
+              status: 'active',
+              joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+              invitedBy: invite[FirestorePaths.FROM_UID] || null,
+              [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        } else {
+          transaction.set(
+            target.boardMemberRef,
+            {
+              status: 'active',
+              [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+
+        transaction.update(target.boardRef, {
+          members: admin.firestore.FieldValue.arrayUnion(uid),
+          [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        transaction.set(
+          firestore.collection(FirestorePaths.USERS).doc(uid),
+          boardOwnerId === uid
+            ? {
+                [FirestorePaths.OWNED_BOARDS]: admin.firestore.FieldValue.arrayUnion(target.boardId),
+                [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+              }
+            : {
+                [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayUnion(target.boardId),
+                [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+              },
+          { merge: true },
+        );
+      }
 
       transaction.delete(inviteRef);
 

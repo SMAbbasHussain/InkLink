@@ -60,4 +60,8 @@ class FirestorePaths {
   static const String name = 'name';
   static const String description = 'description';
   static const String memberCount = 'memberCount';
+
+  // Workspace board fields
+  static const String boardSource =
+      'boardSource'; // 'imported' or 'workspace_native'
 }

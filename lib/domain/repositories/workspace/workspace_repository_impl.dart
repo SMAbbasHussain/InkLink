@@ -230,6 +230,27 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
         .snapshots()
         .asyncMap((snapshot) async {
           final currentUid = currentUserId;
+          if (currentUid == null) {
+            return <Board>[];
+          }
+
+          final userSnapshot = await _firestoreService
+              .collection(FirestorePaths.users)
+              .doc(currentUid)
+              .get();
+          final userData = userSnapshot.data() ?? {};
+          final ownedBoards =
+              (userData[FirestorePaths.ownedBoards] as List<dynamic>?)
+                  ?.whereType<String>()
+                  .toSet() ??
+              <String>{};
+          final joinedBoards =
+              (userData[FirestorePaths.joinedBoards] as List<dynamic>?)
+                  ?.whereType<String>()
+                  .toSet() ??
+              <String>{};
+          final readableBoardIds = {...ownedBoards, ...joinedBoards};
+
           final isar = await _localDatabaseService.database;
           final localBoards = await isar.localBoards.where().anyId().findAll();
           final localPreviewByBoardId = {
@@ -245,7 +266,8 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
             }
             final linkedBoardId =
                 (linkData[FirestorePaths.boardId] as String?) ?? linkDoc.id;
-            if (linkedBoardId.isNotEmpty) {
+            if (linkedBoardId.isNotEmpty &&
+                readableBoardIds.contains(linkedBoardId)) {
               visibleBoardIds.add(linkedBoardId);
             }
           }
@@ -581,38 +603,16 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
   }
 
   @override
-  Future<void> leaveWorkspace(String workspaceId) async {
-    final uid = currentUserId;
-    if (uid == null) return;
-
-    final firestore = _firestoreService.getInstance();
-    final workspaceRef = firestore
-        .collection(FirestorePaths.workspaces)
-        .doc(workspaceId);
-    final memberRef = workspaceRef
-        .collection(FirestorePaths.workspaceMembersSubcollection)
-        .doc(uid);
-
-    await firestore.runTransaction((transaction) async {
-      final workspaceSnapshot = await transaction.get(workspaceRef);
-      if (!workspaceSnapshot.exists) {
-        return;
-      }
-
-      final data = workspaceSnapshot.data() ?? {};
-      if (data[FirestorePaths.ownerId] == uid) {
-        throw Exception('Owner cannot leave workspace.');
-      }
-
-      transaction.delete(memberRef);
-      transaction.update(workspaceRef, {
-        FirestorePaths.memberCount: FieldValue.increment(-1),
-        FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
-      });
-      transaction.update(firestore.collection(FirestorePaths.users).doc(uid), {
-        FirestorePaths.workspaceIds: FieldValue.arrayRemove([workspaceId]),
-      });
-    });
+  Future<void> leaveWorkspace({
+    String? workspaceId,
+    List<String>? importedBoardsToKeep,
+  }) async {
+    // Cloud Functions handles the source-based logic.
+    // This repository method is kept for compatibility but delegates to cloud function via service.
+    // The actual implementation is in leaveWorkspace.js (Cloud Function).
+    throw UnimplementedError(
+      'leaveWorkspace should be called via CloudFunctionsService. Use WorkspaceService.leaveWorkspace instead.',
+    );
   }
 
   @override
@@ -797,6 +797,20 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
         FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
       });
     });
+  }
+
+  @override
+  Future<String> createBoardInWorkspace({
+    required String workspaceId,
+    required String title,
+    String? description,
+    String? visibility,
+  }) async {
+    // Cloud Functions handles the board creation with workspace-native tagging.
+    // This repository method is kept for consistency but delegates to cloud function via service.
+    throw UnimplementedError(
+      'createBoardInWorkspace should be called via CloudFunctionsService. Use WorkspaceService.createBoardInWorkspace instead.',
+    );
   }
 
   @override

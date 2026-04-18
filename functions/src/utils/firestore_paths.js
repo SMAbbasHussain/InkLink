@@ -47,6 +47,9 @@ const FirestorePaths = {
   TIMESTAMP: 'timestamp',
   STATUS: 'status',
 
+  // Workspace board fields
+  BOARD_SOURCE: 'boardSource', // 'imported' or 'workspace_native'
+  
   // Board invite fields
   BOARD_ID: 'boardId',
   BOARD_TITLE: 'boardTitle',
@@ -62,6 +65,7 @@ const FirestorePaths = {
   DEFAULT_LINK_JOIN_ROLE: 'defaultLinkJoinRole',
   TARGET_ROLE: 'targetRole',
   INVITER_ROLE_SNAPSHOT: 'inviterRoleSnapshot',
+  OWNER_ID: 'ownerId',
   RESOLVED_AT: 'resolvedAt',
   ACCEPTED_AT: 'acceptedAt',
   REJECTED_AT: 'rejectedAt',
