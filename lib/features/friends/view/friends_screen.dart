@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/features/friends/view/widgets/friend_request_banner.dart';
+import 'package:inklink/features/friends/view/widgets/friend_presence_avatar.dart';
 import 'package:inklink/features/profile/view/profile_route.dart';
 import '../../../core/constants/app_colors.dart';
 import '../bloc/friends_bloc.dart';
@@ -72,6 +73,31 @@ class _FriendsScreenState extends State<FriendsScreen> {
                     child: _buildSearchBar(isDark),
                   ),
                 ),
+                if (state is FriendsLoaded && state.isOffline)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.grey.withOpacity(0.45),
+                          ),
+                        ),
+                        child: const Text(
+                          'You are offline.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                  ),
 
                 // 2. Incoming Requests Banner
                 if (state is FriendsLoaded && state.incomingRequests.isNotEmpty)
@@ -184,32 +210,12 @@ class _FriendsScreenState extends State<FriendsScreen> {
           child: Row(
             children: [
               // GLITTER AVATAR
-              Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: photoUrl == null
-                      ? _avatarGradients[gradientIdx]
-                      : null,
-                  image: photoUrl != null
-                      ? DecorationImage(
-                          image: NetworkImage(photoUrl),
-                          fit: BoxFit.cover,
-                        )
-                      : null,
-                ),
-                child: photoUrl == null
-                    ? Center(
-                        child: Text(
-                          name[0],
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      )
-                    : null,
+              FriendPresenceAvatar(
+                userId: userId,
+                displayName: name,
+                photoUrl: photoUrl,
+                gradient: _avatarGradients[gradientIdx],
+                isDark: isDark,
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -361,30 +367,60 @@ class _FriendsScreenState extends State<FriendsScreen> {
             Expanded(
               child: BlocBuilder<FriendsBloc, FriendsState>(
                 builder: (context, state) {
-                  if (state is FriendsLoading) {
+                  if (state is EmailSearchInProgress) {
                     return const Center(child: CircularProgressIndicator());
                   }
 
-                  if (state is SearchResultsLoaded) {
-                    if (state.results.isEmpty) {
+                  if (state is EmailSearchEmpty) {
+                    return Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.person_search_outlined,
+                          size: 60,
+                          color: Colors.grey.withOpacity(0.5),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text("No user found with this email."),
+                      ],
+                    );
+                  }
+
+                  if (state is EmailSearchResultsLoaded) {
+                    if (state.isOffline) {
                       return Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(
-                            Icons.person_search_outlined,
-                            size: 60,
-                            color: Colors.grey.withOpacity(0.5),
+                          const Icon(Icons.cloud_off, size: 52),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Offline mode',
+                            style: TextStyle(fontWeight: FontWeight.bold),
                           ),
-                          const SizedBox(height: 16),
-                          const Text("No user found with this email."),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Search requires internet. Cached friends and requests are still available.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                          const SizedBox(height: 24),
                         ],
                       );
                     }
 
-                    // Grab the first result (since emails are unique)
-                    final user = state.results.first;
+                    final user = state.result;
+                    final String searchedUid = user['uid']?.toString() ?? '';
                     final String name = user['displayName'] ?? "Creator";
                     final String? photoUrl = user['photoURL'];
+                    final isAlreadyFriend = state.friendUids.contains(
+                      searchedUid,
+                    );
+                    final isPending = state.pendingOutgoingUids.contains(
+                      searchedUid,
+                    );
+                    final isSending = state.sendingRequestTargetUids.contains(
+                      searchedUid,
+                    );
                     final int gradientIdx =
                         name.length % _avatarGradients.length;
 
@@ -448,30 +484,47 @@ class _FriendsScreenState extends State<FriendsScreen> {
                           style: const TextStyle(fontSize: 13),
                         ),
                         trailing: ElevatedButton(
-                          onPressed: () {
-                            context.read<FriendsBloc>().add(
-                              SendFriendRequestRequested(user['uid']),
-                            );
-                            Navigator.pop(context); // Close sheet after sending
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text("Collaboration request sent!"),
-                                backgroundColor: Colors.green,
-                              ),
-                            );
-                          },
+                          onPressed: (isAlreadyFriend || isPending || isSending)
+                              ? null
+                              : () {
+                                  context.read<FriendsBloc>().add(
+                                    SendFriendRequestRequested(user['uid']),
+                                  );
+                                },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
+                            backgroundColor: isAlreadyFriend
+                                ? Colors.blue
+                                : AppColors.primary,
                             foregroundColor: Colors.white,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
                             elevation: 0,
                           ),
-                          child: const Text("Add"),
+                          child: isSending
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Text(
+                                  isAlreadyFriend
+                                      ? "Message"
+                                      : isPending
+                                      ? "Pending"
+                                      : "Add",
+                                ),
                         ),
                       ),
                     );
+                  }
+
+                  // Default view when sheet first opens (SearchResultsLoaded legacy state)
+                  if (state is SearchResultsLoaded) {
+                    return const SizedBox.shrink();
                   }
 
                   // Default view when sheet first opens

@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../domain/repositories/profile/profile_repository.dart';
+import '../../../domain/services/presence/presence_service.dart';
+import '../../../domain/services/profile/profile_service.dart';
 
 // States
 abstract class ProfileState {}
@@ -12,10 +15,20 @@ class ProfilePhotoUploading extends ProfileState {
   final Map<String, dynamic> userData;
   final bool isSelf;
   final bool isFriend;
+  final bool isBlocked;
+  final int friendCount;
+  final int boardCount;
+  final bool isOnline;
+  final DateTime? lastActive;
   ProfilePhotoUploading({
     required this.userData,
     required this.isSelf,
     required this.isFriend,
+    required this.isBlocked,
+    this.friendCount = 0,
+    this.boardCount = 0,
+    this.isOnline = false,
+    this.lastActive,
   });
 }
 
@@ -23,10 +36,20 @@ class ProfileLoaded extends ProfileState {
   final Map<String, dynamic> userData;
   final bool isSelf;
   final bool isFriend;
+  final bool isBlocked;
+  final int friendCount;
+  final int boardCount;
+  final bool isOnline;
+  final DateTime? lastActive;
   ProfileLoaded({
     required this.userData,
     required this.isSelf,
     required this.isFriend,
+    required this.isBlocked,
+    this.friendCount = 0,
+    this.boardCount = 0,
+    this.isOnline = false,
+    this.lastActive,
   });
 }
 
@@ -72,37 +95,115 @@ class SaveProfileChangesRequested extends ProfileEvent {
   });
 }
 
-class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
-  final ProfileRepository profileRepo;
+class _ProfileDocUpdated extends ProfileEvent {
+  final Map<String, dynamic> userData;
+  _ProfileDocUpdated(this.userData);
+}
 
-  ProfileBloc({required this.profileRepo}) : super(ProfileInitial()) {
+class _ProfilePresenceUpdated extends ProfileEvent {
+  final bool isOnline;
+  final DateTime? lastActive;
+
+  _ProfilePresenceUpdated({required this.isOnline, required this.lastActive});
+}
+
+class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
+  final ProfileService profileService;
+  final PresenceService presenceService;
+  StreamSubscription<Map<String, dynamic>?>? _liveProfileSubscription;
+  StreamSubscription<UserPresence>? _presenceSubscription;
+
+  ProfileBloc({required this.profileService, required this.presenceService})
+    : super(ProfileInitial()) {
     on<LoadProfile>((event, emit) async {
       emit(ProfileLoading());
       try {
-        final currentUid = profileRepo.getCurrentUserId();
-        if (currentUid == null) {
-          emit(ProfileError('User not authenticated'));
-          return;
-        }
-
-        final userData = await profileRepo.getUserById(event.userId);
-
-        if (userData == null) {
-          emit(ProfileError("User not found"));
-          return;
-        }
-
-        final bool isSelf = currentUid == event.userId;
-        bool isFriend = false;
-        if (!isSelf) {
-          isFriend = await profileRepo.checkFriendshipStatus(event.userId);
-        }
+        final profile = await profileService.loadProfile(event.userId);
 
         emit(
-          ProfileLoaded(userData: userData, isSelf: isSelf, isFriend: isFriend),
+          ProfileLoaded(
+            userData: profile.userData,
+            isSelf: profile.isSelf,
+            isFriend: profile.isFriend,
+            isBlocked: profile.isBlocked,
+            friendCount: profile.friendCount,
+            boardCount: profile.boardCount,
+            isOnline: profile.isOnline,
+            lastActive: profile.lastActive,
+          ),
         );
+
+        await _startLiveProfileListener(event.userId);
+        await _startPresenceListener(event.userId);
       } catch (e) {
         emit(ProfileError(e.toString()));
+      }
+    });
+
+    on<_ProfileDocUpdated>((event, emit) {
+      final currentState = state;
+
+      if (currentState is ProfileLoaded) {
+        final mergedUserData = {...currentState.userData, ...event.userData};
+
+        emit(
+          ProfileLoaded(
+            userData: mergedUserData,
+            isSelf: currentState.isSelf,
+            isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: currentState.isOnline,
+            lastActive: currentState.lastActive,
+          ),
+        );
+      } else if (currentState is ProfilePhotoUploading) {
+        final mergedUserData = {...currentState.userData, ...event.userData};
+
+        emit(
+          ProfilePhotoUploading(
+            userData: mergedUserData,
+            isSelf: currentState.isSelf,
+            isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: currentState.isOnline,
+            lastActive: currentState.lastActive,
+          ),
+        );
+      }
+    });
+
+    on<_ProfilePresenceUpdated>((event, emit) {
+      final currentState = state;
+      if (currentState is ProfileLoaded) {
+        emit(
+          ProfileLoaded(
+            userData: currentState.userData,
+            isSelf: currentState.isSelf,
+            isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: event.isOnline,
+            lastActive: event.lastActive,
+          ),
+        );
+      } else if (currentState is ProfilePhotoUploading) {
+        emit(
+          ProfilePhotoUploading(
+            userData: currentState.userData,
+            isSelf: currentState.isSelf,
+            isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: event.isOnline,
+            lastActive: event.lastActive,
+          ),
+        );
       }
     });
 
@@ -111,7 +212,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
       if (currentState is ProfileLoaded) {
         emit(ProfileLoading()); // Show spinner
         try {
-          await profileRepo.updateUserProfile(name: event.name, bio: event.bio);
+          await profileService.updateProfile(name: event.name, bio: event.bio);
 
           // IMPROVEMENT: Instead of reloading the entire profile from Firestore,
           // update the local state immediately with the new values.
@@ -127,6 +228,11 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
               userData: updatedUserData,
               isSelf: currentState.isSelf,
               isFriend: currentState.isFriend,
+              isBlocked: currentState.isBlocked,
+              friendCount: currentState.friendCount,
+              boardCount: currentState.boardCount,
+              isOnline: currentState.isOnline,
+              lastActive: currentState.lastActive,
             ),
           );
         } catch (e) {
@@ -146,12 +252,17 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             userData: currentState.userData,
             isSelf: currentState.isSelf,
             isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: currentState.isOnline,
+            lastActive: currentState.lastActive,
           ),
         );
 
         try {
           // Call repository to upload image and get the new photoURL
-          final photoUrl = await profileRepo.uploadProfilePhoto(
+          final photoUrl = await profileService.uploadProfilePhoto(
             imageData: event.imageData,
             filename: event.filename,
           );
@@ -165,6 +276,11 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
               userData: updatedUserData,
               isSelf: currentState.isSelf,
               isFriend: currentState.isFriend,
+              isBlocked: currentState.isBlocked,
+              friendCount: currentState.friendCount,
+              boardCount: currentState.boardCount,
+              isOnline: currentState.isOnline,
+              lastActive: currentState.lastActive,
             ),
           );
         } catch (e) {
@@ -181,21 +297,12 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
 
       emit(ProfileLoading());
       try {
-        await profileRepo.updateUserProfile(name: event.name, bio: event.bio);
-
-        String? photoUrl;
-        final shouldUploadPhoto =
-            event.imageData != null &&
-            event.imageData!.isNotEmpty &&
-            event.filename != null &&
-            event.filename!.isNotEmpty;
-
-        if (shouldUploadPhoto) {
-          photoUrl = await profileRepo.uploadProfilePhoto(
-            imageData: event.imageData!,
-            filename: event.filename!,
-          );
-        }
+        final photoUrl = await profileService.saveProfileChanges(
+          name: event.name,
+          bio: event.bio,
+          imageData: event.imageData,
+          filename: event.filename,
+        );
 
         final updatedUserData = {...currentState.userData};
         updatedUserData['displayName'] = event.name;
@@ -209,6 +316,11 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             userData: updatedUserData,
             isSelf: currentState.isSelf,
             isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: currentState.isOnline,
+            lastActive: currentState.lastActive,
           ),
         );
       } catch (e) {
@@ -224,6 +336,11 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             userData: updatedUserData,
             isSelf: currentState.isSelf,
             isFriend: currentState.isFriend,
+            isBlocked: currentState.isBlocked,
+            friendCount: currentState.friendCount,
+            boardCount: currentState.boardCount,
+            isOnline: currentState.isOnline,
+            lastActive: currentState.lastActive,
           ),
         );
         emit(
@@ -233,5 +350,37 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
         );
       }
     });
+  }
+
+  Future<void> _startLiveProfileListener(String userId) async {
+    await _liveProfileSubscription?.cancel();
+    _liveProfileSubscription = profileService.watchUserById(userId).listen((
+      userData,
+    ) {
+      if (userData != null) {
+        add(_ProfileDocUpdated(userData));
+      }
+    });
+  }
+
+  Future<void> _startPresenceListener(String userId) async {
+    await _presenceSubscription?.cancel();
+    _presenceSubscription = presenceService.watchUserPresence(userId).listen((
+      presence,
+    ) {
+      add(
+        _ProfilePresenceUpdated(
+          isOnline: presence.isOnline,
+          lastActive: presence.lastChanged,
+        ),
+      );
+    });
+  }
+
+  @override
+  Future<void> close() async {
+    await _liveProfileSubscription?.cancel();
+    await _presenceSubscription?.cancel();
+    return super.close();
   }
 }

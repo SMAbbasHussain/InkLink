@@ -2,6 +2,8 @@ abstract class FriendsEvent {}
 
 class LoadFriendsInfo extends FriendsEvent {}
 
+class StopFriendsInfo extends FriendsEvent {}
+
 class SearchUserByEmailRequested extends FriendsEvent {
   final String email;
   SearchUserByEmailRequested(this.email);
@@ -23,9 +25,27 @@ class DeclineFriendRequestRequested extends FriendsEvent {
   DeclineFriendRequestRequested(this.requestId);
 }
 
+class CancelFriendRequestRequested extends FriendsEvent {
+  final String requestId;
+  final String targetUid;
+  CancelFriendRequestRequested(this.requestId, this.targetUid);
+}
+
 // FIX: Use named parameters here
 class UpdateFriendsLists extends FriendsEvent {
   final List<Map<String, dynamic>> friends;
   final List<Map<String, dynamic>> incomingRequests;
-  UpdateFriendsLists({required this.friends, required this.incomingRequests});
+  final List<Map<String, dynamic>> outgoingRequests;
+
+  UpdateFriendsLists({
+    required this.friends,
+    required this.incomingRequests,
+    required this.outgoingRequests,
+  });
+}
+
+class FriendsConnectivityUpdated extends FriendsEvent {
+  final bool isOffline;
+
+  FriendsConnectivityUpdated(this.isOffline);
 }

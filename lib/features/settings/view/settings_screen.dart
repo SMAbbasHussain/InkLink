@@ -4,7 +4,12 @@ import 'package:inklink/features/auth/view/login_screen.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
+import 'package:inklink/features/board_invitations/bloc/board_invitations_bloc.dart';
+import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
+import 'package:inklink/features/friends/bloc/friends_bloc.dart';
+import 'package:inklink/features/notifications/bloc/notifications_bloc.dart';
 import 'package:inklink/features/settings/bloc/settings_bloc.dart';
+import 'package:inklink/features/workspaces/bloc/workspace_bloc.dart';
 import '../../theme/bloc/theme_bloc.dart';
 import '../../../core/constants/app_colors.dart';
 
@@ -86,10 +91,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               );
                             },
                     ),
+                    ListTile(
+                      leading: const Icon(
+                        Icons.photo_size_select_large_outlined,
+                      ),
+                      title: const Text('Board Preview Quality'),
+                      subtitle: const Text(
+                        'Used when saving board thumbnail after leaving canvas',
+                      ),
+                      trailing: DropdownButton<String>(
+                        value: settingsState.boardPreviewQuality,
+                        onChanged: (value) {
+                          if (value == null) return;
+                          context.read<SettingsBloc>().add(
+                            SettingsBoardPreviewQualityChanged(value),
+                          );
+                        },
+                        items: const [
+                          DropdownMenuItem(value: 'low', child: Text('Low')),
+                          DropdownMenuItem(
+                            value: 'medium',
+                            child: Text('Medium'),
+                          ),
+                          DropdownMenuItem(value: 'high', child: Text('High')),
+                        ],
+                      ),
+                    ),
+                    SwitchListTile(
+                      title: const Text('Compress Board Preview'),
+                      subtitle: const Text(
+                        'Recommended ON. Defaults to medium compressed previews.',
+                      ),
+                      secondary: const Icon(Icons.compress_outlined),
+                      value: settingsState.boardPreviewCompressionEnabled,
+                      onChanged: (value) {
+                        context.read<SettingsBloc>().add(
+                          SettingsBoardPreviewCompressionToggled(value),
+                        );
+                      },
+                    ),
                     _buildSectionHeader('Storage'),
                     ListTile(
                       leading: const Icon(Icons.cloud_download),
-                      title: const Text('Offline Database (Isar)'),
+                      title: const Text('Offline Database (Isar Community)'),
                       subtitle: const Text(
                         'Tap clear to remove local cached boards',
                       ),
@@ -162,10 +206,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: const Text("Cancel"),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(innerContext);
-              // 5. Dispatch the logout event to the BLoC
-              context.read<AuthBloc>().add(LogoutRequested());
+
+              final friendsBloc = context.read<FriendsBloc>();
+              final workspaceBloc = context.read<WorkspaceBloc>();
+              final dashboardBloc = context.read<DashboardBloc>();
+              final notificationsBloc = context.read<NotificationsBloc>();
+              final boardInvitationsBloc = context.read<BoardInvitationsBloc>();
+              final authBloc = context.read<AuthBloc>();
+
+              await friendsBloc.stopForLogout();
+              await workspaceBloc.stopForLogout();
+              await dashboardBloc.stopForLogout();
+              await notificationsBloc.stopForLogout();
+              await boardInvitationsBloc.stopForLogout();
+
+              authBloc.add(LogoutRequested());
             },
             child: const Text("Logout", style: TextStyle(color: Colors.red)),
           ),

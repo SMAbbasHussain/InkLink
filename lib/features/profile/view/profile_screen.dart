@@ -1,20 +1,25 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/features/profile/bloc/profile_bloc.dart';
 import 'package:inklink/features/profile/view/widgets/edit_profile_sheet.dart';
+
 import '../../../core/constants/app_colors.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../../friends/bloc/friends_event.dart';
+import '../../friends/bloc/friends_state.dart';
+import '../../friends/view/blocked_users_screen.dart';
+import '../../friends/view/friend_requests_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   final String userId;
+
   const ProfileScreen({super.key, required this.userId});
 
   @override
   Widget build(BuildContext context) {
-    // If we somehow got here without a UID, don't crash the bloc
     if (userId.isEmpty) {
-      return const Scaffold(body: Center(child: Text("Invalid User ID")));
+      return const Scaffold(body: Center(child: Text('Invalid User ID')));
     }
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -34,64 +39,159 @@ class ProfileScreen extends StatelessWidget {
           BlocBuilder<ProfileBloc, ProfileState>(
             builder: (context, state) {
               if (state is ProfileLoaded && state.isSelf) {
-                return IconButton(
-                  icon: const Icon(Icons.edit_outlined),
-                  onPressed: () {
-                    // Use the extracted widget
-                    showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      backgroundColor: Colors.transparent,
-                      builder: (_) => BlocProvider.value(
-                        value: context
-                            .read<ProfileBloc>(), // Pass the bloc to the sheet
-                        child: EditProfileSheet(userData: state.userData),
-                      ),
-                    );
+                return PopupMenuButton<String>(
+                  icon: Icon(
+                    Icons.more_vert,
+                    color: isDark ? Colors.white : Colors.black,
+                  ),
+                  onSelected: (value) {
+                    if (value == 'edit') {
+                      showModalBottomSheet(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: Colors.transparent,
+                        builder: (_) => BlocProvider.value(
+                          value: context.read<ProfileBloc>(),
+                          child: EditProfileSheet(userData: state.userData),
+                        ),
+                      );
+                      return;
+                    }
+
+                    if (value == 'requests') {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const FriendRequestsScreen(),
+                        ),
+                      );
+                      return;
+                    }
+
+                    if (value == 'blocked') {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const BlockedUsersScreen(),
+                        ),
+                      );
+                    }
                   },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'edit', child: Text('Edit profile')),
+                    PopupMenuItem(
+                      value: 'requests',
+                      child: Text('View friend requests'),
+                    ),
+                    PopupMenuItem(
+                      value: 'blocked',
+                      child: Text('View blocked users'),
+                    ),
+                  ],
                 );
               }
+
+              if (state is ProfileLoaded && !state.isSelf) {
+                return PopupMenuButton<String>(
+                  icon: Icon(
+                    Icons.more_vert,
+                    color: isDark ? Colors.white : Colors.black,
+                  ),
+                  onSelected: (value) async {
+                    if (value == 'unfriend') {
+                      await _confirmUnfriendUser(context);
+                    } else if (value == 'block') {
+                      await _confirmBlockUser(context);
+                    } else if (value == 'unblock') {
+                      await _confirmUnblockUser(context);
+                    } else if (value == 'report') {
+                      await _reportUser(context);
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    if (state.isFriend)
+                      const PopupMenuItem(
+                        value: 'unfriend',
+                        child: Text('Remove friend'),
+                      ),
+                    if (!state.isBlocked)
+                      const PopupMenuItem(
+                        value: 'block',
+                        child: Text('Block user'),
+                      ),
+                    if (state.isBlocked)
+                      const PopupMenuItem(
+                        value: 'unblock',
+                        child: Text('Unblock user'),
+                      ),
+                    const PopupMenuItem(
+                      value: 'report',
+                      child: Text('Report user'),
+                    ),
+                  ],
+                );
+              }
+
               return const SizedBox.shrink();
             },
           ),
         ],
       ),
       extendBodyBehindAppBar: true,
-      body: BlocBuilder<ProfileBloc, ProfileState>(
-        builder: (context, state) {
-          if (state is ProfileLoading) {
-            return const Center(child: CircularProgressIndicator());
+      body: BlocListener<FriendsBloc, FriendsState>(
+        listener: (context, friendsState) {
+          if (friendsState is FriendsError) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(friendsState.message)));
           }
-          if (state is ProfileError) {
-            return Center(child: Text(state.message));
-          }
-          if (state is ProfilePhotoUploading) {
-            final user = state.userData;
-            return Column(
-              children: [
-                _buildHeader(user, isDark),
-                const SizedBox(height: 24),
-                _buildBioSection(user, isDark),
-                const Spacer(),
-                const SizedBox(height: 40),
-              ],
-            );
-          }
-          if (state is ProfileLoaded) {
-            final user = state.userData;
-            return Column(
-              children: [
-                _buildHeader(user, isDark),
-                const SizedBox(height: 24),
-                _buildBioSection(user, isDark),
-                const Spacer(),
-                _buildActionButtons(context, state, isDark),
-                const SizedBox(height: 40),
-              ],
-            );
-          }
-          return const SizedBox.shrink();
         },
+        child: BlocBuilder<ProfileBloc, ProfileState>(
+          builder: (context, state) {
+            if (state is ProfileLoading) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            if (state is ProfileError) {
+              return Center(child: Text(state.message));
+            }
+
+            if (state is ProfilePhotoUploading) {
+              final user = state.userData;
+              return Column(
+                children: [
+                  _buildHeader(user, isDark),
+                  const SizedBox(height: 24),
+                  _buildBioSection(user, isDark),
+                  const Spacer(),
+                  const SizedBox(height: 40),
+                ],
+              );
+            }
+
+            if (state is ProfileLoaded) {
+              final user = state.userData;
+              return Column(
+                children: [
+                  _buildHeader(user, isDark),
+                  const SizedBox(height: 12),
+                  _buildProfileStats(state, isDark),
+                  const SizedBox(height: 12),
+                  _buildJoinDate(_asDateTime(user['createdAt']), isDark),
+                  if (state.isBlocked) const SizedBox(height: 12),
+                  if (state.isBlocked) _buildBlockedBanner(isDark),
+                  const SizedBox(height: 12),
+                  _buildBioSection(user, isDark),
+                  const Spacer(),
+                  _buildActionButtons(context, state, isDark),
+                  const SizedBox(height: 40),
+                ],
+              );
+            }
+
+            return const SizedBox.shrink();
+          },
+        ),
       ),
     );
   }
@@ -138,14 +238,138 @@ class ProfileScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           Text(
-            user['displayName'] ?? "User",
+            user['displayName'] ?? 'User',
             style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
           ),
           Text(
-            user['email'] ?? "",
+            user['email'] ?? '',
             style: TextStyle(color: Colors.grey.shade500, fontSize: 16),
           ),
         ],
+      ),
+    );
+  }
+
+  DateTime? _asDateTime(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    if (value is Timestamp) return value.toDate();
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is String) return DateTime.tryParse(value);
+    return null;
+  }
+
+  String _formatJoinDate(DateTime? createdAt) {
+    if (createdAt == null) return '';
+
+    final now = DateTime.now();
+    final difference = now.difference(createdAt);
+
+    if (difference.inDays > 365) {
+      return 'Joined ${createdAt.year}';
+    } else if (difference.inDays > 30) {
+      return 'Joined ${difference.inDays ~/ 30}mo ago';
+    } else if (difference.inDays > 0) {
+      return 'Joined ${difference.inDays}d ago';
+    } else {
+      return 'Joined today';
+    }
+  }
+
+  String _formatLastActive(DateTime? lastActive) {
+    if (lastActive == null) return 'Offline';
+
+    final now = DateTime.now();
+    final difference = now.difference(lastActive);
+    if (difference.inSeconds < 60) {
+      return 'Active just now';
+    } else if (difference.inMinutes < 60) {
+      return 'Active ${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return 'Active ${difference.inHours}h ago';
+    } else if (difference.inDays < 7) {
+      return 'Active ${difference.inDays}d ago';
+    } else {
+      return 'Last active ${difference.inDays}d ago';
+    }
+  }
+
+  Widget _buildProfileStats(ProfileLoaded state, bool isDark) {
+    if (state.isSelf) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _buildStatItem(state.boardCount.toString(), 'Boards', isDark),
+          _buildStatItem(state.friendCount.toString(), 'Friends', isDark),
+          _buildStatItem(
+            state.isOnline ? '🟢 Online' : _formatLastActive(state.lastActive),
+            'Status',
+            isDark,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatItem(
+    String value,
+    String label,
+    bool isDark, {
+    double height = 52,
+  }) {
+    return Expanded(
+      child: Container(
+        height: height,
+        margin: const EdgeInsets.symmetric(horizontal: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.surfaceDark : Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isDark ? Colors.white10 : Colors.grey.shade200,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Expanded(
+              child: Center(
+                child: Text(
+                  value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildJoinDate(DateTime? createdAt, bool isDark) {
+    if (createdAt == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Text(
+        '⏰ ${_formatJoinDate(createdAt)}',
+        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
       ),
     );
   }
@@ -167,14 +391,43 @@ class ProfileScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              "Bio",
+              'Bio',
               style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey),
             ),
             const SizedBox(height: 8),
             Text(
               user['bio'] ??
-                  "No bio yet. This creator is busy bringing ideas to life!",
+                  'No bio yet. This creator is busy bringing ideas to life!',
               style: const TextStyle(fontSize: 16, height: 1.5),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBlockedBanner(bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF3F2A2A) : const Color(0xFFFFF1F1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isDark ? const Color(0xFFB77979) : const Color(0xFFEFA6A6),
+          ),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.block, size: 16, color: Color(0xFFD64545)),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'You blocked this user. Unblock from the menu to collaborate again.',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
             ),
           ],
         ),
@@ -191,57 +444,373 @@ class ProfileScreen extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: InkWell(
-        onTap: () {
-          if (state.isFriend) {
-            // Add Navigation to Chat later
-          } else {
-            // Use the specific userId passed to the widget
-            context.read<FriendsBloc>().add(SendFriendRequestRequested(userId));
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text("Request Sent!")));
+      child: BlocBuilder<FriendsBloc, FriendsState>(
+        builder: (context, friendsState) {
+          final loaded = friendsState is FriendsLoaded ? friendsState : null;
+          final isFriendInFriendsState =
+              loaded?.friends.any(
+                (friend) => (friend['uid']?.toString() ?? '').trim() == userId,
+              ) ??
+              false;
+          final effectiveIsFriend = state.isFriend || isFriendInFriendsState;
+
+          Map<String, dynamic>? incomingForProfile;
+          Map<String, dynamic>? outgoingForProfile;
+          if (loaded != null) {
+            for (final req in loaded.incomingRequests) {
+              if ((req['fromUid']?.toString() ?? '') == userId) {
+                incomingForProfile = req;
+                break;
+              }
+            }
+            for (final req in loaded.outgoingRequests) {
+              if ((req['toUid']?.toString() ?? '') == userId) {
+                outgoingForProfile = req;
+                break;
+              }
+            }
           }
-        },
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          width: double.infinity,
-          height: 58,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: state.isFriend
-                  ? [const Color(0xFF6A11CB), const Color(0xFF2575FC)]
-                  : [const Color(0xFFFF5F6D), const Color(0xFFFFC371)],
-            ),
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.1),
-                blurRadius: 10,
-                offset: const Offset(0, 5),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                state.isFriend ? Icons.chat_rounded : Icons.person_add_alt_1,
-                color: Colors.white,
-              ),
-              const SizedBox(width: 12),
-              Text(
-                state.isFriend ? "Message" : "Collaborate",
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
+
+          final incomingRequestId = incomingForProfile?['id']?.toString() ?? '';
+          final outgoingRequestId =
+              outgoingForProfile?['requestId']?.toString() ??
+              outgoingForProfile?['id']?.toString() ??
+              '';
+
+          final isAccepting =
+              incomingRequestId.isNotEmpty &&
+              (loaded?.acceptingRequestIds.contains(incomingRequestId) ??
+                  false);
+          final isDeclining =
+              incomingRequestId.isNotEmpty &&
+              (loaded?.decliningRequestIds.contains(incomingRequestId) ??
+                  false);
+          final isCanceling =
+              outgoingRequestId.isNotEmpty &&
+              (loaded?.cancelingRequestIds.contains(outgoingRequestId) ??
+                  false);
+          final isSending =
+              loaded?.sendingRequestTargetUids.contains(userId) ?? false;
+
+          if (!effectiveIsFriend && incomingForProfile != null) {
+            return Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: (isAccepting || isDeclining)
+                        ? null
+                        : () {
+                            context.read<FriendsBloc>().add(
+                              AcceptFriendRequestRequested(
+                                incomingRequestId,
+                                userId,
+                              ),
+                            );
+                          },
+                    icon: isAccepting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.check),
+                    label: Text(
+                      isAccepting ? 'Accepting...' : 'Accept request',
+                    ),
+                  ),
                 ),
+                const SizedBox(width: 10),
+                OutlinedButton.icon(
+                  onPressed: (isAccepting || isDeclining)
+                      ? null
+                      : () {
+                          context.read<FriendsBloc>().add(
+                            DeclineFriendRequestRequested(incomingRequestId),
+                          );
+                        },
+                  icon: isDeclining
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.close),
+                  label: const Text('Decline'),
+                ),
+              ],
+            );
+          }
+
+          if (!effectiveIsFriend && outgoingForProfile != null) {
+            return SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: isCanceling
+                    ? null
+                    : () {
+                        context.read<FriendsBloc>().add(
+                          CancelFriendRequestRequested(
+                            outgoingRequestId,
+                            userId,
+                          ),
+                        );
+                      },
+                icon: isCanceling
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.schedule),
+                label: Text(isCanceling ? 'Canceling...' : 'Request pending'),
               ),
-            ],
-          ),
-        ),
+            );
+          }
+
+          return InkWell(
+            onTap: () {
+              if (state.isBlocked) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'User is blocked. Use the top menu to unblock.',
+                    ),
+                  ),
+                );
+                return;
+              }
+
+              if (effectiveIsFriend) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Messaging is coming soon.')),
+                );
+                return;
+              }
+
+              if (isSending) {
+                return;
+              }
+
+              context.read<FriendsBloc>().add(
+                SendFriendRequestRequested(userId),
+              );
+            },
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              width: double.infinity,
+              height: 58,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: state.isBlocked
+                      ? [const Color(0xFF6B7280), const Color(0xFF374151)]
+                      : effectiveIsFriend
+                      ? [const Color(0xFFD64545), const Color(0xFF8E2DE2)]
+                      : [const Color(0xFFFF5F6D), const Color(0xFFFFC371)],
+                ),
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (isSending)
+                    const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  else
+                    Icon(
+                      state.isBlocked
+                          ? Icons.block
+                          : effectiveIsFriend
+                          ? Icons.chat_rounded
+                          : Icons.person_add_alt_1,
+                      color: Colors.white,
+                    ),
+                  const SizedBox(width: 12),
+                  Text(
+                    state.isBlocked
+                        ? 'Blocked'
+                        : effectiveIsFriend
+                        ? 'Message'
+                        : isSending
+                        ? 'Sending...'
+                        : 'Collaborate',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
+  }
+
+  Future<void> _confirmBlockUser(BuildContext context) async {
+    final friendsBloc = context.read<FriendsBloc>();
+    final profileBloc = context.read<ProfileBloc>();
+    final messenger = ScaffoldMessenger.maybeOf(context);
+
+    final shouldBlock = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Block user?'),
+        content: const Text(
+          'They will be removed from your friends and requests.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Block'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldBlock != true) return;
+
+    try {
+      await friendsBloc.blockUser(userId);
+      profileBloc.add(LoadProfile(userId));
+      messenger?.showSnackBar(const SnackBar(content: Text('User blocked')));
+    } catch (e) {
+      messenger?.showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
+  Future<void> _confirmUnfriendUser(BuildContext context) async {
+    final friendsBloc = context.read<FriendsBloc>();
+    final profileBloc = context.read<ProfileBloc>();
+    final messenger = ScaffoldMessenger.maybeOf(context);
+
+    final shouldUnfriend = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove friend?'),
+        content: const Text(
+          'This will remove the connection from both accounts.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldUnfriend != true) return;
+
+    try {
+      await friendsBloc.unfriendUser(userId);
+      profileBloc.add(LoadProfile(userId));
+      messenger?.showSnackBar(const SnackBar(content: Text('Friend removed')));
+    } catch (e) {
+      messenger?.showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
+  Future<void> _confirmUnblockUser(BuildContext context) async {
+    final friendsBloc = context.read<FriendsBloc>();
+    final profileBloc = context.read<ProfileBloc>();
+    final messenger = ScaffoldMessenger.maybeOf(context);
+
+    final shouldUnblock = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Unblock user?'),
+        content: const Text(
+          'This will allow you to send requests and collaborate again.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Unblock'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldUnblock != true) return;
+
+    try {
+      await friendsBloc.unblockUser(userId);
+      profileBloc.add(LoadProfile(userId));
+      messenger?.showSnackBar(const SnackBar(content: Text('User unblocked')));
+    } catch (e) {
+      messenger?.showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
+  Future<void> _reportUser(BuildContext context) async {
+    final friendsBloc = context.read<FriendsBloc>();
+    final messenger = ScaffoldMessenger.maybeOf(context);
+
+    final reasonController = TextEditingController();
+    final reason = await showDialog<String?>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Report user'),
+        content: TextField(
+          controller: reasonController,
+          minLines: 3,
+          maxLines: 5,
+          decoration: const InputDecoration(hintText: 'Optional reason'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, null),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, reasonController.text.trim()),
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+    reasonController.dispose();
+
+    if (reason == null) return;
+
+    try {
+      await friendsBloc.reportUser(userId, reason: reason);
+      messenger?.showSnackBar(
+        const SnackBar(content: Text('Report submitted')),
+      );
+    } catch (e) {
+      messenger?.showSnackBar(SnackBar(content: Text(e.toString())));
+    }
   }
 }

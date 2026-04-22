@@ -2,10 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'auth_repository.dart';
-import '../../../core/utils/helpers.dart'; // FIX: Use centralized helper for search keywords
 import '../../../core/services/firestore_service.dart';
 import '../../../core/services/auth_service.dart';
-import 'dart:developer' as developer;
 
 class FirebaseAuthRepository implements AuthRepository {
   final AuthService _authService;
@@ -25,6 +23,12 @@ class FirebaseAuthRepository implements AuthRepository {
   User? get currentUser => _authService.getCurrentUser();
 
   @override
+  Future<Map<String, dynamic>?> getUserData(String uid) async {
+    final doc = await _firestoreService.collection('users').doc(uid).get();
+    return doc.data();
+  }
+
+  @override
   Future<User?> signInWithGoogle() async {
     try {
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
@@ -40,77 +44,65 @@ class FirebaseAuthRepository implements AuthRepository {
       final UserCredential userCredential = await _authService
           .getInstance()
           .signInWithCredential(credential);
-      final User? user = userCredential.user;
-
-      if (user != null) {
-        // 1. CHECK IF USER EXISTS FIRST
-        final userDoc = await _firestoreService
-            .collection('users')
-            .doc(user.uid)
-            .get();
-
-        if (!userDoc.exists) {
-          // 2. Only register if they are a NEW user
-          developer.log("New Google user. Registering...");
-          await registerUserInFirestore(user, displayName: user.displayName);
-        } else {
-          // 3. If they exist, ONLY update presence/activity, NOT the whole profile
-          developer.log("Existing Google user. Updating activity...");
-          await _firestoreService.collection('users').doc(user.uid).update({
-            'lastActive': FieldValue.serverTimestamp(),
-            'isOnline': true,
-          });
-        }
-      }
-
-      return user;
-    } on FirebaseAuthException catch (e, stackTrace) {
-      developer.log(
-        "Google Sign-In Auth Error",
-        error: e,
-        stackTrace: stackTrace,
-      );
+      return userCredential.user;
+    } on FirebaseAuthException catch (e) {
       throw _mapFirebaseAuthError(e);
-    } catch (e, stackTrace) {
-      developer.log(
-        "Google Sign-In Unknown Error",
-        error: e,
-        stackTrace: stackTrace,
-      );
-      throw "An unexpected error occurred. Please try again.";
     }
   }
 
   @override
-  Future<void> registerUserInFirestore(User user, {String? displayName}) async {
-    try {
-      final String finalName =
-          displayName ?? user.displayName ?? "InkLink Creator";
+  Future<void> upsertUserData(String uid, Map<String, dynamic> data) async {
+    await _firestoreService
+        .collection('users')
+        .doc(uid)
+        .set(data, SetOptions(merge: true));
+  }
 
-      final userData = {
-        'uid': user.uid,
-        'email': user.email,
-        'displayName': finalName,
-        'photoURL': user.photoURL ?? '',
-        'isOnline': true,
-        'createdAt': FieldValue.serverTimestamp(),
-        'lastActive': FieldValue.serverTimestamp(),
-        'searchKeywords': generateSearchKeywords(
-          finalName,
-        ), // FIX: Use centralized helper
-        // No 'bio' here, so we MUST use merge: true
-      };
+  @override
+  Future<void> syncFcmToken(String uid, String token) {
+    return upsertUserData(uid, {
+      'fcmToken': token,
+      'fcmTokens': FieldValue.arrayUnion([token]),
+      'lastActive': FieldValue.serverTimestamp(),
+    });
+  }
 
-      // FIX: Use SetOptions(merge: true) to prevent wiping existing fields like 'bio'
-      await _firestoreService
-          .collection('users')
-          .doc(user.uid)
-          .set(userData, SetOptions(merge: true));
+  @override
+  Future<void> removeFcmTokenOnSignOut(String uid, {String? token}) {
+    final userUpdates = <String, dynamic>{
+      'fcmToken': FieldValue.delete(),
+      'lastActive': FieldValue.serverTimestamp(),
+    };
 
-      developer.log("User doc processed with merge: true");
-    } catch (e) {
-      developer.log("Firestore Save Error", error: e);
+    if (token != null && token.isNotEmpty) {
+      userUpdates['fcmTokens'] = FieldValue.arrayRemove([token]);
     }
+
+    return upsertUserData(uid, userUpdates);
+  }
+
+  @override
+  Future<void> upsertUserProfile({
+    required String uid,
+    required String? email,
+    required String displayName,
+    required String photoURL,
+    required List<String> searchKeywords,
+    required bool isNewUser,
+  }) {
+    return upsertUserData(uid, {
+      'uid': uid,
+      'email': email,
+      'displayName': displayName,
+      'photoURL': photoURL,
+      'lastActive': FieldValue.serverTimestamp(),
+      'searchKeywords': searchKeywords,
+      if (isNewUser) 'createdAt': FieldValue.serverTimestamp(),
+      if (isNewUser) 'friendCount': 0,
+      if (isNewUser) 'boardCount': 0,
+      if (isNewUser) 'ownedBoards': <String>[],
+      if (isNewUser) 'joinedBoards': <String>[],
+    });
   }
 
   @override
@@ -119,17 +111,7 @@ class FirebaseAuthRepository implements AuthRepository {
       final credential = await _authService
           .getInstance()
           .createUserWithEmailAndPassword(email: email, password: password);
-      final user = credential.user;
-
-      if (user != null) {
-        // 1. Update Auth Profile
-        await user.updateDisplayName(name);
-
-        // 2. PASS THE NAME MANUALLY HERE
-        // This bypasses the null check on the stale 'user' object
-        await registerUserInFirestore(user, displayName: name);
-      }
-      return user;
+      return credential.user;
     } on FirebaseAuthException catch (e) {
       throw _mapFirebaseAuthError(e);
     } catch (e) {

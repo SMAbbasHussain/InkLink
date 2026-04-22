@@ -1,4 +1,4 @@
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 
 part 'user_model.g.dart';
 
@@ -25,11 +25,23 @@ class UserModel {
   /// URL to user's profile photo stored in Cloudflare R2
   String? photoURL;
 
+  /// Cached count of friends.
+  int friendCount = 0;
+
+  /// Cached count of owned boards.
+  int boardCount = 0;
+
   /// Timestamp when the user was created
   late DateTime createdAt;
 
   /// Timestamp when the user profile was last updated
   DateTime? updatedAt;
+
+  /// Whether the user is currently online
+  bool? isOnline;
+
+  /// Timestamp of user's last activity
+  DateTime? lastActive;
 
   UserModel({
     this.id,
@@ -38,8 +50,12 @@ class UserModel {
     required this.email,
     this.bio,
     this.photoURL,
+    this.friendCount = 0,
+    this.boardCount = 0,
     required this.createdAt,
     this.updatedAt,
+    this.isOnline,
+    this.lastActive,
   });
 
   /// Convert from Firestore user data (Map) to UserModel
@@ -50,8 +66,12 @@ class UserModel {
       email: data['email'] ?? '',
       bio: data['bio'],
       photoURL: data['photoURL'],
+      friendCount: (data['friendCount'] as num?)?.toInt() ?? 0,
+      boardCount: (data['boardCount'] as num?)?.toInt() ?? 0,
       createdAt: (data['createdAt'] as dynamic)?.toDate() ?? DateTime.now(),
       updatedAt: (data['updatedAt'] as dynamic)?.toDate(),
+      isOnline: data['isOnline'] as bool?,
+      lastActive: (data['lastActive'] as dynamic)?.toDate(),
     );
   }
 
@@ -62,7 +82,11 @@ class UserModel {
       'email': email,
       'bio': bio,
       'photoURL': photoURL,
+      'friendCount': friendCount,
+      'boardCount': boardCount,
       'updatedAt': updatedAt ?? DateTime.now(),
+      'isOnline': isOnline,
+      'lastActive': lastActive,
     };
   }
 }

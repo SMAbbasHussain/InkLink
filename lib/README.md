@@ -1,6 +1,21 @@
-# InkLink - lib Architecture
+# InkLink lib/ Architecture
 
-This document describes the current implementation in the lib folder.
+This document captures the current Flutter client structure in lib/.
+
+## High-Level Layering
+
+Dependency flow:
+
+UI (screens/widgets) -> BLoC -> Domain Service -> Repository -> Backend/DB
+
+Key contract:
+
+- Screen files are UI-only and dispatch events.
+- BLoCs coordinate state and call domain services.
+- Domain services own orchestration and business rules.
+- Repositories are data-access only.
+
+Guardrails are enforced by tool/architecture_guardrails.dart.
 
 ## Folder Structure
 
@@ -13,177 +28,131 @@ lib/
 |   |-- constants/
 |   |-- crdt/
 |   |-- database/
-|   |   |-- collections/
-|   |   `-- database_service.dart
 |   |-- services/
 |   |   |-- auth_service.dart
+|   |   |-- cloud_functions_service.dart
 |   |   |-- firestore_service.dart
-|   |   `-- cloud_functions_service.dart
+|   |   |-- local_notification_service.dart
+|   |   `-- messaging_service.dart
 |   |-- theme/
 |   `-- utils/
 |-- domain/
 |   |-- models/
-|   `-- repositories/
+|   |-- repositories/
+|   |   |-- auth/
+|   |   |-- board/
+|   |   |-- canvas/
+|   |   |-- friends/
+|   |   |-- invitation/
+|   |   |-- notification/
+|   |   |-- presence/
+|   |   |-- profile/
+|   |   |-- settings/
+|   |   `-- theme/
+|   `-- services/
 |       |-- auth/
 |       |-- board/
 |       |-- canvas/
+|       |-- friends/
+|       |-- invitation/
+|       |-- notification/
+|       |-- presence/
 |       |-- profile/
 |       |-- settings/
-|       |-- social/
 |       `-- theme/
 `-- features/
     |-- auth/
+    |-- board_invitations/
     |-- canvas/
     |-- dashboard/
     |-- friends/
     |-- navigation/
+    |-- notifications/
     |-- profile/
     |-- settings/
     `-- theme/
 ```
 
-## Startup and Dependency Composition
+## Startup and Composition
 
-`main.dart` is the composition root.
+main.dart is the composition root.
 
-Current startup flow:
+Current startup sequence:
 
-1. Initialize Flutter bindings.
-2. Initialize Firebase with `DefaultFirebaseOptions.currentPlatform`.
-3. Load initial theme from `ThemeRepositoryImpl`.
-4. Initialize local database service.
-5. Build `MultiRepositoryProvider`.
-6. Build `MultiBlocProvider`.
-7. Start app with `MyApp` -> `AppView`.
+1. Initialize Flutter bindings and load .env.
+2. Initialize Firebase via DefaultFirebaseOptions.currentPlatform.
+3. Initialize notifications (local + messaging listeners).
+4. Initialize theme and local database services.
+5. Build app providers in this order:
+   - Infrastructure services
+   - Repositories
+   - Domain services
+   - BLoCs
 
-Provided services in app scope:
+Important composition detail:
 
-- `FirestoreService`
-- `AuthService`
-- `CloudFunctionsService`
-- `DatabaseService`
+- Provider order matters for dependent services (for example PresenceService before AuthSessionService).
 
-Provided repositories in app scope:
+## App-Level Providers
 
-- `AuthRepository`
-- `SocialRepository`
-- `ProfileRepository`
-- `BoardRepository`
-- `CanvasSyncRepository`
-- `SettingsRepository`
+Main app scope includes:
 
-Provided BLoCs in app scope:
-
-- `ThemeBloc`
-- `NavBloc`
-- `DashboardBloc`
-- `AuthBloc`
-- `FriendsBloc`
+- Infrastructure services: FirestoreService, AuthService, CloudFunctionsService, MessagingService, ThemeService, LocalDatabaseService.
+- Repositories: Auth, Presence, Friends, Profile, Board, CanvasSync, Settings, Notification, Invitation.
+- Domain services: Presence, AuthSession, Friends, Settings, Notification, Invitation, Board, Profile.
+- App-level BLoCs: ThemeBloc, NavBloc, DashboardBloc, AuthBloc, FriendsBloc, NotificationsBloc, BoardInvitationsBloc.
 
 ## Routing and Feature Composition
 
-`app_view.dart` routes by auth state:
+Routing entry:
 
-- `Authenticated` -> `MainWrapper`
-- All unauthenticated/loading/error auth states -> `LoginScreen`
+- app_view.dart routes Authenticated users to MainWrapper.
+- Unauthenticated/loading/error auth states route to LoginScreen.
 
-`MainWrapper` owns tab shell composition:
+Main wrapper responsibilities:
 
-- Tab 0: `HomeScreen`
-- Tab 1: `FriendsScreen`
-- Tab 2: `SettingsScreen` wrapped in a `SettingsBloc` provider
+- Hosts Home, Friends, and Settings tabs.
+- Observes app lifecycle and updates online/offline presence.
 
-Route-level BLoC composition helpers:
+Route-level builders:
 
-- `features/canvas/view/canvas_route.dart` creates `CanvasBloc` and dispatches board sync/init events.
-- `features/profile/view/profile_route.dart` creates `ProfileBloc` and dispatches profile load.
+- features/canvas/view/canvas_route.dart
+- features/profile/view/profile_route.dart
+- features/notifications/view/notifications_route.dart
 
-This keeps `*_screen.dart` files focused on UI + event dispatch.
+These provide feature-scoped dependencies so screen files stay focused on rendering and dispatching events.
 
-## Domain Layer Pattern
+## Current Feature Coverage
 
-Repository pattern is standardized as interface + implementation per folder:
+- Auth: session restore, email/password auth, Google sign-in, sign-out.
+- Dashboard: board list and board create/join/update/delete actions.
+- Canvas: CRDT-based board sync and session-scoped editing state.
+- Friends: search, request lifecycle, block/report/unfriend flows.
+- Invitations: board invite inbox and decisions.
+- Notifications: stream and lifecycle updates.
+- Profile: profile load/update and image upload workflow.
+- Settings: preferences and cache-related actions.
+- Theme + Navigation: app-wide visual mode and tab state.
 
-- `auth/auth_repository.dart` + `auth/auth_repository_impl.dart`
-- `board/board_repository.dart` + `board/board_repository_impl.dart`
-- `canvas/canvas_sync_repository.dart` + `canvas/canvas_sync_repository_impl.dart`
-- `profile/profile_repository.dart` + `profile/profile_repository_impl.dart`
-- `settings/settings_repository.dart` + `settings/settings_repository_impl.dart`
-- `social/social_repository.dart` + `social/social_repository_impl.dart`
-- `theme/theme_repository.dart` + `theme/theme_repository_impl.dart`
+## Guardrails and Validation
 
-## Feature Notes
+Architecture checks:
 
-### auth
+- No direct Firebase singleton use outside approved core paths.
+- No repository/core DB imports in BLoCs.
+- No repository/service imports in feature screen files.
+- No Cloud Functions imports/calls from repository files.
+- No repository imports of domain services.
 
-- `AuthBloc` handles auth check, email/password auth, Google sign-in, and sign-out.
-- `Authenticated` state currently carries `userName`, `uid`, `email`, and `photoUrl`.
-
-### dashboard
-
-- `DashboardBloc` owns board list streams and board actions.
-- Supports create/join/rename/delete board.
-- Uses one-shot effect fields in state: `joinedBoardId`, `createdBoardId`, `actionError`.
-
-### canvas
-
-- `CanvasBloc` is route-scoped per board session via `buildCanvasRoute`.
-- Initializes CRDT sync and board sync on route entry.
-
-### friends
-
-- `FriendsBloc` handles friend requests and social interactions via `SocialRepository`.
-
-### profile
-
-- `ProfileBloc` is composed at route level via `buildProfileRoute`.
-
-### settings
-
-- `SettingsBloc` manages tray tip preference and local cache clear actions.
-- Uses `SettingsRepository`.
-
-### navigation
-
-- `NavBloc` controls tab index with `ChangeTab` events.
-
-### theme
-
-- `ThemeBloc` controls app `ThemeMode` and persistence.
-
-## Architecture Guardrails
-
-Guardrail script:
-
-- `tool/architecture_guardrails.dart`
-
-Current checks:
-
-1. Blocks direct Firebase singleton use outside approved core paths.
-2. Blocks direct repository mutation calls from view files.
-3. Blocks direct service/repository access from feature screen files.
-4. Blocks direct service/repository imports in feature screen files.
-
-Run locally:
+Run before significant refactors:
 
 ```bash
 dart run tool/architecture_guardrails.dart
+flutter analyze
+flutter test
 ```
 
-CI workflow:
+## Related Docs
 
-- `.github/workflows/architecture-guardrails.yml`
-
-Workflow steps:
-
-1. `dart run tool/architecture_guardrails.dart`
-2. `flutter analyze`
-3. `flutter test`
-
-## Working Rules for New Code
-
-1. Add data access in services/repositories, not in screen files.
-2. Add feature business logic in BLoC classes.
-3. Compose new BLoCs in app root or route/wrapper files.
-4. Keep screens focused on rendering and dispatching events.
-5. Run guardrails, analyze, and tests before pushing.
+- Project overview and setup: ../README.md
+- Backend callable functions and conventions: ../functions/README.md

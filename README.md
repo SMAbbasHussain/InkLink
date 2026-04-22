@@ -1,90 +1,58 @@
 # InkLink
 
-InkLink is a Flutter app for real-time collaborative canvas workspaces with Firebase-backed sync and a BLoC + repository architecture.
+InkLink is a Flutter app for collaborative canvases with Firebase-backed realtime sync, offline cache support, and a service-first BLoC architecture.
 
-## Current Implementation Snapshot
+## Current Status
 
-- Flutter app with feature modules under `lib/features`.
-- Firebase integration for Auth, Firestore, and Cloud Functions.
-- Local persistence and offline-friendly state via Isar.
-- Collaborative canvas sync through CRDT update streams.
-- Architecture guardrails enforced locally and in GitHub Actions.
+- Flutter client in lib/ with modular feature folders.
+- Firebase Auth, Firestore, Realtime Database presence, Cloud Functions, and FCM integrations.
+- Isar-backed local cache and settings storage.
+- Canvas collaboration powered by CRDT sync.
+- Social graph + board invitation + notifications flows are implemented.
+- Architecture guardrails are enforced locally and in CI.
 
 ## Architecture
 
-The app follows this flow:
+Layer flow:
 
-`UI (screens/widgets)` -> `BLoC` -> `Repository` -> `Services` -> `Firebase/Local DB`
+UI (screens/widgets) -> BLoC -> Domain Service -> Repository -> Backend/DB
 
-Composition happens at app and route boundaries:
+Rules enforced by tool/architecture_guardrails.dart:
 
-- `lib/main.dart` wires service and repository dependencies and app-level BLoCs.
-- Route/wrapper files create feature-scoped BLoCs when needed.
-- Screen files stay UI-focused and dispatch events to BLoCs.
+- Screen files remain UI/event-dispatch only.
+- BLoCs depend on domain services, not repositories.
+- Repositories are data-access only.
+- Domain services own orchestration/business rules.
+- Direct Firebase singleton usage is restricted to approved core wrappers.
+- Repositories do not call Cloud Functions directly.
 
-## Key Modules
+Composition roots:
 
-- `lib/features/auth`: sign in, sign up, session bootstrap.
-- `lib/features/dashboard`: board listing and board creation flow.
-- `lib/features/canvas`: collaborative board canvas state and sync.
-- `lib/features/friends`: friend requests and social graph actions.
-- `lib/features/profile`: profile load/update UI flow.
-- `lib/features/settings`: settings state via `SettingsBloc` + repository.
-- `lib/features/navigation`: bottom navigation shell and tab switching.
-- `lib/features/theme`: app theme state and persistence.
+- lib/main.dart wires services, repositories, domain services, and app-level BLoCs.
+- Route-level builders (for example canvas/profile/notifications routes) provide scoped BLoCs and services.
+- lib/features/navigation/view/main_wrapper.dart manages tab shell and app lifecycle presence updates.
 
-## Data and Security
+## Feature Areas
 
-- Firestore rules enforce owner/member board access and friend-request constraints.
-- Board reads allow owner or member access.
-- CRDT update writes are constrained to board members and source client checks.
-
-## Firebase Options and API Keys
-
-`lib/firebase_options.dart` is generated client configuration and should be committed.
-
-- The values there (including Firebase API keys) are client app identifiers, not server secrets.
-- Real protection must come from Firebase Security Rules, Auth checks, and backend authorization.
-- Do not commit service account private keys or other server-side secrets.
-
-## Guardrails
-
-Architecture checks live in:
-
-- `tool/architecture_guardrails.dart`
-
-Current enforced rules include:
-
-1. No direct Firebase singleton access outside approved core paths.
-2. No direct repository mutation calls from view files.
-3. No direct repository/service reads from feature screen files.
-4. No direct repository/service imports in feature screen files.
-
-## CI Behavior
-
-GitHub workflow:
-
-- `.github/workflows/architecture-guardrails.yml`
-
-Runs on:
-
-- Every pull request.
-- Pushes to `main` and `master`.
-
-The workflow executes:
-
-1. `dart run tool/architecture_guardrails.dart`
-2. `flutter analyze`
-3. `flutter test`
+- lib/features/auth: email/password + Google auth and session bootstrap.
+- lib/features/dashboard: boards listing and board CRUD entry points.
+- lib/features/canvas: board editing, CRDT sync initialization.
+- lib/features/friends: requests, friend actions, block/report/unfriend flows.
+- lib/features/board_invitations: invite inbox and accept/decline.
+- lib/features/notifications: in-app notification stream.
+- lib/features/profile: profile load/update and photo flow.
+- lib/features/settings: settings state and cache actions.
+- lib/features/theme and lib/features/navigation: global app state.
 
 ## Local Development
 
 ### Prerequisites
 
-- Flutter SDK (stable channel)
-- Firebase project configured for target platforms
+- Flutter SDK (stable)
+- Firebase project configured for client platforms
+- .env file at repo root (copy from .env.example and fill values)
 
-### Setup
+### Install
 
 ```bash
 flutter pub get
@@ -96,7 +64,7 @@ flutter pub get
 flutter run
 ```
 
-### Run Quality Checks
+### Quality Gates
 
 ```bash
 dart run tool/architecture_guardrails.dart
@@ -104,17 +72,38 @@ flutter analyze
 flutter test
 ```
 
-## Project Layout (Top Level)
+## Cloud Functions (Backend)
 
-```text
-lib/                  Flutter app source
-functions/            Firebase Cloud Functions (Node.js)
-tool/                 Project tooling scripts (including guardrails)
-.github/workflows/    CI workflows
+Backend callable functions live in functions/.
+
+```bash
+cd functions
+npm install
+npm run serve
 ```
 
-## Additional Documentation
+See functions/README.md for the full backend guide and function conventions.
 
-For deeper lib-layer documentation, see:
+## Security and Configuration Notes
 
-- `lib/README.md`
+- Commit lib/firebase_options.dart (generated client config).
+- Do not commit service-account credentials or other server-only secrets.
+- Keep firestore.rules and database.rules.json aligned with backend behavior.
+- Keep Firestore path constants aligned between:
+	- lib/core/constants/firestore_paths.dart
+	- functions/src/utils/firestore_paths.js
+
+## CI
+
+GitHub Actions workflow .github/workflows/architecture-guardrails.yml runs on PRs and main/master pushes and executes:
+
+1. flutter pub get
+2. dart run tool/architecture_guardrails.dart
+3. flutter analyze
+4. flutter test
+
+## Documentation Map
+
+- Root overview: README.md
+- App architecture details: lib/README.md
+- Cloud Functions details: functions/README.md

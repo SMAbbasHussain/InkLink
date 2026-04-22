@@ -5,17 +5,7 @@ abstract class CanvasEvent {
   const CanvasEvent();
 }
 
-/// Create a new board (used by dashboard)
-class CreateBoardRequested extends CanvasEvent {
-  const CreateBoardRequested();
-}
-
-/// Start board metadata sync (title, ownership, etc.)
-class CanvasStartBoardSyncRequested extends CanvasEvent {
-  const CanvasStartBoardSyncRequested();
-}
-
-/// Rename current board
+/// Rename current board through BoardService.
 class CanvasRenameBoardRequested extends CanvasEvent {
   final String newName;
 
@@ -32,8 +22,16 @@ class CanvasInitializeCrdt extends CanvasEvent {
 /// Internal board metadata update from repository stream
 class CanvasBoardTitleUpdated extends CanvasEvent {
   final String? title;
+  final String currentUserRole;
 
-  const CanvasBoardTitleUpdated(this.title);
+  const CanvasBoardTitleUpdated(this.title, {this.currentUserRole = 'viewer'});
+}
+
+/// Board metadata is no longer available (deleted or access lost).
+class CanvasBoardUnavailable extends CanvasEvent {
+  final String message;
+
+  const CanvasBoardUnavailable(this.message);
 }
 
 /// Update canvas from remote CRDT changes
@@ -129,4 +127,10 @@ class CanvasShowTrayTips extends CanvasEvent {
 /// Dismiss tray tips overlay
 class CanvasDismissTrayTips extends CanvasEvent {
   const CanvasDismissTrayTips();
+}
+
+class CanvasSaveBoardPreviewRequested extends CanvasEvent {
+  final Uint8List pngBytes;
+
+  const CanvasSaveBoardPreviewRequested(this.pngBytes);
 }

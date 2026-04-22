@@ -1,0 +1,229 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import '../../../features/canvas/view/canvas_route.dart';
+import '../bloc/board_invitations_bloc.dart';
+
+class BoardInvitesScreen extends StatefulWidget {
+  const BoardInvitesScreen({super.key});
+
+  @override
+  State<BoardInvitesScreen> createState() => _BoardInvitesScreenState();
+}
+
+class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
+  bool _loadRequested = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _requestLoad();
+  }
+
+  void _requestLoad() {
+    if (!_loadRequested) {
+      _loadRequested = true;
+      context.read<BoardInvitationsBloc>().add(
+        const BoardInvitationsLoadRequested(),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocConsumer<BoardInvitationsBloc, BoardInvitationsState>(
+      listener: (context, state) {
+        if (state is BoardInvitationsLoaded && state.message != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(state.message!),
+              backgroundColor: state.isError ? Colors.red : null,
+            ),
+          );
+
+          if (state.openedBoardId != null && !state.isError) {
+            Navigator.push(
+              context,
+              buildCanvasRoute(
+                context,
+                boardId: state.openedBoardId!,
+                showTrayTipsOnEntry: true,
+              ),
+            );
+          }
+        }
+      },
+      builder: (context, state) {
+        if (state is BoardInvitationsInitial ||
+            state is BoardInvitationsLoading) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (state is BoardInvitationsError) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Board Invites')),
+            body: Center(child: Text(state.message)),
+          );
+        }
+
+        final loaded = state as BoardInvitationsLoaded;
+        return Scaffold(
+          appBar: AppBar(title: const Text('Board Invites')),
+          body: Column(
+            children: [
+              if (loaded.isOffline)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.amber.withOpacity(0.45)),
+                    ),
+                    child: const Text(
+                      'Offline mode: showing cached board invites.',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: loaded.invites.isEmpty
+                    ? const Center(child: Text('No pending invites.'))
+                    : ListView.separated(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: loaded.invites.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 12),
+                        itemBuilder: (context, index) {
+                          final invite = loaded.invites[index];
+                          final inviteId = invite['id']?.toString() ?? '';
+                          final boardId = invite['boardId']?.toString() ?? '';
+                          final boardTitle =
+                              invite['boardTitle']?.toString() ??
+                              'Untitled Board';
+                          final senderName =
+                              invite['senderName']?.toString() ??
+                              'InkLink User';
+                          final senderPic = invite['senderPic']?.toString();
+                          final expiresAt = invite['expiresAt'];
+
+                          return Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      CircleAvatar(
+                                        backgroundImage:
+                                            senderPic != null &&
+                                                senderPic.isNotEmpty
+                                            ? NetworkImage(senderPic)
+                                            : null,
+                                        child:
+                                            senderPic == null ||
+                                                senderPic.isEmpty
+                                            ? Text(
+                                                senderName.isEmpty
+                                                    ? 'I'
+                                                    : senderName[0]
+                                                          .toUpperCase(),
+                                              )
+                                            : null,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              senderName,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            Text(
+                                              'invited you to "$boardTitle"',
+                                            ),
+                                            if (expiresAt != null) ...[
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                'Invite has an expiration window',
+                                                style: TextStyle(
+                                                  color: Colors.grey.shade600,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: OutlinedButton(
+                                          onPressed: inviteId.isEmpty
+                                              ? null
+                                              : () {
+                                                  context
+                                                      .read<
+                                                        BoardInvitationsBloc
+                                                      >()
+                                                      .add(
+                                                        BoardInvitationDeclineRequested(
+                                                          inviteId,
+                                                        ),
+                                                      );
+                                                },
+                                          child: const Text('Decline'),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: ElevatedButton(
+                                          onPressed:
+                                              inviteId.isEmpty ||
+                                                  boardId.isEmpty
+                                              ? null
+                                              : () {
+                                                  context
+                                                      .read<
+                                                        BoardInvitationsBloc
+                                                      >()
+                                                      .add(
+                                                        BoardInvitationAcceptRequested(
+                                                          inviteId,
+                                                          boardId: boardId,
+                                                        ),
+                                                      );
+                                                },
+                                          child: const Text('Accept'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}

@@ -2,8 +2,8 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:rxdart/rxdart.dart';
 import '../../../domain/models/board.dart';
-import '../../../domain/repositories/board/board_repository.dart';
-import '../../../domain/repositories/profile/profile_repository.dart';
+import '../../../domain/services/board/board_service.dart';
+import '../../../domain/services/profile/profile_service.dart';
 
 // States
 abstract class DashboardState {}
@@ -15,6 +15,7 @@ class DashboardLoaded extends DashboardState {
   final List<Board> joinedBoards;
   final Map<String, dynamic>? currentUserProfile;
   final String? actionError;
+  final String? actionInfo;
   final String? joinedBoardId;
   final String? createdBoardId;
 
@@ -23,6 +24,7 @@ class DashboardLoaded extends DashboardState {
     required this.joinedBoards,
     this.currentUserProfile,
     this.actionError,
+    this.actionInfo,
     this.joinedBoardId,
     this.createdBoardId,
   });
@@ -32,6 +34,7 @@ class DashboardLoaded extends DashboardState {
     List<Board>? joinedBoards,
     Object? currentUserProfile = _unset,
     Object? actionError = _unset,
+    Object? actionInfo = _unset,
     Object? joinedBoardId = _unset,
     Object? createdBoardId = _unset,
   }) {
@@ -44,6 +47,9 @@ class DashboardLoaded extends DashboardState {
       actionError: actionError == _unset
           ? this.actionError
           : actionError as String?,
+      actionInfo: actionInfo == _unset
+          ? this.actionInfo
+          : actionInfo as String?,
       joinedBoardId: joinedBoardId == _unset
           ? this.joinedBoardId
           : joinedBoardId as String?,
@@ -72,8 +78,42 @@ class DashboardJoinBoardRequested extends DashboardEvent {
 
 class DashboardCreateBoardRequested extends DashboardEvent {
   final String? title;
+  final String visibility;
+  final String privateJoinPolicy;
+  final String whoCanInvite;
+  final String defaultLinkJoinRole;
+  final String inviteTargetRole;
+  final List<String> tags;
+  final List<String> invitedUserIds;
+  final int inviteExpiryHours;
 
-  DashboardCreateBoardRequested({this.title});
+  DashboardCreateBoardRequested({
+    this.title,
+    required this.visibility,
+    required this.privateJoinPolicy,
+    this.whoCanInvite = Board.inviteOwnerOnly,
+    this.defaultLinkJoinRole = Board.roleViewer,
+    this.inviteTargetRole = Board.roleViewer,
+    this.tags = const [],
+    this.invitedUserIds = const [],
+    this.inviteExpiryHours = 72,
+  });
+}
+
+class DashboardUpdateBoardSettingsRequested extends DashboardEvent {
+  final String boardId;
+  final String visibility;
+  final String privateJoinPolicy;
+  final String whoCanInvite;
+  final String defaultLinkJoinRole;
+
+  DashboardUpdateBoardSettingsRequested({
+    required this.boardId,
+    required this.visibility,
+    required this.privateJoinPolicy,
+    required this.whoCanInvite,
+    required this.defaultLinkJoinRole,
+  });
 }
 
 class DashboardRenameBoardRequested extends DashboardEvent {
@@ -110,13 +150,13 @@ class LoadDashboardRequested extends DashboardEvent {}
 const Object _unset = Object();
 
 class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
-  final BoardRepository boardRepo;
-  final ProfileRepository profileRepo;
+  final BoardService boardService;
+  final ProfileService profileService;
   StreamSubscription<List<List<Board>>>? _dashboardSub;
   StreamSubscription<Map<String, dynamic>?>? _profileSub;
   Map<String, dynamic>? _latestCurrentUserProfile;
 
-  DashboardBloc({required this.boardRepo, required this.profileRepo})
+  DashboardBloc({required this.boardService, required this.profileService})
     : super(DashboardInitial()) {
     on<LoadDashboardRequested>(_onLoadDashboardRequested);
     on<_UpdateDashboardData>(_onUpdateDashboardData);
@@ -124,6 +164,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     on<DashboardJoinBoardRequested>(_onDashboardJoinBoardRequested);
     on<DashboardRenameBoardRequested>(_onDashboardRenameBoardRequested);
     on<DashboardDeleteBoardRequested>(_onDashboardDeleteBoardRequested);
+    on<DashboardUpdateBoardSettingsRequested>(
+      _onDashboardUpdateBoardSettingsRequested,
+    );
     on<DashboardConsumeEffects>(_onDashboardConsumeEffects);
     on<DashboardWatchCurrentUserProfileRequested>(
       _onDashboardWatchCurrentUserProfileRequested,
@@ -136,12 +179,12 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     Emitter<DashboardState> emit,
   ) async {
     _dashboardSub?.cancel();
-    await boardRepo.startBoardsSync();
+    await boardService.startBoardsSync();
 
     _dashboardSub =
         Rx.combineLatest2<List<Board>, List<Board>, List<List<Board>>>(
-          boardRepo.getOwnedBoards(),
-          boardRepo.getJoinedBoards(),
+          boardService.getOwnedBoards(),
+          boardService.getJoinedBoards(),
           (owned, joined) => <List<Board>>[owned, joined],
         ).listen((combined) {
           add(_UpdateDashboardData(combined[0], combined[1]));
@@ -159,6 +202,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           ownedBoards: event.owned,
           joinedBoards: event.joined,
           actionError: null,
+          actionInfo: null,
         ),
       );
       return;
@@ -185,7 +229,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       return;
     }
 
-    _profileSub = profileRepo.getUserByIdStream(event.userId!).listen((data) {
+    _profileSub = profileService.watchUserById(event.userId!).listen((data) {
       add(_UpdateCurrentUserProfile(data));
     });
   }
@@ -207,7 +251,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     Emitter<DashboardState> emit,
   ) async {
     try {
-      await boardRepo.joinBoard(event.boardId);
+      await boardService.joinBoard(event.boardId);
       final current = state;
       if (current is DashboardLoaded) {
         emit(current.copyWith(joinedBoardId: event.boardId, actionError: null));
@@ -215,7 +259,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     } catch (e) {
       final current = state;
       if (current is DashboardLoaded) {
-        emit(current.copyWith(actionError: 'Failed to join: $e'));
+        emit(current.copyWith(actionError: _humanizeError(e)));
       }
     }
   }
@@ -225,18 +269,66 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     Emitter<DashboardState> emit,
   ) async {
     try {
-      final boardId = await boardRepo.createNewBoard(
-        event.title ?? 'Untitled Board',
+      final createResult = await boardService.createBoard(
+        title: event.title,
+        visibility: event.visibility,
+        privateJoinPolicy: event.privateJoinPolicy,
+        whoCanInvite: event.whoCanInvite,
+        defaultLinkJoinRole: event.defaultLinkJoinRole,
+        inviteTargetRole: event.inviteTargetRole,
+        tags: event.tags,
+        invitedUserIds: event.invitedUserIds,
+        inviteExpiryHours: event.inviteExpiryHours,
       );
 
       final current = state;
       if (current is DashboardLoaded) {
-        emit(current.copyWith(createdBoardId: boardId, actionError: null));
+        final warningText = createResult.unresolvedEmails.isEmpty
+            ? null
+            : 'Board created, but these emails were not found: ${createResult.unresolvedEmails.join(', ')}';
+
+        emit(
+          current.copyWith(
+            createdBoardId: createResult.boardId,
+            actionError: null,
+            actionInfo: warningText,
+          ),
+        );
       }
     } catch (e) {
       final current = state;
       if (current is DashboardLoaded) {
-        emit(current.copyWith(actionError: 'Failed to create board: $e'));
+        emit(current.copyWith(actionError: _humanizeError(e)));
+      }
+    }
+  }
+
+  Future<void> _onDashboardUpdateBoardSettingsRequested(
+    DashboardUpdateBoardSettingsRequested event,
+    Emitter<DashboardState> emit,
+  ) async {
+    try {
+      await boardService.updateBoardSettings(
+        boardId: event.boardId,
+        visibility: event.visibility,
+        privateJoinPolicy: event.privateJoinPolicy,
+        whoCanInvite: event.whoCanInvite,
+        defaultLinkJoinRole: event.defaultLinkJoinRole,
+      );
+
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(
+          current.copyWith(
+            actionError: null,
+            actionInfo: 'Board settings updated.',
+          ),
+        );
+      }
+    } catch (e) {
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(current.copyWith(actionError: _humanizeError(e)));
       }
     }
   }
@@ -246,7 +338,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     Emitter<DashboardState> emit,
   ) async {
     try {
-      await boardRepo.renameBoard(event.boardId, event.newName);
+      await boardService.renameBoard(event.boardId, event.newName);
       final current = state;
       if (current is DashboardLoaded) {
         emit(current.copyWith(actionError: null));
@@ -254,7 +346,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     } catch (e) {
       final current = state;
       if (current is DashboardLoaded) {
-        emit(current.copyWith(actionError: 'Failed to rename board: $e'));
+        emit(current.copyWith(actionError: _humanizeError(e)));
       }
     }
   }
@@ -264,7 +356,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     Emitter<DashboardState> emit,
   ) async {
     try {
-      await boardRepo.deleteBoard(event.boardId);
+      await boardService.deleteBoard(event.boardId);
       final current = state;
       if (current is DashboardLoaded) {
         emit(current.copyWith(actionError: null));
@@ -272,7 +364,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     } catch (e) {
       final current = state;
       if (current is DashboardLoaded) {
-        emit(current.copyWith(actionError: 'Failed to delete board: $e'));
+        emit(current.copyWith(actionError: _humanizeError(e)));
       }
     }
   }
@@ -286,6 +378,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       emit(
         current.copyWith(
           actionError: null,
+          actionInfo: null,
           joinedBoardId: null,
           createdBoardId: null,
         ),
@@ -293,10 +386,24 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     }
   }
 
+  String _humanizeError(Object error) {
+    final raw = error.toString().trim();
+    if (raw.startsWith('Exception:')) {
+      return raw.replaceFirst('Exception:', '').trim();
+    }
+    return raw;
+  }
+
+  Future<void> stopForLogout() async {
+    await _dashboardSub?.cancel();
+    await _profileSub?.cancel();
+    _dashboardSub = null;
+    _profileSub = null;
+  }
+
   @override
-  Future<void> close() {
-    _dashboardSub?.cancel();
-    _profileSub?.cancel();
+  Future<void> close() async {
+    await stopForLogout();
     return super.close();
   }
 }

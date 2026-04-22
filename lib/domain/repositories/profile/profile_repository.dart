@@ -3,9 +3,12 @@ abstract class ProfileRepository {
   Future<Map<String, dynamic>?> getUserById(String uid);
   Stream<Map<String, dynamic>?> getUserByIdStream(String uid);
   Future<bool> checkFriendshipStatus(String targetUid);
-  Future<void> updateUserProfile({required String name, required String bio});
-  Future<String> uploadProfilePhoto({
-    required String imageData,
-    required String filename,
+  Future<void> cacheUserProfile(
+    String uid,
+    Map<String, dynamic> data, {
+    required bool isFriend,
+    required bool isSelf,
+    String source = 'profile_open',
   });
+  Future<void> updateUserFields(String uid, Map<String, dynamic> data);
 }

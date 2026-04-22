@@ -1,4 +1,4 @@
-import 'package:isar/isar.dart';
+import 'package:isar_community/isar.dart';
 
 part 'local_board.g.dart';
 
@@ -13,6 +13,14 @@ class LocalBoard {
   late String ownerId;
   late List<String> members;
   late String engine;
+  late String visibility;
+  late String privateJoinPolicy;
+  late List<String> tags;
+  bool joinViaCodeEnabled = false;
+  String whoCanInvite = 'owner_only';
+  String defaultLinkJoinRole = 'viewer';
+  String currentUserRole = 'viewer';
+  String? previewPath;
   late DateTime createdAt;
   late DateTime updatedAt;
 

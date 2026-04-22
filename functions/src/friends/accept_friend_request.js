@@ -15,7 +15,25 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const admin = require("../../server/firebase-admin");
 const { validateRequestId, validateUID, validateDifferentUIDs } = require("../utils/validation");
 const FirestorePaths = require("../utils/firestore_paths");
+const { hasAnyBlock, getFriendRef } = require('./relationship_utils');
+const {
+  sendUserNotification,
+  updateUserNotificationStatus,
+} = require('../utils/notification_sender');
 const logger = require("../utils/logger");
+
+function toNonNegativeInt(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 0 ? 0 : Math.trunc(value);
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isNaN(parsed)) {
+      return parsed < 0 ? 0 : parsed;
+    }
+  }
+  return 0;
+}
 
 module.exports = async (request) => {
   const { data, auth } = request;
@@ -131,6 +149,10 @@ module.exports = async (request) => {
         .doc(toUid)
         .collection(FirestorePaths.FRIENDS_SUBCOLLECTION)
         .doc(fromUid);
+
+      if (await hasAnyBlock(transaction, firestore, fromUid, toUid)) {
+        throw new HttpsError('permission-denied', 'This request can no longer be accepted.');
+      }
       
       const existingFriendship = await transaction.get(existingFriendshipRef);
       if (existingFriendship.exists) {
@@ -157,24 +179,69 @@ module.exports = async (request) => {
       transaction.set(existingFriendshipRef, recipientFriendData);
 
       // Sender's view: friend is toUid
-      const senderFriendRef = firestore
-        .collection(FirestorePaths.USERS)
-        .doc(fromUid)
-        .collection(FirestorePaths.FRIENDS_SUBCOLLECTION)
-        .doc(toUid);
+      const senderFriendRef = getFriendRef(firestore, fromUid, toUid);
       
       const senderFriendData = { ...friendshipData };
       senderFriendData[FirestorePaths.UID] = toUid;
       transaction.set(senderFriendRef, senderFriendData);
+
+      const senderFriendCount = toNonNegativeInt(
+        senderDoc.data()?.[FirestorePaths.FRIEND_COUNT],
+      );
+      const recipientFriendCount = toNonNegativeInt(
+        recipientDoc.data()?.[FirestorePaths.FRIEND_COUNT],
+      );
+
+      transaction.update(senderRef, {
+        [FirestorePaths.FRIEND_COUNT]: senderFriendCount + 1,
+        [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      transaction.update(recipientRef, {
+        [FirestorePaths.FRIEND_COUNT]: recipientFriendCount + 1,
+        [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
+      });
 
       // Delete the request
       transaction.delete(requestRef);
 
       return { 
         success: true, 
-        message: 'Friend request accepted successfully.' 
+        message: 'Friend request accepted successfully.',
+        fromUid,
+        acceptedByUid: toUid,
+        senderName: senderDoc.data()?.displayName || 'InkLink User',
+        accepterName: recipientDoc.data()?.displayName || 'InkLink User',
+        accepterPhotoUrl: recipientDoc.data()?.photoURL || null,
       };
     });
+
+    // Notify the original sender that their request was accepted.
+    if (result.fromUid && result.acceptedByUid) {
+      await updateUserNotificationStatus({
+        recipientUid: result.acceptedByUid,
+        type: 'friend_request',
+        targetId: requestId,
+        status: 'accepted',
+        title: 'Friend request accepted',
+        body: `You accepted ${result.senderName || 'this'} friend request.`,
+      });
+
+      await sendUserNotification({
+        recipientUid: result.fromUid,
+        title: `${result.accepterName} accepted your friend request`,
+        body: 'You are now friends on InkLink.',
+        type: 'friend_request_accepted',
+        action: 'open_friends',
+        targetId: result.acceptedByUid,
+        senderUid: result.acceptedByUid,
+        senderName: result.accepterName,
+        senderPhotoUrl: result.accepterPhotoUrl,
+        groupingKey: `friend_request_accepted:${result.acceptedByUid}:${result.fromUid}`,
+        extraData: {
+          friendUid: result.acceptedByUid,
+        },
+      });
+    }
 
     logger.info('Friend request accepted successfully', {
       requestId,

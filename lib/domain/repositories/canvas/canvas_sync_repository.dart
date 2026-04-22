@@ -3,14 +3,16 @@ import '../../../core/database/collections/local_crdt_update.dart';
 abstract class CanvasSyncRepository {
   String? get currentUserId;
 
-  Future<void> pushCrdtUpdate({
+  Future<void> saveLocalCrdtUpdate(LocalCrdtUpdate update);
+  Future<void> markCrdtUpdateSynced(String updateId);
+  Future<List<LocalCrdtUpdate>> getLocalCrdtUpdates(String boardId);
+  Future<List<LocalCrdtUpdate>> fetchRemoteCrdtUpdates(String boardId);
+  Stream<List<LocalCrdtUpdate>> watchLocalCrdtUpdates(String boardId);
+  Stream<List<LocalCrdtUpdate>> watchRemoteCrdtUpdates(String boardId);
+  Future<void> writeRemoteCrdtUpdate({
     required String boardId,
     required String updateId,
-    required List<int> payload,
+    required String payloadBase64,
+    required String sourceClientId,
   });
-
-  Stream<List<LocalCrdtUpdate>> listenToCrdtUpdates(String boardId);
-  Future<void> hydrateCrdtUpdates(String boardId);
-  void startCrdtRemoteSync(String boardId);
-  Future<void> stopCrdtRemoteSync(String boardId);
 }
