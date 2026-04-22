@@ -9,7 +9,6 @@ import 'package:inklink/features/canvas/view/canvas_route.dart';
 class BoardCard extends StatelessWidget {
   final Board board;
   final bool isOwner;
-  final Function(String, String) onRename;
   final Function(String) onDelete;
   final VoidCallback? onOpenSettings;
 
@@ -17,7 +16,6 @@ class BoardCard extends StatelessWidget {
     super.key,
     required this.board,
     required this.isOwner,
-    required this.onRename,
     required this.onDelete,
     this.onOpenSettings,
   });
@@ -111,9 +109,7 @@ class BoardCard extends StatelessWidget {
                   PopupMenuButton<String>(
                     icon: const Icon(Icons.more_vert, size: 20),
                     onSelected: (value) {
-                      if (value == 'rename') {
-                        _showRenameDialog(context);
-                      } else if (value == 'copy') {
+                      if (value == 'copy') {
                         Clipboard.setData(ClipboardData(text: board.id));
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
@@ -134,10 +130,6 @@ class BoardCard extends StatelessWidget {
                         child: Text('Settings'),
                       ),
                       const PopupMenuItem(
-                        value: 'rename',
-                        child: Text('Rename'),
-                      ),
-                      const PopupMenuItem(
                         value: 'copy',
                         child: Text('Copy Join Code'),
                       ),
@@ -156,36 +148,6 @@ class BoardCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  void _showRenameDialog(BuildContext context) {
-    final controller = TextEditingController(text: board.title);
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Rename Board'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(hintText: "Enter new name"),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              if (controller.text.isNotEmpty) {
-                onRename(board.id, controller.text);
-                Navigator.pop(context);
-              }
-            },
-            child: const Text('Rename'),
-          ),
-        ],
       ),
     );
   }

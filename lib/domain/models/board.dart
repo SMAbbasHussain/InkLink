@@ -92,3 +92,33 @@ class Board {
     return data;
   }
 }
+
+class BoardMember {
+  final String uid;
+  final String role;
+  final String status;
+  final DateTime? joinedAt;
+  final String? displayName;
+  final String? email;
+  final String? photoUrl;
+
+  const BoardMember({
+    required this.uid,
+    required this.role,
+    required this.status,
+    this.joinedAt,
+    this.displayName,
+    this.email,
+    this.photoUrl,
+  });
+
+  String get label {
+    if (displayName != null && displayName!.trim().isNotEmpty) {
+      return displayName!;
+    }
+    if (email != null && email!.trim().isNotEmpty) {
+      return email!;
+    }
+    return uid;
+  }
+}

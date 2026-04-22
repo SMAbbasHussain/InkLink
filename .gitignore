@@ -126,3 +126,4 @@ requirements.txt
 requirements-analysis.md
 firebase_optimizations.md
 firebase_queries_reference.md
+firebase_listener_lifecycle_audit.md

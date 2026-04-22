@@ -252,6 +252,51 @@ class FirestoreBoardRepository implements BoardRepository {
   }
 
   @override
+  Stream<List<BoardMember>> getBoardMembers(String boardId) {
+    return _firestoreService
+        .collection('boards')
+        .doc(boardId)
+        .collection(_membersSubcollection)
+        .snapshots()
+        .asyncMap((membersSnapshot) async {
+          if (membersSnapshot.docs.isEmpty) {
+            return <BoardMember>[];
+          }
+
+          final members = <BoardMember>[];
+          for (final doc in membersSnapshot.docs) {
+            final data = doc.data();
+            final uid = doc.id;
+            final role = data['role'] as String? ?? 'viewer';
+            final status = data['status'] as String? ?? 'active';
+            final joinedAt = data['joinedAt'] != null
+                ? (data['joinedAt'] as Timestamp).toDate()
+                : null;
+
+            // Fetch user data for display name, email, photoUrl
+            final userDoc = await _firestoreService
+                .collection('users')
+                .doc(uid)
+                .get();
+            final userData = userDoc.data();
+
+            members.add(
+              BoardMember(
+                uid: uid,
+                role: role,
+                status: status,
+                joinedAt: joinedAt,
+                displayName: userData?['displayName'] as String?,
+                email: userData?['email'] as String?,
+                photoUrl: userData?['photoURL'] as String?,
+              ),
+            );
+          }
+          return members;
+        });
+  }
+
+  @override
   Stream<Board?> getBoardById(String boardId) async* {
     await activateBoard(boardId);
     final isar = await _localDatabaseService.database;

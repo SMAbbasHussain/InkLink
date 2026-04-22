@@ -84,14 +84,15 @@ class _FriendsScreenState extends State<FriendsScreen> {
                           vertical: 10,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.amber.withOpacity(0.12),
+                          color: Colors.grey.withOpacity(0.12),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: Colors.amber.withOpacity(0.45),
+                            color: Colors.grey.withOpacity(0.45),
                           ),
                         ),
                         child: const Text(
-                          'Offline mode: showing locally cached friends data.',
+                          'You are offline.',
+                          textAlign: TextAlign.center,
                           style: TextStyle(fontWeight: FontWeight.w600),
                         ),
                       ),

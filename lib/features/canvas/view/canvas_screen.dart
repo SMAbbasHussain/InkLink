@@ -7,7 +7,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/constants/app_colors.dart';
+import '../../../domain/models/board.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
+import '../../dashboard/bloc/dashboard_bloc.dart';
+import '../../dashboard/view/board_settings_route.dart';
 import '../bloc/canvas_bloc.dart';
 import 'trays/ai_tray.dart';
 import 'trays/brush_tray.dart';
@@ -96,40 +99,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
     _canvasBloc.add(const CanvasClearAll());
   }
 
-  void _showRenameDialog() {
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Rename Board'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(hintText: "Enter new name"),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () async {
-              if (controller.text.isNotEmpty) {
-                _canvasBloc.add(
-                  CanvasRenameBoardRequested(controller.text.trim()),
-                );
-                if (dialogContext.mounted) {
-                  Navigator.pop(dialogContext);
-                }
-              }
-            },
-            child: const Text('Rename'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _savePreview() async {
     if (_savingPreview) return;
     _savingPreview = true;
@@ -174,6 +143,42 @@ class _CanvasScreenState extends State<CanvasScreen> {
     await _savePreview();
     if (!mounted) return;
     Navigator.pop(context);
+  }
+
+  void _openSettings(String currentTitle) {
+    final dashboardState = context.read<DashboardBloc>().state;
+    Board? board;
+
+    if (dashboardState is DashboardLoaded) {
+      for (final b in dashboardState.ownedBoards) {
+        if (b.id == widget.boardId) {
+          board = b;
+          break;
+        }
+      }
+      if (board == null) {
+        for (final b in dashboardState.joinedBoards) {
+          if (b.id == widget.boardId) {
+            board = b;
+            break;
+          }
+        }
+      }
+    }
+
+    final fallback = Board(
+      id: widget.boardId,
+      title: currentTitle,
+      ownerId: '',
+      members: const [],
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
+    Navigator.push(
+      context,
+      buildBoardSettingsRoute(context, board: board ?? fallback),
+    );
   }
 
   @override
@@ -225,9 +230,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     : const Color(0xFFF5F5F5),
                 resizeToAvoidBottomInset: false,
                 appBar: AppBar(
-                  title: Text(
-                    title,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  title: GestureDetector(
+                    onTap: () => _openSettings(state.boardTitle ?? 'Board'),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
                   ),
                   centerTitle: true,
                   elevation: 0,
@@ -236,8 +249,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert),
                       onSelected: (value) {
-                        if (value == 'rename') {
-                          _showRenameDialog();
+                        if (value == 'settings') {
+                          _openSettings(state.boardTitle ?? 'Board');
                         } else if (value == 'copy') {
                           Clipboard.setData(
                             ClipboardData(text: widget.boardId),
@@ -253,8 +266,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       },
                       itemBuilder: (context) => [
                         const PopupMenuItem(
-                          value: 'rename',
-                          child: Text('Rename Board'),
+                          value: 'settings',
+                          child: Text('Board Settings'),
                         ),
                         const PopupMenuItem(
                           value: 'copy',

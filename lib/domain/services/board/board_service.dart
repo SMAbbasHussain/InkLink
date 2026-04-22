@@ -13,11 +13,18 @@ class CreateBoardResult {
   });
 }
 
+class SendBoardInviteResult {
+  final List<String> unresolvedEmails;
+
+  const SendBoardInviteResult({this.unresolvedEmails = const []});
+}
+
 abstract class BoardService {
   Future<void> startBoardsSync();
   Future<void> stopBoardsSync();
   Stream<List<Board>> getOwnedBoards();
   Stream<List<Board>> getJoinedBoards();
+  Stream<Board?> getBoardById(String boardId);
   Future<CreateBoardResult> createBoard({
     String? title,
     required String visibility,
@@ -39,6 +46,20 @@ abstract class BoardService {
   Future<void> joinBoard(String boardId);
   Future<void> renameBoard(String boardId, String newName);
   Future<void> deleteBoard(String boardId);
+  Stream<List<BoardMember>> getBoardMembers(String boardId);
+  Future<void> updateBoardMemberRole(
+    String boardId,
+    String targetUid,
+    String role,
+  );
+  Future<void> removeBoardMember(String boardId, String targetUid);
+  Future<SendBoardInviteResult> sendBoardInvite({
+    required String boardId,
+    required String boardTitle,
+    required List<String> invitedUserIds,
+    required String targetRole,
+    int inviteExpiryHours,
+  });
 }
 
 class BoardServiceImpl implements BoardService {
@@ -62,6 +83,11 @@ class BoardServiceImpl implements BoardService {
 
   @override
   Stream<List<Board>> getJoinedBoards() => _boardRepository.getJoinedBoards();
+
+  @override
+  Stream<Board?> getBoardById(String boardId) {
+    return _boardRepository.getBoardById(boardId);
+  }
 
   @override
   Future<CreateBoardResult> createBoard({
@@ -188,5 +214,61 @@ class BoardServiceImpl implements BoardService {
         .then((_) {
           return _boardRepository.deleteBoard(resolvedBoardId);
         });
+  }
+
+  @override
+  Stream<List<BoardMember>> getBoardMembers(String boardId) {
+    return _boardRepository.getBoardMembers(boardId);
+  }
+
+  @override
+  Future<void> updateBoardMemberRole(
+    String boardId,
+    String targetUid,
+    String role,
+  ) async {
+    await _cloudFunctionsService.httpsCallable('updateBoardMemberRole').call({
+      'boardId': boardId.trim(),
+      'targetUid': targetUid.trim(),
+      'role': role,
+    });
+  }
+
+  @override
+  Future<void> removeBoardMember(String boardId, String targetUid) async {
+    await _cloudFunctionsService.httpsCallable('removeBoardMember').call({
+      'boardId': boardId.trim(),
+      'targetUid': targetUid.trim(),
+    });
+  }
+
+  @override
+  Future<SendBoardInviteResult> sendBoardInvite({
+    required String boardId,
+    required String boardTitle,
+    required List<String> invitedUserIds,
+    required String targetRole,
+    int inviteExpiryHours = 72,
+  }) async {
+    final response = await _cloudFunctionsService
+        .httpsCallable('sendBoardInvite')
+        .call({
+          'boardId': boardId.trim(),
+          'boardTitle': boardTitle.trim(),
+          'invitedUserIds': invitedUserIds,
+          'inviteExpiryHours': inviteExpiryHours,
+          'targetRole': targetRole,
+        });
+
+    final data = response.data;
+    if (data is! Map) {
+      return const SendBoardInviteResult();
+    }
+
+    return SendBoardInviteResult(
+      unresolvedEmails: List<String>.from(
+        data['unresolvedEmails'] ?? const <String>[],
+      ),
+    );
   }
 }

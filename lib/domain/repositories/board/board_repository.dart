@@ -14,6 +14,7 @@ abstract class BoardRepository {
   Stream<List<Board>> getOwnedBoards();
   Stream<List<Board>> getJoinedBoards();
   Stream<Board?> getBoardById(String boardId);
+  Stream<List<BoardMember>> getBoardMembers(String boardId);
 
   Future<String> createNewBoard({
     String name = 'Untitled Board',
