@@ -3,10 +3,12 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:isar_community/isar.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/database/collections/local_board.dart';
+import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
@@ -21,6 +23,7 @@ class FirestoreBoardRepository implements BoardRepository {
   static const String _membersSubcollection = 'members';
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   _userBoardIndexSub;
+  StreamSubscription<User?>? _authStateSub;
   String? _syncUserId;
   String? _activeBoardId;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _activeBoardSub;
@@ -73,7 +76,13 @@ class FirestoreBoardRepository implements BoardRepository {
   Future<void> startBoardsSync() async {
     final uid = currentUserId;
     if (uid == null) {
-      await stopBoardsSync();
+      _authStateSub ??= _authService.getInstance().authStateChanges().listen((
+        user,
+      ) {
+        if (user != null) {
+          unawaited(startBoardsSync());
+        }
+      });
       return;
     }
 
@@ -127,6 +136,8 @@ class FirestoreBoardRepository implements BoardRepository {
     await deactivateBoard();
     await _userBoardIndexSub?.cancel();
     _userBoardIndexSub = null;
+    await _authStateSub?.cancel();
+    _authStateSub = null;
     _ownedBoardDocs.clear();
     _joinedBoardDocs.clear();
     _syncUserId = null;
@@ -800,6 +811,7 @@ class FirestoreBoardRepository implements BoardRepository {
     final isar = await _localDatabaseService.database;
     await isar.writeTxn(() async {
       await isar.localBoards.deleteByBoardId(boardId);
+      await isar.localCrdtUpdates.filter().boardIdEqualTo(boardId).deleteAll();
     });
   }
 

@@ -39,6 +39,7 @@ const LocalCrdtUpdateSchema = CollectionSchema(
       name: r'updateId',
       type: IsarType.string,
     ),
+    r'version': PropertySchema(id: 6, name: r'version', type: IsarType.long),
   },
 
   estimateSize: _localCrdtUpdateEstimateSize,
@@ -108,6 +109,7 @@ void _localCrdtUpdateSerialize(
   writer.writeString(offsets[3], object.payloadBase64);
   writer.writeString(offsets[4], object.sourceClientId);
   writer.writeString(offsets[5], object.updateId);
+  writer.writeLong(offsets[6], object.version);
 }
 
 LocalCrdtUpdate _localCrdtUpdateDeserialize(
@@ -124,6 +126,7 @@ LocalCrdtUpdate _localCrdtUpdateDeserialize(
   object.payloadBase64 = reader.readString(offsets[3]);
   object.sourceClientId = reader.readString(offsets[4]);
   object.updateId = reader.readString(offsets[5]);
+  object.version = reader.readLong(offsets[6]);
   return object;
 }
 
@@ -146,6 +149,8 @@ P _localCrdtUpdateDeserializeProp<P>(
       return (reader.readString(offset)) as P;
     case 5:
       return (reader.readString(offset)) as P;
+    case 6:
+      return (reader.readLong(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
   }
@@ -1093,6 +1098,61 @@ extension LocalCrdtUpdateQueryFilter
       );
     });
   }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  versionEqualTo(int value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'version', value: value),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  versionGreaterThan(int value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'version',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  versionLessThan(int value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'version',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  versionBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'version',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+        ),
+      );
+    });
+  }
 }
 
 extension LocalCrdtUpdateQueryObject
@@ -1183,6 +1243,19 @@ extension LocalCrdtUpdateQuerySortBy
   sortByUpdateIdDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'updateId', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy> sortByVersion() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'version', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  sortByVersionDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'version', Sort.desc);
     });
   }
 }
@@ -1283,6 +1356,19 @@ extension LocalCrdtUpdateQuerySortThenBy
       return query.addSortBy(r'updateId', Sort.desc);
     });
   }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy> thenByVersion() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'version', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  thenByVersionDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'version', Sort.desc);
+    });
+  }
 }
 
 extension LocalCrdtUpdateQueryWhereDistinct
@@ -1336,6 +1422,13 @@ extension LocalCrdtUpdateQueryWhereDistinct
       return query.addDistinctBy(r'updateId', caseSensitive: caseSensitive);
     });
   }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QDistinct>
+  distinctByVersion() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'version');
+    });
+  }
 }
 
 extension LocalCrdtUpdateQueryProperty
@@ -1382,6 +1475,12 @@ extension LocalCrdtUpdateQueryProperty
   QueryBuilder<LocalCrdtUpdate, String, QQueryOperations> updateIdProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'updateId');
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, int, QQueryOperations> versionProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'version');
     });
   }
 }

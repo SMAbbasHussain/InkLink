@@ -11,42 +11,101 @@ class ShapesTray extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final icons = <IconData>[
-      Icons.square_outlined,
-      Icons.circle_outlined,
-      Icons.change_history,
-      Icons.star_border,
-      Icons.pentagon_outlined,
-      Icons.horizontal_rule,
-    ];
-
-    final shapeTypes = <CanvasShapeType>[
-      CanvasShapeType.square,
-      CanvasShapeType.circle,
-      CanvasShapeType.triangle,
-      CanvasShapeType.star,
-      CanvasShapeType.pentagon,
-      CanvasShapeType.line,
+    final items = <({IconData icon, String label, CanvasShapeType type})>[
+      (
+        icon: Icons.square_outlined,
+        label: 'Square',
+        type: CanvasShapeType.square,
+      ),
+      (
+        icon: Icons.rectangle_outlined,
+        label: 'Rect',
+        type: CanvasShapeType.rectangle,
+      ),
+      (
+        icon: Icons.circle_outlined,
+        label: 'Circle',
+        type: CanvasShapeType.circle,
+      ),
+      (
+        icon: Icons.egg_outlined,
+        label: 'Ellipse',
+        type: CanvasShapeType.ellipse,
+      ),
+      (
+        icon: Icons.change_history,
+        label: 'Triangle',
+        type: CanvasShapeType.triangle,
+      ),
+      (
+        icon: Icons.diamond,
+        label: 'Diamond',
+        type: CanvasShapeType.diamond,
+      ),
+      (icon: Icons.star_border, label: 'Star', type: CanvasShapeType.star),
+      (
+        icon: Icons.pentagon_outlined,
+        label: 'Pentagon',
+        type: CanvasShapeType.pentagon,
+      ),
+      (
+        icon: Icons.hexagon_outlined,
+        label: 'Hexagon',
+        type: CanvasShapeType.hexagon,
+      ),
+      (icon: Icons.horizontal_rule, label: 'Line', type: CanvasShapeType.line),
+      (
+        icon: Icons.align_horizontal_left_rounded,
+        label: 'Semicircle',
+        type: CanvasShapeType.semicircle,
+      ),
     ];
 
     return SlidingTray(
       isOpen: isOpen,
       direction: TrayDirection.right,
       title: 'Shapes',
-      height: 220,
-      width: 200,
+      height: 360,
+      width: 244,
       bottomOffset: 60,
       child: GridView.builder(
         padding: const EdgeInsets.all(12),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 3,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
+          childAspectRatio: 0.95,
         ),
-        itemCount: icons.length,
-        itemBuilder: (context, i) => InkWell(
-          onTap: () => onAddShape(shapeTypes[i]),
-          borderRadius: BorderRadius.circular(12),
-          child: Icon(icons[i], size: 30),
-        ),
+        itemCount: items.length,
+        itemBuilder: (context, i) {
+          final item = items[i];
+          return InkWell(
+            onTap: () => onAddShape(item.type),
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(item.icon, size: 24),
+                  const SizedBox(height: 6),
+                  Text(
+                    item.label,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }

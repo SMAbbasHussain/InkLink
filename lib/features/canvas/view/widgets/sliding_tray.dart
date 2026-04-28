@@ -10,6 +10,7 @@ class SlidingTray extends StatelessWidget {
   final double width;
   final double height;
   final String title;
+  final Widget? headerActions;
   final double? topOffset;
   final double? bottomOffset;
 
@@ -21,6 +22,7 @@ class SlidingTray extends StatelessWidget {
     this.width = 250,
     this.height = 300,
     required this.title,
+    this.headerActions,
     this.topOffset,
     this.bottomOffset,
   });
@@ -100,12 +102,19 @@ class SlidingTray extends StatelessWidget {
                 vertical: 12.0,
                 horizontal: 16,
               ),
-              child: Text(
-                title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                  if (headerActions != null) headerActions!,
+                ],
               ),
             ),
             const Divider(height: 1),

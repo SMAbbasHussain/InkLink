@@ -18,6 +18,17 @@ abstract class CanvasService {
     required String boardId,
     required String updateId,
     required Uint8List payload,
+    String? elementId,
+  });
+  Future<void> markCrdtUpdateDeleted(String updateId, bool isDeleted);
+  Future<LocalCrdtUpdate?> getElementCrdtUpdate({
+    required String boardId,
+    required String elementId,
+  });
+  Future<void> updateCrdtUpdatePayload({
+    required String boardId,
+    required String updateId,
+    required Uint8List payload,
   });
 }
 
@@ -57,9 +68,9 @@ class CanvasServiceImpl implements CanvasService {
       return _syncRepository.watchLocalCrdtUpdates(boardId);
     }
 
-    _hydrateAndStartRemoteSync(boardId, userId);
-    _syncPendingLocalUpdates(boardId, userId);
-    return _syncRepository.watchLocalCrdtUpdates(boardId);
+    return Stream.fromFuture(
+      _hydrateAndStartRemoteSync(boardId, userId),
+    ).asyncExpand((_) => _syncRepository.watchLocalCrdtUpdates(boardId));
   }
 
   @override
@@ -79,6 +90,7 @@ class CanvasServiceImpl implements CanvasService {
     required String boardId,
     required String updateId,
     required Uint8List payload,
+    String? elementId,
   }) {
     final userId = _syncRepository.currentUserId;
     final payloadBase64 = base64Encode(payload);
@@ -88,6 +100,7 @@ class CanvasServiceImpl implements CanvasService {
           LocalCrdtUpdate()
             ..updateId = updateId
             ..boardId = boardId
+            ..elementId = elementId
             ..payloadBase64 = payloadBase64
             ..sourceClientId = userId ?? 'anonymous'
             ..appliedAt = DateTime.now()
@@ -101,6 +114,7 @@ class CanvasServiceImpl implements CanvasService {
               updateId: updateId,
               payloadBase64: payloadBase64,
               sourceClientId: userId,
+              elementId: elementId,
             );
             await _syncRepository.markCrdtUpdateSynced(updateId);
             await _syncPendingLocalUpdates(boardId, userId);
@@ -114,12 +128,43 @@ class CanvasServiceImpl implements CanvasService {
         });
   }
 
+  @override
+  Future<void> markCrdtUpdateDeleted(String updateId, bool isDeleted) {
+    return _syncRepository.markCrdtUpdateDeleted(updateId, isDeleted);
+  }
+
+  @override
+  Future<LocalCrdtUpdate?> getElementCrdtUpdate({
+    required String boardId,
+    required String elementId,
+  }) {
+    return _syncRepository.getElementCrdtUpdate(boardId, elementId);
+  }
+
+  @override
+  Future<void> updateCrdtUpdatePayload({
+    required String boardId,
+    required String updateId,
+    required Uint8List payload,
+  }) {
+    return _syncRepository.updateCrdtUpdatePayload(
+      boardId: boardId,
+      updateId: updateId,
+      payloadBase64: base64Encode(payload),
+    );
+  }
+
   Future<void> _hydrateAndStartRemoteSync(String boardId, String userId) async {
     if (_remoteSubs.containsKey(boardId)) return;
 
     await _boardRepository.ensureBoardCached(boardId);
 
-    final remoteUpdates = await _syncRepository.fetchRemoteCrdtUpdates(boardId);
+    final latestLocalUpdateAt = await _syncRepository
+        .getLatestLocalCrdtUpdateAt(boardId);
+    final remoteUpdates = await _syncRepository.fetchRemoteCrdtUpdates(
+      boardId,
+      since: latestLocalUpdateAt,
+    );
     if (remoteUpdates.isNotEmpty) {
       await _syncRepository.saveLocalCrdtUpdate(remoteUpdates.first).then((
         _,
@@ -130,15 +175,17 @@ class CanvasServiceImpl implements CanvasService {
       });
     }
 
-    final remoteSub = _syncRepository.watchRemoteCrdtUpdates(boardId).listen((
-      updates,
-    ) async {
-      for (final update in updates) {
-        await _syncRepository.saveLocalCrdtUpdate(update);
-      }
-      await _syncPendingLocalUpdates(boardId, userId);
-    }, onError: (_) {});
+    final remoteSub = _syncRepository
+        .watchRemoteCrdtUpdates(boardId, since: latestLocalUpdateAt)
+        .listen((updates) async {
+          for (final update in updates) {
+            await _syncRepository.saveLocalCrdtUpdate(update);
+          }
+          await _syncPendingLocalUpdates(boardId, userId);
+        }, onError: (_) {});
     _remoteSubs[boardId] = remoteSub;
+
+    await _syncPendingLocalUpdates(boardId, userId);
   }
 
   Future<void> _syncPendingLocalUpdates(String boardId, String userId) async {

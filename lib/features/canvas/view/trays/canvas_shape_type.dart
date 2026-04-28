@@ -1,1 +1,13 @@
-enum CanvasShapeType { square, circle, triangle, star, pentagon, line }
+enum CanvasShapeType {
+  square,
+  rectangle,
+  circle,
+  ellipse,
+  triangle,
+  diamond,
+  star,
+  pentagon,
+  hexagon,
+  line,
+  semicircle,
+}

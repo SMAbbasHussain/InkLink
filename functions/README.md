@@ -11,6 +11,7 @@ This directory contains Firebase callable backend functions used by the InkLink 
   - npm run shell -> Firebase functions shell
   - npm run deploy -> deploy all functions
   - npm run logs -> fetch Cloud Functions logs
+  - npm run backfill:crdt-versions -> backfill missing CRDT version fields
 
 ## Directory Layout
 
@@ -86,7 +87,7 @@ Deploying one function (example):
 
 ```bash
 firebase deploy --only functions:acceptFriendRequest
-```
+
 
 ## Configuration
 

@@ -1,6 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' as firestore;
 import 'package:isar_community/isar.dart';
 
 import '../../../core/database/collections/local_crdt_update.dart';
@@ -13,6 +14,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   final FirestoreService _firestoreService;
   final AuthService _authService;
   final LocalDatabaseService _localDatabaseService;
+  static const int _maxPayloadBase64Length = 900000;
 
   FirestoreCanvasSyncRepository({
     required FirestoreService firestoreService,
@@ -34,6 +36,14 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   }
 
   @override
+  Future<void> clearLocalCrdtUpdatesForBoard(String boardId) async {
+    final isar = await _localDatabaseService.database;
+    await isar.writeTxn(() async {
+      await isar.localCrdtUpdates.filter().boardIdEqualTo(boardId).deleteAll();
+    });
+  }
+
+  @override
   Future<void> markCrdtUpdateSynced(String updateId) async {
     final isar = await _localDatabaseService.database;
     final existing = await isar.localCrdtUpdates.getByUpdateId(updateId);
@@ -46,37 +56,117 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   }
 
   @override
+  Future<void> markCrdtUpdateDeleted(String updateId, bool isDeleted) async {
+    final isar = await _localDatabaseService.database;
+    final existing = await isar.localCrdtUpdates.getByUpdateId(updateId);
+    if (existing == null) return;
+
+    existing.isDeleted = isDeleted;
+    await isar.writeTxn(() async {
+      await isar.localCrdtUpdates.putByUpdateId(existing);
+    });
+  }
+
+  @override
+  Future<LocalCrdtUpdate?> getElementCrdtUpdate(
+    String boardId,
+    String elementId,
+  ) async {
+    final isar = await _localDatabaseService.database;
+    final updates = await isar.localCrdtUpdates
+        .filter()
+        .boardIdEqualTo(boardId)
+        .findAll();
+
+    // Find the first non-deleted update for this element
+    for (final update in updates) {
+      if (update.elementId == elementId && !update.isDeleted) {
+        return update;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<DateTime?> getLatestLocalCrdtUpdateAt(String boardId) async {
+    final isar = await _localDatabaseService.database;
+    final latest = await isar.localCrdtUpdates
+        .filter()
+        .boardIdEqualTo(boardId)
+        .sortByAppliedAtDesc()
+        .findFirst();
+    return latest?.appliedAt;
+  }
+
+  @override
+  Future<void> updateCrdtUpdatePayload({
+    required String boardId,
+    required String updateId,
+    required String payloadBase64,
+  }) async {
+    // Update locally
+    final isar = await _localDatabaseService.database;
+    final existing = await isar.localCrdtUpdates.getByUpdateId(updateId);
+    if (existing == null) return;
+
+    existing.payloadBase64 = payloadBase64;
+    existing.appliedAt = DateTime.now();
+    existing.isSynced = false; // Mark for re-sync since payload changed
+    await isar.writeTxn(() async {
+      await isar.localCrdtUpdates.putByUpdateId(existing);
+    });
+
+    // Update remotely
+    if (payloadBase64.isEmpty ||
+        payloadBase64.length > _maxPayloadBase64Length) {
+      return;
+    }
+
+    await _firestoreService
+        .collection('boards')
+        .doc(boardId)
+        .collection('crdt_updates')
+        .doc(updateId)
+        .update({
+          'payloadBase64': payloadBase64,
+          'appliedAt': firestore.FieldValue.serverTimestamp(),
+        });
+  }
+
+  @override
   Future<List<LocalCrdtUpdate>> getLocalCrdtUpdates(String boardId) async {
     final isar = await _localDatabaseService.database;
     return isar.localCrdtUpdates.filter().boardIdEqualTo(boardId).findAll();
   }
 
   @override
-  Future<List<LocalCrdtUpdate>> fetchRemoteCrdtUpdates(String boardId) async {
-    QuerySnapshot<Map<String, dynamic>> snapshot;
+  Future<List<LocalCrdtUpdate>> fetchRemoteCrdtUpdates(
+    String boardId, {
+    DateTime? since,
+  }) async {
+    firestore.Query<Map<String, dynamic>> query = _firestoreService
+        .collection('boards')
+        .doc(boardId)
+        .collection('crdt_updates');
+
+    if (since != null) {
+      query = query.where(
+        'appliedAt',
+        isGreaterThan: firestore.Timestamp.fromDate(since),
+      );
+    }
+
+    firestore.QuerySnapshot<Map<String, dynamic>> snapshot;
     try {
-      snapshot = await _firestoreService
-          .collection('boards')
-          .doc(boardId)
-          .collection('crdt_updates')
-          .get();
-    } on FirebaseException catch (e) {
+      snapshot = await query.get();
+    } on firestore.FirebaseException catch (e) {
       if (e.code == 'permission-denied') return <LocalCrdtUpdate>[];
       rethrow;
     }
 
     return snapshot.docs
-        .map((doc) {
-          final data = doc.data();
-          return LocalCrdtUpdate()
-            ..updateId = doc.id
-            ..boardId = data['boardId'] ?? boardId
-            ..payloadBase64 = data['payloadBase64'] ?? ''
-            ..sourceClientId = data['sourceClientId'] ?? ''
-            ..appliedAt =
-                (data['appliedAt'] as Timestamp?)?.toDate() ?? DateTime.now()
-            ..isSynced = true;
-        })
+        .map((doc) => _mapRemoteDoc(doc, boardId))
+        .whereType<LocalCrdtUpdate>()
         .toList(growable: false);
   }
 
@@ -91,28 +181,28 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   }
 
   @override
-  Stream<List<LocalCrdtUpdate>> watchRemoteCrdtUpdates(String boardId) async* {
-    yield* _firestoreService
+  Stream<List<LocalCrdtUpdate>> watchRemoteCrdtUpdates(
+    String boardId, {
+    DateTime? since,
+  }) async* {
+    firestore.Query<Map<String, dynamic>> query = _firestoreService
         .collection('boards')
         .doc(boardId)
-        .collection('crdt_updates')
-        .snapshots()
-        .map((snapshot) {
-          return snapshot.docs
-              .map((doc) {
-                final data = doc.data();
-                return LocalCrdtUpdate()
-                  ..updateId = doc.id
-                  ..boardId = data['boardId'] ?? boardId
-                  ..payloadBase64 = data['payloadBase64'] ?? ''
-                  ..sourceClientId = data['sourceClientId'] ?? ''
-                  ..appliedAt =
-                      (data['appliedAt'] as Timestamp?)?.toDate() ??
-                      DateTime.now()
-                  ..isSynced = true;
-              })
-              .toList(growable: false);
-        });
+        .collection('crdt_updates');
+
+    if (since != null) {
+      query = query.where(
+        'appliedAt',
+        isGreaterThan: firestore.Timestamp.fromDate(since),
+      );
+    }
+
+    yield* query.snapshots().map(
+      (snapshot) => snapshot.docs
+          .map((doc) => _mapRemoteDoc(doc, boardId))
+          .whereType<LocalCrdtUpdate>()
+          .toList(growable: false),
+    );
   }
 
   @override
@@ -121,7 +211,13 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     required String updateId,
     required String payloadBase64,
     required String sourceClientId,
+    String? elementId,
   }) async {
+    if (payloadBase64.isEmpty ||
+        payloadBase64.length > _maxPayloadBase64Length) {
+      return;
+    }
+
     await _firestoreService
         .collection('boards')
         .doc(boardId)
@@ -131,7 +227,44 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           'boardId': boardId,
           'payloadBase64': payloadBase64,
           'sourceClientId': sourceClientId,
-          'appliedAt': FieldValue.serverTimestamp(),
+          'elementId': elementId,
+          'appliedAt': firestore.FieldValue.serverTimestamp(),
         });
+  }
+
+  LocalCrdtUpdate? _mapRemoteDoc(
+    firestore.DocumentSnapshot<Map<String, dynamic>> doc,
+    String boardId,
+  ) {
+    final data = doc.data() ?? const <String, dynamic>{};
+    final payloadBase64 = (data['payloadBase64'] as String?) ?? '';
+    if (!_isValidPayloadBase64(payloadBase64)) {
+      return null;
+    }
+
+    return LocalCrdtUpdate()
+      ..updateId = doc.id
+      ..boardId = (data['boardId'] as String?) ?? boardId
+      ..elementId = (data['elementId'] as String?)
+      ..payloadBase64 = payloadBase64
+      ..sourceClientId = (data['sourceClientId'] as String?) ?? ''
+      ..appliedAt =
+          (data['appliedAt'] as firestore.Timestamp?)?.toDate() ??
+          DateTime.now()
+      ..isSynced = true;
+  }
+
+  bool _isValidPayloadBase64(String payloadBase64) {
+    if (payloadBase64.isEmpty ||
+        payloadBase64.length > _maxPayloadBase64Length) {
+      return false;
+    }
+
+    try {
+      final decoded = base64Decode(payloadBase64);
+      return decoded.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
   }
 }

@@ -22,27 +22,76 @@ class ToolsTray extends StatelessWidget {
       isOpen: isOpen,
       direction: TrayDirection.left,
       title: 'Editing Tools',
-      height: 230,
-      width: 200,
+      height: 260,
+      width: 230,
       bottomOffset: 60,
-      child: Column(
-        children: [
-          ListTile(
-            leading: const Icon(Icons.undo, color: Colors.blue),
-            title: const Text('Undo', style: TextStyle(fontSize: 14)),
-            onTap: onUndo,
-          ),
-          ListTile(
-            leading: const Icon(Icons.redo, color: Colors.blue),
-            title: const Text('Redo', style: TextStyle(fontSize: 14)),
-            onTap: onRedo,
-          ),
-          ListTile(
-            leading: const Icon(Icons.delete_outline, color: Colors.red),
-            title: const Text('Clear All', style: TextStyle(fontSize: 14)),
-            onTap: onClearAll,
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            _ToolButton(
+              icon: Icons.undo,
+              label: 'Undo',
+              color: Colors.blue,
+              onTap: onUndo,
+            ),
+            const SizedBox(height: 10),
+            _ToolButton(
+              icon: Icons.redo,
+              label: 'Redo',
+              color: Colors.blue,
+              onTap: onRedo,
+            ),
+            const SizedBox(height: 10),
+            _ToolButton(
+              icon: Icons.delete_outline,
+              label: 'Clear All',
+              color: Colors.red,
+              onTap: onClearAll,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ToolButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _ToolButton({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withOpacity(0.2)),
+          color: color.withOpacity(0.06),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: color),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
       ),
     );
   }

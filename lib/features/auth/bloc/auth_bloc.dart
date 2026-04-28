@@ -44,6 +44,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           emit(Unauthenticated());
           return;
         }
+        await authService.onAuthenticated(user);
         emit(_toAuthenticated(user));
       } catch (e) {
         emit(AuthError(e.toString()));
@@ -62,6 +63,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           emit(Unauthenticated());
           return;
         }
+        await authService.onAuthenticated(user);
         emit(_toAuthenticated(user, fallbackName: event.name));
       } catch (e) {
         emit(AuthError(e.toString()));
@@ -74,6 +76,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         final user = await authService.signInWithGoogle();
 
         if (user != null) {
+          await authService.onAuthenticated(user);
           // Success: User picked an account and Firebase authed
           emit(_toAuthenticated(user, fallbackName: 'Creator'));
         } else {
