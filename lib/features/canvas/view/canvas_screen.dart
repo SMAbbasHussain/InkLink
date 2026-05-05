@@ -140,16 +140,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   void _deferredResizeSelectedShape(double size) {
-    setState(() {
-      _pendingShapeEdits['size'] = size;
-    });
+    _pendingShapeEdits['size'] = size;
     _scheduleShapeEditCommit();
   }
 
   void _deferredSetSelectedShapeFill(bool isFilled) {
-    setState(() {
-      _pendingShapeEdits['isFilled'] = isFilled;
-    });
+    _pendingShapeEdits['isFilled'] = isFilled;
     _scheduleShapeEditCommit();
   }
 
@@ -158,23 +154,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   void _rotateSelectedShape(double rotation) {
-    setState(() {
-      _pendingShapeEdits['rotation'] = rotation;
-    });
     _canvasBloc.add(CanvasRotateSelectedShape(rotation));
   }
 
   void _deferredRotateSelectedShape(double rotation) {
-    setState(() {
-      _pendingShapeEdits['rotation'] = rotation;
-    });
+    _pendingShapeEdits['rotation'] = rotation;
     _scheduleShapeEditCommit();
   }
 
   void _deferredSetSelectedShapeBorderRadius(double borderRadius) {
-    setState(() {
-      _pendingShapeEdits['borderRadius'] = borderRadius;
-    });
+    _pendingShapeEdits['borderRadius'] = borderRadius;
     _scheduleShapeEditCommit();
   }
 
@@ -832,7 +821,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           if (state.selectedShapeId != null &&
                               !_isEditingShape &&
                               !_isShapeEditTrayExpanded)
-                            _buildShapeEditBanner(),
+                            _buildShapeEditBanner(
+                              Theme.of(context).brightness == Brightness.dark,
+                            ),
                           if (state.selectedShapeId != null)
                             _buildShapeTransformOverlay(state, mappedElements),
                           _buildEdgeTriggers(),
@@ -882,6 +873,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               strokeWidth: (data['strokeWidth'] as num?)?.toDouble() ?? 5,
               opacity: (data['opacity'] as num?)?.toDouble() ?? 1,
               brushType: (data['brushType'] as String?) ?? 'solid',
+              data: data,
             );
           }
 
@@ -919,51 +911,48 @@ class _CanvasScreenState extends State<CanvasScreen> {
             color: Color(
               (data['color'] as num?)?.toInt() ?? Colors.black.value,
             ),
+            data: data,
           );
         })
         .toList(growable: false);
 
     final draft = _shapeTransformDraft;
-    
-    // Also apply _pendingShapeEdits for selected shape if no active draft handles
-    if (draft == null && _pendingShapeEdits.isNotEmpty && _canvasBloc.state.selectedShapeId != null) {
-      return mapped.map((element) {
-        if (element.id != _canvasBloc.state.selectedShapeId || element.kind != _ElementKind.shape) {
-          return element;
-        }
-        
-        final overrideRotation = _pendingShapeEdits['rotation'] as double?;
-        final overrideSize = _pendingShapeEdits['size'] as double?;
-        final overrideBorderRadius = _pendingShapeEdits['borderRadius'] as double?;
-        final overrideIsFilled = _pendingShapeEdits['isFilled'] as bool?;
-        
-        return element.copyWith(
-          size: overrideSize ?? element.size,
-          isFilled: overrideIsFilled ?? element.isFilled,
-          data: {
-            ...element.data,
-            if (overrideRotation != null) 'rotation': overrideRotation,
-            if (overrideBorderRadius != null) 'borderRadius': overrideBorderRadius,
-          },
-        );
-      }).toList(growable: false);
-    }
 
-    if (draft == null) {
+    if (draft == null && _pendingShapeEdits.isEmpty) {
       return mapped;
     }
 
     return mapped
         .map((element) {
-          if (element.id != draft.shapeId ||
-              element.kind != _ElementKind.shape) {
-            return element;
+          _CanvasElement result = element;
+
+          // 1. Apply slider pending edits if this element is selected
+          if (_pendingShapeEdits.isNotEmpty &&
+              element.id == _canvasBloc.state.selectedShapeId) {
+            Map<String, dynamic> updatedData = Map.from(result.data);
+            _pendingShapeEdits.forEach((key, value) {
+              updatedData[key] = value;
+            });
+            // Re-bind properties from updatedData
+            if (result.kind == _ElementKind.shape) {
+              result = result.copyWith(
+                data: updatedData,
+                size: updatedData['size'] ?? result.size,
+                isFilled: updatedData['isFilled'] ?? result.isFilled,
+              );
+            }
           }
-          return element.copyWith(
-            center: draft.center,
-            size: draft.size,
-            data: {...element.data, 'rotation': draft.rotation},
-          );
+
+          // 2. Apply drag/scale draft overlay edits
+          if (draft != null && result.id == draft.shapeId) {
+            result = result.copyWith(
+              center: draft.center,
+              size: draft.size,
+              data: {...result.data, 'rotation': draft.rotation},
+            );
+          }
+
+          return result;
         })
         .toList(growable: false);
   }
@@ -971,10 +960,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
   String? _hitTestShape(List<_CanvasElement> elements, Offset position) {
     for (var i = elements.length - 1; i >= 0; i--) {
       final element = elements[i];
-      if (element.kind != _ElementKind.shape) continue;
-      final distance = (position - element.center).distance;
-      if (distance <= (element.size / 2) + 14) {
-        return element.id;
+      // Allow selecting shapes, images, strokes, and text!
+      if (element.kind == _ElementKind.stroke) {
+        // Simple bounding box for strokes
+        if (element.bounds != null && element.bounds!.contains(position)) {
+          return element.id;
+        }
+      } else {
+        // Shapes, images, text
+        final distance = (position - element.center).distance;
+        final sizeHit = element.kind == _ElementKind.shape
+            ? element.size
+            : 100.0;
+        if (distance <= (sizeHit / 2) + 14) {
+          return element.id;
+        }
       }
     }
     return null;
@@ -1047,44 +1047,44 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   SwitchListTile.adaptive(
                     dense: true,
                     contentPadding: EdgeInsets.zero,
-                    value: (_pendingShapeEdits['isFilled'] as bool?) ?? state.selectedShapeIsFilled,
+                    value: state.selectedShapeIsFilled,
                     title: const Text('Filled', style: TextStyle(fontSize: 13)),
                     onChanged: _deferredSetSelectedShapeFill,
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Size ${((_pendingShapeEdits['size'] as double?) ?? shape.size).toStringAsFixed(0)}',
+                    'Size ${shape.size.toStringAsFixed(0)}',
                     style: const TextStyle(fontSize: 12),
                   ),
                   Slider(
-                    value: ((_pendingShapeEdits['size'] as double?) ?? shape.size).clamp(24, 320),
+                    value: shape.size.clamp(24, 320),
                     min: 24,
                     max: 320,
                     onChanged: _deferredResizeSelectedShape,
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Rotation ${(((_pendingShapeEdits['rotation'] as double?) ?? state.selectedShapeRotation) * 180 / math.pi).toStringAsFixed(0)}°',
+                    'Rotation ${(state.selectedShapeRotation * 180 / math.pi).toStringAsFixed(0)}°',
                     style: const TextStyle(fontSize: 12),
                   ),
                   Slider(
-                    value: (_pendingShapeEdits['rotation'] as double?) ?? state.selectedShapeRotation,
+                    value: state.selectedShapeRotation,
                     min: 0,
                     max: math.pi * 2,
                     onChanged: _deferredRotateSelectedShape,
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Corner Radius ${((_pendingShapeEdits['borderRadius'] as double?) ?? state.selectedShapeBorderRadius).toStringAsFixed(0)}',
+                    'Corner Radius ${state.selectedShapeBorderRadius.toStringAsFixed(0)}',
                     style: const TextStyle(fontSize: 12),
                   ),
                   Slider(
-                    value: ((_pendingShapeEdits['borderRadius'] as double?) ?? state.selectedShapeBorderRadius).clamp(
+                    value: state.selectedShapeBorderRadius.clamp(
                       0,
-                      ((_pendingShapeEdits['size'] as double?) ?? shape.size) / 2,
+                      shape.size / 2,
                     ),
                     min: 0,
-                    max: ((_pendingShapeEdits['size'] as double?) ?? shape.size) / 2 > 0 ? ((_pendingShapeEdits['size'] as double?) ?? shape.size) / 2 : 1,
+                    max: shape.size / 2,
                     onChanged: _deferredSetSelectedShapeBorderRadius,
                   ),
                   Wrap(
@@ -1116,22 +1116,46 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
-  Widget _buildShapeEditBanner() {
+  Widget _buildShapeEditBanner(bool isDark) {
     return Positioned(
       left: 0,
       right: 0,
       bottom: 18,
-      child: Center(
-        child: ElevatedButton.icon(
-          onPressed: () {
-            setState(() {
-              _isShapeEditTrayExpanded = true;
-            });
-          },
-          icon: const Icon(Icons.tune, size: 18),
-          label: const Text('Edit Shape'),
-          style: ElevatedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Container(
+        color: isDark ? AppColors.bgDark : AppColors.bgLight,
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Center(
+          child: ElevatedButton.icon(
+            onPressed: () {
+              setState(() {
+                _isShapeEditTrayExpanded = true;
+              });
+            },
+            icon: Icon(
+              Icons.tune,
+              size: 18,
+              color: isDark
+                  ? AppColors.textPrimaryDark
+                  : AppColors.textPrimaryLight,
+            ),
+            label: Text(
+              'Edit Shape',
+              style: TextStyle(
+                color: isDark
+                    ? AppColors.textPrimaryDark
+                    : AppColors.textPrimaryLight,
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isDark
+                  ? AppColors.surfaceDark
+                  : AppColors.surfaceLight,
+              foregroundColor: isDark
+                  ? AppColors.textPrimaryDark
+                  : AppColors.textPrimaryLight,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              elevation: 0,
+            ),
           ),
         ),
       ),
@@ -1161,144 +1185,148 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final center = _toScreen(shape.center);
     final size = shape.size * _viewportScale;
     final half = size / 2;
+    final rotation = (shape.data['rotation'] as num?)?.toDouble() ?? 0.0;
 
     return Positioned(
       left: center.dx - half - 16,
       top: center.dy - half - 16,
       width: size + 32,
       height: size + 32,
-      child: IgnorePointer(
-        ignoring: false,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Positioned.fill(
-              child: GestureDetector(
-                onPanStart: (_) {
-                  _setShapeEditing(true);
-                  _shapeTransformDraft ??= _ShapeTransformDraft(
-                    shapeId: shape.id,
-                    center: shape.center,
-                    size: shape.size,
-                    rotation:
-                        (shape.data['rotation'] as num?)?.toDouble() ??
-                        state.selectedShapeRotation,
-                  );
-                },
-                onPanUpdate: (details) {
-                  final draft =
-                      _shapeTransformDraft ??
-                      _ShapeTransformDraft(
-                        shapeId: shape.id,
-                        center: shape.center,
-                        size: shape.size,
-                        rotation:
-                            (shape.data['rotation'] as num?)?.toDouble() ??
-                            state.selectedShapeRotation,
-                      );
-                  final nextCenter = Offset(
-                    draft.center.dx + (details.delta.dx / _viewportScale),
-                    draft.center.dy + (details.delta.dy / _viewportScale),
-                  );
-                  setState(() {
-                    _shapeTransformDraft = draft.copyWith(center: nextCenter);
-                  });
-                },
-                onPanEnd: (_) {
-                  final draft = _shapeTransformDraft;
-                  if (draft != null && draft.shapeId == shape.id) {
-                    _moveSelectedShape(draft.center);
-                  }
-                  _shapeTransformDraft = null;
-                  _setShapeEditing(false);
-                },
-                child: Container(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.blueAccent, width: 1.5),
-                    borderRadius: BorderRadius.circular(8),
+      child: Transform.rotate(
+        angle: rotation,
+        child: IgnorePointer(
+          ignoring: false,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  onPanStart: (_) {
+                    _setShapeEditing(true);
+                    _shapeTransformDraft ??= _ShapeTransformDraft(
+                      shapeId: shape.id,
+                      center: shape.center,
+                      size: shape.size,
+                      rotation:
+                          (shape.data['rotation'] as num?)?.toDouble() ??
+                          state.selectedShapeRotation,
+                    );
+                  },
+                  onPanUpdate: (details) {
+                    final draft =
+                        _shapeTransformDraft ??
+                        _ShapeTransformDraft(
+                          shapeId: shape.id,
+                          center: shape.center,
+                          size: shape.size,
+                          rotation:
+                              (shape.data['rotation'] as num?)?.toDouble() ??
+                              state.selectedShapeRotation,
+                        );
+                    final nextCenter = Offset(
+                      draft.center.dx + (details.delta.dx / _viewportScale),
+                      draft.center.dy + (details.delta.dy / _viewportScale),
+                    );
+                    setState(() {
+                      _shapeTransformDraft = draft.copyWith(center: nextCenter);
+                    });
+                  },
+                  onPanEnd: (_) {
+                    final draft = _shapeTransformDraft;
+                    if (draft != null && draft.shapeId == shape.id) {
+                      _moveSelectedShape(draft.center);
+                    }
+                    _shapeTransformDraft = null;
+                    _setShapeEditing(false);
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.blueAccent, width: 1.5),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                 ),
               ),
-            ),
-            Positioned(
-              top: -8,
-              left: size / 2,
-              child: GestureDetector(
-                onPanStart: (_) {
-                  _setShapeEditing(true);
-                  _isRotatingShape = true;
-                  final baseRotation =
-                      (shape.data['rotation'] as num?)?.toDouble() ??
-                      state.selectedShapeRotation;
-                  _shapeTransformDraft = _ShapeTransformDraft(
-                    shapeId: shape.id,
-                    center: shape.center,
-                    size: shape.size,
-                    rotation: baseRotation,
-                  );
-                },
-                onPanUpdate: (details) {
-                  final draft = _shapeTransformDraft;
-                  if (draft == null || draft.shapeId != shape.id) return;
-                  final delta = details.delta.dx + details.delta.dy;
-                  setState(() {
-                    _shapeTransformDraft = draft.copyWith(
-                      rotation: draft.rotation + (delta / 140),
-                    );
-                  });
-                },
-                onPanEnd: (_) {
-                  final draft = _shapeTransformDraft;
-                  if (draft != null && draft.shapeId == shape.id) {
-                    _rotateSelectedShape(draft.rotation);
-                  }
-                  _shapeTransformDraft = null;
-                  _isRotatingShape = false;
-                  _setShapeEditing(false);
-                },
-                child: _buildHandle(Icons.rotate_right),
-              ),
-            ),
-            Positioned(
-              top: size / 2,
-              right: -8,
-              child: GestureDetector(
-                onPanStart: (_) {
-                  _setShapeEditing(true);
-                  _isResizingShape = true;
-                  _shapeTransformDraft = _ShapeTransformDraft(
-                    shapeId: shape.id,
-                    center: shape.center,
-                    size: shape.size,
-                    rotation:
+              Positioned(
+                top: -8,
+                left: size / 2,
+                child: GestureDetector(
+                  onPanStart: (_) {
+                    _setShapeEditing(true);
+                    _isRotatingShape = true;
+                    final baseRotation =
                         (shape.data['rotation'] as num?)?.toDouble() ??
-                        state.selectedShapeRotation,
-                  );
-                },
-                onPanUpdate: (details) {
-                  final draft = _shapeTransformDraft;
-                  if (draft == null || draft.shapeId != shape.id) return;
-                  final delta = details.delta.dx + details.delta.dy;
-                  final nextSize = (draft.size + delta / _viewportScale * 1.8)
-                      .clamp(24.0, 420.0)
-                      .toDouble();
-                  setState(() {
-                    _shapeTransformDraft = draft.copyWith(size: nextSize);
-                  });
-                },
-                onPanEnd: (_) {
-                  final draft = _shapeTransformDraft;
-                  if (draft != null && draft.shapeId == shape.id) {
-                    _resizeSelectedShape(draft.size);
-                  }
-                  _shapeTransformDraft = null;
-                  _isResizingShape = false;
-                  _setShapeEditing(false);
-                },
-                child: _buildHandle(Icons.open_in_full),
+                        state.selectedShapeRotation;
+                    _shapeTransformDraft = _ShapeTransformDraft(
+                      shapeId: shape.id,
+                      center: shape.center,
+                      size: shape.size,
+                      rotation: baseRotation,
+                    );
+                  },
+                  onPanUpdate: (details) {
+                    final draft = _shapeTransformDraft;
+                    if (draft == null || draft.shapeId != shape.id) return;
+                    final delta = details.delta.dx + details.delta.dy;
+                    setState(() {
+                      _shapeTransformDraft = draft.copyWith(
+                        rotation: draft.rotation + (delta / 140),
+                      );
+                    });
+                  },
+                  onPanEnd: (_) {
+                    final draft = _shapeTransformDraft;
+                    if (draft != null && draft.shapeId == shape.id) {
+                      _rotateSelectedShape(draft.rotation);
+                    }
+                    _shapeTransformDraft = null;
+                    _isRotatingShape = false;
+                    _setShapeEditing(false);
+                  },
+                  child: _buildHandle(Icons.rotate_right),
+                ),
               ),
-            ),
-          ],
+              Positioned(
+                top: size / 2,
+                right: -8,
+                child: GestureDetector(
+                  onPanStart: (_) {
+                    _setShapeEditing(true);
+                    _isResizingShape = true;
+                    _shapeTransformDraft = _ShapeTransformDraft(
+                      shapeId: shape.id,
+                      center: shape.center,
+                      size: shape.size,
+                      rotation:
+                          (shape.data['rotation'] as num?)?.toDouble() ??
+                          state.selectedShapeRotation,
+                    );
+                  },
+                  onPanUpdate: (details) {
+                    final draft = _shapeTransformDraft;
+                    if (draft == null || draft.shapeId != shape.id) return;
+                    final delta = details.delta.dx + details.delta.dy;
+                    final nextSize = (draft.size + delta / _viewportScale * 1.8)
+                        .clamp(24.0, 420.0)
+                        .toDouble();
+                    setState(() {
+                      _shapeTransformDraft = draft.copyWith(size: nextSize);
+                    });
+                  },
+                  onPanEnd: (_) {
+                    final draft = _shapeTransformDraft;
+                    if (draft != null && draft.shapeId == shape.id) {
+                      _resizeSelectedShape(draft.size);
+                    }
+                    _shapeTransformDraft = null;
+                    _isResizingShape = false;
+                    _setShapeEditing(false);
+                  },
+                  child: _buildHandle(Icons.open_in_full),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1713,6 +1741,21 @@ class _CanvasElement {
   final String text;
   final Map<String, dynamic> data;
 
+  Rect? get bounds {
+    if (points.isEmpty) return null;
+    double minX = points.first.dx;
+    double minY = points.first.dy;
+    double maxX = points.first.dx;
+    double maxY = points.first.dy;
+    for (final p in points) {
+      if (p.dx < minX) minX = p.dx;
+      if (p.dy < minY) minY = p.dy;
+      if (p.dx > maxX) maxX = p.dx;
+      if (p.dy > maxY) maxY = p.dy;
+    }
+    return Rect.fromLTRB(minX, minY, maxX, maxY).inflate(strokeWidth + 8);
+  }
+
   const _CanvasElement._({
     required this.id,
     required this.kind,
@@ -1736,6 +1779,7 @@ class _CanvasElement {
     required double strokeWidth,
     required double opacity,
     required String brushType,
+    Map<String, dynamic> data = const {},
   }) {
     return _CanvasElement._(
       id: id,
@@ -1745,6 +1789,7 @@ class _CanvasElement {
       strokeWidth: strokeWidth,
       opacity: opacity,
       brushType: brushType,
+      data: data,
     );
   }
 
@@ -1776,6 +1821,7 @@ class _CanvasElement {
     required Offset center,
     required String text,
     required Color color,
+    Map<String, dynamic> data = const {},
   }) {
     return _CanvasElement._(
       id: id,
@@ -1783,14 +1829,15 @@ class _CanvasElement {
       center: center,
       text: text,
       color: color,
+      data: data,
     );
   }
 
   _CanvasElement copyWith({
     Offset? center,
     double? size,
-    bool? isFilled,
     Map<String, dynamic>? data,
+    bool? isFilled,
   }) {
     return _CanvasElement._(
       id: id,

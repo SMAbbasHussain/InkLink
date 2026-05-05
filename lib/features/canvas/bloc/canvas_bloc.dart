@@ -724,7 +724,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final selectedId = state.selectedShapeId;
     if (selectedId == null) return null;
     for (final element in state.elements) {
-      if (element.id == selectedId && element.type == 'shape') {
+      if (element.id == selectedId) {
         return element;
       }
     }
@@ -738,7 +738,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     CanvasElement? existing;
     for (final element in state.elements) {
-      if (element.id == shapeId && element.type == 'shape') {
+      if (element.id == shapeId) {
         existing = element;
         break;
       }
@@ -792,7 +792,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(elements: next));
     await _saveCrdtOperation(
       action: 'update',
-      type: 'shape',
+      type: existing
+          .type, // <-- Pass the correct type instead of hardcoded 'shape'
       objectId: shapeId,
       data: data,
       emit: emit,
@@ -1272,10 +1273,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       return;
     }
 
-    // For shape updates, check if we should do in-place edit instead of new update
-    if (action == 'update' &&
-        type == 'shape' &&
-        _lastShapeUpdateId.containsKey(objectId)) {
+    // For element updates, check if we should do in-place edit instead of new update
+    if (action == 'update' && _lastShapeUpdateId.containsKey(objectId)) {
       final existingUpdateId = _lastShapeUpdateId[objectId]!;
       await _updateCrdtUpdateInPlace(
         objectId: objectId,
@@ -1283,12 +1282,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         payload: update,
       );
     } else {
-      final elementId = type == 'shape' ? objectId : null;
+      final elementId = objectId;
       final publishedUpdateId = await _publishCrdtUpdate(
         update,
         elementId: elementId,
       );
-      if (publishedUpdateId != null && type == 'shape') {
+      if (publishedUpdateId != null) {
         // Track this update for in-place edits
         _lastShapeUpdateId[objectId] = publishedUpdateId;
       }
@@ -1424,16 +1423,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               'cy': (payload['cy'] as num?)?.toDouble() ?? 0.0,
               'size': (payload['size'] as num?)?.toDouble() ?? 64.0,
               'rotation': (payload['rotation'] as num?)?.toDouble() ?? 0.0,
-              'borderRadius': (payload['borderRadius'] as num?)?.toDouble() ?? 0.0,
+              'borderRadius':
+                  (payload['borderRadius'] as num?)?.toDouble() ?? 0.0,
               'isFilled': payload['isFilled'] as bool? ?? false,
               'color':
                   (payload['color'] as num?)?.toInt() ?? Colors.black.value,
               'strokeWidth':
                   (payload['strokeWidth'] as num?)?.toDouble() ?? 3.0,
-              'isFilled': (payload['isFilled'] as bool?) ?? false,
-              'borderRadius':
-                  (payload['borderRadius'] as num?)?.toDouble() ?? 0.0,
-              'rotation': (payload['rotation'] as num?)?.toDouble() ?? 0.0,
             },
           ),
         );

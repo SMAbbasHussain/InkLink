@@ -25,6 +25,12 @@ class _NotificationsUpdated extends NotificationsEvent {
   const _NotificationsUpdated(this.notifications);
 }
 
+class _NotificationsErrorOccurred extends NotificationsEvent {
+  final String error;
+
+  const _NotificationsErrorOccurred(this.error);
+}
+
 abstract class NotificationsState {
   const NotificationsState();
 }
@@ -60,6 +66,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
       super(const NotificationsInitial()) {
     on<NotificationsLoadRequested>(_onLoadRequested);
     on<_NotificationsUpdated>(_onNotificationsUpdated);
+    on<_NotificationsErrorOccurred>(_onErrorOccurred);
     on<NotificationsDeleteRequested>(_onDeleteRequested);
   }
 
@@ -76,7 +83,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
       _rawNotifications = items;
       final normalized = _normalizeNotifications(items);
       add(_NotificationsUpdated(normalized));
-    }, onError: (error) => emit(NotificationsError(error.toString())));
+    }, onError: (error) => add(_NotificationsErrorOccurred(error.toString())));
   }
 
   void _onNotificationsUpdated(
@@ -88,6 +95,13 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     )..sort((left, right) => _timestampOf(right).compareTo(_timestampOf(left)));
 
     emit(NotificationsLoaded(sorted));
+  }
+
+  void _onErrorOccurred(
+    _NotificationsErrorOccurred event,
+    Emitter<NotificationsState> emit,
+  ) {
+    emit(NotificationsError(event.error));
   }
 
   Future<void> markNotificationRead(String notificationId) async {

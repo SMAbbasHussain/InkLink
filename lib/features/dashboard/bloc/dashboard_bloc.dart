@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:rxdart/rxdart.dart';
 import '../../../domain/models/board.dart';
@@ -178,17 +179,51 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     LoadDashboardRequested event,
     Emitter<DashboardState> emit,
   ) async {
-    _dashboardSub?.cancel();
-    await boardService.startBoardsSync();
+    // Emit loading state immediately
+    emit(
+      DashboardLoaded(
+        ownedBoards: const [],
+        joinedBoards: const [],
+        currentUserProfile: _latestCurrentUserProfile,
+      ),
+    );
 
-    _dashboardSub =
-        Rx.combineLatest2<List<Board>, List<Board>, List<List<Board>>>(
-          boardService.getOwnedBoards(),
-          boardService.getJoinedBoards(),
-          (owned, joined) => <List<Board>>[owned, joined],
-        ).listen((combined) {
-          add(_UpdateDashboardData(combined[0], combined[1]));
-        });
+    // Properly cancel old subscriptions
+    await _dashboardSub?.cancel();
+    _dashboardSub = null;
+    await _profileSub?.cancel();
+    _profileSub = null;
+
+    try {
+      await boardService.startBoardsSync();
+
+      _dashboardSub =
+          Rx.combineLatest2<List<Board>, List<Board>, List<List<Board>>>(
+            boardService.getOwnedBoards(),
+            boardService.getJoinedBoards(),
+            (owned, joined) => <List<Board>>[owned, joined],
+          ).listen(
+            (combined) {
+              add(_UpdateDashboardData(combined[0], combined[1]));
+            },
+            onError: (error) {
+              developer.log(
+                'Dashboard boards sync error: $error',
+                name: 'DashboardBloc',
+              );
+            },
+          );
+    } catch (e) {
+      developer.log('Failed to start boards sync: $e', name: 'DashboardBloc');
+      emit(
+        DashboardLoaded(
+          ownedBoards: const [],
+          joinedBoards: const [],
+          currentUserProfile: _latestCurrentUserProfile,
+          actionError: 'Failed to load boards: $e',
+        ),
+      );
+    }
   }
 
   void _onUpdateDashboardData(
@@ -399,6 +434,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     await _profileSub?.cancel();
     _dashboardSub = null;
     _profileSub = null;
+    await boardService.stopBoardsSync();
   }
 
   @override

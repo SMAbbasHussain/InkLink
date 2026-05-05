@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:inklink/core/constants/app_colors.dart';
 
 import '../widgets/sliding_tray.dart';
 import 'canvas_shape_type.dart';
@@ -11,21 +12,24 @@ class ShapesTray extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    Color backGroundColor = isDark ?  AppColors.surfaceDark: AppColors.surfaceLight;
+    
     final items = <({IconData icon, String label, CanvasShapeType type})>[
       (
         icon: Icons.square_outlined,
         label: 'Square',
-        type: CanvasShapeType.square,
+        type: CanvasShapeType.square
       ),
       (
         icon: Icons.rectangle_outlined,
         label: 'Rect',
-        type: CanvasShapeType.rectangle,
+        type: CanvasShapeType.rectangle
       ),
       (
         icon: Icons.circle_outlined,
         label: 'Circle',
-        type: CanvasShapeType.circle,
+        type: CanvasShapeType.circle
       ),
       (
         icon: Icons.egg_outlined,
@@ -35,7 +39,7 @@ class ShapesTray extends StatelessWidget {
       (
         icon: Icons.change_history,
         label: 'Triangle',
-        type: CanvasShapeType.triangle,
+        type: CanvasShapeType.triangle
       ),
       (
         icon: Icons.diamond,
@@ -46,18 +50,18 @@ class ShapesTray extends StatelessWidget {
       (
         icon: Icons.pentagon_outlined,
         label: 'Pentagon',
-        type: CanvasShapeType.pentagon,
+        type: CanvasShapeType.pentagon
       ),
       (
         icon: Icons.hexagon_outlined,
         label: 'Hexagon',
-        type: CanvasShapeType.hexagon,
+        type: CanvasShapeType.hexagon
       ),
       (icon: Icons.horizontal_rule, label: 'Line', type: CanvasShapeType.line),
       (
         icon: Icons.align_horizontal_left_rounded,
         label: 'Semicircle',
-        type: CanvasShapeType.semicircle,
+        type: CanvasShapeType.semicircle
       ),
     ];
 
@@ -84,7 +88,7 @@ class ShapesTray extends StatelessWidget {
             borderRadius: BorderRadius.circular(10),
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.grey.shade50,
+                color: backGroundColor,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: Colors.grey.shade300),
               ),

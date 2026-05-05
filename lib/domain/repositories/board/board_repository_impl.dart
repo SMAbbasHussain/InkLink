@@ -223,43 +223,79 @@ class FirestoreBoardRepository implements BoardRepository {
   }
 
   Stream<List<Board>> _watchLocalBoards({required bool owned}) {
-    return _localDatabaseService.database.asStream().asyncExpand((isar) {
+    final controller = StreamController<List<Board>>.broadcast();
+    StreamSubscription<User?>? authSub;
+    StreamSubscription<List<LocalBoard>>? localSub;
+
+    Future<void> bindToUser(String? uid) async {
+      await localSub?.cancel();
+      localSub = null;
+
+      if (uid == null || uid.isEmpty) {
+        if (!controller.isClosed) {
+          controller.add(const <Board>[]);
+        }
+        return;
+      }
+
+      final isar = await _localDatabaseService.database;
       final queryBuilder = isar.localBoards.filter();
 
       final filterQuery = owned
-          ? queryBuilder.ownerIdEqualTo(currentUserId ?? '')
+          ? queryBuilder.ownerIdEqualTo(uid)
           : queryBuilder
-                .membersElementEqualTo(currentUserId ?? '')
+                .membersElementEqualTo(uid)
                 .and()
                 .not()
-                .ownerIdEqualTo(currentUserId ?? '');
+                .ownerIdEqualTo(uid);
 
-      return filterQuery
+      localSub = filterQuery
           .sortByUpdatedAtDesc()
           .watch(fireImmediately: true)
-          .map(
-            (localBoards) => localBoards
-                .map(
-                  (lb) => Board(
-                    id: lb.boardId,
-                    title: lb.title,
-                    ownerId: lb.ownerId,
-                    members: lb.members,
-                    previewPath: lb.previewPath,
-                    visibility: lb.visibility,
-                    privateJoinPolicy: lb.privateJoinPolicy,
-                    tags: lb.tags,
-                    joinViaCodeEnabled: lb.joinViaCodeEnabled,
-                    whoCanInvite: lb.whoCanInvite,
-                    defaultLinkJoinRole: lb.defaultLinkJoinRole,
-                    currentUserRole: lb.currentUserRole,
-                    createdAt: lb.createdAt,
-                    updatedAt: lb.updatedAt,
-                  ),
-                )
-                .toList(),
-          );
-    });
+          .listen((localBoards) {
+            if (controller.isClosed) {
+              return;
+            }
+
+            controller.add(
+              localBoards
+                  .map(
+                    (lb) => Board(
+                      id: lb.boardId,
+                      title: lb.title,
+                      ownerId: lb.ownerId,
+                      members: lb.members,
+                      previewPath: lb.previewPath,
+                      visibility: lb.visibility,
+                      privateJoinPolicy: lb.privateJoinPolicy,
+                      tags: lb.tags,
+                      joinViaCodeEnabled: lb.joinViaCodeEnabled,
+                      whoCanInvite: lb.whoCanInvite,
+                      defaultLinkJoinRole: lb.defaultLinkJoinRole,
+                      currentUserRole: lb.currentUserRole,
+                      createdAt: lb.createdAt,
+                      updatedAt: lb.updatedAt,
+                    ),
+                  )
+                  .toList(),
+            );
+          }, onError: controller.addError);
+    }
+
+    controller.onListen = () {
+      authSub = _authService.getInstance().authStateChanges().listen((user) {
+        unawaited(bindToUser(user?.uid));
+      }, onError: controller.addError);
+
+      unawaited(bindToUser(currentUserId));
+    };
+
+    controller.onCancel = () async {
+      await authSub?.cancel();
+      await localSub?.cancel();
+    };
+
+    return controller.stream;
   }
 
   @override
