@@ -235,36 +235,44 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
     if (picked == null || !mounted) return;
 
-    final navigator = Navigator.of(context);
-    final rawBytes = await picked.readAsBytes();
-    final edited = await navigator.push<Uint8List>(
-      MaterialPageRoute(
-        builder: (_) => MediaEditorScreen(imageBytes: rawBytes),
-      ),
-    );
-    if (edited == null || edited.isEmpty || !mounted) return;
+    try {
+      final navigator = Navigator.of(context);
+      final rawBytes = await picked.readAsBytes();
+      final edited = await navigator.push<Uint8List>(
+        MaterialPageRoute(
+          builder: (_) => MediaEditorScreen(imageBytes: rawBytes),
+        ),
+      );
+      if (edited == null || edited.isEmpty || !mounted) return;
 
-    setState(() {
-      _recentImages.insert(0, edited);
-      if (_recentImages.length > 10) {
-        _recentImages.removeLast();
-      }
-    });
+      final sourceSize = await _readImageSize(edited);
+      if (!mounted) return;
 
-    final sourceSize = await _readImageSize(edited);
-    final maxSide = math.max(sourceSize.width, sourceSize.height);
-    final fitScale = maxSide > 280 ? (280 / maxSide) : 1.0;
-    final width = (sourceSize.width * fitScale).clamp(90, 720).toDouble();
-    final height = (sourceSize.height * fitScale).clamp(90, 720).toDouble();
+      setState(() {
+        _recentImages.insert(0, edited);
+        if (_recentImages.length > 10) {
+          _recentImages.removeLast();
+        }
+      });
 
-    _canvasBloc.add(
-      CanvasAddImageElement(
-        edited,
-        _canvasBloc.randomShapeCenter(),
-        width: width,
-        height: height,
-      ),
-    );
+      final maxSide = math.max(sourceSize.width, sourceSize.height);
+      final fitScale = maxSide > 280 ? (280 / maxSide) : 1.0;
+      final width = (sourceSize.width * fitScale).clamp(90, 720).toDouble();
+      final height = (sourceSize.height * fitScale).clamp(90, 720).toDouble();
+
+      _canvasBloc.add(
+        CanvasAddImageElement(
+          edited,
+          _canvasBloc.randomShapeCenter(),
+          width: width,
+          height: height,
+        ),
+      );
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Failed to upload image to canvas for board ${widget.boardId}: $error\n$stackTrace',
+      );
+    }
   }
 
   Future<Size> _readImageSize(Uint8List bytes) async {
@@ -275,6 +283,18 @@ class _CanvasScreenState extends State<CanvasScreen> {
     image.dispose();
     codec.dispose();
     return size;
+  }
+
+  void _pruneImageCache(List<CanvasElement> elements) {
+    final activeImageIds = elements
+        .where((element) => element.type == 'image')
+        .map((element) => element.id)
+        .toSet();
+
+    _decodedImageCache.removeWhere((key, _) => !activeImageIds.contains(key));
+    _decodedImageCacheKey.removeWhere(
+      (key, _) => !activeImageIds.contains(key),
+    );
   }
 
   bool _isAtTransform({required double scale, required Offset offset}) {
@@ -593,6 +613,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
         },
         child: BlocBuilder<CanvasBloc, CanvasState>(
           builder: (context, state) {
+            _pruneImageCache(state.elements);
             final mappedElements = _mapElements(state.elements);
             final title =
                 state.boardTitle ??
@@ -1355,10 +1376,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Widget _buildAllTrays(CanvasState state) {
     return Stack(
       children: [
-        MembersTray(
-          isOpen: state.activeTray == 'members',
-          members: state.boardMembers,
-        ),
+        MembersTray(isOpen: state.activeTray == 'members'),
         AITray(
           isOpen: state.activeTray == 'ai',
           controller: _aiPromptController,
@@ -1603,6 +1621,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               height: effectiveHeight,
                             );
                         setState(() {
+                          const minDimension = 24.0;
                           _imageDrafts[element.id] = draftNow.copyWith(
                             cx:
                                 draftNow.cx +
@@ -1610,12 +1629,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             cy:
                                 draftNow.cy +
                                 (details.delta.dy / (_viewportScale * 2)),
-                            width:
-                                draftNow.width +
-                                (details.delta.dx / _viewportScale),
-                            height:
-                                draftNow.height +
-                                (details.delta.dy / _viewportScale),
+                            width: math.max(
+                              minDimension,
+                              draftNow.width +
+                                  (details.delta.dx / _viewportScale),
+                            ),
+                            height: math.max(
+                              minDimension,
+                              draftNow.height +
+                                  (details.delta.dy / _viewportScale),
+                            ),
                           );
                         });
                       },

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:typed_data';
 
 import '../../../core/database/collections/local_crdt_update.dart';
@@ -177,12 +178,25 @@ class CanvasServiceImpl implements CanvasService {
 
     final remoteSub = _syncRepository
         .watchRemoteCrdtUpdates(boardId, since: latestLocalUpdateAt)
-        .listen((updates) async {
-          for (final update in updates) {
-            await _syncRepository.saveLocalCrdtUpdate(update);
-          }
-          await _syncPendingLocalUpdates(boardId, userId);
-        }, onError: (_) {});
+        .listen(
+          (updates) async {
+            for (final update in updates) {
+              await _syncRepository.saveLocalCrdtUpdate(update);
+            }
+            await _syncPendingLocalUpdates(boardId, userId);
+          },
+          onError: (error, stackTrace) {
+            developer.log(
+              'Remote CRDT sync error for board $boardId',
+              name: 'CanvasService',
+              error: error,
+              stackTrace: stackTrace,
+            );
+            if (_isPermissionDenied(error)) {
+              unawaited(stopCrdtRemoteSync(boardId));
+            }
+          },
+        );
     _remoteSubs[boardId] = remoteSub;
 
     await _syncPendingLocalUpdates(boardId, userId);

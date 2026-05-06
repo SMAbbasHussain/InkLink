@@ -104,7 +104,12 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     required String updateId,
     required String payloadBase64,
   }) async {
-    // Update locally
+    if (payloadBase64.isEmpty ||
+        payloadBase64.length > _maxPayloadBase64Length) {
+      return;
+    }
+
+    // Update locally only for payloads that will also be sent remotely.
     final isar = await _localDatabaseService.database;
     final existing = await isar.localCrdtUpdates.getByUpdateId(updateId);
     if (existing == null) return;
@@ -117,11 +122,6 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     });
 
     // Update remotely
-    if (payloadBase64.isEmpty ||
-        payloadBase64.length > _maxPayloadBase64Length) {
-      return;
-    }
-
     await _firestoreService
         .collection('boards')
         .doc(boardId)
@@ -242,15 +242,18 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       return null;
     }
 
+    final appliedAt = (data['appliedAt'] as firestore.Timestamp?)?.toDate();
+    if (appliedAt == null) {
+      return null;
+    }
+
     return LocalCrdtUpdate()
       ..updateId = doc.id
       ..boardId = (data['boardId'] as String?) ?? boardId
       ..elementId = (data['elementId'] as String?)
       ..payloadBase64 = payloadBase64
       ..sourceClientId = (data['sourceClientId'] as String?) ?? ''
-      ..appliedAt =
-          (data['appliedAt'] as firestore.Timestamp?)?.toDate() ??
-          DateTime.now()
+      ..appliedAt = appliedAt
       ..isSynced = true;
   }
 

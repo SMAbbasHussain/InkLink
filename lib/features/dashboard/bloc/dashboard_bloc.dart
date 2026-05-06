@@ -191,8 +191,6 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     // Properly cancel old subscriptions
     await _dashboardSub?.cancel();
     _dashboardSub = null;
-    await _profileSub?.cancel();
-    _profileSub = null;
 
     try {
       await boardService.startBoardsSync();
@@ -220,7 +218,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           ownedBoards: const [],
           joinedBoards: const [],
           currentUserProfile: _latestCurrentUserProfile,
-          actionError: 'Failed to load boards: $e',
+          actionError: 'Failed to load boards: ${_humanizeError(e)}',
         ),
       );
     }

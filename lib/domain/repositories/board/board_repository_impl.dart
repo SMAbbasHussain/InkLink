@@ -226,9 +226,14 @@ class FirestoreBoardRepository implements BoardRepository {
     final controller = StreamController<List<Board>>.broadcast();
     StreamSubscription<User?>? authSub;
     StreamSubscription<List<LocalBoard>>? localSub;
+    var syncGeneration = 0;
 
     Future<void> bindToUser(String? uid) async {
+      final callGeneration = syncGeneration;
       await localSub?.cancel();
+      if (callGeneration != syncGeneration) {
+        return;
+      }
       localSub = null;
 
       if (uid == null || uid.isEmpty) {
@@ -239,6 +244,9 @@ class FirestoreBoardRepository implements BoardRepository {
       }
 
       final isar = await _localDatabaseService.database;
+      if (callGeneration != syncGeneration || controller.isClosed) {
+        return;
+      }
       final queryBuilder = isar.localBoards.filter();
 
       final filterQuery = owned
@@ -249,7 +257,7 @@ class FirestoreBoardRepository implements BoardRepository {
                 .not()
                 .ownerIdEqualTo(uid);
 
-      localSub = filterQuery
+      final nextLocalSub = filterQuery
           .sortByUpdatedAtDesc()
           .watch(fireImmediately: true)
           .listen((localBoards) {
@@ -280,9 +288,17 @@ class FirestoreBoardRepository implements BoardRepository {
                   .toList(),
             );
           }, onError: controller.addError);
+
+      if (callGeneration != syncGeneration || controller.isClosed) {
+        await nextLocalSub.cancel();
+        return;
+      }
+
+      localSub = nextLocalSub;
     }
 
     controller.onListen = () {
+      syncGeneration++;
       authSub = _authService.getInstance().authStateChanges().listen((user) {
         unawaited(bindToUser(user?.uid));
       }, onError: controller.addError);
@@ -291,8 +307,11 @@ class FirestoreBoardRepository implements BoardRepository {
     };
 
     controller.onCancel = () async {
+      syncGeneration++;
       await authSub?.cancel();
+      authSub = null;
       await localSub?.cancel();
+      localSub = null;
     };
 
     return controller.stream;

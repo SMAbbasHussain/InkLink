@@ -634,13 +634,19 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     // Apply pending changes, with normalization for specific fields
     for (final entry in event.pendingData.entries) {
       if (entry.key == 'rotation') {
-        data[entry.key] = _normalizeRotation(entry.value as double);
+        final rotation = _toDoubleValue(entry.value);
+        if (rotation == null) continue;
+        data[entry.key] = _normalizeRotation(rotation);
       } else if (entry.key == 'size') {
-        data[entry.key] = (entry.value as double).clamp(24.0, 320.0);
+        final size = _toDoubleValue(entry.value);
+        if (size == null) continue;
+        data[entry.key] = size.clamp(24.0, 320.0);
       } else if (entry.key == 'borderRadius') {
-        final size = (data['size'] as num?)?.toDouble() ?? 64.0;
+        final borderRadius = _toDoubleValue(entry.value);
+        if (borderRadius == null) continue;
+        final size = _toDoubleValue(data['size']) ?? 64.0;
         final maxRadius = (size / 2).clamp(0.0, 180.0);
-        data[entry.key] = (entry.value as double).clamp(0.0, maxRadius);
+        data[entry.key] = borderRadius.clamp(0.0, maxRadius);
       } else {
         data[entry.key] = entry.value;
       }
@@ -648,17 +654,19 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
     // Update UI state for tracked fields
     if (event.pendingData.containsKey('rotation')) {
-      emit(state.copyWith(selectedShapeRotation: data['rotation'] as double));
+      final rotation = _toDoubleValue(data['rotation']);
+      if (rotation != null) {
+        emit(state.copyWith(selectedShapeRotation: rotation));
+      }
     }
     if (event.pendingData.containsKey('isFilled')) {
-      emit(state.copyWith(selectedShapeIsFilled: data['isFilled'] as bool));
+      emit(state.copyWith(selectedShapeIsFilled: _parseBool(data['isFilled'])));
     }
     if (event.pendingData.containsKey('borderRadius')) {
-      emit(
-        state.copyWith(
-          selectedShapeBorderRadius: data['borderRadius'] as double,
-        ),
-      );
+      final borderRadius = _toDoubleValue(data['borderRadius']);
+      if (borderRadius != null) {
+        emit(state.copyWith(selectedShapeBorderRadius: borderRadius));
+      }
     }
 
     // Publish single batched update
@@ -810,6 +818,20 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     return normalized;
   }
 
+  double? _toDoubleValue(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  bool _parseBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is String) {
+      return value.trim().toLowerCase() == 'true';
+    }
+    return false;
+  }
+
   String _shapeFingerprint(String shapeId, Map<String, dynamic> data) {
     final cx = ((data['cx'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(3);
     final cy = ((data['cy'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(3);
@@ -822,7 +844,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final borderRadius = ((data['borderRadius'] as num?)?.toDouble() ?? 0.0)
         .toStringAsFixed(3);
     final color = ((data['color'] as num?)?.toInt() ?? 0).toString();
-    final filled = ((data['isFilled'] as bool?) ?? false).toString();
+    final filled = _parseBool(data['isFilled']).toString();
     return '$shapeId|$cx|$cy|$size|$rotation|$borderRadius|$color|$filled';
   }
 
@@ -1425,7 +1447,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               'rotation': (payload['rotation'] as num?)?.toDouble() ?? 0.0,
               'borderRadius':
                   (payload['borderRadius'] as num?)?.toDouble() ?? 0.0,
-              'isFilled': payload['isFilled'] as bool? ?? false,
+              'isFilled': _parseBool(payload['isFilled']),
               'color':
                   (payload['color'] as num?)?.toInt() ?? Colors.black.value,
               'strokeWidth':

@@ -154,7 +154,8 @@ class CanvasState {
           memberSearchQuery == other.memberSearchQuery &&
           selectedShapeId == other.selectedShapeId &&
           selectedShapeIsFilled == other.selectedShapeIsFilled &&
-          selectedShapeBorderRadius == other.selectedShapeBorderRadius;
+          selectedShapeBorderRadius == other.selectedShapeBorderRadius &&
+          selectedShapeRotation == other.selectedShapeRotation;
 
   @override
   int get hashCode =>

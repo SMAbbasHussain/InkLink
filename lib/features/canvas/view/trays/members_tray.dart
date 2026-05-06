@@ -7,9 +7,8 @@ import '../widgets/sliding_tray.dart';
 
 class MembersTray extends StatefulWidget {
   final bool isOpen;
-  final List<BoardMember> members;
 
-  const MembersTray({super.key, required this.isOpen, required this.members});
+  const MembersTray({super.key, required this.isOpen});
 
   @override
   State<MembersTray> createState() => _MembersTrayState();

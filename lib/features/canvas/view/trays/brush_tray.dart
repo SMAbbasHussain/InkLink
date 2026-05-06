@@ -378,9 +378,11 @@ class _BrushTrayState extends State<BrushTray> {
                           ),
                         ),
                         child: widget.selectedColor == c
-                            ? const Icon(
+                            ? Icon(
                                 Icons.check,
-                                color: Colors.white,
+                                color: c.computeLuminance() > 0.6
+                                    ? Colors.black
+                                    : Colors.white,
                                 size: 16,
                               )
                             : null,
