@@ -163,7 +163,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   void _deferredSetSelectedShapeBorderRadius(double borderRadius) {
-    _pendingShapeEdits['borderRadius'] = borderRadius;
+    setState(() {
+      _pendingShapeEdits['borderRadius'] = borderRadius;
+    });
     _scheduleShapeEditCommit();
   }
 
@@ -1017,11 +1019,19 @@ class _CanvasScreenState extends State<CanvasScreen> {
       Colors.orange,
       Colors.purple,
     ];
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    final pendingBorderRadius = (_pendingShapeEdits['borderRadius'] as num?)
+        ?.toDouble();
+    final effectiveBorderRadius =
+        (pendingBorderRadius ?? state.selectedShapeBorderRadius).clamp(
+          0.0,
+          shape.size / 2,
+        );
 
     return Positioned(
       left: 0,
       right: 0,
-      bottom: 18,
+      bottom: 18 + bottomInset + 12,
       child: Center(
         child: Material(
           color: Colors.white,
@@ -1096,14 +1106,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Corner Radius ${state.selectedShapeBorderRadius.toStringAsFixed(0)}',
+                    'Corner Radius ${effectiveBorderRadius.toStringAsFixed(0)}',
                     style: const TextStyle(fontSize: 12),
                   ),
                   Slider(
-                    value: state.selectedShapeBorderRadius.clamp(
-                      0,
-                      shape.size / 2,
-                    ),
+                    value: effectiveBorderRadius,
                     min: 0,
                     max: shape.size / 2,
                     onChanged: _deferredSetSelectedShapeBorderRadius,
@@ -1138,10 +1145,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   Widget _buildShapeEditBanner(bool isDark) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
     return Positioned(
       left: 0,
       right: 0,
-      bottom: 18,
+      bottom: bottomInset,
       child: Container(
         color: isDark ? AppColors.bgDark : AppColors.bgLight,
         padding: const EdgeInsets.symmetric(vertical: 6),

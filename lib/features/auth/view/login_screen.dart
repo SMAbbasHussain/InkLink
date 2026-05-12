@@ -62,7 +62,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const SizedBox(height: 80),
+                        const SizedBox(height: 50),
 
                         // 1. Glitter Logo Area
                         Center(child: _buildLogo()),
@@ -163,23 +163,14 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildLogo() {
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF6A11CB), Color(0xFF2575FC)],
+    return ClipOval(
+        child: Image.asset(
+          'images/app_icon.png',
+          width: 90,
+          height: 90,
+          fit: BoxFit.cover,
         ),
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF6A11CB).withOpacity(0.4),
-            blurRadius: 25,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: const Icon(Icons.edit_note_rounded, size: 65, color: Colors.white),
-    );
+      );
   }
 
   Widget _buildLoginButton(BuildContext context, AuthState state) {

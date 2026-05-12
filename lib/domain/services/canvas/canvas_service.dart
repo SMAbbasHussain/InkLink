@@ -69,9 +69,21 @@ class CanvasServiceImpl implements CanvasService {
       return _syncRepository.watchLocalCrdtUpdates(boardId);
     }
 
-    return Stream.fromFuture(
-      _hydrateAndStartRemoteSync(boardId, userId),
-    ).asyncExpand((_) => _syncRepository.watchLocalCrdtUpdates(boardId));
+    return () async* {
+      try {
+        await _hydrateAndStartRemoteSync(boardId, userId);
+      } catch (error, stackTrace) {
+        developer.log(
+          'CRDT hydrate failed for board $boardId, falling back to local updates',
+          name: 'CanvasService',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+
+      // Always surface local updates, even when remote hydration fails.
+      yield* _syncRepository.watchLocalCrdtUpdates(boardId);
+    }();
   }
 
   @override
@@ -212,6 +224,7 @@ class CanvasServiceImpl implements CanvasService {
           updateId: local.updateId,
           payloadBase64: local.payloadBase64,
           sourceClientId: userId,
+          elementId: local.elementId,
         );
         await _syncRepository.markCrdtUpdateSynced(local.updateId);
       } catch (error) {
