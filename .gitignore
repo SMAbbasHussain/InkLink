@@ -44,6 +44,9 @@ linked_*.ds
 unlinked.ds
 unlinked_spec.ds
 analysis_benchmark.json
+CLAUDE.md
+skills-lock.json
+
 
 # ------------------------------
 # Android

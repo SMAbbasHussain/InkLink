@@ -41,52 +41,119 @@ module.exports = async (request) => {
     const senderPhotoUrl = senderData.photoURL || null;
     const workspaceName = (workspaceData[FirestorePaths.NAME] || '').toString().trim() || 'workspace';
 
+    const inviteIdentifiers = [...new Set(invitedUserIds)]
+      .filter((value) => typeof value === 'string' && value.trim().length > 0)
+      .map((value) => value.trim())
+      .filter((value) => value !== uid);
+
+    const resolvedRecipientUids = [];
+    const unresolvedEmails = [];
+    const unresolvedUids = [];
+
+    for (const identifier of inviteIdentifiers) {
+      if (identifier.includes('@')) {
+        const normalizedEmail = identifier.toLowerCase();
+
+        let userByEmail = await firestore
+          .collection(FirestorePaths.USERS)
+          .where(FirestorePaths.EMAIL, '==', normalizedEmail)
+          .limit(1)
+          .get();
+
+        // Fallback for historical records that may not have lowercased emails.
+        if (userByEmail.docs.length === 0 && identifier !== normalizedEmail) {
+          userByEmail = await firestore
+            .collection(FirestorePaths.USERS)
+            .where(FirestorePaths.EMAIL, '==', identifier)
+            .limit(1)
+            .get();
+        }
+
+        if (userByEmail.docs.length === 0) {
+          unresolvedEmails.push(identifier);
+          continue;
+        }
+
+        resolvedRecipientUids.push(userByEmail.docs[0].id);
+        continue;
+      }
+
+      const targetUserDoc = await firestore
+        .collection(FirestorePaths.USERS)
+        .doc(identifier)
+        .get();
+
+      if (!targetUserDoc.exists) {
+        unresolvedUids.push(identifier);
+        continue;
+      }
+
+      resolvedRecipientUids.push(identifier);
+    }
+
     const results = [];
-    for (const targetUidRaw of invitedUserIds) {
-      if (typeof targetUidRaw !== 'string') continue;
-      const targetUid = targetUidRaw.trim();
+    const failedRecipients = [];
+    for (const targetUid of [...new Set(resolvedRecipientUids)]) {
       if (!targetUid || targetUid === uid) continue;
 
       const inviteRef = firestore
         .collection(FirestorePaths.WORKSPACE_INVITES)
         .doc(`${workspaceId.trim()}_${targetUid}`);
 
-      await inviteRef.set(
-        {
-          workspaceId: workspaceId.trim(),
-          [FirestorePaths.FROM_UID]: uid,
-          [FirestorePaths.TO_UID]: targetUid,
-          [FirestorePaths.SENDER_NAME]: senderName,
-          [FirestorePaths.SENDER_PIC]: senderPhotoUrl,
-          [FirestorePaths.NAME]: workspaceName,
-          [FirestorePaths.STATUS]: 'pending',
-          [FirestorePaths.TIMESTAMP]: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
+      try {
+        await inviteRef.set(
+          {
+            workspaceId: workspaceId.trim(),
+            [FirestorePaths.FROM_UID]: uid,
+            [FirestorePaths.TO_UID]: targetUid,
+            [FirestorePaths.SENDER_NAME]: senderName,
+            [FirestorePaths.SENDER_PIC]: senderPhotoUrl,
+            [FirestorePaths.NAME]: workspaceName,
+            [FirestorePaths.STATUS]: 'pending',
+            [FirestorePaths.TIMESTAMP]: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
 
-      await sendUserNotification({
-        recipientUid: targetUid,
-        title: `${senderName} invited you to a workspace`,
-        body: `Invitation to join "${workspaceName}"`,
-        type: 'workspace_invite',
-        action: 'open_workspace_invites',
-        targetId: inviteRef.id,
-        senderUid: uid,
-        senderName,
-        senderPhotoUrl,
-        groupingKey: `workspace_invite:${uid}:${targetUid}`,
-        extraData: {
-          workspaceId: workspaceId.trim(),
-          workspaceName,
-          inviteId: inviteRef.id,
-        },
-      });
+        await sendUserNotification({
+          recipientUid: targetUid,
+          title: `${senderName} invited you to a workspace`,
+          body: `Invitation to join "${workspaceName}"`,
+          type: 'workspace_invite',
+          action: 'open_workspace_invites',
+          targetId: inviteRef.id,
+          senderUid: uid,
+          senderName,
+          senderPhotoUrl,
+          groupingKey: `workspace_invite:${uid}:${targetUid}`,
+          extraData: {
+            workspaceId: workspaceId.trim(),
+            workspaceName,
+            inviteId: inviteRef.id,
+          },
+        });
 
-      results.push({ targetUid, inviteId: inviteRef.id });
+        results.push({ targetUid, inviteId: inviteRef.id });
+      } catch (inviteError) {
+        logger.warn('inviteToWorkspace recipient failed', {
+          workspaceId: workspaceId.trim(),
+          senderUid: uid,
+          targetUid,
+          errorMessage: inviteError instanceof Error ? inviteError.message : String(inviteError),
+        });
+        failedRecipients.push(targetUid);
+      }
     }
 
-    return { success: true, workspaceId: workspaceId.trim(), invitedCount: results.length, results };
+    return {
+      success: true,
+      workspaceId: workspaceId.trim(),
+      invitedCount: results.length,
+      results,
+      unresolvedEmails,
+      unresolvedUids,
+      failedRecipients,
+    };
   } catch (error) {
     if (error instanceof HttpsError) throw error;
     logger.error('inviteToWorkspace failed', error);
