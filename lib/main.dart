@@ -173,6 +173,7 @@ void main() async {
             messagingService: context.read<MessagingService>(),
             localDatabaseService: context.read<LocalDatabaseService>(),
             presenceService: context.read<PresenceService>(),
+            canvasSyncRepository: context.read<CanvasSyncRepository>(),
           ),
         ),
         RepositoryProvider<FriendsService>(

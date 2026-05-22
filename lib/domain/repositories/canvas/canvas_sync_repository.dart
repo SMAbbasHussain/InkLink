@@ -21,6 +21,7 @@ abstract class CanvasSyncRepository {
   Future<List<LocalCrdtUpdate>> fetchRemoteCrdtUpdates(
     String boardId, {
     DateTime? since,
+    bool preferSocket = true,
   });
   Stream<List<LocalCrdtUpdate>> watchLocalCrdtUpdates(String boardId);
   Stream<List<LocalCrdtUpdate>> watchRemoteCrdtUpdates(
@@ -38,4 +39,8 @@ abstract class CanvasSyncRepository {
   /// Sync all pending local CRDT updates in a single Firestore batch.
   /// Returns true if the batch succeeded.
   Future<bool> batchSyncPendingUpdates(String boardId, String userId);
+
+  /// Disconnect WebSocket on logout.
+  /// Server will clear Redis queues for this user automatically on disconnect.
+  Future<void> disconnectSocket();
 }

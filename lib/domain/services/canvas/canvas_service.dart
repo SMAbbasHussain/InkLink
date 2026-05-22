@@ -172,24 +172,26 @@ class CanvasServiceImpl implements CanvasService {
 
     await _boardRepository.ensureBoardCached(boardId);
 
+    final localUpdates = await _syncRepository.getLocalCrdtUpdates(boardId);
     final latestLocalUpdateAt = await _syncRepository
         .getLatestLocalCrdtUpdateAt(boardId);
+    final useFirestoreFirst = localUpdates.isEmpty;
     final remoteUpdates = await _syncRepository.fetchRemoteCrdtUpdates(
       boardId,
-      since: latestLocalUpdateAt,
+      since: useFirestoreFirst ? null : latestLocalUpdateAt,
+      preferSocket: !useFirestoreFirst,
     );
     if (remoteUpdates.isNotEmpty) {
-      await _syncRepository.saveLocalCrdtUpdate(remoteUpdates.first).then((
-        _,
-      ) async {
-        for (final update in remoteUpdates.skip(1)) {
-          await _syncRepository.saveLocalCrdtUpdate(update);
-        }
-      });
+      for (final update in remoteUpdates) {
+        await _syncRepository.saveLocalCrdtUpdate(update);
+      }
     }
 
+    final refreshedLatestLocalUpdateAt = await _syncRepository
+        .getLatestLocalCrdtUpdateAt(boardId);
+
     final remoteSub = _syncRepository
-        .watchRemoteCrdtUpdates(boardId, since: latestLocalUpdateAt)
+        .watchRemoteCrdtUpdates(boardId, since: refreshedLatestLocalUpdateAt)
         .listen(
           (updates) async {
             for (final update in updates) {
@@ -216,7 +218,10 @@ class CanvasServiceImpl implements CanvasService {
 
   Future<void> _syncPendingLocalUpdates(String boardId, String userId) async {
     // Delegate batching to repository implementation.
-    final success = await _syncRepository.batchSyncPendingUpdates(boardId, userId);
+    final success = await _syncRepository.batchSyncPendingUpdates(
+      boardId,
+      userId,
+    );
     if (!success) {
       // If batch fails (e.g., permission denied), stop remote sync.
       await stopCrdtRemoteSync(boardId);
