@@ -8,7 +8,7 @@ Quick start (local):
 ```bash
 cd server
 cp .env.example .env
-# set REDIS_URL and optionally GOOGLE_APPLICATION_CREDENTIALS or service-account.json
+# set REDIS_URL and one Firebase credential source (JSON, base64, or path)
 npm ci
 npm start
 ```
@@ -16,7 +16,10 @@ npm start
 Environment variables (see `.env.example`):
 - `PORT` - port to run the server on (default 3000)
 - `REDIS_URL` - redis connection string
-- `GOOGLE_APPLICATION_CREDENTIALS` - optional path to service-account.json for Firebase Admin
+- `FIREBASE_SERVICE_ACCOUNT_JSON` - Firebase service account JSON string for Render
+- `FIREBASE_SERVICE_ACCOUNT_BASE64` - base64-encoded Firebase service account JSON for Render
+- `GOOGLE_APPLICATION_CREDENTIALS` - optional path to service-account.json for local/path-based deployments
+- `SERVICE_ACCOUNT_PATH` - local file path fallback for Firebase Admin
 
 Endpoints & Socket events:
 - `watch_board` (client -> server): join a board room
@@ -27,4 +30,5 @@ Endpoints & Socket events:
 Deployment notes:
 - Use a host that supports long-lived WebSocket connections (Render, Railway, Heroku with websockets enabled, or Cloud Run with sticky session support).
 - Provision a managed Redis and set `REDIS_URL` in your deployment environment variables.
+- Add one Firebase credential variable in Render: `FIREBASE_SERVICE_ACCOUNT_JSON`, `FIREBASE_SERVICE_ACCOUNT_BASE64`, or `GOOGLE_APPLICATION_CREDENTIALS` if you mount a file.
 

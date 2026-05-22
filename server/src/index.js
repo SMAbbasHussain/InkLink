@@ -14,6 +14,33 @@ const io = new Server(server, {
   cors: { origin: '*' },
 });
 
+function loadFirebaseServiceAccount() {
+  const jsonValue =
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+    process.env.SERVICE_ACCOUNT_JSON;
+  const base64Value =
+    process.env.FIREBASE_SERVICE_ACCOUNT_BASE64 ||
+    process.env.SERVICE_ACCOUNT_BASE64;
+
+  if (jsonValue) {
+    return JSON.parse(jsonValue);
+  }
+
+  if (base64Value) {
+    return JSON.parse(Buffer.from(base64Value, 'base64').toString('utf8'));
+  }
+
+  const credentialsPath =
+    process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+    process.env.SERVICE_ACCOUNT_PATH;
+
+  if (credentialsPath) {
+    return require(credentialsPath);
+  }
+
+  return require('../service-account.json');
+}
+
 // 1. Redis Provisioning Setup
 const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
 let redisAvailable = false;
@@ -33,19 +60,21 @@ redis.on('error', (error) => {
 });
 
 // 2. Firebase Admin Setup
-if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault()
-  });
-} else {
-  try {
-    const serviceAccount = require('../service-account.json');
+try {
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
+      credential: admin.credential.applicationDefault(),
     });
-  } catch (error) {
-    console.warn('Firebase Admin not initialized. Please set GOOGLE_APPLICATION_CREDENTIALS or add service-account.json');
+  } else {
+    const serviceAccount = loadFirebaseServiceAccount();
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
   }
+} catch (error) {
+  console.warn(
+    'Firebase Admin not initialized. Set FIREBASE_SERVICE_ACCOUNT_JSON, FIREBASE_SERVICE_ACCOUNT_BASE64, GOOGLE_APPLICATION_CREDENTIALS, or SERVICE_ACCOUNT_PATH.',
+  );
 }
 
 const db = admin.firestore?.() || null;
