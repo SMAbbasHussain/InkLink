@@ -128,16 +128,50 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       await isar.localCrdtUpdates.putByUpdateId(existing);
     });
 
-    // Update remotely
+    final sourceClientId = _authService.getCurrentUserId() ?? '';
+
+    try {
+      if (_socket != null && _socket!.connected) {
+        _logWs(
+          'UPDATE SENT',
+          boardId,
+          'crdt_update (in-place)',
+          updateId: updateId,
+          elementId: existing.elementId,
+        );
+        _socket!.emit('crdt_update', {
+          'boardId': boardId,
+          'update': {
+            'updateId': updateId,
+            'payloadBase64': payloadBase64,
+            'sourceClientId': sourceClientId,
+            'elementId': existing.elementId,
+          },
+        });
+
+        await markCrdtUpdateSynced(updateId);
+        return;
+      }
+    } catch (_) {
+      // fall through to Firestore write
+    }
+
+    // Fallback to Firestore if websocket is unavailable.
     await _firestoreService
         .collection('boards')
         .doc(boardId)
         .collection('crdt_updates')
         .doc(updateId)
-        .update({
+        .set({
+          'updateId': updateId,
+          'boardId': boardId,
           'payloadBase64': payloadBase64,
+          'sourceClientId': sourceClientId,
+          'elementId': existing.elementId,
           'appliedAt': firestore.FieldValue.serverTimestamp(),
-        });
+        }, firestore.SetOptions(merge: true));
+
+    await markCrdtUpdateSynced(updateId);
   }
 
   @override

@@ -1295,24 +1295,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       return;
     }
 
-    // For element updates, check if we should do in-place edit instead of new update
-    if (action == 'update' && _lastShapeUpdateId.containsKey(objectId)) {
-      final existingUpdateId = _lastShapeUpdateId[objectId]!;
-      await _updateCrdtUpdateInPlace(
-        objectId: objectId,
-        updateId: existingUpdateId,
-        payload: update,
-      );
-    } else {
-      final elementId = objectId;
-      final publishedUpdateId = await _publishCrdtUpdate(
-        update,
-        elementId: elementId,
-      );
-      if (publishedUpdateId != null) {
-        // Track this update for in-place edits
-        _lastShapeUpdateId[objectId] = publishedUpdateId;
-      }
+    final elementId = objectId;
+    final publishedUpdateId = await _publishCrdtUpdate(
+      update,
+      elementId: elementId,
+    );
+    if (publishedUpdateId != null) {
+      // Track the latest update for this element so future edits stay attached to the same shape.
+      _lastShapeUpdateId[objectId] = publishedUpdateId;
     }
 
     _refreshFromCrdtAdapter(emit);
@@ -1338,25 +1328,6 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
 
     return updateId;
-  }
-
-  Future<void> _updateCrdtUpdateInPlace({
-    required String objectId,
-    required String updateId,
-    required Uint8List payload,
-  }) async {
-    if (!_canSync) return;
-
-    final canvasService = _canvasService;
-    if (canvasService == null) return;
-
-    _appliedCrdtUpdateIds.add(updateId);
-
-    await canvasService.updateCrdtUpdatePayload(
-      boardId: _boardId,
-      updateId: updateId,
-      payload: payload,
-    );
   }
 
   void _refreshFromCrdtAdapter(Emitter<CanvasState> emit) {
