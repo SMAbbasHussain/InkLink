@@ -34,4 +34,8 @@ abstract class CanvasSyncRepository {
     required String sourceClientId,
     String? elementId,
   });
+
+  /// Sync all pending local CRDT updates in a single Firestore batch.
+  /// Returns true if the batch succeeded.
+  Future<bool> batchSyncPendingUpdates(String boardId, String userId);
 }

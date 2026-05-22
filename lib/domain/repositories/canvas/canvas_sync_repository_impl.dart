@@ -232,6 +232,48 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         });
   }
 
+  // Helper to detect permission errors, mirroring the service layer implementation.
+  bool _isPermissionDenied(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('permission-denied') ||
+        message.contains('missing or insufficient permissions');
+  }
+
+  @override
+  Future<bool> batchSyncPendingUpdates(String boardId, String userId) async {
+    final pending = await getLocalCrdtUpdates(boardId);
+    final toSync = pending.where((u) => !u.isSynced).toList();
+    if (toSync.isEmpty) return true;
+    final batch = _firestoreService.getInstance().batch();
+    for (final local in toSync) {
+      final docRef = _firestoreService
+          .collection('boards')
+          .doc(boardId)
+          .collection('crdt_updates')
+          .doc(local.updateId);
+      batch.set(docRef, {
+        'boardId': boardId,
+        'payloadBase64': local.payloadBase64,
+        'sourceClientId': userId,
+        'elementId': local.elementId,
+        'appliedAt': firestore.FieldValue.serverTimestamp(),
+      });
+    }
+    try {
+      await batch.commit();
+      // Mark all as synced
+      for (final local in toSync) {
+        await markCrdtUpdateSynced(local.updateId);
+      }
+      return true;
+    } catch (error) {
+      if (_isPermissionDenied(error)) {
+        return false;
+      }
+      rethrow;
+    }
+  }
+
   LocalCrdtUpdate? _mapRemoteDoc(
     firestore.DocumentSnapshot<Map<String, dynamic>> doc,
     String boardId,

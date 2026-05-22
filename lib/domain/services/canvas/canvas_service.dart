@@ -215,25 +215,11 @@ class CanvasServiceImpl implements CanvasService {
   }
 
   Future<void> _syncPendingLocalUpdates(String boardId, String userId) async {
-    final pending = await _syncRepository.getLocalCrdtUpdates(boardId);
-    for (final local in pending) {
-      if (local.isSynced) continue;
-      try {
-        await _syncRepository.writeRemoteCrdtUpdate(
-          boardId: boardId,
-          updateId: local.updateId,
-          payloadBase64: local.payloadBase64,
-          sourceClientId: userId,
-          elementId: local.elementId,
-        );
-        await _syncRepository.markCrdtUpdateSynced(local.updateId);
-      } catch (error) {
-        if (_isPermissionDenied(error)) {
-          await stopCrdtRemoteSync(boardId);
-          return;
-        }
-        rethrow;
-      }
+    // Delegate batching to repository implementation.
+    final success = await _syncRepository.batchSyncPendingUpdates(boardId, userId);
+    if (!success) {
+      // If batch fails (e.g., permission denied), stop remote sync.
+      await stopCrdtRemoteSync(boardId);
     }
   }
 
