@@ -10,7 +10,8 @@
   - npm install
   - npm run serve
   - npm run deploy
-- Run guardrails + analyze + tests before finishing significant refactors.
+- Run guardrails + analyze + tests after modifying any file in lib/features/, lib/core/, or functions/, or before finalizing any task.
+- If guardrails, analysis, or tests output errors, automatically fix the violations or ask the user for clarification before proceeding.
 
 ## Architecture
 - Follow service-first layering:
@@ -24,14 +25,16 @@
   - No direct repository/service usage from feature screen files.
   - No repository imports in BLoCs.
   - No Cloud Functions imports/callables in repositories.
-  - No direct Firebase singleton usage outside approved core wrappers.
+  - No direct Firebase singleton usage outside approved core wrappers (for example, classes in lib/core/firebase/).
 - The guardrail source of truth is tool/architecture_guardrails.dart.
+- Domain services are responsible for interacting with Cloud Functions. Do not place Cloud Function callables in repositories.
 
 ## Project Conventions
 - Prefer existing composition patterns in lib/main.dart and route-level builders in lib/features/*/view/*_route.dart.
 - Keep Firestore path constants aligned across:
   - lib/core/constants/firestore_paths.dart
   - functions/src/utils/firestore_paths.js
+- When modifying Firestore schemas or paths, update both lib/core/constants/firestore_paths.dart and functions/src/utils/firestore_paths.js in the same response.
 - Cloud Functions are loaded dynamically from functions/src/**/*.js via functions/index.js.
   - Each function module should export a single handler function via module.exports = async (request) => { ... }.
 - Treat generated/build output as non-source:
@@ -46,7 +49,7 @@
 - For Cloud Functions runtime assumptions, prefer functions/package.json and functions/index.js over older prose docs if they disagree.
 
 ## Link First
-- Start with existing docs, then implement:
+- Read and review existing docs before writing any code:
   - README.md
   - lib/README.md
   - functions/README.md
