@@ -892,17 +892,25 @@ class FirestoreBoardRepository implements BoardRepository {
     final isar = await _localDatabaseService.database;
     final localBoard = await isar.localBoards.getByBoardId(boardId);
     if (localBoard == null) return;
+    // Updating top-level board metadata is owner-scoped in security rules.
+    // Do not attempt this write for non-owners when closing/saving preview.
     final canUpdateBoardMetadata =
         localBoard.currentUserRole == Board.roleOwner ||
-        localBoard.currentUserRole == Board.roleEditor;
+        localBoard.ownerId == currentUserId;
 
     localBoard.previewPath = previewFile.path;
     localBoard.updatedAt = DateTime.now();
 
     if (canUpdateBoardMetadata) {
-      await _firestoreService.collection('boards').doc(boardId).update({
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      try {
+        await _firestoreService.collection('boards').doc(boardId).update({
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } on FirebaseException catch (e) {
+        if (e.code != 'permission-denied') {
+          rethrow;
+        }
+      }
     }
 
     await isar.writeTxn(() async {

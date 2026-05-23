@@ -129,7 +129,6 @@ class CanvasServiceImpl implements CanvasService {
               sourceClientId: userId,
               elementId: elementId,
             );
-            await _syncRepository.markCrdtUpdateSynced(updateId);
             await _syncPendingLocalUpdates(boardId, userId);
           } catch (error) {
             if (_isPermissionDenied(error)) {

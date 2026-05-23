@@ -490,9 +490,13 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       return;
     }
 
-    // If socket connected, emit update to server which will persist and relay
-    try {
-      if (_socket != null && _socket!.connected) {
+    final socketConnected = _socket != null && _socket!.connected;
+
+    // Prefer socket when connected. If socket send/ack fails, keep the update
+    // unsynced for retry and avoid immediate Firestore fallback writes that may
+    // fail with stale permission context after role changes.
+    if (socketConnected) {
+      try {
         _logWs(
           'UPDATE SENT',
           boardId,
@@ -512,21 +516,30 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         });
 
         if (ack != null && ack['status'] == 'success') {
+          await markCrdtUpdateSynced(updateId);
           return;
         }
-        // otherwise fall through to Firestore write
+
+        developer.log(
+          'Socket ack missing/failed for writeRemote; leaving update unsynced for retry | [event] crdt_update [board] $boardId [updateId] $updateId',
+          name: 'CanvasWebSocket::WARN',
+          level: 900,
+        );
+        return;
+      } catch (error, stackTrace) {
+        _logError(
+          'Socket writeRemote failed; leaving update unsynced for retry',
+          error,
+          stackTrace,
+          boardId: boardId,
+          event: 'crdt_update',
+          updateId: updateId,
+        );
+        return;
       }
-    } catch (error, stackTrace) {
-      _logError(
-        'Socket writeRemote failed; falling back to Firestore write',
-        error,
-        stackTrace,
-        boardId: boardId,
-        event: 'crdt_update',
-        updateId: updateId,
-      );
     }
-    // Fallback to Firestore write if socket unavailable
+
+    // Fallback to Firestore write only when socket is unavailable.
     await _firestoreService
         .collection('boards')
         .doc(boardId)
@@ -540,6 +553,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           'elementId': elementId,
           'appliedAt': firestore.FieldValue.serverTimestamp(),
         });
+    await markCrdtUpdateSynced(updateId);
   }
 
   // Helper to detect permission errors, mirroring the service layer implementation.
