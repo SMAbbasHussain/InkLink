@@ -21,6 +21,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   // Socket.IO client (optional). When present and connected, we'll prefer websocket transport.
   io.Socket? _socket;
   StreamController<List<LocalCrdtUpdate>>? _socketUpdatesController;
+  StreamController<List<LocalCrdtUpdate>>? _socketPreviewController;
 
   FirestoreCanvasSyncRepository({
     required FirestoreService firestoreService,
@@ -189,6 +190,50 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   }
 
   @override
+  Future<void> publishCanvasPreview({
+    required String boardId,
+    required String previewId,
+    required String elementId,
+    required String payloadBase64,
+    required String sourceClientId,
+  }) async {
+    if (payloadBase64.isEmpty ||
+        payloadBase64.length > _maxPayloadBase64Length) {
+      return;
+    }
+
+    try {
+      if (_socket != null && _socket!.connected) {
+        _logWs(
+          'PREVIEW SENT',
+          boardId,
+          'crdt_preview',
+          updateId: previewId,
+          elementId: elementId,
+        );
+        await _emitWithAck('crdt_preview', {
+          'boardId': boardId,
+          'preview': {
+            'previewId': previewId,
+            'elementId': elementId,
+            'payloadBase64': payloadBase64,
+            'sourceClientId': sourceClientId,
+          },
+        });
+      }
+    } catch (error, stackTrace) {
+      _logError(
+        'Socket preview publish failed',
+        error,
+        stackTrace,
+        boardId: boardId,
+        event: 'crdt_preview',
+        updateId: previewId,
+      );
+    }
+  }
+
+  @override
   Future<List<LocalCrdtUpdate>> getLocalCrdtUpdates(String boardId) async {
     final isar = await _localDatabaseService.database;
     return isar.localCrdtUpdates.filter().boardIdEqualTo(boardId).findAll();
@@ -341,6 +386,102 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         .map((doc) => _mapRemoteDoc(doc, boardId))
         .whereType<LocalCrdtUpdate>()
         .toList(growable: false);
+  }
+
+  @override
+  Stream<List<LocalCrdtUpdate>> watchRemoteCanvasPreviews(
+    String boardId,
+  ) async* {
+    try {
+      if (_socket == null || !_socket!.connected) {
+        final token = await _authService.getIdToken();
+        if (token != null) {
+          final serverUrl =
+              dotenv.env['WEBSOCKET_URL'] ?? 'http://10.0.2.2:3000';
+          _socket = io.io(
+            serverUrl,
+            io.OptionBuilder()
+                .setTransports(['websocket'])
+                .setAuth({'token': token})
+                .disableAutoConnect()
+                .build(),
+          );
+          _socket!.connect();
+          final connectCompleter = Completer<void>();
+          _socket!.onConnect((_) {
+            if (!connectCompleter.isCompleted) connectCompleter.complete();
+          });
+          await Future.any([
+            connectCompleter.future,
+            Future.delayed(const Duration(seconds: 2)),
+          ]);
+        }
+      }
+
+      if (_socket != null && _socket!.connected) {
+        _socket!.emit('watch_board', boardId);
+        _logWs('SUBSCRIBE SENT', boardId, 'watch_board (preview)');
+        _socketPreviewController?.close();
+        _socketPreviewController = StreamController<List<LocalCrdtUpdate>>();
+
+        void handlePreview(dynamic data) {
+          try {
+            final map = data as Map<String, dynamic>;
+            if ((map['boardId'] as String?) == boardId) {
+              final payload = (map['preview'] as Map<String, dynamic>?) ?? {};
+              final preview = LocalCrdtUpdate()
+                ..updateId =
+                    (payload['previewId'] as String?) ??
+                    (map['id'] as String?) ??
+                    ''
+                ..boardId = boardId
+                ..elementId = payload['elementId'] as String?
+                ..payloadBase64 = payload['payloadBase64'] as String? ?? ''
+                ..sourceClientId = payload['sourceClientId'] as String? ?? ''
+                ..appliedAt = DateTime.now()
+                ..isSynced = true;
+              _socketPreviewController?.add([preview]);
+            }
+          } catch (error, stackTrace) {
+            _logError(
+              'Failed to parse inbound preview payload',
+              error,
+              stackTrace,
+              boardId: boardId,
+              event: 'crdt_preview',
+            );
+          }
+        }
+
+        _socket!.on('crdt_preview', handlePreview);
+
+        _socketPreviewController!.onCancel = () {
+          try {
+            _socket!.emit('leave_board', boardId);
+            _socket!.off('crdt_preview', handlePreview);
+          } catch (error, stackTrace) {
+            _logError(
+              'Failed while unsubscribing from preview stream',
+              error,
+              stackTrace,
+              boardId: boardId,
+              event: 'leave_board',
+            );
+          }
+        };
+
+        yield* _socketPreviewController!.stream;
+        return;
+      }
+    } catch (error, stackTrace) {
+      _logError(
+        'Socket preview setup failed',
+        error,
+        stackTrace,
+        boardId: boardId,
+        event: 'crdt_preview',
+      );
+    }
   }
 
   @override

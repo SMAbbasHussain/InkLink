@@ -41,6 +41,13 @@ class CanvasApplyRemoteUpdate extends CanvasEvent {
   const CanvasApplyRemoteUpdate(this.updates);
 }
 
+/// Update canvas from remote live previews.
+class CanvasApplyRemotePreview extends CanvasEvent {
+  final List<LocalCrdtUpdate> previews;
+
+  const CanvasApplyRemotePreview(this.previews);
+}
+
 /// Start a new stroke
 class CanvasStartStroke extends CanvasEvent {
   final Offset point;
@@ -99,6 +106,21 @@ class CanvasUpdateImageElement extends CanvasEvent {
   final double height;
 
   const CanvasUpdateImageElement({
+    required this.elementId,
+    required this.center,
+    required this.width,
+    required this.height,
+  });
+}
+
+/// Publish an in-progress image transform preview.
+class CanvasPreviewImageElement extends CanvasEvent {
+  final String elementId;
+  final Offset center;
+  final double width;
+  final double height;
+
+  const CanvasPreviewImageElement({
     required this.elementId,
     required this.center,
     required this.width,
@@ -177,11 +199,25 @@ class CanvasMoveSelectedShape extends CanvasEvent {
   const CanvasMoveSelectedShape(this.center);
 }
 
+/// Publish an in-progress selected-shape move preview.
+class CanvasPreviewMoveSelectedShape extends CanvasEvent {
+  final Offset center;
+
+  const CanvasPreviewMoveSelectedShape(this.center);
+}
+
 /// Resize selected shape
 class CanvasResizeSelectedShape extends CanvasEvent {
   final double size;
 
   const CanvasResizeSelectedShape(this.size);
+}
+
+/// Publish an in-progress selected-shape resize preview.
+class CanvasPreviewResizeSelectedShape extends CanvasEvent {
+  final double size;
+
+  const CanvasPreviewResizeSelectedShape(this.size);
 }
 
 /// Toggle fill mode for selected shape
@@ -212,12 +248,30 @@ class CanvasRotateSelectedShape extends CanvasEvent {
   const CanvasRotateSelectedShape(this.rotation);
 }
 
+/// Publish an in-progress selected-shape rotation preview.
+class CanvasPreviewRotateSelectedShape extends CanvasEvent {
+  final double rotation;
+
+  const CanvasPreviewRotateSelectedShape(this.rotation);
+}
+
 /// Commit pending shape edits (batched from sliders/UI)
 class CanvasCommitPendingShapeEdits extends CanvasEvent {
   final String shapeId;
   final Map<String, dynamic> pendingData;
 
   const CanvasCommitPendingShapeEdits({
+    required this.shapeId,
+    required this.pendingData,
+  });
+}
+
+/// Publish pending shape edits as a live preview.
+class CanvasPreviewPendingShapeEdits extends CanvasEvent {
+  final String shapeId;
+  final Map<String, dynamic> pendingData;
+
+  const CanvasPreviewPendingShapeEdits({
     required this.shapeId,
     required this.pendingData,
   });

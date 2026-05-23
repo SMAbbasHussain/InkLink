@@ -14,12 +14,19 @@ abstract class CanvasService {
   Future<void> ensureBoardCached(String boardId);
   Stream<Board?> watchBoardById(String boardId);
   Stream<List<LocalCrdtUpdate>> listenToCrdtUpdates(String boardId);
+  Stream<List<LocalCrdtUpdate>> listenToCanvasPreviews(String boardId);
   Future<void> stopCrdtRemoteSync(String boardId);
   Future<void> pushCrdtUpdate({
     required String boardId,
     required String updateId,
     required Uint8List payload,
     String? elementId,
+  });
+  Future<void> publishCanvasPreview({
+    required String boardId,
+    required String previewId,
+    required String elementId,
+    required Uint8List payload,
   });
   Future<void> markCrdtUpdateDeleted(String updateId, bool isDeleted);
   Future<LocalCrdtUpdate?> getElementCrdtUpdate({
@@ -87,6 +94,16 @@ class CanvasServiceImpl implements CanvasService {
   }
 
   @override
+  Stream<List<LocalCrdtUpdate>> listenToCanvasPreviews(String boardId) {
+    final userId = _syncRepository.currentUserId;
+    if (userId == null) {
+      return const Stream<List<LocalCrdtUpdate>>.empty();
+    }
+
+    return _syncRepository.watchRemoteCanvasPreviews(boardId);
+  }
+
+  @override
   Future<void> stopCrdtRemoteSync(String boardId) {
     final sub = _remoteSubs.remove(boardId);
     return () async {
@@ -138,6 +155,25 @@ class CanvasServiceImpl implements CanvasService {
             rethrow;
           }
         });
+  }
+
+  @override
+  Future<void> publishCanvasPreview({
+    required String boardId,
+    required String previewId,
+    required String elementId,
+    required Uint8List payload,
+  }) {
+    final userId = _syncRepository.currentUserId;
+    if (userId == null) return Future.value();
+
+    return _syncRepository.publishCanvasPreview(
+      boardId: boardId,
+      previewId: previewId,
+      elementId: elementId,
+      payloadBase64: base64Encode(payload),
+      sourceClientId: userId,
+    );
   }
 
   @override

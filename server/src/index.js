@@ -237,6 +237,27 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Live preview relay for in-progress canvas edits.
+  socket.on('crdt_preview', async ({ boardId, preview }, ack) => {
+    logWsEvent('PREVIEW RECEIVED', [
+      `[event] crdt_preview`,
+      `[direction] client -> server`,
+      `[user] ${uid}`,
+      `[board] ${boardId}`,
+      `[previewId] ${preview?.previewId ?? 'n/a'}`,
+      `[elementId] ${preview?.elementId ?? 'n/a'}`,
+    ]);
+
+    socket.to(`board_room:${boardId}`).emit('crdt_preview', { boardId, preview });
+    console.log(
+      `[WS PREVIEW SENT] board_room:${boardId} previewId=${preview?.previewId ?? 'n/a'}`,
+    );
+
+    if (typeof ack === 'function') {
+      ack({ status: 'success', previewId: preview?.previewId ?? null, boardId });
+    }
+  });
+
   // Phase 3: Offline Sync Demand & Fallback
   socket.on('sync_offline', async ({ boardId }, callback) => {
       logWsEvent('SYNC REQUEST RECEIVED', [
