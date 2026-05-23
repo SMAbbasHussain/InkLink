@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -13,6 +14,8 @@ class MediaEditorScreen extends StatefulWidget {
 }
 
 class _MediaEditorScreenState extends State<MediaEditorScreen> {
+  static const int _maxPersistedImageBytes = 650000;
+  static const int _minPersistedImageSide = 512;
   double _scale = 1.0;
   double _backgroundThreshold = 225;
   bool _isRemovingBackground = false;
@@ -55,7 +58,7 @@ class _MediaEditorScreenState extends State<MediaEditorScreen> {
         : scaled;
 
     final output = _backgroundWasRemoved
-        ? Uint8List.fromList(img.encodePng(resized, level: 4))
+        ? _encodePngWithinLimit(resized)
         : Uint8List.fromList(img.encodeJpg(resized, quality: 78));
     if (!mounted) return;
     Navigator.of(context).pop(output);
@@ -108,6 +111,47 @@ class _MediaEditorScreenState extends State<MediaEditorScreen> {
       if (mounted) {
         setState(() => _isRemovingBackground = false);
       }
+    }
+  }
+
+  Uint8List _encodePngWithinLimit(img.Image image) {
+    var current = image;
+
+    while (true) {
+      final bytes = Uint8List.fromList(img.encodePng(current, level: 9));
+      if (bytes.length <= _maxPersistedImageBytes) {
+        return bytes;
+      }
+
+      if (current.width <= _minPersistedImageSide &&
+          current.height <= _minPersistedImageSide) {
+        return bytes;
+      }
+
+      final nextWidth = math.max(
+        (current.width * 0.85).round(),
+        _minPersistedImageSide,
+      );
+      final nextHeight = math.max(
+        (current.height * 0.85).round(),
+        _minPersistedImageSide,
+      );
+
+      if (nextWidth == current.width && nextHeight == current.height) {
+        return bytes;
+      }
+
+      current = current.width >= current.height
+          ? img.copyResize(
+              current,
+              width: nextWidth,
+              interpolation: img.Interpolation.average,
+            )
+          : img.copyResize(
+              current,
+              height: nextHeight,
+              interpolation: img.Interpolation.average,
+            );
     }
   }
 

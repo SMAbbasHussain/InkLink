@@ -749,7 +749,18 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     }
 
     final batch = _firestoreService.getInstance().batch();
+    var wroteAny = false;
+    final syncedUpdateIds = <String>[];
     for (final local in toSync) {
+      if (!_isValidPayloadBase64(local.payloadBase64)) {
+        developer.log(
+          'Skipping oversized or invalid CRDT payload during batch sync | [board] $boardId [updateId] ${local.updateId}',
+          name: 'CanvasSyncRepository::WARN',
+          level: 900,
+        );
+        continue;
+      }
+
       final docRef = _firestoreService
           .collection('boards')
           .doc(boardId)
@@ -763,12 +774,19 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         'elementId': local.elementId,
         'appliedAt': firestore.FieldValue.serverTimestamp(),
       });
+      wroteAny = true;
+      syncedUpdateIds.add(local.updateId);
     }
+
+    if (!wroteAny) {
+      return true;
+    }
+
     try {
       await batch.commit();
       // Mark all as synced
-      for (final local in toSync) {
-        await markCrdtUpdateSynced(local.updateId);
+      for (final updateId in syncedUpdateIds) {
+        await markCrdtUpdateSynced(updateId);
       }
       return true;
     } catch (error) {
