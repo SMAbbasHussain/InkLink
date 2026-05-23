@@ -103,7 +103,11 @@ class AuthSessionServiceImpl implements AuthSessionService {
       }
     }
 
-    // Disconnect WebSocket on logout - server will clear Redis queues automatically
+    // Explicitly inform server of logout so it can clear server-side queues,
+    // then disconnect locally. Do not fail sign-out if logout handshake fails.
+    try {
+      await _canvasSyncRepository.logoutSocket();
+    } catch (_) {}
     await _canvasSyncRepository.disconnectSocket();
 
     await _authRepository.signOut();

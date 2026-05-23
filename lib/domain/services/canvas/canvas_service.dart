@@ -173,12 +173,15 @@ class CanvasServiceImpl implements CanvasService {
     await _boardRepository.ensureBoardCached(boardId);
 
     final localUpdates = await _syncRepository.getLocalCrdtUpdates(boardId);
-    final latestLocalUpdateAt = await _syncRepository
-        .getLatestLocalCrdtUpdateAt(boardId);
     final useFirestoreFirst = localUpdates.isEmpty;
+    // Only use previously-synced rows to compute the 'since' cursor. If there
+    // are no local updates, fetch all remote updates from Firestore.
+    final latestLocalUpdateAt = useFirestoreFirst
+        ? null
+        : await _syncRepository.getLatestLocalCrdtUpdateAt(boardId);
     final remoteUpdates = await _syncRepository.fetchRemoteCrdtUpdates(
       boardId,
-      since: useFirestoreFirst ? null : latestLocalUpdateAt,
+      since: latestLocalUpdateAt,
       preferSocket: !useFirestoreFirst,
     );
     if (remoteUpdates.isNotEmpty) {

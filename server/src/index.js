@@ -89,6 +89,31 @@ function logWsEvent(title, lines) {
   console.log('==================================================');
 }
 
+async function clearUserQueues(uid) {
+  if (redisAvailable) {
+    try {
+      const keys = await redis.keys(`queue:${uid}:board:*`);
+      if (keys && keys.length > 0) {
+        for (const key of keys) {
+          await redis.del(key);
+          console.log(`[logout] Cleared Redis queue: ${key}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[logout] Failed clearing Redis queues for ${uid}: ${e.message}`);
+    }
+    return;
+  }
+
+  const queuePrefix = `queue:${uid}:board:`;
+  for (const key in memoryQueue) {
+    if (key.startsWith(queuePrefix)) {
+      delete memoryQueue[key];
+      console.log(`[logout] Cleared memory queue: ${key}`);
+    }
+  }
+}
+
 // Helper to get connected users in a room
 async function getConnectedSocketsInRoom(roomName) {
   const sockets = await io.in(roomName).fetchSockets();
@@ -132,7 +157,7 @@ io.on('connection', (socket) => {
   });
 
   // Phase 2 & 3: Incoming Update Relay
-  socket.on('crdt_update', async ({ boardId, update }) => {
+  socket.on('crdt_update', async ({ boardId, update }, ack) => {
     logWsEvent('UPDATE RECEIVED', [
       `[event] crdt_update`,
       `[direction] client -> server`,
@@ -146,63 +171,69 @@ io.on('connection', (socket) => {
     socket.to(`board_room:${boardId}`).emit('crdt_update', { boardId, update });
     console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId}`);
 
-    // 2. Forward to Firestore
-    if (db) {
-        try {
-            await db.collection('boards').doc(boardId).collection('crdt_updates')
-              .doc(update.updateId)
-              .set({
-                  ...update,
+    try {
+      // 2. Forward to Firestore
+      if (db) {
+        await db.collection('boards').doc(boardId).collection('crdt_updates')
+          .doc(update.updateId)
+          .set({
+            ...update,
             updateId: update.updateId,
             appliedAt: admin.firestore.FieldValue.serverTimestamp(),
-            timestamp: admin.firestore.FieldValue.serverTimestamp()
-              });
-            console.log(`[crdt_update] Wrote update ${update.updateId} to Firestore`);
-        } catch (error) {
-            console.error('Failed to write to Firestore:', error);
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        console.log(`[crdt_update] Wrote update ${update.updateId} to Firestore`);
+      }
+
+      // 3. Redis-Backed Offline Queue
+      let members = [];
+      if (db) {
+        const membersSnapshot = await db.collection('boards').doc(boardId).collection('members').get();
+        members = membersSnapshot.docs.map(doc => doc.id);
+        console.log(`[crdt_update] Board ${boardId} has members: ${members.join(', ')}`);
+      }
+
+      const connectedUids = await getConnectedSocketsInRoom(`board_room:${boardId}`);
+      console.log(`[crdt_update] Connected UIDs in board ${boardId}: ${connectedUids.join(', ')}`);
+      const offlineMembers = members.filter(memberUid => !connectedUids.includes(memberUid));
+      console.log(`[crdt_update] Offline members for board ${boardId}: ${offlineMembers.join(', ')}`);
+
+      const ttlSeconds = 604800; // 7 days
+
+      for (const memberUid of offlineMembers) {
+        const queueKey = `queue:${memberUid}:board:${boardId}`;
+        console.log(`[crdt_update] Queueing update ${update.updateId} for offline member ${memberUid} (key: ${queueKey})`);
+
+        if (redisAvailable) {
+          try {
+            await redis.rpush(queueKey, JSON.stringify(update));
+            await redis.expire(queueKey, ttlSeconds);
+            console.log(`[crdt_update] Successfully queued update to Redis for ${queueKey}`);
+          } catch (redisError) {
+            console.warn(`Redis queue failed for ${queueKey}, using memory fallback`);
+            if (!memoryQueue[queueKey]) memoryQueue[queueKey] = [];
+            memoryQueue[queueKey].push(update);
+          }
+        } else {
+          // Use in-memory fallback
+          if (!memoryQueue[queueKey]) memoryQueue[queueKey] = [];
+          memoryQueue[queueKey].push(update);
+          console.log(`[crdt_update] Queued update to memory for ${queueKey}`);
         }
-    }
+      }
 
-    // 3. Redis-Backed Offline Queue
-    try {
-        let members = [];
-        // cached members ideally... for brevity querying active members here
-        if (db) {
-          const membersSnapshot = await db.collection('boards').doc(boardId).collection('members').get();
-          members = membersSnapshot.docs.map(doc => doc.id);
-          console.log(`[crdt_update] Board ${boardId} has members: ${members.join(', ')}`);
-        }
-
-        const connectedUids = await getConnectedSocketsInRoom(`board_room:${boardId}`);
-        console.log(`[crdt_update] Connected UIDs in board ${boardId}: ${connectedUids.join(', ')}`);
-        const offlineMembers = members.filter(memberUid => !connectedUids.includes(memberUid));
-        console.log(`[crdt_update] Offline members for board ${boardId}: ${offlineMembers.join(', ')}`);
-
-        const ttlSeconds = 604800; // 7 days
-
-        for (const memberUid of offlineMembers) {
-            const queueKey = `queue:${memberUid}:board:${boardId}`;
-            console.log(`[crdt_update] Queueing update ${update.updateId} for offline member ${memberUid} (key: ${queueKey})`);
-            
-            if (redisAvailable) {
-                try {
-                    await redis.rpush(queueKey, JSON.stringify(update));
-                    await redis.expire(queueKey, ttlSeconds);
-                    console.log(`[crdt_update] Successfully queued update to Redis for ${queueKey}`);
-                } catch (redisError) {
-                    console.warn(`Redis queue failed for ${queueKey}, using memory fallback`);
-                    if (!memoryQueue[queueKey]) memoryQueue[queueKey] = [];
-                    memoryQueue[queueKey].push(update);
-                }
-            } else {
-                // Use in-memory fallback
-                if (!memoryQueue[queueKey]) memoryQueue[queueKey] = [];
-                memoryQueue[queueKey].push(update);
-                console.log(`[crdt_update] Queued update to memory for ${queueKey}`);
-            }
-        }
+      if (typeof ack === 'function') {
+        ack({ status: 'success', updateId: update.updateId, boardId });
+      }
     } catch (error) {
-        console.error('Failed offline queue distribution:', error);
+      console.error('Failed processing crdt_update:', error);
+      if (typeof ack === 'function') {
+        try {
+          ack({ status: 'error', message: error.message });
+        } catch (e) {
+          // ignore
+        }
+      }
     }
   });
 
@@ -290,26 +321,27 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log(`[WS DISCONNECT] user=${uid} socket=${socket.id}`);
-    // Clear all Redis queues for this user on logout
-    // This ensures they get fresh data from Firestore on next login
-    if (redisAvailable) {
-      redis.keys(`queue:${uid}:board:*`, async (err, keys) => {
-        if (!err && keys && keys.length > 0) {
-          for (const key of keys) {
-            await redis.del(key);
-            console.log(`[disconnect] Cleared Redis queue: ${key}`);
-          }
-        }
-      });
-    } else {
-      // Clear memory queue
-      const queuePrefix = `queue:${uid}:board:`;
-      for (const key in memoryQueue) {
-        if (key.startsWith(queuePrefix)) {
-          delete memoryQueue[key];
-          console.log(`[disconnect] Cleared memory queue: ${key}`);
-        }
-      }
+    // IMPORTANT: Do NOT clear user queues on simple disconnect. Queues
+    // must be preserved across transient disconnects. Clearing should be
+    // done only on explicit logout (handled via 'logout' event).
+    // This preserves pending offline updates for later delivery.
+  });
+
+  // Explicit logout: clear per-user queues only when client intentionally logs out
+  socket.on('logout', async (payload, callback) => {
+    logWsEvent('LOGOUT RECEIVED', [
+      `[event] logout`,
+      `[direction] client -> server`,
+      `[user] ${uid}`,
+    ]);
+    try {
+      await clearUserQueues(uid);
+      if (typeof callback === 'function') callback({ status: 'success' });
+      else socket.emit('logout_response', { status: 'success' });
+    } catch (e) {
+      console.error(`[logout] Failed clearing queues for ${uid}: ${e.message}`);
+      if (typeof callback === 'function') callback({ status: 'error', message: e.message });
+      else socket.emit('logout_response', { status: 'error', message: e.message });
     }
   });
 });

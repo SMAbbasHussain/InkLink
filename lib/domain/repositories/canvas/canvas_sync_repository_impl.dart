@@ -97,9 +97,12 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   @override
   Future<DateTime?> getLatestLocalCrdtUpdateAt(String boardId) async {
     final isar = await _localDatabaseService.database;
+    // Use only previously-synced rows to compute the local 'since' cursor.
+    // This avoids client-clock based local entries skewing hydration windows.
     final latest = await isar.localCrdtUpdates
         .filter()
         .boardIdEqualTo(boardId)
+        .isSyncedEqualTo(true)
         .sortByAppliedAtDesc()
         .findFirst();
     return latest?.appliedAt;
@@ -139,7 +142,8 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           updateId: updateId,
           elementId: existing.elementId,
         );
-        _socket!.emit('crdt_update', {
+
+        final ack = await _emitWithAck('crdt_update', {
           'boardId': boardId,
           'update': {
             'updateId': updateId,
@@ -149,11 +153,21 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           },
         });
 
-        await markCrdtUpdateSynced(updateId);
-        return;
+        if (ack != null && ack['status'] == 'success') {
+          await markCrdtUpdateSynced(updateId);
+          return;
+        }
+        // Otherwise fall through to Firestore write
       }
-    } catch (_) {
-      // fall through to Firestore write
+    } catch (error, stackTrace) {
+      _logError(
+        'Socket in-place update failed; falling back to Firestore write',
+        error,
+        stackTrace,
+        boardId: boardId,
+        event: 'crdt_update (in-place)',
+        updateId: updateId,
+      );
     }
 
     // Fallback to Firestore if websocket is unavailable.
@@ -280,12 +294,24 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
           try {
             return await completer.future.timeout(const Duration(seconds: 5));
-          } catch (_) {
-            // fall through to Firestore fallback below
+          } catch (error, stackTrace) {
+            _logError(
+              'Socket sync_offline fetch timed out/failed; falling back to Firestore query',
+              error,
+              stackTrace,
+              boardId: boardId,
+              event: 'sync_offline (fetch)',
+            );
           }
         }
-      } catch (_) {
-        // ignore and fallback to Firestore
+      } catch (error, stackTrace) {
+        _logError(
+          'Socket-based remote fetch setup failed; falling back to Firestore query',
+          error,
+          stackTrace,
+          boardId: boardId,
+          event: 'sync_offline (fetch)',
+        );
       }
     }
 
@@ -390,8 +416,14 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
               );
               _socketUpdatesController?.add([update]);
             }
-          } catch (_) {
-            // ignore bad messages
+          } catch (error, stackTrace) {
+            _logError(
+              'Failed to parse inbound socket crdt_update payload',
+              error,
+              stackTrace,
+              boardId: boardId,
+              event: 'crdt_update',
+            );
           }
         }
 
@@ -401,14 +433,28 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           try {
             _socket!.emit('leave_board', boardId);
             _socket!.off('crdt_update', handleUpdate);
-          } catch (_) {}
+          } catch (error, stackTrace) {
+            _logError(
+              'Failed while unsubscribing from board socket stream',
+              error,
+              stackTrace,
+              boardId: boardId,
+              event: 'leave_board',
+            );
+          }
         };
 
         yield* _socketUpdatesController!.stream;
         return;
       }
-    } catch (_) {
-      // fall through to Firestore snapshots
+    } catch (error, stackTrace) {
+      _logError(
+        'Socket watchRemote setup failed; falling back to Firestore snapshots',
+        error,
+        stackTrace,
+        boardId: boardId,
+        event: 'watch_board',
+      );
     }
 
     firestore.Query<Map<String, dynamic>> query = _firestoreService
@@ -454,7 +500,8 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           updateId: updateId,
           elementId: elementId,
         );
-        _socket!.emit('crdt_update', {
+
+        final ack = await _emitWithAck('crdt_update', {
           'boardId': boardId,
           'update': {
             'updateId': updateId,
@@ -463,10 +510,21 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
             'elementId': elementId,
           },
         });
-        return;
+
+        if (ack != null && ack['status'] == 'success') {
+          return;
+        }
+        // otherwise fall through to Firestore write
       }
-    } catch (_) {
-      // ignore and fallback to Firestore
+    } catch (error, stackTrace) {
+      _logError(
+        'Socket writeRemote failed; falling back to Firestore write',
+        error,
+        stackTrace,
+        boardId: boardId,
+        event: 'crdt_update',
+        updateId: updateId,
+      );
     }
     // Fallback to Firestore write if socket unavailable
     await _firestoreService
@@ -507,7 +565,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
             updateId: local.updateId,
             elementId: local.elementId,
           );
-          _socket!.emit('crdt_update', {
+          final ack = await _emitWithAck('crdt_update', {
             'boardId': boardId,
             'update': {
               'updateId': local.updateId,
@@ -516,14 +574,23 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
               'elementId': local.elementId,
             },
           });
-        }
-        for (final local in toSync) {
-          await markCrdtUpdateSynced(local.updateId);
+          if (ack != null && ack['status'] == 'success') {
+            await markCrdtUpdateSynced(local.updateId);
+          } else {
+            // If any ack fails, stop and let retry happen later
+            return false;
+          }
         }
         return true;
       }
-    } catch (_) {
-      // ignore and fallback to Firestore
+    } catch (error, stackTrace) {
+      _logError(
+        'Socket batch sync failed; falling back to Firestore batch write',
+        error,
+        stackTrace,
+        boardId: boardId,
+        event: 'crdt_update (batch)',
+      );
     }
 
     final batch = _firestoreService.getInstance().batch();
@@ -595,13 +662,106 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     try {
       final decoded = base64Decode(payloadBase64);
       return decoded.isNotEmpty;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _logError(
+        'Invalid payloadBase64 encountered during validation',
+        error,
+        stackTrace,
+        event: 'payload_validation',
+      );
       return false;
     }
   }
 
   /// Disconnect WebSocket on logout.
-  /// Server will clear Redis queues for this user automatically on disconnect.
+  /// Helper to emit an event and await server ack (with timeout).
+  Future<Map<String, dynamic>?> _emitWithAck(
+    String event,
+    dynamic payload, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    if (_socket == null || !_socket!.connected) return null;
+    final completer = Completer<Map<String, dynamic>?>();
+    try {
+      _socket!.emitWithAck(
+        event,
+        payload,
+        ack: (dynamic response) {
+          try {
+            completer.complete(response as Map<String, dynamic>?);
+          } catch (error, stackTrace) {
+            _logError(
+              'Socket ack response type-cast failed',
+              error,
+              stackTrace,
+              event: event,
+            );
+            completer.complete(null);
+          }
+        },
+      );
+      return await completer.future.timeout(timeout, onTimeout: () => null);
+    } catch (error, stackTrace) {
+      _logError(
+        'emitWithAck failed before receiving response',
+        error,
+        stackTrace,
+        event: event,
+      );
+      return null;
+    }
+  }
+
+  /// Send explicit logout handshake to the server. Server will clear server-side
+  /// queues only when an explicit logout is received.
+  @override
+  Future<void> logoutSocket() async {
+    if (_socket != null && _socket!.connected) {
+      try {
+        final response = await _emitWithAck('logout', null);
+        if (response == null || response['status'] != 'success') {
+          developer.log(
+            'Logout ack missing or unsuccessful: ${response ?? 'null'}',
+            name: 'CanvasWebSocket::LOGOUT',
+            level: 900,
+          );
+        }
+      } catch (error, stackTrace) {
+        _logError(
+          'logoutSocket failed while waiting for server ack',
+          error,
+          stackTrace,
+          event: 'logout',
+        );
+      }
+    }
+  }
+
+  void _logError(
+    String message,
+    Object error,
+    StackTrace stackTrace, {
+    String? boardId,
+    String? event,
+    String? updateId,
+  }) {
+    final contextParts = <String>[
+      if (event != null) '[event] $event',
+      if (boardId != null) '[board] $boardId',
+      if (updateId != null) '[updateId] $updateId',
+    ];
+    final context = contextParts.isEmpty ? '' : ' ${contextParts.join(' ')}';
+    developer.log(
+      '$message$context',
+      name: 'CanvasWebSocket::ERROR',
+      error: error,
+      stackTrace: stackTrace,
+      level: 1000,
+    );
+  }
+
+  /// Disconnect WebSocket locally. Server will NOT clear user queues on simple
+  /// disconnects; queues are preserved until an explicit `logout` is received.
   @override
   Future<void> disconnectSocket() async {
     if (_socket != null && _socket!.connected) {

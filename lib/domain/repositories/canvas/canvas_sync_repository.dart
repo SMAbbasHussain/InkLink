@@ -40,7 +40,10 @@ abstract class CanvasSyncRepository {
   /// Returns true if the batch succeeded.
   Future<bool> batchSyncPendingUpdates(String boardId, String userId);
 
-  /// Disconnect WebSocket on logout.
-  /// Server will clear Redis queues for this user automatically on disconnect.
+  /// Send an explicit logout handshake to the server which clears server-side queues.
+  Future<void> logoutSocket();
+
+  /// Disconnect WebSocket locally. Server will NOT clear user queues on simple
+  /// disconnects; queues are preserved until an explicit `logout` is received.
   Future<void> disconnectSocket();
 }
