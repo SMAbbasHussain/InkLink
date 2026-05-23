@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:typed_data';
 
 import '../../../core/database/collections/local_crdt_update.dart';
@@ -15,6 +16,17 @@ abstract class CanvasService {
   Stream<List<LocalCrdtUpdate>> listenToCrdtUpdates(String boardId);
   Future<void> stopCrdtRemoteSync(String boardId);
   Future<void> pushCrdtUpdate({
+    required String boardId,
+    required String updateId,
+    required Uint8List payload,
+    String? elementId,
+  });
+  Future<void> markCrdtUpdateDeleted(String updateId, bool isDeleted);
+  Future<LocalCrdtUpdate?> getElementCrdtUpdate({
+    required String boardId,
+    required String elementId,
+  });
+  Future<void> updateCrdtUpdatePayload({
     required String boardId,
     required String updateId,
     required Uint8List payload,
@@ -57,9 +69,21 @@ class CanvasServiceImpl implements CanvasService {
       return _syncRepository.watchLocalCrdtUpdates(boardId);
     }
 
-    _hydrateAndStartRemoteSync(boardId, userId);
-    _syncPendingLocalUpdates(boardId, userId);
-    return _syncRepository.watchLocalCrdtUpdates(boardId);
+    return () async* {
+      try {
+        await _hydrateAndStartRemoteSync(boardId, userId);
+      } catch (error, stackTrace) {
+        developer.log(
+          'CRDT hydrate failed for board $boardId, falling back to local updates',
+          name: 'CanvasService',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+
+      // Always surface local updates, even when remote hydration fails.
+      yield* _syncRepository.watchLocalCrdtUpdates(boardId);
+    }();
   }
 
   @override
@@ -79,6 +103,7 @@ class CanvasServiceImpl implements CanvasService {
     required String boardId,
     required String updateId,
     required Uint8List payload,
+    String? elementId,
   }) {
     final userId = _syncRepository.currentUserId;
     final payloadBase64 = base64Encode(payload);
@@ -88,6 +113,7 @@ class CanvasServiceImpl implements CanvasService {
           LocalCrdtUpdate()
             ..updateId = updateId
             ..boardId = boardId
+            ..elementId = elementId
             ..payloadBase64 = payloadBase64
             ..sourceClientId = userId ?? 'anonymous'
             ..appliedAt = DateTime.now()
@@ -101,8 +127,8 @@ class CanvasServiceImpl implements CanvasService {
               updateId: updateId,
               payloadBase64: payloadBase64,
               sourceClientId: userId,
+              elementId: elementId,
             );
-            await _syncRepository.markCrdtUpdateSynced(updateId);
             await _syncPendingLocalUpdates(boardId, userId);
           } catch (error) {
             if (_isPermissionDenied(error)) {
@@ -114,52 +140,93 @@ class CanvasServiceImpl implements CanvasService {
         });
   }
 
+  @override
+  Future<void> markCrdtUpdateDeleted(String updateId, bool isDeleted) {
+    return _syncRepository.markCrdtUpdateDeleted(updateId, isDeleted);
+  }
+
+  @override
+  Future<LocalCrdtUpdate?> getElementCrdtUpdate({
+    required String boardId,
+    required String elementId,
+  }) {
+    return _syncRepository.getElementCrdtUpdate(boardId, elementId);
+  }
+
+  @override
+  Future<void> updateCrdtUpdatePayload({
+    required String boardId,
+    required String updateId,
+    required Uint8List payload,
+  }) {
+    return _syncRepository.updateCrdtUpdatePayload(
+      boardId: boardId,
+      updateId: updateId,
+      payloadBase64: base64Encode(payload),
+    );
+  }
+
   Future<void> _hydrateAndStartRemoteSync(String boardId, String userId) async {
     if (_remoteSubs.containsKey(boardId)) return;
 
     await _boardRepository.ensureBoardCached(boardId);
 
-    final remoteUpdates = await _syncRepository.fetchRemoteCrdtUpdates(boardId);
+    final localUpdates = await _syncRepository.getLocalCrdtUpdates(boardId);
+    final useFirestoreFirst = localUpdates.isEmpty;
+    // Only use previously-synced rows to compute the 'since' cursor. If there
+    // are no local updates, fetch all remote updates from Firestore.
+    final latestLocalUpdateAt = useFirestoreFirst
+        ? null
+        : await _syncRepository.getLatestLocalCrdtUpdateAt(boardId);
+    final remoteUpdates = await _syncRepository.fetchRemoteCrdtUpdates(
+      boardId,
+      since: latestLocalUpdateAt,
+      preferSocket: !useFirestoreFirst,
+    );
     if (remoteUpdates.isNotEmpty) {
-      await _syncRepository.saveLocalCrdtUpdate(remoteUpdates.first).then((
-        _,
-      ) async {
-        for (final update in remoteUpdates.skip(1)) {
-          await _syncRepository.saveLocalCrdtUpdate(update);
-        }
-      });
-    }
-
-    final remoteSub = _syncRepository.watchRemoteCrdtUpdates(boardId).listen((
-      updates,
-    ) async {
-      for (final update in updates) {
+      for (final update in remoteUpdates) {
         await _syncRepository.saveLocalCrdtUpdate(update);
       }
-      await _syncPendingLocalUpdates(boardId, userId);
-    }, onError: (_) {});
+    }
+
+    final refreshedLatestLocalUpdateAt = await _syncRepository
+        .getLatestLocalCrdtUpdateAt(boardId);
+
+    final remoteSub = _syncRepository
+        .watchRemoteCrdtUpdates(boardId, since: refreshedLatestLocalUpdateAt)
+        .listen(
+          (updates) async {
+            for (final update in updates) {
+              await _syncRepository.saveLocalCrdtUpdate(update);
+            }
+            await _syncPendingLocalUpdates(boardId, userId);
+          },
+          onError: (error, stackTrace) {
+            developer.log(
+              'Remote CRDT sync error for board $boardId',
+              name: 'CanvasService',
+              error: error,
+              stackTrace: stackTrace,
+            );
+            if (_isPermissionDenied(error)) {
+              unawaited(stopCrdtRemoteSync(boardId));
+            }
+          },
+        );
     _remoteSubs[boardId] = remoteSub;
+
+    await _syncPendingLocalUpdates(boardId, userId);
   }
 
   Future<void> _syncPendingLocalUpdates(String boardId, String userId) async {
-    final pending = await _syncRepository.getLocalCrdtUpdates(boardId);
-    for (final local in pending) {
-      if (local.isSynced) continue;
-      try {
-        await _syncRepository.writeRemoteCrdtUpdate(
-          boardId: boardId,
-          updateId: local.updateId,
-          payloadBase64: local.payloadBase64,
-          sourceClientId: userId,
-        );
-        await _syncRepository.markCrdtUpdateSynced(local.updateId);
-      } catch (error) {
-        if (_isPermissionDenied(error)) {
-          await stopCrdtRemoteSync(boardId);
-          return;
-        }
-        rethrow;
-      }
+    // Delegate batching to repository implementation.
+    final success = await _syncRepository.batchSyncPendingUpdates(
+      boardId,
+      userId,
+    );
+    if (!success) {
+      // If batch fails (e.g., permission denied), stop remote sync.
+      await stopCrdtRemoteSync(boardId);
     }
   }
 

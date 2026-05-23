@@ -44,6 +44,9 @@ linked_*.ds
 unlinked.ds
 unlinked_spec.ds
 analysis_benchmark.json
+CLAUDE.md
+skills-lock.json
+.agents
 
 # ------------------------------
 # Android
@@ -127,3 +130,11 @@ requirements-analysis.md
 firebase_optimizations.md
 firebase_queries_reference.md
 firebase_listener_lifecycle_audit.md
+mermaid_output_parse
+.parseignore
+lib/.parseignore
+MEGALENS_CODE_REVIEW.md
+server/node_modules
+server/service-account.json
+server/.env
+websocket_migration_plan.md

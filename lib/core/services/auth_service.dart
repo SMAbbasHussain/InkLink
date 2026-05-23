@@ -9,6 +9,9 @@ abstract class AuthService {
   /// Get the current user's UID
   String? getCurrentUserId();
 
+  /// Get the current user's ID token (Firebase JWT) for server authentication
+  Future<String?> getIdToken({bool forceRefresh = false});
+
   /// Get Firebase Auth instance (if direct access needed)
   FirebaseAuth getInstance();
 }
@@ -34,5 +37,10 @@ class AuthServiceImpl implements AuthService {
   @override
   FirebaseAuth getInstance() {
     return _auth;
+  }
+
+  @override
+  Future<String?> getIdToken({bool forceRefresh = false}) async {
+    return await _auth.currentUser?.getIdToken(forceRefresh);
   }
 }

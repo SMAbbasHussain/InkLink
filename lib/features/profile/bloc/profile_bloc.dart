@@ -107,6 +107,8 @@ class _ProfilePresenceUpdated extends ProfileEvent {
   _ProfilePresenceUpdated({required this.isOnline, required this.lastActive});
 }
 
+class ProfileCleared extends ProfileEvent {}
+
 class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
   final ProfileService profileService;
   final PresenceService presenceService;
@@ -115,6 +117,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
 
   ProfileBloc({required this.profileService, required this.presenceService})
     : super(ProfileInitial()) {
+    on<ProfileCleared>((event, emit) => emit(ProfileInitial()));
     on<LoadProfile>((event, emit) async {
       emit(ProfileLoading());
       try {
@@ -375,6 +378,14 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
         ),
       );
     });
+  }
+
+  Future<void> stopForLogout() async {
+    await _liveProfileSubscription?.cancel();
+    _liveProfileSubscription = null;
+    await _presenceSubscription?.cancel();
+    _presenceSubscription = null;
+    add(ProfileCleared());
   }
 
   @override

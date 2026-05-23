@@ -23,22 +23,33 @@ const LocalCrdtUpdateSchema = CollectionSchema(
       type: IsarType.dateTime,
     ),
     r'boardId': PropertySchema(id: 1, name: r'boardId', type: IsarType.string),
-    r'isSynced': PropertySchema(id: 2, name: r'isSynced', type: IsarType.bool),
-    r'payloadBase64': PropertySchema(
+    r'elementId': PropertySchema(
+      id: 2,
+      name: r'elementId',
+      type: IsarType.string,
+    ),
+    r'isDeleted': PropertySchema(
       id: 3,
+      name: r'isDeleted',
+      type: IsarType.bool,
+    ),
+    r'isSynced': PropertySchema(id: 4, name: r'isSynced', type: IsarType.bool),
+    r'payloadBase64': PropertySchema(
+      id: 5,
       name: r'payloadBase64',
       type: IsarType.string,
     ),
     r'sourceClientId': PropertySchema(
-      id: 4,
+      id: 6,
       name: r'sourceClientId',
       type: IsarType.string,
     ),
     r'updateId': PropertySchema(
-      id: 5,
+      id: 7,
       name: r'updateId',
       type: IsarType.string,
     ),
+    r'version': PropertySchema(id: 8, name: r'version', type: IsarType.long),
   },
 
   estimateSize: _localCrdtUpdateEstimateSize,
@@ -73,6 +84,19 @@ const LocalCrdtUpdateSchema = CollectionSchema(
         ),
       ],
     ),
+    r'elementId': IndexSchema(
+      id: 4987470561970176603,
+      name: r'elementId',
+      unique: false,
+      replace: false,
+      properties: [
+        IndexPropertySchema(
+          name: r'elementId',
+          type: IndexType.hash,
+          caseSensitive: true,
+        ),
+      ],
+    ),
   },
   links: {},
   embeddedSchemas: {},
@@ -90,6 +114,12 @@ int _localCrdtUpdateEstimateSize(
 ) {
   var bytesCount = offsets.last;
   bytesCount += 3 + object.boardId.length * 3;
+  {
+    final value = object.elementId;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
   bytesCount += 3 + object.payloadBase64.length * 3;
   bytesCount += 3 + object.sourceClientId.length * 3;
   bytesCount += 3 + object.updateId.length * 3;
@@ -104,10 +134,13 @@ void _localCrdtUpdateSerialize(
 ) {
   writer.writeDateTime(offsets[0], object.appliedAt);
   writer.writeString(offsets[1], object.boardId);
-  writer.writeBool(offsets[2], object.isSynced);
-  writer.writeString(offsets[3], object.payloadBase64);
-  writer.writeString(offsets[4], object.sourceClientId);
-  writer.writeString(offsets[5], object.updateId);
+  writer.writeString(offsets[2], object.elementId);
+  writer.writeBool(offsets[3], object.isDeleted);
+  writer.writeBool(offsets[4], object.isSynced);
+  writer.writeString(offsets[5], object.payloadBase64);
+  writer.writeString(offsets[6], object.sourceClientId);
+  writer.writeString(offsets[7], object.updateId);
+  writer.writeLong(offsets[8], object.version);
 }
 
 LocalCrdtUpdate _localCrdtUpdateDeserialize(
@@ -119,11 +152,14 @@ LocalCrdtUpdate _localCrdtUpdateDeserialize(
   final object = LocalCrdtUpdate();
   object.appliedAt = reader.readDateTime(offsets[0]);
   object.boardId = reader.readString(offsets[1]);
+  object.elementId = reader.readStringOrNull(offsets[2]);
   object.id = id;
-  object.isSynced = reader.readBool(offsets[2]);
-  object.payloadBase64 = reader.readString(offsets[3]);
-  object.sourceClientId = reader.readString(offsets[4]);
-  object.updateId = reader.readString(offsets[5]);
+  object.isDeleted = reader.readBool(offsets[3]);
+  object.isSynced = reader.readBool(offsets[4]);
+  object.payloadBase64 = reader.readString(offsets[5]);
+  object.sourceClientId = reader.readString(offsets[6]);
+  object.updateId = reader.readString(offsets[7]);
+  object.version = reader.readLong(offsets[8]);
   return object;
 }
 
@@ -139,13 +175,19 @@ P _localCrdtUpdateDeserializeProp<P>(
     case 1:
       return (reader.readString(offset)) as P;
     case 2:
-      return (reader.readBool(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 3:
-      return (reader.readString(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 4:
-      return (reader.readString(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 5:
       return (reader.readString(offset)) as P;
+    case 6:
+      return (reader.readString(offset)) as P;
+    case 7:
+      return (reader.readString(offset)) as P;
+    case 8:
+      return (reader.readLong(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
   }
@@ -407,6 +449,81 @@ extension LocalCrdtUpdateQueryWhere
       }
     });
   }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterWhereClause>
+  elementIdIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(
+        IndexWhereClause.equalTo(indexName: r'elementId', value: [null]),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterWhereClause>
+  elementIdIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(
+        IndexWhereClause.between(
+          indexName: r'elementId',
+          lower: [null],
+          includeLower: false,
+          upper: [],
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterWhereClause>
+  elementIdEqualTo(String? elementId) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(
+        IndexWhereClause.equalTo(indexName: r'elementId', value: [elementId]),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterWhereClause>
+  elementIdNotEqualTo(String? elementId) {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(
+              IndexWhereClause.between(
+                indexName: r'elementId',
+                lower: [],
+                upper: [elementId],
+                includeUpper: false,
+              ),
+            )
+            .addWhereClause(
+              IndexWhereClause.between(
+                indexName: r'elementId',
+                lower: [elementId],
+                includeLower: false,
+                upper: [],
+              ),
+            );
+      } else {
+        return query
+            .addWhereClause(
+              IndexWhereClause.between(
+                indexName: r'elementId',
+                lower: [elementId],
+                includeLower: false,
+                upper: [],
+              ),
+            )
+            .addWhereClause(
+              IndexWhereClause.between(
+                indexName: r'elementId',
+                lower: [],
+                upper: [elementId],
+                includeUpper: false,
+              ),
+            );
+      }
+    });
+  }
 }
 
 extension LocalCrdtUpdateQueryFilter
@@ -608,6 +725,165 @@ extension LocalCrdtUpdateQueryFilter
   }
 
   QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  elementIdIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'elementId'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  elementIdIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'elementId'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  elementIdEqualTo(String? value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'elementId',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  elementIdGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'elementId',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  elementIdLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'elementId',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  elementIdBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'elementId',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  elementIdStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'elementId',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  elementIdEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'elementId',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  elementIdContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'elementId',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  elementIdMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'elementId',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  elementIdIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'elementId', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  elementIdIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'elementId', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
   idEqualTo(Id value) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(
@@ -658,6 +934,15 @@ extension LocalCrdtUpdateQueryFilter
           upper: upper,
           includeUpper: includeUpper,
         ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  isDeletedEqualTo(bool value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'isDeleted', value: value),
       );
     });
   }
@@ -1093,6 +1378,61 @@ extension LocalCrdtUpdateQueryFilter
       );
     });
   }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  versionEqualTo(int value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'version', value: value),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  versionGreaterThan(int value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'version',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  versionLessThan(int value, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'version',
+          value: value,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  versionBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'version',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+        ),
+      );
+    });
+  }
 }
 
 extension LocalCrdtUpdateQueryObject
@@ -1127,6 +1467,34 @@ extension LocalCrdtUpdateQuerySortBy
   sortByBoardIdDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'boardId', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  sortByElementId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'elementId', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  sortByElementIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'elementId', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  sortByIsDeleted() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isDeleted', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  sortByIsDeletedDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isDeleted', Sort.desc);
     });
   }
 
@@ -1185,6 +1553,19 @@ extension LocalCrdtUpdateQuerySortBy
       return query.addSortBy(r'updateId', Sort.desc);
     });
   }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy> sortByVersion() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'version', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  sortByVersionDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'version', Sort.desc);
+    });
+  }
 }
 
 extension LocalCrdtUpdateQuerySortThenBy
@@ -1216,6 +1597,20 @@ extension LocalCrdtUpdateQuerySortThenBy
     });
   }
 
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  thenByElementId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'elementId', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  thenByElementIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'elementId', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy> thenById() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'id', Sort.asc);
@@ -1225,6 +1620,20 @@ extension LocalCrdtUpdateQuerySortThenBy
   QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy> thenByIdDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'id', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  thenByIsDeleted() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isDeleted', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  thenByIsDeletedDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isDeleted', Sort.desc);
     });
   }
 
@@ -1283,6 +1692,19 @@ extension LocalCrdtUpdateQuerySortThenBy
       return query.addSortBy(r'updateId', Sort.desc);
     });
   }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy> thenByVersion() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'version', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  thenByVersionDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'version', Sort.desc);
+    });
+  }
 }
 
 extension LocalCrdtUpdateQueryWhereDistinct
@@ -1299,6 +1721,20 @@ extension LocalCrdtUpdateQueryWhereDistinct
   }) {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'boardId', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QDistinct>
+  distinctByElementId({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'elementId', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QDistinct>
+  distinctByIsDeleted() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'isDeleted');
     });
   }
 
@@ -1336,6 +1772,13 @@ extension LocalCrdtUpdateQueryWhereDistinct
       return query.addDistinctBy(r'updateId', caseSensitive: caseSensitive);
     });
   }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QDistinct>
+  distinctByVersion() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'version');
+    });
+  }
 }
 
 extension LocalCrdtUpdateQueryProperty
@@ -1356,6 +1799,18 @@ extension LocalCrdtUpdateQueryProperty
   QueryBuilder<LocalCrdtUpdate, String, QQueryOperations> boardIdProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'boardId');
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, String?, QQueryOperations> elementIdProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'elementId');
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, bool, QQueryOperations> isDeletedProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'isDeleted');
     });
   }
 
@@ -1382,6 +1837,12 @@ extension LocalCrdtUpdateQueryProperty
   QueryBuilder<LocalCrdtUpdate, String, QQueryOperations> updateIdProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'updateId');
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, int, QQueryOperations> versionProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'version');
     });
   }
 }

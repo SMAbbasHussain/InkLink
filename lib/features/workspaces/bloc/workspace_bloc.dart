@@ -110,10 +110,7 @@ class LeaveWorkspaceRequested extends WorkspaceEvent {
   final String workspaceId;
   final List<String>? importedBoardsToKeep;
 
-  LeaveWorkspaceRequested(
-    this.workspaceId, {
-    this.importedBoardsToKeep,
-  });
+  LeaveWorkspaceRequested(this.workspaceId, {this.importedBoardsToKeep});
 }
 
 class RemoveWorkspaceMemberRequested extends WorkspaceEvent {
@@ -295,11 +292,19 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     if (service == null) return;
 
     try {
-      await service.startWorkspacSync();
-
+      // Cancel old subscriptions first
       await _ownedWorkspacesSub?.cancel();
+      _ownedWorkspacesSub = null;
       await _memberWorkspacesSub?.cancel();
+      _memberWorkspacesSub = null;
       await _incomingInvitesSub?.cancel();
+      _incomingInvitesSub = null;
+
+      // Emit loading state
+      emit(_emptyLoaded());
+
+      // Then start fresh sync
+      await service.startWorkspacSync();
 
       _ownedWorkspacesSub = service.getOwnedWorkspaces().listen((workspaces) {
         add(_OwnedWorkspacesUpdated(workspaces));

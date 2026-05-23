@@ -5,6 +5,7 @@ import '../../../core/services/messaging_service.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/utils/helpers.dart';
 import '../../repositories/auth/auth_repository.dart';
+import '../../repositories/canvas/canvas_sync_repository.dart';
 import '../presence/presence_service.dart';
 
 abstract class AuthSessionService {
@@ -22,6 +23,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
   final MessagingService _messagingService;
   final LocalDatabaseService _localDatabaseService;
   final PresenceService _presenceService;
+  final CanvasSyncRepository _canvasSyncRepository;
   bool _tokenRefreshBound = false;
   String? _lastSyncedToken;
 
@@ -31,11 +33,13 @@ class AuthSessionServiceImpl implements AuthSessionService {
     required MessagingService messagingService,
     required LocalDatabaseService localDatabaseService,
     required PresenceService presenceService,
+    required CanvasSyncRepository canvasSyncRepository,
   }) : _authRepository = authRepository,
        _authService = authService,
        _messagingService = messagingService,
        _localDatabaseService = localDatabaseService,
-       _presenceService = presenceService;
+       _presenceService = presenceService,
+       _canvasSyncRepository = canvasSyncRepository;
 
   @override
   Stream<User?> get user => _authRepository.user;
@@ -76,10 +80,35 @@ class AuthSessionServiceImpl implements AuthSessionService {
     if (current != null) {
       await _presenceService.setUserOffline();
 
-      final token = await _messagingService.getToken();
-      await _authRepository.removeFcmTokenOnSignOut(current.uid, token: token);
-      await _messagingService.deleteToken();
+      String? token;
+      try {
+        token = await _messagingService.getToken();
+      } catch (_) {
+        token = null;
+      }
+
+      try {
+        await _authRepository.removeFcmTokenOnSignOut(
+          current.uid,
+          token: token,
+        );
+      } catch (_) {
+        // Logout must continue even when FCM is unavailable.
+      }
+
+      try {
+        await _messagingService.deleteToken();
+      } catch (_) {
+        // Ignore FCM cleanup failures on devices without Google Play services.
+      }
     }
+
+    // Explicitly inform server of logout so it can clear server-side queues,
+    // then disconnect locally. Do not fail sign-out if logout handshake fails.
+    try {
+      await _canvasSyncRepository.logoutSocket();
+    } catch (_) {}
+    await _canvasSyncRepository.disconnectSocket();
 
     await _authRepository.signOut();
     await _localDatabaseService.clearLocalCache();
@@ -90,8 +119,18 @@ class AuthSessionServiceImpl implements AuthSessionService {
     final current = _authService.getCurrentUser();
     if (current == null) return;
 
-    await _messagingService.requestPermission();
-    final token = await _messagingService.getToken();
+    try {
+      await _messagingService.requestPermission();
+    } catch (_) {
+      return;
+    }
+
+    String? token;
+    try {
+      token = await _messagingService.getToken();
+    } catch (_) {
+      return;
+    }
     if (token != null && token.isNotEmpty && _lastSyncedToken != token) {
       await _authRepository.syncFcmToken(current.uid, token);
       _lastSyncedToken = token;

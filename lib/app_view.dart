@@ -4,13 +4,33 @@ import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/bloc/auth_state.dart';
 import 'features/auth/view/login_screen.dart';
 import 'features/navigation/view/main_wrapper.dart';
+import 'features/dashboard/bloc/dashboard_bloc.dart';
+import 'features/workspaces/bloc/workspace_bloc.dart';
+import 'features/notifications/bloc/notifications_bloc.dart';
+import 'features/board_invitations/bloc/board_invitations_bloc.dart';
+import 'features/friends/bloc/friends_bloc.dart';
+import 'features/friends/bloc/friends_event.dart';
 
 class AppView extends StatelessWidget {
   const AppView({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<AuthBloc, AuthState>(
+    return BlocConsumer<AuthBloc, AuthState>(
+      listenWhen: (previous, current) =>
+          previous is! Authenticated && current is Authenticated,
+      listener: (context, state) {
+        // Restart global syncs when authenticated (crucial after logout/login cycle)
+        context.read<DashboardBloc>().add(LoadDashboardRequested());
+        context.read<WorkspaceBloc>().add(LoadWorkspacesRequested());
+        context.read<NotificationsBloc>().add(
+          const NotificationsLoadRequested(),
+        );
+        context.read<BoardInvitationsBloc>().add(
+          const BoardInvitationsLoadRequested(),
+        );
+        context.read<FriendsBloc>().add(LoadFriendsInfo());
+      },
       builder: (context, state) {
         if (state is Authenticated) {
           return const MainWrapper();

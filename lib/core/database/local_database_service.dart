@@ -1,5 +1,6 @@
 import 'package:isar_community/isar.dart';
 import 'package:path_provider/path_provider.dart';
+import 'collections/local_canvas_sync_state.dart';
 import 'collections/local_board.dart';
 import 'collections/local_blocked_user.dart';
 import 'collections/local_crdt_update.dart';
@@ -22,6 +23,7 @@ class LocalDatabaseService {
       final dir = await getApplicationDocumentsDirectory();
       return await Isar.open(
         [
+          LocalCanvasSyncStateSchema,
           LocalBoardSchema,
           LocalBlockedUserSchema,
           LocalCrdtUpdateSchema,
@@ -47,6 +49,7 @@ class LocalDatabaseService {
     await isar.writeTxn(() async {
       await isar.localBoards.clear();
       await isar.localBlockedUsers.clear();
+      await isar.localCanvasSyncStates.clear();
       await isar.localCrdtUpdates.clear();
       await isar.localFriendRequests.clear();
       await isar.localFriendProfiles.clear();

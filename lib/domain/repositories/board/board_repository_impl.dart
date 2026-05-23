@@ -3,10 +3,12 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:isar_community/isar.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/database/collections/local_board.dart';
+import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
@@ -21,6 +23,7 @@ class FirestoreBoardRepository implements BoardRepository {
   static const String _membersSubcollection = 'members';
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   _userBoardIndexSub;
+  StreamSubscription<User?>? _authStateSub;
   String? _syncUserId;
   String? _activeBoardId;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _activeBoardSub;
@@ -73,7 +76,13 @@ class FirestoreBoardRepository implements BoardRepository {
   Future<void> startBoardsSync() async {
     final uid = currentUserId;
     if (uid == null) {
-      await stopBoardsSync();
+      _authStateSub ??= _authService.getInstance().authStateChanges().listen((
+        user,
+      ) {
+        if (user != null) {
+          unawaited(startBoardsSync());
+        }
+      });
       return;
     }
 
@@ -127,6 +136,8 @@ class FirestoreBoardRepository implements BoardRepository {
     await deactivateBoard();
     await _userBoardIndexSub?.cancel();
     _userBoardIndexSub = null;
+    await _authStateSub?.cancel();
+    _authStateSub = null;
     _ownedBoardDocs.clear();
     _joinedBoardDocs.clear();
     _syncUserId = null;
@@ -212,43 +223,98 @@ class FirestoreBoardRepository implements BoardRepository {
   }
 
   Stream<List<Board>> _watchLocalBoards({required bool owned}) {
-    return _localDatabaseService.database.asStream().asyncExpand((isar) {
+    final controller = StreamController<List<Board>>.broadcast();
+    StreamSubscription<User?>? authSub;
+    StreamSubscription<List<LocalBoard>>? localSub;
+    var syncGeneration = 0;
+
+    Future<void> bindToUser(String? uid) async {
+      final callGeneration = syncGeneration;
+      await localSub?.cancel();
+      if (callGeneration != syncGeneration) {
+        return;
+      }
+      localSub = null;
+
+      if (uid == null || uid.isEmpty) {
+        if (!controller.isClosed) {
+          controller.add(const <Board>[]);
+        }
+        return;
+      }
+
+      final isar = await _localDatabaseService.database;
+      if (callGeneration != syncGeneration || controller.isClosed) {
+        return;
+      }
       final queryBuilder = isar.localBoards.filter();
 
       final filterQuery = owned
-          ? queryBuilder.ownerIdEqualTo(currentUserId ?? '')
+          ? queryBuilder.ownerIdEqualTo(uid)
           : queryBuilder
-                .membersElementEqualTo(currentUserId ?? '')
+                .membersElementEqualTo(uid)
                 .and()
                 .not()
-                .ownerIdEqualTo(currentUserId ?? '');
+                .ownerIdEqualTo(uid);
 
-      return filterQuery
+      final nextLocalSub = filterQuery
           .sortByUpdatedAtDesc()
           .watch(fireImmediately: true)
-          .map(
-            (localBoards) => localBoards
-                .map(
-                  (lb) => Board(
-                    id: lb.boardId,
-                    title: lb.title,
-                    ownerId: lb.ownerId,
-                    members: lb.members,
-                    previewPath: lb.previewPath,
-                    visibility: lb.visibility,
-                    privateJoinPolicy: lb.privateJoinPolicy,
-                    tags: lb.tags,
-                    joinViaCodeEnabled: lb.joinViaCodeEnabled,
-                    whoCanInvite: lb.whoCanInvite,
-                    defaultLinkJoinRole: lb.defaultLinkJoinRole,
-                    currentUserRole: lb.currentUserRole,
-                    createdAt: lb.createdAt,
-                    updatedAt: lb.updatedAt,
-                  ),
-                )
-                .toList(),
-          );
-    });
+          .listen((localBoards) {
+            if (controller.isClosed) {
+              return;
+            }
+
+            controller.add(
+              localBoards
+                  .map(
+                    (lb) => Board(
+                      id: lb.boardId,
+                      title: lb.title,
+                      ownerId: lb.ownerId,
+                      members: lb.members,
+                      previewPath: lb.previewPath,
+                      visibility: lb.visibility,
+                      privateJoinPolicy: lb.privateJoinPolicy,
+                      tags: lb.tags,
+                      joinViaCodeEnabled: lb.joinViaCodeEnabled,
+                      whoCanInvite: lb.whoCanInvite,
+                      defaultLinkJoinRole: lb.defaultLinkJoinRole,
+                      currentUserRole: lb.currentUserRole,
+                      createdAt: lb.createdAt,
+                      updatedAt: lb.updatedAt,
+                    ),
+                  )
+                  .toList(),
+            );
+          }, onError: controller.addError);
+
+      if (callGeneration != syncGeneration || controller.isClosed) {
+        await nextLocalSub.cancel();
+        return;
+      }
+
+      localSub = nextLocalSub;
+    }
+
+    controller.onListen = () {
+      syncGeneration++;
+      authSub = _authService.getInstance().authStateChanges().listen((user) {
+        unawaited(bindToUser(user?.uid));
+      }, onError: controller.addError);
+
+      unawaited(bindToUser(currentUserId));
+    };
+
+    controller.onCancel = () async {
+      syncGeneration++;
+      await authSub?.cancel();
+      authSub = null;
+      await localSub?.cancel();
+      localSub = null;
+    };
+
+    return controller.stream;
   }
 
   @override
@@ -800,6 +866,7 @@ class FirestoreBoardRepository implements BoardRepository {
     final isar = await _localDatabaseService.database;
     await isar.writeTxn(() async {
       await isar.localBoards.deleteByBoardId(boardId);
+      await isar.localCrdtUpdates.filter().boardIdEqualTo(boardId).deleteAll();
     });
   }
 
@@ -825,17 +892,25 @@ class FirestoreBoardRepository implements BoardRepository {
     final isar = await _localDatabaseService.database;
     final localBoard = await isar.localBoards.getByBoardId(boardId);
     if (localBoard == null) return;
+    // Updating top-level board metadata is owner-scoped in security rules.
+    // Do not attempt this write for non-owners when closing/saving preview.
     final canUpdateBoardMetadata =
         localBoard.currentUserRole == Board.roleOwner ||
-        localBoard.currentUserRole == Board.roleEditor;
+        localBoard.ownerId == currentUserId;
 
     localBoard.previewPath = previewFile.path;
     localBoard.updatedAt = DateTime.now();
 
     if (canUpdateBoardMetadata) {
-      await _firestoreService.collection('boards').doc(boardId).update({
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      try {
+        await _firestoreService.collection('boards').doc(boardId).update({
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } on FirebaseException catch (e) {
+        if (e.code != 'permission-denied') {
+          rethrow;
+        }
+      }
     }
 
     await isar.writeTxn(() async {

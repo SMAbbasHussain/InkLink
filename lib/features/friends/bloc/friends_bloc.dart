@@ -4,6 +4,12 @@ import '../../../domain/services/friends/friends_service.dart';
 import 'friends_event.dart';
 import 'friends_state.dart';
 
+class _FriendsStreamFailed extends FriendsEvent {
+  final String error;
+
+  _FriendsStreamFailed(this.error);
+}
+
 class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
   final FriendsService friendsService;
   StreamSubscription? _friendsSubscription;
@@ -15,15 +21,25 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
   bool _isOffline = false;
 
   FriendsBloc({required this.friendsService}) : super(FriendsInitial()) {
+    on<_FriendsStreamFailed>((event, emit) {
+      final message = event.error.toLowerCase();
+      if (message.contains('permission-denied') ||
+          message.contains('permission denied')) {
+        emit(FriendsInitial());
+        return;
+      }
+      emit(FriendsError(event.error));
+    });
     on<LoadFriendsInfo>((event, emit) async {
       emit(FriendsLoading());
+
+      // Cancel old subscription
       await _friendsSubscription?.cancel();
       _friendsSubscription = null;
       add(FriendsConnectivityUpdated(false));
       _refreshConnectivity();
 
-      // In a full implementation, you'd combine streams.
-      // For now, let's fix the syntax error.
+      // Start fresh listeners
       _friendsSubscription = friendsService.watchFriendsInfo().listen(
         (info) {
           if (_isOffline) {
@@ -37,18 +53,9 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
             ),
           );
         },
-        onError: (error) async {
-          await _friendsSubscription?.cancel();
-          _friendsSubscription = null;
-
-          final message = error.toString().toLowerCase();
-          if (message.contains('permission-denied') ||
-              message.contains('permission denied')) {
-            emit(FriendsInitial());
-            return;
-          }
-
-          emit(FriendsError(error.toString()));
+        onError: (error) {
+          if (isClosed) return;
+          add(_FriendsStreamFailed(error.toString()));
         },
       );
     });

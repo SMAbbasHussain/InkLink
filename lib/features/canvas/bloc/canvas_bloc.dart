@@ -25,10 +25,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
   StreamSubscription<List<LocalCrdtUpdate>>? _crdtUpdatesSub;
   StreamSubscription<Board?>? _boardMetaSub;
+  StreamSubscription<List<BoardMember>>? _membersSub;
   CanvasDocAdapter? _crdtAdapter;
   Future<void>? _crdtInitFuture;
   Timer? _boardUnavailableTimer;
   final Set<String> _appliedCrdtUpdateIds = <String>{};
+  final Map<String, String> _lastShapePayloadFingerprint = <String, String>{};
+  final Map<String, String> _lastShapeUpdateId =
+      <String, String>{}; // Track last update ID per shape
   bool _hasSeenBoardMetadata = false;
   String _boardId;
   String _currentUserRole = Board.roleViewer;
@@ -52,16 +56,33 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasEndStroke>(_onEndStroke);
     on<CanvasAddShape>(_onAddShape);
     on<CanvasAddAiText>(_onAddAiText);
+    on<CanvasAddImageElement>(_onAddImageElement);
+    on<CanvasUpdateImageElement>(_onUpdateImageElement);
     on<CanvasUndo>(_onUndo);
     on<CanvasRedo>(_onRedo);
     on<CanvasClearAll>(_onClearAll);
     on<CanvasDeleteElement>(_onDeleteElement);
     on<CanvasUpdateColor>(_onUpdateColor);
     on<CanvasUpdateStrokeWidth>(_onUpdateStrokeWidth);
+    on<CanvasUpdateBrushOpacity>(_onUpdateBrushOpacity);
+    on<CanvasUpdateBrushType>(_onUpdateBrushType);
+    on<CanvasUpdateEraserScope>(_onUpdateEraserScope);
+    on<CanvasSelectShape>(_onSelectShape);
+    on<CanvasMoveSelectedShape>(_onMoveSelectedShape);
+    on<CanvasResizeSelectedShape>(_onResizeSelectedShape);
+    on<CanvasToggleSelectedShapeFill>(_onToggleSelectedShapeFill);
+    on<CanvasUpdateSelectedShapeColor>(_onUpdateSelectedShapeColor);
+    on<CanvasUpdateSelectedShapeBorderRadius>(
+      _onUpdateSelectedShapeBorderRadius,
+    );
+    on<CanvasRotateSelectedShape>(_onRotateSelectedShape);
+    on<CanvasCommitPendingShapeEdits>(_onCommitPendingShapeEdits);
     on<CanvasToggleTray>(_onToggleTray);
     on<CanvasShowTrayTips>(_onShowTrayTips);
     on<CanvasDismissTrayTips>(_onDismissTrayTips);
     on<CanvasSaveBoardPreviewRequested>(_onSaveBoardPreviewRequested);
+    on<CanvasBoardMembersUpdated>(_onBoardMembersUpdated);
+    on<CanvasMemberSearchQueryChanged>(_onMemberSearchQueryChanged);
   }
 
   bool get _canSync => _canvasService != null && _boardId.isNotEmpty;
@@ -131,13 +152,34 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (adapter == null) return;
 
     for (final update in event.updates) {
+      // Skip updates that have been marked as deleted (undone)
+      if (update.isDeleted) {
+        _appliedCrdtUpdateIds.add(update.updateId);
+        continue;
+      }
+
       if (_appliedCrdtUpdateIds.contains(update.updateId)) {
         continue;
       }
 
-      final bytes = base64Decode(update.payloadBase64);
-      adapter.applyUpdate(bytes, origin: 'remote');
-      _appliedCrdtUpdateIds.add(update.updateId);
+      try {
+        if (update.payloadBase64.isEmpty) {
+          _appliedCrdtUpdateIds.add(update.updateId);
+          continue;
+        }
+
+        final bytes = base64Decode(update.payloadBase64);
+        if (bytes.isEmpty) {
+          _appliedCrdtUpdateIds.add(update.updateId);
+          continue;
+        }
+
+        adapter.applyUpdate(bytes, origin: 'remote');
+        _appliedCrdtUpdateIds.add(update.updateId);
+      } catch (_) {
+        // Skip malformed updates instead of crashing canvas state restoration.
+        _appliedCrdtUpdateIds.add(update.updateId);
+      }
     }
 
     _refreshFromCrdtAdapter(emit);
@@ -172,11 +214,49 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       return;
     }
 
+    if (state.brushType == 'eraser') {
+      final eraserResult = _applyEraserStroke(
+        erasePath: state.currentStroke,
+        eraserRadius: state.strokeWidth / 2,
+        eraseEverything: state.eraserEraseEverything,
+      );
+
+      emit(
+        state.copyWith(
+          elements: eraserResult.nextElements,
+          currentStroke: const [],
+        ),
+      );
+
+      for (final elementId in eraserResult.deletedElementIds) {
+        await _saveCrdtOperation(
+          action: 'delete',
+          type: 'element',
+          objectId: elementId,
+          data: const {},
+          emit: emit,
+        );
+      }
+
+      for (final createdStroke in eraserResult.createdStrokes) {
+        await _saveCrdtOperation(
+          action: 'create',
+          type: 'stroke',
+          objectId: createdStroke.id,
+          data: createdStroke.data as Map<String, dynamic>,
+          emit: emit,
+        );
+      }
+      return;
+    }
+
     final strokeId = _uuid.v4();
     final strokeData = {
       'z': _nextZIndex(),
       'color': state.selectedColor.value,
       'strokeWidth': state.strokeWidth,
+      'opacity': state.brushOpacity,
+      'brushType': state.brushType,
       'points': state.currentStroke
           .map((p) => {'x': p.dx, 'y': p.dy})
           .toList(growable: false),
@@ -216,12 +296,23 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       'size': 64.0,
       'color': state.selectedColor.value,
       'strokeWidth': 3.0,
+      'isFilled': false,
+      'borderRadius': 0.0,
+      'rotation': 0.0,
     };
 
     final shape = CanvasElement(id: shapeId, type: 'shape', data: shapeData);
     final nextElements = List<CanvasElement>.from(state.elements)..add(shape);
 
-    emit(state.copyWith(elements: nextElements, activeTray: null));
+    emit(
+      state.copyWith(
+        elements: nextElements,
+        activeTray: null,
+        selectedShapeId: shapeId,
+        selectedShapeIsFilled: false,
+        selectedShapeBorderRadius: 0.0,
+      ),
+    );
 
     await _saveCrdtOperation(
       action: 'create',
@@ -267,16 +358,114 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
   }
 
+  Future<void> _onAddImageElement(
+    CanvasAddImageElement event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) {
+      return;
+    }
+
+    final imageId = _uuid.v4();
+    final imageData = {
+      'z': _nextZIndex(),
+      'cx': event.center.dx,
+      'cy': event.center.dy,
+      'width': event.width.clamp(80.0, 720.0),
+      'height': event.height.clamp(80.0, 720.0),
+      'imageBase64': base64Encode(event.imageBytes),
+    };
+
+    final imageElement = CanvasElement(
+      id: imageId,
+      type: 'image',
+      data: imageData,
+    );
+    final nextElements = List<CanvasElement>.from(state.elements)
+      ..add(imageElement);
+
+    emit(state.copyWith(elements: nextElements, activeTray: null));
+
+    await _saveCrdtOperation(
+      action: 'create',
+      type: 'image',
+      objectId: imageId,
+      data: imageData,
+      emit: emit,
+    );
+  }
+
+  Future<void> _onUpdateImageElement(
+    CanvasUpdateImageElement event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) {
+      return;
+    }
+
+    CanvasElement? target;
+    for (final element in state.elements) {
+      if (element.id == event.elementId && element.type == 'image') {
+        target = element;
+        break;
+      }
+    }
+    if (target == null) return;
+
+    final data = Map<String, dynamic>.from(target.data as Map<String, dynamic>)
+      ..['cx'] = event.center.dx
+      ..['cy'] = event.center.dy
+      ..['width'] = event.width.clamp(80.0, 720.0)
+      ..['height'] = event.height.clamp(80.0, 720.0);
+
+    final oldData = target.data as Map<String, dynamic>;
+    final oldCx = (oldData['cx'] as num?)?.toDouble() ?? 0.0;
+    final oldCy = (oldData['cy'] as num?)?.toDouble() ?? 0.0;
+    final oldW = (oldData['width'] as num?)?.toDouble() ?? 220.0;
+    final oldH = (oldData['height'] as num?)?.toDouble() ?? 160.0;
+    final newCx = (data['cx'] as num).toDouble();
+    final newCy = (data['cy'] as num).toDouble();
+    final newW = (data['width'] as num).toDouble();
+    final newH = (data['height'] as num).toDouble();
+
+    final unchanged =
+        (newCx - oldCx).abs() < 0.1 &&
+        (newCy - oldCy).abs() < 0.1 &&
+        (newW - oldW).abs() < 0.1 &&
+        (newH - oldH).abs() < 0.1;
+    if (unchanged) {
+      return;
+    }
+
+    final next = state.elements
+        .map(
+          (e) => e.id == event.elementId
+              ? CanvasElement(id: e.id, type: e.type, data: data)
+              : e,
+        )
+        .toList(growable: false);
+
+    emit(state.copyWith(elements: next));
+
+    await _saveCrdtOperation(
+      action: 'update',
+      type: 'image',
+      objectId: event.elementId,
+      data: data,
+      emit: emit,
+    );
+  }
+
   Future<void> _onUndo(CanvasUndo event, Emitter<CanvasState> emit) async {
     if (!_ensureCanEdit(emit)) {
       return;
     }
 
     final adapter = _crdtAdapter;
-    if (adapter == null || !_canSync) return;
+    if (adapter == null) return;
 
     final update = adapter.undoLast(origin: 'local');
-    if (update == null) return;
+    if (update == null || update.isEmpty) return;
 
     await _publishCrdtUpdate(update);
     _refreshFromCrdtAdapter(emit);
@@ -289,10 +478,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
 
     final adapter = _crdtAdapter;
-    if (adapter == null || !_canSync) return;
+    if (adapter == null) return;
 
     final update = adapter.redoLast(origin: 'local');
-    if (update == null) return;
+    if (update == null || update.isEmpty) return;
 
     await _publishCrdtUpdate(update);
     _refreshFromCrdtAdapter(emit);
@@ -331,7 +520,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         .where((e) => e.id != event.elementId)
         .toList(growable: false);
 
-    emit(state.copyWith(elements: nextElements));
+    emit(
+      state.copyWith(
+        elements: nextElements,
+        selectedShapeId: state.selectedShapeId == event.elementId
+            ? null
+            : state.selectedShapeId,
+      ),
+    );
     await _saveCrdtOperation(
       action: 'delete',
       type: 'element',
@@ -350,6 +546,518 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     emit(state.copyWith(strokeWidth: event.strokeWidth));
+  }
+
+  void _onUpdateBrushOpacity(
+    CanvasUpdateBrushOpacity event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(brushOpacity: event.opacity));
+  }
+
+  void _onUpdateBrushType(
+    CanvasUpdateBrushType event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(brushType: event.brushType));
+  }
+
+  void _onUpdateEraserScope(
+    CanvasUpdateEraserScope event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(eraserEraseEverything: event.eraseEverything));
+  }
+
+  void _onSelectShape(CanvasSelectShape event, Emitter<CanvasState> emit) {
+    if (event.shapeId == null) {
+      emit(state.copyWith(selectedShapeId: null));
+      return;
+    }
+
+    CanvasElement? selected;
+    for (final element in state.elements) {
+      if (element.id == event.shapeId) {
+        selected = element;
+        break;
+      }
+    }
+    final data = selected?.data as Map<String, dynamic>?;
+    emit(
+      state.copyWith(
+        selectedShapeId: event.shapeId,
+        selectedShapeIsFilled: (data?['isFilled'] as bool?) ?? false,
+        selectedShapeBorderRadius:
+            (data?['borderRadius'] as num?)?.toDouble() ?? 0.0,
+        selectedShapeRotation: (data?['rotation'] as num?)?.toDouble() ?? 0.0,
+      ),
+    );
+  }
+
+  Future<void> _onMoveSelectedShape(
+    CanvasMoveSelectedShape event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
+      ..['cx'] = event.center.dx
+      ..['cy'] = event.center.dy;
+    await _updateShape(shape.id, data, emit);
+  }
+
+  Future<void> _onRotateSelectedShape(
+    CanvasRotateSelectedShape event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
+      ..['rotation'] = _normalizeRotation(event.rotation);
+    await _updateShape(shape.id, data, emit);
+    emit(state.copyWith(selectedShapeRotation: data['rotation'] as double));
+  }
+
+  Future<void> _onCommitPendingShapeEdits(
+    CanvasCommitPendingShapeEdits event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final shape = _selectedShape();
+    if (shape == null) return;
+
+    // Merge current shape data with pending changes
+    final data = Map<String, dynamic>.from(
+      shape.data as Map<String, dynamic>? ?? const {},
+    );
+
+    // Apply pending changes, with normalization for specific fields
+    for (final entry in event.pendingData.entries) {
+      if (entry.key == 'rotation') {
+        final rotation = _toDoubleValue(entry.value);
+        if (rotation == null) continue;
+        data[entry.key] = _normalizeRotation(rotation);
+      } else if (entry.key == 'size') {
+        final size = _toDoubleValue(entry.value);
+        if (size == null) continue;
+        data[entry.key] = size.clamp(24.0, 320.0);
+      } else if (entry.key == 'borderRadius') {
+        final borderRadius = _toDoubleValue(entry.value);
+        if (borderRadius == null) continue;
+        final size = _toDoubleValue(data['size']) ?? 64.0;
+        final maxRadius = (size / 2).clamp(0.0, 180.0);
+        data[entry.key] = borderRadius.clamp(0.0, maxRadius);
+      } else {
+        data[entry.key] = entry.value;
+      }
+    }
+
+    // Update UI state for tracked fields
+    if (event.pendingData.containsKey('rotation')) {
+      final rotation = _toDoubleValue(data['rotation']);
+      if (rotation != null) {
+        emit(state.copyWith(selectedShapeRotation: rotation));
+      }
+    }
+    if (event.pendingData.containsKey('isFilled')) {
+      emit(state.copyWith(selectedShapeIsFilled: _parseBool(data['isFilled'])));
+    }
+    if (event.pendingData.containsKey('borderRadius')) {
+      final borderRadius = _toDoubleValue(data['borderRadius']);
+      if (borderRadius != null) {
+        emit(state.copyWith(selectedShapeBorderRadius: borderRadius));
+      }
+    }
+
+    // Publish single batched update
+    await _updateShape(shape.id, data, emit);
+  }
+
+  Future<void> _onResizeSelectedShape(
+    CanvasResizeSelectedShape event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
+      ..['size'] = event.size.clamp(24.0, 320.0);
+    await _updateShape(shape.id, data, emit);
+  }
+
+  Future<void> _onToggleSelectedShapeFill(
+    CanvasToggleSelectedShapeFill event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
+      ..['isFilled'] = event.isFilled;
+    await _updateShape(shape.id, data, emit);
+    emit(state.copyWith(selectedShapeIsFilled: event.isFilled));
+  }
+
+  Future<void> _onUpdateSelectedShapeColor(
+    CanvasUpdateSelectedShapeColor event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
+      ..['color'] = event.color.value;
+    await _updateShape(shape.id, data, emit);
+  }
+
+  Future<void> _onUpdateSelectedShapeBorderRadius(
+    CanvasUpdateSelectedShapeBorderRadius event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || !_ensureCanEdit(emit)) return;
+    final size =
+        ((shape.data as Map<String, dynamic>)['size'] as num?)?.toDouble() ??
+        64.0;
+    final maxRadius = (size / 2).clamp(0.0, 180.0);
+    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
+      ..['borderRadius'] = event.borderRadius.clamp(0.0, maxRadius);
+    await _updateShape(shape.id, data, emit);
+    emit(
+      state.copyWith(
+        selectedShapeBorderRadius:
+            (data['borderRadius'] as num?)?.toDouble() ?? 0.0,
+      ),
+    );
+  }
+
+  CanvasElement? _selectedShape() {
+    final selectedId = state.selectedShapeId;
+    if (selectedId == null) return null;
+    for (final element in state.elements) {
+      if (element.id == selectedId) {
+        return element;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _updateShape(
+    String shapeId,
+    Map<String, dynamic> data,
+    Emitter<CanvasState> emit,
+  ) async {
+    CanvasElement? existing;
+    for (final element in state.elements) {
+      if (element.id == shapeId) {
+        existing = element;
+        break;
+      }
+    }
+
+    if (existing == null) return;
+
+    final currentData = existing.data as Map<String, dynamic>? ?? const {};
+    final currentCx = (currentData['cx'] as num?)?.toDouble() ?? 0.0;
+    final currentCy = (currentData['cy'] as num?)?.toDouble() ?? 0.0;
+    final currentSize = (currentData['size'] as num?)?.toDouble() ?? 64.0;
+    final currentRotation =
+        ((currentData['rotation'] as num?)?.toDouble() ?? 0.0) % (math.pi * 2);
+    final currentBorderRadius =
+        (currentData['borderRadius'] as num?)?.toDouble() ?? 0.0;
+    final currentColor = (currentData['color'] as num?)?.toInt() ?? 0;
+    final currentFilled = (currentData['isFilled'] as bool?) ?? false;
+
+    final nextCx = (data['cx'] as num?)?.toDouble() ?? 0.0;
+    final nextCy = (data['cy'] as num?)?.toDouble() ?? 0.0;
+    final nextSize = (data['size'] as num?)?.toDouble() ?? 64.0;
+    final nextRotation =
+        ((data['rotation'] as num?)?.toDouble() ?? 0.0) % (math.pi * 2);
+    final nextBorderRadius = (data['borderRadius'] as num?)?.toDouble() ?? 0.0;
+    final nextColor = (data['color'] as num?)?.toInt() ?? 0;
+    final nextFilled = (data['isFilled'] as bool?) ?? false;
+
+    final unchanged =
+        (nextCx - currentCx).abs() < 0.01 &&
+        (nextCy - currentCy).abs() < 0.01 &&
+        (nextSize - currentSize).abs() < 0.01 &&
+        (nextRotation - currentRotation).abs() < 0.0001 &&
+        (nextBorderRadius - currentBorderRadius).abs() < 0.01 &&
+        nextColor == currentColor &&
+        nextFilled == currentFilled;
+    if (unchanged) return;
+
+    final fingerprint = _shapeFingerprint(shapeId, data);
+    if (_lastShapePayloadFingerprint[shapeId] == fingerprint) {
+      return;
+    }
+    _lastShapePayloadFingerprint[shapeId] = fingerprint;
+
+    final next = state.elements
+        .map(
+          (e) => e.id == shapeId
+              ? CanvasElement(id: e.id, type: e.type, data: data)
+              : e,
+        )
+        .toList(growable: false);
+    emit(state.copyWith(elements: next));
+    await _saveCrdtOperation(
+      action: 'update',
+      type: existing
+          .type, // <-- Pass the correct type instead of hardcoded 'shape'
+      objectId: shapeId,
+      data: data,
+      emit: emit,
+    );
+  }
+
+  double _normalizeRotation(double value) {
+    if (value.isNaN || value.isInfinite) return 0.0;
+    final twoPi = math.pi * 2;
+    var normalized = value % twoPi;
+    if (normalized < 0) {
+      normalized += twoPi;
+    }
+    return normalized;
+  }
+
+  double? _toDoubleValue(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  bool _parseBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is String) {
+      return value.trim().toLowerCase() == 'true';
+    }
+    return false;
+  }
+
+  String _shapeFingerprint(String shapeId, Map<String, dynamic> data) {
+    final cx = ((data['cx'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(3);
+    final cy = ((data['cy'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(3);
+    final size = ((data['size'] as num?)?.toDouble() ?? 64.0).toStringAsFixed(
+      3,
+    );
+    final rotation = _normalizeRotation(
+      (data['rotation'] as num?)?.toDouble() ?? 0.0,
+    ).toStringAsFixed(5);
+    final borderRadius = ((data['borderRadius'] as num?)?.toDouble() ?? 0.0)
+        .toStringAsFixed(3);
+    final color = ((data['color'] as num?)?.toInt() ?? 0).toString();
+    final filled = _parseBool(data['isFilled']).toString();
+    return '$shapeId|$cx|$cy|$size|$rotation|$borderRadius|$color|$filled';
+  }
+
+  _EraserResult _applyEraserStroke({
+    required List<Offset> erasePath,
+    required double eraserRadius,
+    required bool eraseEverything,
+  }) {
+    final deletedIds = <String>[];
+    final createdStrokes = <CanvasElement>[];
+    final nextElements = <CanvasElement>[];
+
+    for (final element in state.elements) {
+      if (element.type != 'stroke') {
+        final shouldDeleteWholeElement =
+            eraseEverything &&
+            _elementTouchesErasePath(element, erasePath, eraserRadius);
+        if (shouldDeleteWholeElement) {
+          deletedIds.add(element.id);
+        } else {
+          nextElements.add(element);
+        }
+        continue;
+      }
+
+      final touched = _elementTouchesErasePath(
+        element,
+        erasePath,
+        eraserRadius,
+      );
+      if (!touched) {
+        nextElements.add(element);
+        continue;
+      }
+
+      final data = element.data as Map<String, dynamic>? ?? const {};
+      final strokePoints = _pointsFromData(data);
+      final strokeWidth = (data['strokeWidth'] as num?)?.toDouble() ?? 5.0;
+      final keepSegments = _splitStrokeByErasePath(
+        strokePoints: strokePoints,
+        erasePath: erasePath,
+        eraseRadius: eraserRadius + (strokeWidth / 2),
+      );
+
+      deletedIds.add(element.id);
+
+      for (final segment in keepSegments) {
+        if (segment.length < 2) continue;
+        final segmentData = Map<String, dynamic>.from(data)
+          ..['points'] = segment
+              .map((p) => {'x': p.dx, 'y': p.dy})
+              .toList(growable: false)
+          ..['z'] = _nextZIndex();
+
+        final replacement = CanvasElement(
+          id: _uuid.v4(),
+          type: 'stroke',
+          data: segmentData,
+        );
+        nextElements.add(replacement);
+        createdStrokes.add(replacement);
+      }
+    }
+
+    return _EraserResult(
+      nextElements: nextElements,
+      deletedElementIds: deletedIds,
+      createdStrokes: createdStrokes,
+    );
+  }
+
+  List<List<Offset>> _splitStrokeByErasePath({
+    required List<Offset> strokePoints,
+    required List<Offset> erasePath,
+    required double eraseRadius,
+  }) {
+    if (strokePoints.length < 2 || erasePath.length < 2) {
+      return <List<Offset>>[strokePoints];
+    }
+
+    final keepMask = List<bool>.filled(strokePoints.length, true);
+    for (var i = 0; i < strokePoints.length; i++) {
+      final point = strokePoints[i];
+      for (var j = 0; j < erasePath.length - 1; j++) {
+        final distance = _distanceToSegment(
+          point,
+          erasePath[j],
+          erasePath[j + 1],
+        );
+        if (distance <= eraseRadius) {
+          keepMask[i] = false;
+          break;
+        }
+      }
+    }
+
+    final segments = <List<Offset>>[];
+    var currentSegment = <Offset>[];
+
+    for (var i = 0; i < strokePoints.length; i++) {
+      if (keepMask[i]) {
+        currentSegment.add(strokePoints[i]);
+      } else {
+        if (currentSegment.length >= 2) {
+          segments.add(List<Offset>.from(currentSegment));
+        }
+        currentSegment = <Offset>[];
+      }
+    }
+
+    if (currentSegment.length >= 2) {
+      segments.add(currentSegment);
+    }
+
+    return segments;
+  }
+
+  bool _elementTouchesErasePath(
+    CanvasElement element,
+    List<Offset> points,
+    double brushRadius,
+  ) {
+    final data = element.data as Map<String, dynamic>? ?? const {};
+
+    if (element.type == 'stroke') {
+      final strokePoints = _pointsFromData(data);
+      if (strokePoints.length < 2 || points.isEmpty) return false;
+
+      final strokeRadius = (data['strokeWidth'] as num?)?.toDouble() ?? 5.0;
+      for (final erasePoint in points) {
+        for (var i = 0; i < strokePoints.length - 1; i++) {
+          final distance = _distanceToSegment(
+            erasePoint,
+            strokePoints[i],
+            strokePoints[i + 1],
+          );
+          if (distance <= brushRadius + (strokeRadius / 2)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    final bounds = _elementBounds(element, data);
+    if (bounds == null) return false;
+    for (final erasePoint in points) {
+      if (bounds.inflate(brushRadius).contains(erasePoint)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  List<Offset> _pointsFromData(Map<String, dynamic> data) {
+    final pointMaps = (data['points'] as List?) ?? const [];
+    return pointMaps
+        .whereType<Map>()
+        .map(
+          (point) => Offset(
+            (point['x'] as num?)?.toDouble() ?? 0.0,
+            (point['y'] as num?)?.toDouble() ?? 0.0,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Rect? _elementBounds(CanvasElement element, Map<String, dynamic> data) {
+    if (element.type == 'shape') {
+      final cx = (data['cx'] as num?)?.toDouble() ?? 0.0;
+      final cy = (data['cy'] as num?)?.toDouble() ?? 0.0;
+      final size = (data['size'] as num?)?.toDouble() ?? 64.0;
+      return Rect.fromCenter(center: Offset(cx, cy), width: size, height: size);
+    }
+
+    if (element.type == 'text') {
+      final cx = (data['cx'] as num?)?.toDouble() ?? 0.0;
+      final cy = (data['cy'] as num?)?.toDouble() ?? 0.0;
+      return Rect.fromCenter(center: Offset(cx, cy), width: 180, height: 48);
+    }
+
+    if (element.type == 'image') {
+      final cx = (data['cx'] as num?)?.toDouble() ?? 0.0;
+      final cy = (data['cy'] as num?)?.toDouble() ?? 0.0;
+      final width = (data['width'] as num?)?.toDouble() ?? 220.0;
+      final height = (data['height'] as num?)?.toDouble() ?? 160.0;
+      return Rect.fromCenter(
+        center: Offset(cx, cy),
+        width: width,
+        height: height,
+      );
+    }
+
+    return null;
+  }
+
+  double _distanceToSegment(Offset point, Offset start, Offset end) {
+    final dx = end.dx - start.dx;
+    final dy = end.dy - start.dy;
+    if (dx == 0 && dy == 0) {
+      return (point - start).distance;
+    }
+
+    final lengthSquared = (dx * dx) + (dy * dy);
+    final t =
+        (((point.dx - start.dx) * dx) + ((point.dy - start.dy) * dy)) /
+        lengthSquared;
+    final clampedT = t.clamp(0.0, 1.0);
+    final projection = Offset(
+      start.dx + (clampedT * dx),
+      start.dy + (clampedT * dy),
+    );
+    return (point - projection).distance;
   }
 
   void _onToggleTray(CanvasToggleTray event, Emitter<CanvasState> emit) {
@@ -382,12 +1090,31 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
   }
 
+  void _onBoardMembersUpdated(
+    CanvasBoardMembersUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(boardMembers: event.members));
+  }
+
+  void _onMemberSearchQueryChanged(
+    CanvasMemberSearchQueryChanged event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(memberSearchQuery: event.query));
+  }
+
   Future<void> _initializeCrdtSync() async {
     if (_crdtAdapter != null && _crdtUpdatesSub != null) return;
 
     try {
       _crdtAdapter ??= await CanvasDocAdapterFactory.create();
       _appliedCrdtUpdateIds.clear();
+      _lastShapeUpdateId.clear();
+
+      // Rebuild element -> updateId mapping from remote updates
+      await _rebuildElementUpdateIdMapping();
+
       _startCrdtUpdatesListener();
     } finally {
       _crdtInitFuture = null;
@@ -398,6 +1125,24 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (_crdtAdapter != null) return;
     _crdtInitFuture ??= _initializeCrdtSync();
     await _crdtInitFuture;
+  }
+
+  Future<void> _rebuildElementUpdateIdMapping() async {
+    final canvasService = _canvasService;
+    if (canvasService == null || _boardId.isEmpty) return;
+
+    try {
+      final remoteUpdates = await canvasService
+          .listenToCrdtUpdates(_boardId)
+          .first;
+      for (final update in remoteUpdates) {
+        if (update.elementId != null && !update.isDeleted) {
+          _lastShapeUpdateId[update.elementId!] = update.updateId;
+        }
+      }
+    } catch (_) {
+      // Silently handle errors - if rebuild fails, elements will get new updates on edit
+    }
   }
 
   void _startCrdtUpdatesListener() {
@@ -437,6 +1182,25 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         ),
       );
     });
+
+    _startBoardMembersListener();
+  }
+
+  void _startBoardMembersListener() {
+    final boardService = _boardService;
+    if (boardService == null || _boardId.isEmpty) return;
+
+    _membersSub?.cancel();
+    _membersSub = boardService
+        .getBoardMembers(_boardId)
+        .listen(
+          (members) {
+            add(CanvasBoardMembersUpdated(members));
+          },
+          onError: (e) {
+            // Silently handle member fetch errors; do not interrupt canvas
+          },
+        );
   }
 
   bool _ensureCanEdit(Emitter<CanvasState> emit) {
@@ -526,15 +1290,32 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       update = adapter.upsertElement(objectId, payload, origin: 'local');
     }
 
-    await _publishCrdtUpdate(update);
+    if (update.isEmpty) {
+      _refreshFromCrdtAdapter(emit);
+      return;
+    }
+
+    final elementId = objectId;
+    final publishedUpdateId = await _publishCrdtUpdate(
+      update,
+      elementId: elementId,
+    );
+    if (publishedUpdateId != null) {
+      // Track the latest update for this element so future edits stay attached to the same shape.
+      _lastShapeUpdateId[objectId] = publishedUpdateId;
+    }
+
     _refreshFromCrdtAdapter(emit);
   }
 
-  Future<void> _publishCrdtUpdate(Uint8List update) async {
-    if (!_canSync) return;
+  Future<String?> _publishCrdtUpdate(
+    Uint8List update, {
+    String? elementId,
+  }) async {
+    if (!_canSync || update.isEmpty) return null;
 
     final canvasService = _canvasService;
-    if (canvasService == null) return;
+    if (canvasService == null) return null;
 
     final updateId = _uuid.v4();
     _appliedCrdtUpdateIds.add(updateId);
@@ -543,7 +1324,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       boardId: _boardId,
       updateId: updateId,
       payload: update,
+      elementId: elementId,
     );
+
+    return updateId;
   }
 
   void _refreshFromCrdtAdapter(Emitter<CanvasState> emit) {
@@ -599,6 +1383,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
                   (payload['color'] as num?)?.toInt() ?? Colors.black.value,
               'strokeWidth':
                   (payload['strokeWidth'] as num?)?.toDouble() ?? 5.0,
+              'opacity': (payload['opacity'] as num?)?.toDouble() ?? 1.0,
+              'brushType': (payload['brushType'] as String?) ?? 'solid',
               'points': points,
             },
           ),
@@ -629,6 +1415,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               'cx': (payload['cx'] as num?)?.toDouble() ?? 0.0,
               'cy': (payload['cy'] as num?)?.toDouble() ?? 0.0,
               'size': (payload['size'] as num?)?.toDouble() ?? 64.0,
+              'rotation': (payload['rotation'] as num?)?.toDouble() ?? 0.0,
+              'borderRadius':
+                  (payload['borderRadius'] as num?)?.toDouble() ?? 0.0,
+              'isFilled': _parseBool(payload['isFilled']),
               'color':
                   (payload['color'] as num?)?.toInt() ?? Colors.black.value,
               'strokeWidth':
@@ -656,6 +1446,29 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               'cy': (payload['cy'] as num?)?.toDouble() ?? 0.0,
               'color':
                   (payload['color'] as num?)?.toInt() ?? Colors.black.value,
+            },
+          ),
+        );
+        continue;
+      }
+
+      if (type == 'image') {
+        rebuilt.add(
+          CanvasElement(
+            id: id,
+            type: 'image',
+            data: {
+              'z': _readElementOrder(
+                elementId: id,
+                payload: payload,
+                currentOrder: currentOrder,
+                fallbackOrder: maxExistingOrder + rebuilt.length,
+              ),
+              'cx': (payload['cx'] as num?)?.toDouble() ?? 0.0,
+              'cy': (payload['cy'] as num?)?.toDouble() ?? 0.0,
+              'width': (payload['width'] as num?)?.toDouble() ?? 220.0,
+              'height': (payload['height'] as num?)?.toDouble() ?? 160.0,
+              'imageBase64': (payload['imageBase64'] as String?) ?? '',
             },
           ),
         );
@@ -709,8 +1522,21 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _boardUnavailableTimer?.cancel();
     _boardUnavailableTimer = null;
     await _boardMetaSub?.cancel();
+    await _membersSub?.cancel();
     await _crdtUpdatesSub?.cancel();
     await _canvasService?.stopCrdtRemoteSync(_boardId);
     return super.close();
   }
+}
+
+class _EraserResult {
+  final List<CanvasElement> nextElements;
+  final List<String> deletedElementIds;
+  final List<CanvasElement> createdStrokes;
+
+  const _EraserResult({
+    required this.nextElements,
+    required this.deletedElementIds,
+    required this.createdStrokes,
+  });
 }
