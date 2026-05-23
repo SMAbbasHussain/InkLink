@@ -10,6 +10,7 @@ const app = express();
 app.use(cors());
 
 app.get('/health', (req, res) => {
+  console.log("Ping Test");
   res.status(200).json({
     status: 'ok',
     time: new Date(),
