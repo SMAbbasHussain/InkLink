@@ -9,6 +9,13 @@ require('dotenv').config();
 const app = express();
 app.use(cors());
 
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    time: new Date(),
+  });
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*' },
