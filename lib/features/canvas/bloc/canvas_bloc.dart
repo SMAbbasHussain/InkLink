@@ -22,6 +22,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final BoardService? _boardService;
   final Uuid _uuid = const Uuid();
   final math.Random _random = math.Random();
+  static const Duration _previewPublishThrottle = Duration(milliseconds: 60);
 
   StreamSubscription<List<LocalCrdtUpdate>>? _crdtUpdatesSub;
   StreamSubscription<List<LocalCrdtUpdate>>? _previewUpdatesSub;
@@ -38,6 +39,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final Map<String, String> _lastShapePayloadFingerprint = <String, String>{};
   final Map<String, String> _lastShapeUpdateId =
       <String, String>{}; // Track last update ID per shape
+  final Map<String, _QueuedPreviewPublish> _pendingPreviewPublishes =
+      <String, _QueuedPreviewPublish>{};
   String? _activeStrokeId;
   bool _hasSeenBoardMetadata = false;
   String _boardId;
@@ -98,6 +101,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   }
 
   bool get _canSync => _canvasService != null && _boardId.isNotEmpty;
+
+  String? get _currentClientId => _canvasService?.currentClientId;
 
   Future<void> _onCanvasRenameBoardRequested(
     CanvasRenameBoardRequested event,
@@ -188,6 +193,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         }
 
         adapter.applyUpdate(bytes, origin: 'remote');
+        _remotePreviewClearsBoard = false;
         if (update.elementId != null) {
           _remotePreviewElements.remove(update.elementId);
         }
@@ -205,8 +211,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasApplyRemotePreview event,
     Emitter<CanvasState> emit,
   ) async {
+    final currentClientId = _currentClientId;
+
     for (final preview in event.previews) {
       if (preview.elementId == null || preview.payloadBase64.isEmpty) {
+        continue;
+      }
+
+      if (currentClientId != null &&
+          currentClientId.isNotEmpty &&
+          preview.sourceClientId == currentClientId) {
         continue;
       }
 
@@ -258,6 +272,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final shape = _selectedShape();
     final canvasService = _canvasService;
     if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    if (!_ensureCanEdit(emit)) return;
 
     final data = Map<String, dynamic>.from(
       shape.data as Map<String, dynamic>? ?? const {},
@@ -293,7 +308,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(currentStroke: [event.point]));
   }
 
-  void _onAppendStroke(CanvasAppendStroke event, Emitter<CanvasState> emit) {
+  Future<void> _onAppendStroke(
+    CanvasAppendStroke event,
+    Emitter<CanvasState> emit,
+  ) async {
     if (!_ensureCanEditWithOptions(emit, clearStroke: true)) {
       return;
     }
@@ -319,14 +337,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           .toList(growable: false),
     };
 
-    unawaited(
-      canvasService.publishCanvasPreview(
-        boardId: _boardId,
-        previewId: strokeId,
-        elementId: strokeId,
-        payload: Uint8List.fromList(utf8.encode(jsonEncode(previewData))),
-      ),
-    );
+    await _publishSelectedShapePreview(strokeId, previewData);
   }
 
   Future<void> _onEndStroke(
@@ -591,8 +602,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final canvasService = _canvasService;
     if (canvasService == null || _boardId.isEmpty) return;
+    if (!_ensureCanEdit(emit)) return;
 
-    final previewId = _uuid.v4();
     final payload = {
       'type': 'image',
       'action': 'upsert',
@@ -603,12 +614,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       'height': event.height.clamp(80.0, 720.0),
     };
 
-    await canvasService.publishCanvasPreview(
-      boardId: _boardId,
-      previewId: previewId,
-      elementId: event.elementId,
-      payload: Uint8List.fromList(utf8.encode(jsonEncode(payload))),
-    );
+    await _publishSelectedShapePreview(event.elementId, payload);
   }
 
   Future<void> _onUndo(CanvasUndo event, Emitter<CanvasState> emit) async {
@@ -756,6 +762,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final shape = _selectedShape();
     final canvasService = _canvasService;
     if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    if (!_ensureCanEdit(emit)) return;
 
     final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
       ..['cx'] = event.center.dx
@@ -770,6 +777,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final shape = _selectedShape();
     final canvasService = _canvasService;
     if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    if (!_ensureCanEdit(emit)) return;
 
     final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
       ..['size'] = event.size.clamp(24.0, 320.0);
@@ -783,6 +791,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final shape = _selectedShape();
     final canvasService = _canvasService;
     if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    if (!_ensureCanEdit(emit)) return;
 
     final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
       ..['rotation'] = _normalizeRotation(event.rotation);
@@ -1558,7 +1567,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final previewPayload = <String, dynamic>{
       'action': action == 'delete' ? 'delete' : 'upsert',
       'type': type,
-      'objectId': objectId,
+      'elementId': objectId,
       ...data,
     };
 
@@ -1616,14 +1625,52 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     if (canvasService == null || _boardId.isEmpty) return;
 
-    final previewId = _uuid.v4();
-    final previewData = <String, dynamic>{'type': 'shape', ...data};
-    await canvasService.publishCanvasPreview(
-      boardId: _boardId,
-      previewId: previewId,
-      elementId: elementId,
-      payload: Uint8List.fromList(utf8.encode(jsonEncode(previewData))),
+    final preview = _pendingPreviewPublishes.putIfAbsent(
+      elementId,
+      _QueuedPreviewPublish.new,
     );
+    preview.previewId = _uuid.v4();
+    preview.elementId = elementId;
+    preview.payload = Uint8List.fromList(utf8.encode(jsonEncode(data)));
+    preview.dirty = true;
+
+    if (preview.timer != null) {
+      return;
+    }
+
+    _flushQueuedPreviewPublish(elementId);
+  }
+
+  void _flushQueuedPreviewPublish(String elementId) {
+    final canvasService = _canvasService;
+    final preview = _pendingPreviewPublishes[elementId];
+    if (canvasService == null || _boardId.isEmpty || preview == null) {
+      preview?.timer?.cancel();
+      _pendingPreviewPublishes.remove(elementId);
+      return;
+    }
+
+    preview.dirty = false;
+    unawaited(
+      canvasService.publishCanvasPreview(
+        boardId: _boardId,
+        previewId: preview.previewId,
+        elementId: preview.elementId,
+        payload: preview.payload,
+      ),
+    );
+
+    preview.timer = Timer(_previewPublishThrottle, () {
+      preview.timer = null;
+      final current = _pendingPreviewPublishes[elementId];
+      if (current == null) return;
+
+      if (current.dirty) {
+        _flushQueuedPreviewPublish(elementId);
+      } else {
+        _pendingPreviewPublishes.remove(elementId);
+      }
+    });
   }
 
   List<CanvasElement> _rebuildElementsFromCrdtState(
@@ -1807,6 +1854,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   Future<void> close() async {
     _boardUnavailableTimer?.cancel();
     _boardUnavailableTimer = null;
+    for (final preview in _pendingPreviewPublishes.values) {
+      preview.timer?.cancel();
+    }
+    _pendingPreviewPublishes.clear();
     await _boardMetaSub?.cancel();
     await _membersSub?.cancel();
     await _crdtUpdatesSub?.cancel();
@@ -1826,4 +1877,12 @@ class _EraserResult {
     required this.deletedElementIds,
     required this.createdStrokes,
   });
+}
+
+class _QueuedPreviewPublish {
+  Timer? timer;
+  bool dirty = false;
+  String previewId = '';
+  String elementId = '';
+  Uint8List payload = Uint8List(0);
 }

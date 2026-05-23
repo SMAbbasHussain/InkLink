@@ -10,6 +10,7 @@ import '../../repositories/canvas/canvas_sync_repository.dart';
 
 abstract class CanvasService {
   bool get canSync;
+  String? get currentClientId;
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes);
   Future<void> ensureBoardCached(String boardId);
   Stream<Board?> watchBoardById(String boardId);
@@ -53,6 +54,9 @@ class CanvasServiceImpl implements CanvasService {
 
   @override
   bool get canSync => _syncRepository.currentUserId != null;
+
+  @override
+  String? get currentClientId => _syncRepository.currentUserId;
 
   @override
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes) {

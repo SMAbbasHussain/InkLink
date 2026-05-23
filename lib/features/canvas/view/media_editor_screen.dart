@@ -125,7 +125,19 @@ class _MediaEditorScreenState extends State<MediaEditorScreen> {
 
       if (current.width <= _minPersistedImageSide &&
           current.height <= _minPersistedImageSide) {
-        return bytes;
+        var quality = 78;
+        var jpegBytes = Uint8List.fromList(
+          img.encodeJpg(current, quality: quality),
+        );
+
+        while (jpegBytes.length > _maxPersistedImageBytes && quality > 10) {
+          quality -= 10;
+          jpegBytes = Uint8List.fromList(
+            img.encodeJpg(current, quality: quality),
+          );
+        }
+
+        return jpegBytes;
       }
 
       final nextWidth = math.max(

@@ -50,6 +50,65 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     });
   }
 
+  Future<bool> _ensureSocketConnected() async {
+    if (_socket != null && _socket!.connected) {
+      return true;
+    }
+
+    final token = await _authService.getIdToken();
+    if (token == null) return false;
+
+    final serverUrl = dotenv.env['WEBSOCKET_URL'] ?? 'http://10.0.2.2:3000';
+    _socket = io.io(
+      serverUrl,
+      io.OptionBuilder()
+          .setTransports(['websocket'])
+          .setAuth({'token': token})
+          .disableAutoConnect()
+          .build(),
+    );
+    _socket!.connect();
+
+    final connectCompleter = Completer<void>();
+    _socket!.onConnect((_) {
+      if (!connectCompleter.isCompleted) connectCompleter.complete();
+    });
+
+    await Future.any([
+      connectCompleter.future,
+      Future.delayed(const Duration(seconds: 2)),
+    ]);
+
+    return _socket != null && _socket!.connected;
+  }
+
+  void _bindBoardSocketStream({
+    required String boardId,
+    required StreamController<List<LocalCrdtUpdate>> controller,
+    required String eventName,
+    required String subscribeLabel,
+    required void Function(dynamic data) handleEvent,
+  }) {
+    _socket!.emit('watch_board', boardId);
+    _logWs('SUBSCRIBE SENT', boardId, subscribeLabel);
+    _socket!.on(eventName, handleEvent);
+
+    controller.onCancel = () {
+      try {
+        _socket!.emit('leave_board', boardId);
+        _socket!.off(eventName, handleEvent);
+      } catch (error, stackTrace) {
+        _logError(
+          'Failed while unsubscribing from board socket stream',
+          error,
+          stackTrace,
+          boardId: boardId,
+          event: 'leave_board',
+        );
+      }
+    };
+  }
+
   @override
   Future<void> markCrdtUpdateSynced(String updateId) async {
     final isar = await _localDatabaseService.database;
@@ -393,34 +452,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     String boardId,
   ) async* {
     try {
-      if (_socket == null || !_socket!.connected) {
-        final token = await _authService.getIdToken();
-        if (token != null) {
-          final serverUrl =
-              dotenv.env['WEBSOCKET_URL'] ?? 'http://10.0.2.2:3000';
-          _socket = io.io(
-            serverUrl,
-            io.OptionBuilder()
-                .setTransports(['websocket'])
-                .setAuth({'token': token})
-                .disableAutoConnect()
-                .build(),
-          );
-          _socket!.connect();
-          final connectCompleter = Completer<void>();
-          _socket!.onConnect((_) {
-            if (!connectCompleter.isCompleted) connectCompleter.complete();
-          });
-          await Future.any([
-            connectCompleter.future,
-            Future.delayed(const Duration(seconds: 2)),
-          ]);
-        }
-      }
+      await _ensureSocketConnected();
 
       if (_socket != null && _socket!.connected) {
-        _socket!.emit('watch_board', boardId);
-        _logWs('SUBSCRIBE SENT', boardId, 'watch_board (preview)');
         _socketPreviewController?.close();
         _socketPreviewController = StreamController<List<LocalCrdtUpdate>>();
 
@@ -453,22 +487,13 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           }
         }
 
-        _socket!.on('crdt_preview', handlePreview);
-
-        _socketPreviewController!.onCancel = () {
-          try {
-            _socket!.emit('leave_board', boardId);
-            _socket!.off('crdt_preview', handlePreview);
-          } catch (error, stackTrace) {
-            _logError(
-              'Failed while unsubscribing from preview stream',
-              error,
-              stackTrace,
-              boardId: boardId,
-              event: 'leave_board',
-            );
-          }
-        };
+        _bindBoardSocketStream(
+          boardId: boardId,
+          controller: _socketPreviewController!,
+          eventName: 'crdt_preview',
+          subscribeLabel: 'watch_board (preview)',
+          handleEvent: handlePreview,
+        );
 
         yield* _socketPreviewController!.stream;
         return;
@@ -501,34 +526,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   }) async* {
     // Prefer socket stream when available
     try {
-      if (_socket == null || !_socket!.connected) {
-        final token = await _authService.getIdToken();
-        if (token != null) {
-          final serverUrl =
-              dotenv.env['WEBSOCKET_URL'] ?? 'http://10.0.2.2:3000';
-          _socket = io.io(
-            serverUrl,
-            io.OptionBuilder()
-                .setTransports(['websocket'])
-                .setAuth({'token': token})
-                .disableAutoConnect()
-                .build(),
-          );
-          _socket!.connect();
-          final connectCompleter = Completer<void>();
-          _socket!.onConnect((_) {
-            if (!connectCompleter.isCompleted) connectCompleter.complete();
-          });
-          await Future.any([
-            connectCompleter.future,
-            Future.delayed(const Duration(seconds: 2)),
-          ]);
-        }
-      }
+      await _ensureSocketConnected();
 
       if (_socket != null && _socket!.connected) {
-        _socket!.emit('watch_board', boardId);
-        _logWs('SUBSCRIBE SENT', boardId, 'watch_board');
         _socketUpdatesController?.close();
         _socketUpdatesController = StreamController<List<LocalCrdtUpdate>>();
 
@@ -568,22 +568,13 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           }
         }
 
-        _socket!.on('crdt_update', handleUpdate);
-
-        _socketUpdatesController!.onCancel = () {
-          try {
-            _socket!.emit('leave_board', boardId);
-            _socket!.off('crdt_update', handleUpdate);
-          } catch (error, stackTrace) {
-            _logError(
-              'Failed while unsubscribing from board socket stream',
-              error,
-              stackTrace,
-              boardId: boardId,
-              event: 'leave_board',
-            );
-          }
-        };
+        _bindBoardSocketStream(
+          boardId: boardId,
+          controller: _socketUpdatesController!,
+          eventName: 'crdt_update',
+          subscribeLabel: 'watch_board',
+          handleEvent: handleUpdate,
+        );
 
         yield* _socketUpdatesController!.stream;
         return;

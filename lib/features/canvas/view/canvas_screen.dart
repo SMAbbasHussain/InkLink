@@ -793,7 +793,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               );
                               if (_isDraggingShape) {
                                 final nextCenter = worldPoint - _shapeDragDelta;
-                                _shapeDragPreviewCenter = nextCenter;
+                                setState(() {
+                                  _shapeDragPreviewCenter = nextCenter;
+                                });
                                 _canvasBloc.add(
                                   CanvasPreviewMoveSelectedShape(nextCenter),
                                 );
@@ -1004,6 +1006,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
               size: draft.size,
               data: {...result.data, 'rotation': draft.rotation},
             );
+          } else if (_isDraggingShape &&
+              _shapeDragPreviewCenter != null &&
+              result.id == _canvasBloc.state.selectedShapeId) {
+            result = result.copyWith(center: _shapeDragPreviewCenter!);
           }
 
           return result;
