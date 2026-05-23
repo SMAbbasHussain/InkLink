@@ -9,6 +9,13 @@ require('dotenv').config();
 const app = express();
 app.use(cors());
 
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    time: new Date(),
+  });
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*' },
@@ -234,6 +241,27 @@ io.on('connection', (socket) => {
           // ignore
         }
       }
+    }
+  });
+
+  // Live preview relay for in-progress canvas edits.
+  socket.on('crdt_preview', async ({ boardId, preview }, ack) => {
+    logWsEvent('PREVIEW RECEIVED', [
+      `[event] crdt_preview`,
+      `[direction] client -> server`,
+      `[user] ${uid}`,
+      `[board] ${boardId}`,
+      `[previewId] ${preview?.previewId ?? 'n/a'}`,
+      `[elementId] ${preview?.elementId ?? 'n/a'}`,
+    ]);
+
+    socket.to(`board_room:${boardId}`).emit('crdt_preview', { boardId, preview });
+    console.log(
+      `[WS PREVIEW SENT] board_room:${boardId} previewId=${preview?.previewId ?? 'n/a'}`,
+    );
+
+    if (typeof ack === 'function') {
+      ack({ status: 'success', previewId: preview?.previewId ?? null, boardId });
     }
   });
 

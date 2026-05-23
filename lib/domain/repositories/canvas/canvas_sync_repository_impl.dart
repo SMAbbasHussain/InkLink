@@ -21,6 +21,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   // Socket.IO client (optional). When present and connected, we'll prefer websocket transport.
   io.Socket? _socket;
   StreamController<List<LocalCrdtUpdate>>? _socketUpdatesController;
+  StreamController<List<LocalCrdtUpdate>>? _socketPreviewController;
 
   FirestoreCanvasSyncRepository({
     required FirestoreService firestoreService,
@@ -47,6 +48,65 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     await isar.writeTxn(() async {
       await isar.localCrdtUpdates.filter().boardIdEqualTo(boardId).deleteAll();
     });
+  }
+
+  Future<bool> _ensureSocketConnected() async {
+    if (_socket != null && _socket!.connected) {
+      return true;
+    }
+
+    final token = await _authService.getIdToken();
+    if (token == null) return false;
+
+    final serverUrl = dotenv.env['WEBSOCKET_URL'] ?? 'http://10.0.2.2:3000';
+    _socket = io.io(
+      serverUrl,
+      io.OptionBuilder()
+          .setTransports(['websocket'])
+          .setAuth({'token': token})
+          .disableAutoConnect()
+          .build(),
+    );
+    _socket!.connect();
+
+    final connectCompleter = Completer<void>();
+    _socket!.onConnect((_) {
+      if (!connectCompleter.isCompleted) connectCompleter.complete();
+    });
+
+    await Future.any([
+      connectCompleter.future,
+      Future.delayed(const Duration(seconds: 2)),
+    ]);
+
+    return _socket != null && _socket!.connected;
+  }
+
+  void _bindBoardSocketStream({
+    required String boardId,
+    required StreamController<List<LocalCrdtUpdate>> controller,
+    required String eventName,
+    required String subscribeLabel,
+    required void Function(dynamic data) handleEvent,
+  }) {
+    _socket!.emit('watch_board', boardId);
+    _logWs('SUBSCRIBE SENT', boardId, subscribeLabel);
+    _socket!.on(eventName, handleEvent);
+
+    controller.onCancel = () {
+      try {
+        _socket!.emit('leave_board', boardId);
+        _socket!.off(eventName, handleEvent);
+      } catch (error, stackTrace) {
+        _logError(
+          'Failed while unsubscribing from board socket stream',
+          error,
+          stackTrace,
+          boardId: boardId,
+          event: 'leave_board',
+        );
+      }
+    };
   }
 
   @override
@@ -186,6 +246,50 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         }, firestore.SetOptions(merge: true));
 
     await markCrdtUpdateSynced(updateId);
+  }
+
+  @override
+  Future<void> publishCanvasPreview({
+    required String boardId,
+    required String previewId,
+    required String elementId,
+    required String payloadBase64,
+    required String sourceClientId,
+  }) async {
+    if (payloadBase64.isEmpty ||
+        payloadBase64.length > _maxPayloadBase64Length) {
+      return;
+    }
+
+    try {
+      if (_socket != null && _socket!.connected) {
+        _logWs(
+          'PREVIEW SENT',
+          boardId,
+          'crdt_preview',
+          updateId: previewId,
+          elementId: elementId,
+        );
+        await _emitWithAck('crdt_preview', {
+          'boardId': boardId,
+          'preview': {
+            'previewId': previewId,
+            'elementId': elementId,
+            'payloadBase64': payloadBase64,
+            'sourceClientId': sourceClientId,
+          },
+        });
+      }
+    } catch (error, stackTrace) {
+      _logError(
+        'Socket preview publish failed',
+        error,
+        stackTrace,
+        boardId: boardId,
+        event: 'crdt_preview',
+        updateId: previewId,
+      );
+    }
   }
 
   @override
@@ -344,6 +448,68 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   }
 
   @override
+  Stream<List<LocalCrdtUpdate>> watchRemoteCanvasPreviews(
+    String boardId,
+  ) async* {
+    try {
+      await _ensureSocketConnected();
+
+      if (_socket != null && _socket!.connected) {
+        _socketPreviewController?.close();
+        _socketPreviewController = StreamController<List<LocalCrdtUpdate>>();
+
+        void handlePreview(dynamic data) {
+          try {
+            final map = data as Map<String, dynamic>;
+            if ((map['boardId'] as String?) == boardId) {
+              final payload = (map['preview'] as Map<String, dynamic>?) ?? {};
+              final preview = LocalCrdtUpdate()
+                ..updateId =
+                    (payload['previewId'] as String?) ??
+                    (map['id'] as String?) ??
+                    ''
+                ..boardId = boardId
+                ..elementId = payload['elementId'] as String?
+                ..payloadBase64 = payload['payloadBase64'] as String? ?? ''
+                ..sourceClientId = payload['sourceClientId'] as String? ?? ''
+                ..appliedAt = DateTime.now()
+                ..isSynced = true;
+              _socketPreviewController?.add([preview]);
+            }
+          } catch (error, stackTrace) {
+            _logError(
+              'Failed to parse inbound preview payload',
+              error,
+              stackTrace,
+              boardId: boardId,
+              event: 'crdt_preview',
+            );
+          }
+        }
+
+        _bindBoardSocketStream(
+          boardId: boardId,
+          controller: _socketPreviewController!,
+          eventName: 'crdt_preview',
+          subscribeLabel: 'watch_board (preview)',
+          handleEvent: handlePreview,
+        );
+
+        yield* _socketPreviewController!.stream;
+        return;
+      }
+    } catch (error, stackTrace) {
+      _logError(
+        'Socket preview setup failed',
+        error,
+        stackTrace,
+        boardId: boardId,
+        event: 'crdt_preview',
+      );
+    }
+  }
+
+  @override
   Stream<List<LocalCrdtUpdate>> watchLocalCrdtUpdates(String boardId) async* {
     final isar = await _localDatabaseService.database;
     yield* isar.localCrdtUpdates
@@ -360,34 +526,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   }) async* {
     // Prefer socket stream when available
     try {
-      if (_socket == null || !_socket!.connected) {
-        final token = await _authService.getIdToken();
-        if (token != null) {
-          final serverUrl =
-              dotenv.env['WEBSOCKET_URL'] ?? 'http://10.0.2.2:3000';
-          _socket = io.io(
-            serverUrl,
-            io.OptionBuilder()
-                .setTransports(['websocket'])
-                .setAuth({'token': token})
-                .disableAutoConnect()
-                .build(),
-          );
-          _socket!.connect();
-          final connectCompleter = Completer<void>();
-          _socket!.onConnect((_) {
-            if (!connectCompleter.isCompleted) connectCompleter.complete();
-          });
-          await Future.any([
-            connectCompleter.future,
-            Future.delayed(const Duration(seconds: 2)),
-          ]);
-        }
-      }
+      await _ensureSocketConnected();
 
       if (_socket != null && _socket!.connected) {
-        _socket!.emit('watch_board', boardId);
-        _logWs('SUBSCRIBE SENT', boardId, 'watch_board');
         _socketUpdatesController?.close();
         _socketUpdatesController = StreamController<List<LocalCrdtUpdate>>();
 
@@ -427,22 +568,13 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           }
         }
 
-        _socket!.on('crdt_update', handleUpdate);
-
-        _socketUpdatesController!.onCancel = () {
-          try {
-            _socket!.emit('leave_board', boardId);
-            _socket!.off('crdt_update', handleUpdate);
-          } catch (error, stackTrace) {
-            _logError(
-              'Failed while unsubscribing from board socket stream',
-              error,
-              stackTrace,
-              boardId: boardId,
-              event: 'leave_board',
-            );
-          }
-        };
+        _bindBoardSocketStream(
+          boardId: boardId,
+          controller: _socketUpdatesController!,
+          eventName: 'crdt_update',
+          subscribeLabel: 'watch_board',
+          handleEvent: handleUpdate,
+        );
 
         yield* _socketUpdatesController!.stream;
         return;
@@ -608,7 +740,18 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     }
 
     final batch = _firestoreService.getInstance().batch();
+    var wroteAny = false;
+    final syncedUpdateIds = <String>[];
     for (final local in toSync) {
+      if (!_isValidPayloadBase64(local.payloadBase64)) {
+        developer.log(
+          'Skipping oversized or invalid CRDT payload during batch sync | [board] $boardId [updateId] ${local.updateId}',
+          name: 'CanvasSyncRepository::WARN',
+          level: 900,
+        );
+        continue;
+      }
+
       final docRef = _firestoreService
           .collection('boards')
           .doc(boardId)
@@ -622,12 +765,19 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         'elementId': local.elementId,
         'appliedAt': firestore.FieldValue.serverTimestamp(),
       });
+      wroteAny = true;
+      syncedUpdateIds.add(local.updateId);
     }
+
+    if (!wroteAny) {
+      return true;
+    }
+
     try {
       await batch.commit();
       // Mark all as synced
-      for (final local in toSync) {
-        await markCrdtUpdateSynced(local.updateId);
+      for (final updateId in syncedUpdateIds) {
+        await markCrdtUpdateSynced(updateId);
       }
       return true;
     } catch (error) {

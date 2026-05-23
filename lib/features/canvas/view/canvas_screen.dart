@@ -56,6 +56,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   bool _didAutoFrameContent = false;
   Size _lastCanvasSize = Size.zero;
   Offset _shapeDragDelta = Offset.zero;
+  Offset? _shapeDragPreviewCenter;
   _ShapeTransformDraft? _shapeTransformDraft;
   double _viewportScale = 1.0;
   Offset _viewportOffset = Offset.zero;
@@ -141,11 +142,23 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   void _deferredResizeSelectedShape(double size) {
     _pendingShapeEdits['size'] = size;
+    _canvasBloc.add(
+      CanvasPreviewPendingShapeEdits(
+        shapeId: _canvasBloc.state.selectedShapeId ?? '',
+        pendingData: Map<String, dynamic>.from(_pendingShapeEdits),
+      ),
+    );
     _scheduleShapeEditCommit();
   }
 
   void _deferredSetSelectedShapeFill(bool isFilled) {
     _pendingShapeEdits['isFilled'] = isFilled;
+    _canvasBloc.add(
+      CanvasPreviewPendingShapeEdits(
+        shapeId: _canvasBloc.state.selectedShapeId ?? '',
+        pendingData: Map<String, dynamic>.from(_pendingShapeEdits),
+      ),
+    );
     _scheduleShapeEditCommit();
   }
 
@@ -159,6 +172,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   void _deferredRotateSelectedShape(double rotation) {
     _pendingShapeEdits['rotation'] = rotation;
+    _canvasBloc.add(
+      CanvasPreviewPendingShapeEdits(
+        shapeId: _canvasBloc.state.selectedShapeId ?? '',
+        pendingData: Map<String, dynamic>.from(_pendingShapeEdits),
+      ),
+    );
     _scheduleShapeEditCommit();
   }
 
@@ -166,6 +185,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
     setState(() {
       _pendingShapeEdits['borderRadius'] = borderRadius;
     });
+    _canvasBloc.add(
+      CanvasPreviewPendingShapeEdits(
+        shapeId: _canvasBloc.state.selectedShapeId ?? '',
+        pendingData: Map<String, dynamic>.from(_pendingShapeEdits),
+      ),
+    );
     _scheduleShapeEditCommit();
   }
 
@@ -767,8 +792,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 details.localFocalPoint,
                               );
                               if (_isDraggingShape) {
-                                _moveSelectedShape(
-                                  worldPoint - _shapeDragDelta,
+                                final nextCenter = worldPoint - _shapeDragDelta;
+                                setState(() {
+                                  _shapeDragPreviewCenter = nextCenter;
+                                });
+                                _canvasBloc.add(
+                                  CanvasPreviewMoveSelectedShape(nextCenter),
                                 );
                                 return;
                               }
@@ -784,6 +813,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
                               if (_isDraggingShape) {
                                 _isDraggingShape = false;
+                                if (_shapeDragPreviewCenter != null) {
+                                  _moveSelectedShape(_shapeDragPreviewCenter!);
+                                }
+                                _shapeDragPreviewCenter = null;
                                 _setShapeEditing(false);
                                 return;
                               }
@@ -973,6 +1006,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
               size: draft.size,
               data: {...result.data, 'rotation': draft.rotation},
             );
+          } else if (_isDraggingShape &&
+              _shapeDragPreviewCenter != null &&
+              result.id == _canvasBloc.state.selectedShapeId) {
+            result = result.copyWith(center: _shapeDragPreviewCenter!);
           }
 
           return result;
@@ -1259,6 +1296,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     setState(() {
                       _shapeTransformDraft = draft.copyWith(center: nextCenter);
                     });
+                    _canvasBloc.add(CanvasPreviewMoveSelectedShape(nextCenter));
                   },
                   onPanEnd: (_) {
                     final draft = _shapeTransformDraft;
@@ -1302,6 +1340,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         rotation: draft.rotation + (delta / 140),
                       );
                     });
+                    _canvasBloc.add(
+                      CanvasPreviewRotateSelectedShape(
+                        draft.rotation + (delta / 140),
+                      ),
+                    );
                   },
                   onPanEnd: (_) {
                     final draft = _shapeTransformDraft;
@@ -1341,6 +1384,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     setState(() {
                       _shapeTransformDraft = draft.copyWith(size: nextSize);
                     });
+                    _canvasBloc.add(CanvasPreviewResizeSelectedShape(nextSize));
                   },
                   onPanEnd: (_) {
                     final draft = _shapeTransformDraft;
@@ -1579,6 +1623,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   cy: draftNow.cy + (details.delta.dy / _viewportScale),
                 );
               });
+              final liveDraft = _imageDrafts[element.id];
+              if (liveDraft != null) {
+                _canvasBloc.add(
+                  CanvasPreviewImageElement(
+                    elementId: element.id,
+                    center: Offset(liveDraft.cx, liveDraft.cy),
+                    width: liveDraft.width,
+                    height: liveDraft.height,
+                  ),
+                );
+              }
             },
             onPanEnd: (_) {
               final finalDraft = _imageDrafts.remove(element.id);
@@ -1649,6 +1704,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             ),
                           );
                         });
+                        final liveDraft = _imageDrafts[element.id];
+                        if (liveDraft != null) {
+                          _canvasBloc.add(
+                            CanvasPreviewImageElement(
+                              elementId: element.id,
+                              center: Offset(liveDraft.cx, liveDraft.cy),
+                              width: liveDraft.width,
+                              height: liveDraft.height,
+                            ),
+                          );
+                        }
                       },
                       onPanEnd: (_) {
                         final finalDraft = _imageDrafts.remove(element.id);

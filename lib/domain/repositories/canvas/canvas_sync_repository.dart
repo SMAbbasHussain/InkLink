@@ -17,12 +17,20 @@ abstract class CanvasSyncRepository {
     required String updateId,
     required String payloadBase64,
   });
+  Future<void> publishCanvasPreview({
+    required String boardId,
+    required String previewId,
+    required String elementId,
+    required String payloadBase64,
+    required String sourceClientId,
+  });
   Future<List<LocalCrdtUpdate>> getLocalCrdtUpdates(String boardId);
   Future<List<LocalCrdtUpdate>> fetchRemoteCrdtUpdates(
     String boardId, {
     DateTime? since,
     bool preferSocket = true,
   });
+  Stream<List<LocalCrdtUpdate>> watchRemoteCanvasPreviews(String boardId);
   Stream<List<LocalCrdtUpdate>> watchLocalCrdtUpdates(String boardId);
   Stream<List<LocalCrdtUpdate>> watchRemoteCrdtUpdates(
     String boardId, {

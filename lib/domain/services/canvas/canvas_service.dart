@@ -10,16 +10,24 @@ import '../../repositories/canvas/canvas_sync_repository.dart';
 
 abstract class CanvasService {
   bool get canSync;
+  String? get currentClientId;
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes);
   Future<void> ensureBoardCached(String boardId);
   Stream<Board?> watchBoardById(String boardId);
   Stream<List<LocalCrdtUpdate>> listenToCrdtUpdates(String boardId);
+  Stream<List<LocalCrdtUpdate>> listenToCanvasPreviews(String boardId);
   Future<void> stopCrdtRemoteSync(String boardId);
   Future<void> pushCrdtUpdate({
     required String boardId,
     required String updateId,
     required Uint8List payload,
     String? elementId,
+  });
+  Future<void> publishCanvasPreview({
+    required String boardId,
+    required String previewId,
+    required String elementId,
+    required Uint8List payload,
   });
   Future<void> markCrdtUpdateDeleted(String updateId, bool isDeleted);
   Future<LocalCrdtUpdate?> getElementCrdtUpdate({
@@ -46,6 +54,9 @@ class CanvasServiceImpl implements CanvasService {
 
   @override
   bool get canSync => _syncRepository.currentUserId != null;
+
+  @override
+  String? get currentClientId => _syncRepository.currentUserId;
 
   @override
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes) {
@@ -84,6 +95,16 @@ class CanvasServiceImpl implements CanvasService {
       // Always surface local updates, even when remote hydration fails.
       yield* _syncRepository.watchLocalCrdtUpdates(boardId);
     }();
+  }
+
+  @override
+  Stream<List<LocalCrdtUpdate>> listenToCanvasPreviews(String boardId) {
+    final userId = _syncRepository.currentUserId;
+    if (userId == null) {
+      return const Stream<List<LocalCrdtUpdate>>.empty();
+    }
+
+    return _syncRepository.watchRemoteCanvasPreviews(boardId);
   }
 
   @override
@@ -138,6 +159,25 @@ class CanvasServiceImpl implements CanvasService {
             rethrow;
           }
         });
+  }
+
+  @override
+  Future<void> publishCanvasPreview({
+    required String boardId,
+    required String previewId,
+    required String elementId,
+    required Uint8List payload,
+  }) {
+    final userId = _syncRepository.currentUserId;
+    if (userId == null) return Future.value();
+
+    return _syncRepository.publishCanvasPreview(
+      boardId: boardId,
+      previewId: previewId,
+      elementId: elementId,
+      payloadBase64: base64Encode(payload),
+      sourceClientId: userId,
+    );
   }
 
   @override
