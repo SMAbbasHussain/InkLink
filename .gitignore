@@ -138,3 +138,4 @@ server/node_modules
 server/service-account.json
 server/.env
 websocket_migration_plan.md
+optimizations_plan.md

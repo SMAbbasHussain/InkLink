@@ -55,8 +55,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
   bool _isTransformingCanvas = false;
   bool _didAutoFrameContent = false;
   Size _lastCanvasSize = Size.zero;
-  Offset _shapeDragDelta = Offset.zero;
+  Offset _shapeDragStartCenter = Offset.zero;
+  Offset _shapeDragStartWorldPoint = Offset.zero;
   Offset? _shapeDragPreviewCenter;
+  double _shapeDragStartRotation = 0.0;
   _ShapeTransformDraft? _shapeTransformDraft;
   double _viewportScale = 1.0;
   Offset _viewportOffset = Offset.zero;
@@ -755,7 +757,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 final shape = mappedElements.firstWhere(
                                   (e) => e.id == hitShapeId,
                                 );
-                                _shapeDragDelta = worldPoint - shape.center;
+                                _shapeDragStartCenter = shape.center;
+                                _shapeDragStartWorldPoint = worldPoint;
+                                _shapeDragStartRotation =
+                                    state.selectedShapeRotation;
                                 return;
                               }
 
@@ -792,7 +797,24 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 details.localFocalPoint,
                               );
                               if (_isDraggingShape) {
-                                final nextCenter = worldPoint - _shapeDragDelta;
+                                var dragDelta =
+                                    worldPoint - _shapeDragStartWorldPoint;
+                                // Unrotate dragDelta to convert from shape's rotated frame
+                                // back to screen frame
+                                if (_shapeDragStartRotation != 0.0) {
+                                  final cos = math.cos(
+                                    -_shapeDragStartRotation,
+                                  );
+                                  final sin = math.sin(
+                                    -_shapeDragStartRotation,
+                                  );
+                                  dragDelta = Offset(
+                                    dragDelta.dx * cos - dragDelta.dy * sin,
+                                    dragDelta.dx * sin + dragDelta.dy * cos,
+                                  );
+                                }
+                                final nextCenter =
+                                    _shapeDragStartCenter + dragDelta;
                                 setState(() {
                                   _shapeDragPreviewCenter = nextCenter;
                                 });
@@ -817,6 +839,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   _moveSelectedShape(_shapeDragPreviewCenter!);
                                 }
                                 _shapeDragPreviewCenter = null;
+                                _shapeDragStartCenter = Offset.zero;
+                                _shapeDragStartWorldPoint = Offset.zero;
+                                _shapeDragStartRotation = 0.0;
                                 _setShapeEditing(false);
                                 return;
                               }
