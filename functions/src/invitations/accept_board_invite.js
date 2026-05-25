@@ -90,10 +90,12 @@ module.exports = async (request) => {
 
       transaction.update(boardRef, {
         members: admin.firestore.FieldValue.arrayUnion(uid),
+        [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(1),
         [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
       });
       transaction.set(userRef, {
         [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayUnion(boardId),
+        [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(1),
         [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
 

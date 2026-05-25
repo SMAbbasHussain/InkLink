@@ -21,13 +21,18 @@ class FirestoreBoardRepository implements BoardRepository {
   final LocalDatabaseService _localDatabaseService;
   static const String crdtEngine = 'crdt_v1';
   static const String _membersSubcollection = 'members';
+  static const String _crdtUpdatesSubcollection = 'crdt_updates';
+
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   _userBoardIndexSub;
   StreamSubscription<User?>? _authStateSub;
   String? _syncUserId;
   String? _activeBoardId;
-  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _activeBoardSub;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+  _activeBoardMetadataSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _activeBoardCrdtSub;
   StreamController<Board?>? _activeBoardController;
+
   Set<String> _ownedBoardIds = <String>{};
   Set<String> _joinedBoardIds = <String>{};
   final Map<String, Map<String, dynamic>> _ownedBoardDocs =
@@ -152,7 +157,7 @@ class FirestoreBoardRepository implements BoardRepository {
       return;
     }
 
-    if (_activeBoardId == trimmedBoardId && _activeBoardSub != null) {
+    if (_activeBoardId == trimmedBoardId && _activeBoardMetadataSub != null) {
       return;
     }
 
@@ -160,7 +165,9 @@ class FirestoreBoardRepository implements BoardRepository {
 
     _activeBoardId = trimmedBoardId;
     _activeBoardController = StreamController<Board?>.broadcast();
-    _activeBoardSub = _firestoreService
+
+    // Phase 4A: Separate listener for board metadata
+    _activeBoardMetadataSub = _firestoreService
         .collection('boards')
         .doc(trimmedBoardId)
         .snapshots()
@@ -194,13 +201,39 @@ class FirestoreBoardRepository implements BoardRepository {
             _activeBoardController?.add(null);
           },
         );
+
+    // Phase 4A: Separate incremental listener for CRDT updates
+    _activeBoardCrdtSub = _firestoreService
+        .collection('boards')
+        .doc(trimmedBoardId)
+        .collection(_crdtUpdatesSubcollection)
+        .orderBy('timestamp')
+        .snapshots()
+        .listen(
+          (snapshot) async {
+            try {
+              for (final doc in snapshot.docs) {
+                final data = doc.data();
+                // Process CRDT updates incrementally
+                await _processCrdtUpdate(trimmedBoardId, data);
+              }
+            } catch (_) {
+              // Keep CRDT stream alive on errors
+            }
+          },
+          onError: (error, stackTrace) {
+            // Errors in CRDT stream don't affect main board stream
+          },
+        );
   }
 
   @override
   Future<void> deactivateBoard() async {
     final activeBoardId = _activeBoardId;
-    await _activeBoardSub?.cancel();
-    _activeBoardSub = null;
+    await _activeBoardMetadataSub?.cancel();
+    _activeBoardMetadataSub = null;
+    await _activeBoardCrdtSub?.cancel();
+    _activeBoardCrdtSub = null;
     if (_activeBoardController != null && !_activeBoardController!.isClosed) {
       await _activeBoardController!.close();
     }
@@ -654,6 +687,7 @@ class FirestoreBoardRepository implements BoardRepository {
       'name': name,
       'ownerId': uid,
       'members': [uid],
+      'memberCount': 1,
       'engine': crdtEngine,
       'visibility': normalizedVisibility,
       'privateJoinPolicy': normalizedPrivatePolicy,
@@ -926,6 +960,29 @@ class FirestoreBoardRepository implements BoardRepository {
           .boardIdEqualTo(boardId)
           .watch(fireImmediately: true)
           .map((boards) => boards.isEmpty ? null : boards.first.previewPath);
+    });
+  }
+
+  Future<void> _processCrdtUpdate(
+    String boardId,
+    Map<String, dynamic> updateData,
+  ) async {
+    final isar = await _localDatabaseService.database;
+
+    // Store CRDT update for later processing by canvas sync engine
+    final localUpdate = LocalCrdtUpdate()
+      ..boardId = boardId
+      ..updateId =
+          updateData['updateId'] as String? ??
+          'update_${DateTime.now().millisecondsSinceEpoch}'
+      ..elementId = updateData['elementId'] as String?
+      ..payloadBase64 = updateData['payloadBase64'] as String? ?? ''
+      ..sourceClientId = updateData['sourceClientId'] as String? ?? ''
+      ..appliedAt =
+          (updateData['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+
+    await isar.writeTxn(() async {
+      await isar.localCrdtUpdates.put(localUpdate);
     });
   }
 

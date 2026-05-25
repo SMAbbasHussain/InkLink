@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/bloc/auth_state.dart';
 import 'features/auth/view/login_screen.dart';
@@ -10,6 +11,7 @@ import 'features/notifications/bloc/notifications_bloc.dart';
 import 'features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'features/friends/bloc/friends_bloc.dart';
 import 'features/friends/bloc/friends_event.dart';
+import 'core/services/data_prefetch_service.dart';
 
 class AppView extends StatelessWidget {
   const AppView({super.key});
@@ -20,6 +22,12 @@ class AppView extends StatelessWidget {
       listenWhen: (previous, current) =>
           previous is! Authenticated && current is Authenticated,
       listener: (context, state) {
+        // Phase 4E: Prefetch data on auth
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+        if (uid != null) {
+          context.read<DataPrefetchService>().prefetchInitialData(uid);
+        }
+        
         // Restart global syncs when authenticated (crucial after logout/login cycle)
         context.read<DashboardBloc>().add(LoadDashboardRequested());
         context.read<WorkspaceBloc>().add(LoadWorkspacesRequested());

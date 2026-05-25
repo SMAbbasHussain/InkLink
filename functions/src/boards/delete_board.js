@@ -62,14 +62,17 @@ module.exports = async (request) => {
           continue;
         }
 
-        transaction.set(
-          firestore.collection(FirestorePaths.USERS).doc(memberUid.trim()),
-          {
-            [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
-            [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true },
-        );
+        if (memberUid.trim() !== uid) {
+          transaction.set(
+            firestore.collection(FirestorePaths.USERS).doc(memberUid.trim()),
+            {
+              [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
+              [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(-1),
+              [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
       }
 
       return {

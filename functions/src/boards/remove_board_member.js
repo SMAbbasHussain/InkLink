@@ -44,6 +44,7 @@ module.exports = async (request) => {
 
       transaction.update(boardRef, {
         members: admin.firestore.FieldValue.arrayRemove(targetUid.trim()),
+        [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(-1),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
@@ -56,6 +57,7 @@ module.exports = async (request) => {
         targetUserRef,
         {
           joinedBoards: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
+          [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(-1),
           lastActive: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }

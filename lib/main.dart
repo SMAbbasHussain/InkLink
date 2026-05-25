@@ -9,6 +9,7 @@ import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/services/cloud_functions_service.dart';
 import 'package:inklink/core/services/local_notification_service.dart';
 import 'package:inklink/core/services/messaging_service.dart';
+import 'package:inklink/core/services/data_prefetch_service.dart';
 import 'package:inklink/domain/repositories/auth/auth_repository.dart';
 import 'package:inklink/domain/repositories/auth/auth_repository_impl.dart';
 import 'package:inklink/domain/repositories/board/board_repository.dart';
@@ -143,6 +144,7 @@ void main() async {
           create: (context) => NotificationRepositoryImpl(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
+            localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
         RepositoryProvider<InvitationRepository>(
@@ -218,6 +220,13 @@ void main() async {
             authService: context.read<AuthService>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
             friendsRepository: context.read<FriendsRepository>(),
+          ),
+        ),
+        RepositoryProvider<DataPrefetchService>(
+          create: (context) => DataPrefetchService(
+            boardRepository: context.read<BoardRepository>(),
+            friendsRepository: context.read<FriendsRepository>(),
+            invitationRepository: context.read<InvitationRepository>(),
           ),
         ),
       ],

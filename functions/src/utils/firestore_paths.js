@@ -47,6 +47,12 @@ const FirestorePaths = {
   TIMESTAMP: 'timestamp',
   STATUS: 'status',
 
+  // Denormalized snapshot fields (for optimization)
+  SENDER_DISPLAY_NAME_SNAPSHOT: 'senderDisplayNameSnapshot',
+  SENDER_PHOTO_URL_SNAPSHOT: 'senderPhotoURLSnapshot',
+  RECIPIENT_DISPLAY_NAME_SNAPSHOT: 'recipientDisplayNameSnapshot',
+  RECIPIENT_PHOTO_URL_SNAPSHOT: 'recipientPhotoURLSnapshot',
+
   // Workspace board fields
   BOARD_SOURCE: 'boardSource', // 'imported' or 'workspace_native'
   
@@ -70,6 +76,7 @@ const FirestorePaths = {
   ACCEPTED_AT: 'acceptedAt',
   REJECTED_AT: 'rejectedAt',
   UPDATED_AT: 'updatedAt',
+  MEMBER_COUNT: 'memberCount',
   NAME: 'name',
   DESCRIPTION: 'description',
 
