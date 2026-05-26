@@ -64,7 +64,8 @@ class CanvasAppendStroke extends CanvasEvent {
 
 /// End and save the current stroke
 class CanvasEndStroke extends CanvasEvent {
-  const CanvasEndStroke();
+  final List<Offset>? smoothedPoints;
+  const CanvasEndStroke({this.smoothedPoints});
 }
 
 /// Add a shape to the canvas

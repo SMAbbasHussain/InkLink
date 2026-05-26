@@ -54,6 +54,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   bool _isEditingShape = false;
   bool _isShapeEditTrayExpanded = false;
   bool _isStrokeEditExpanded = false;
+  bool _smoothDoodlesEnabled = false;
   bool _isRotatingShape = false;
   bool _isResizingShape = false;
   bool _showEraserPreview = false;
@@ -116,6 +117,18 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
+  List<Offset> _smoothStrokePoints(List<Offset> points) {
+    if (points.length < 4) return points;
+    final result = List<Offset>.of(points);
+    for (int i = 1; i < points.length - 1; i++) {
+      result[i] = Offset(
+        (points[i - 1].dx + points[i].dx + points[i + 1].dx) / 3,
+        (points[i - 1].dy + points[i].dy + points[i + 1].dy) / 3,
+      );
+    }
+    return result;
+  }
+
   void _startStroke(Offset point) {
     _canvasBloc.add(CanvasStartStroke(point));
   }
@@ -125,7 +138,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   void _endStroke() {
-    _canvasBloc.add(const CanvasEndStroke());
+    final smoothed = _smoothDoodlesEnabled
+        ? _smoothStrokePoints(_canvasBloc.state.currentStroke)
+        : null;
+    _canvasBloc.add(CanvasEndStroke(smoothedPoints: smoothed));
   }
 
   Offset _getElementWorldCenter(CanvasElement element) {
@@ -1976,6 +1992,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           brushOpacity: state.brushOpacity,
           brushType: state.brushType,
           eraserEraseEverything: state.eraserEraseEverything,
+          smoothDoodlesEnabled: _smoothDoodlesEnabled,
           onStrokeWidthChanged: (v) {
             _canvasBloc.add(CanvasUpdateStrokeWidth(v));
           },
@@ -1989,6 +2006,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
             _canvasBloc.add(CanvasUpdateBrushType(type));
           },
           onEraserEraseEverythingChanged: _setEraserScope,
+          onSmoothDoodlesChanged: (v) {
+            setState(() => _smoothDoodlesEnabled = v);
+          },
         ),
       ],
     );

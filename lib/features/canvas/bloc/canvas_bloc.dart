@@ -353,14 +353,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       return;
     }
 
-    if (state.currentStroke.length < 2) {
+    final usePoints = event.smoothedPoints ?? state.currentStroke;
+    if (usePoints.length < 2) {
       emit(state.copyWith(currentStroke: const []));
       return;
     }
 
     if (state.brushType == 'eraser') {
       final eraserResult = _applyEraserStroke(
-        erasePath: state.currentStroke,
+        erasePath: usePoints,
         eraserRadius: state.strokeWidth / 2,
         eraseEverything: state.eraserEraseEverything,
       );
@@ -401,7 +402,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       'strokeWidth': state.strokeWidth,
       'opacity': state.brushOpacity,
       'brushType': state.brushType,
-      'points': state.currentStroke
+      'points': usePoints
           .map((p) => {'x': p.dx, 'y': p.dy})
           .toList(growable: false),
     };
