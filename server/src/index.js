@@ -56,6 +56,10 @@ let redisAvailable = false;
 // In-memory fallback queue for local development (expires after server restart)
 const memoryQueue = {};
 
+// Track UIDs that explicitly logged out so we skip queueing updates for them.
+// Cleared on reconnect (new socket → re‑authenticated → new connection event).
+const loggedOutUids = new Set();
+
 redis.on('connect', () => {
   redisAvailable = true;
   console.log('✓ Redis connected');
@@ -152,6 +156,9 @@ io.on('connection', (socket) => {
   const {uid} = socket.data;
   console.log(`User connected: ${uid} (socket: ${socket.id})`);
 
+  // User re‑authenticated (new login) — resume queueing for them
+  loggedOutUids.delete(uid);
+
   // Phase 2: Live Sync - Join Room
   socket.on('watch_board', (boardId) => {
     socket.join(`board_room:${boardId}`);
@@ -203,8 +210,10 @@ io.on('connection', (socket) => {
 
       const connectedUids = await getConnectedSocketsInRoom(`board_room:${boardId}`);
       console.log(`[crdt_update] Connected UIDs in board ${boardId}: ${connectedUids.join(', ')}`);
-      const offlineMembers = members.filter(memberUid => !connectedUids.includes(memberUid));
-      console.log(`[crdt_update] Offline members for board ${boardId}: ${offlineMembers.join(', ')}`);
+      const offlineMembers = members.filter(
+        memberUid => !connectedUids.includes(memberUid) && !loggedOutUids.has(memberUid)
+      );
+      console.log(`[crdt_update] Offline members (excluding logged‑out) for board ${boardId}: ${offlineMembers.join(', ')}`);
 
       const ttlSeconds = 604800; // 7 days
 
@@ -365,6 +374,8 @@ io.on('connection', (socket) => {
     ]);
     try {
       await clearUserQueues(uid);
+      loggedOutUids.add(uid);
+      console.log(`[logout] Added ${uid} to logged‑out set — future updates for this user will NOT be queued until they log in again`);
       if (typeof callback === 'function') callback({ status: 'success' });
       else socket.emit('logout_response', { status: 'success' });
     } catch (e) {
