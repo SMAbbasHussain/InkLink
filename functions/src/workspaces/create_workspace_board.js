@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
+const { addBoardMember } = require('../utils/redis');
 
 /**
  * Create a new board directly within a workspace (workspace-native board).
@@ -48,7 +49,7 @@ module.exports = async (request) => {
     const boardId = boardRef.id;
     const now = admin.firestore.FieldValue.serverTimestamp();
 
-    return await firestore.runTransaction(async (transaction) => {
+    const result = await firestore.runTransaction(async (transaction) => {
       // Create board document with full schema (matching client-side createBoard)
       const defaultInvitePolicy = {
         whoCanInvite: 'owner_only',
@@ -140,6 +141,10 @@ module.exports = async (request) => {
         title: title.trim(),
       };
     });
+
+    await addBoardMember(boardId, uid);
+
+    return result;
   } catch (error) {
     if (error instanceof HttpsError) throw error;
     logger.error('createWorkspaceBoard failed', error);

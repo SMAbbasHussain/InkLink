@@ -3,6 +3,7 @@ const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
 const { updateUserNotificationStatus } = require('../utils/notification_sender');
+const { addBoardMember } = require('../utils/redis');
 
 const ROLE_OWNER = 'owner';
 const ROLE_EDITOR = 'editor';
@@ -129,6 +130,10 @@ module.exports = async (request) => {
       title: 'Board invite accepted',
       body: 'You accepted this board invite.',
     });
+
+    if (result.success) {
+      await addBoardMember(result.boardId, uid);
+    }
 
     return result;
 

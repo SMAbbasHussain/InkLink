@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
+const { addBoardMembers } = require('../utils/redis');
 
 module.exports = async (request) => {
   const uid = request.auth?.uid;
@@ -166,6 +167,7 @@ module.exports = async (request) => {
     }
 
     await batch.commit();
+    await addBoardMembers(boardId.trim(), memberUids);
     return { success: true, workspaceId: workspaceId.trim(), boardId: boardId.trim() };
   } catch (error) {
     if (error instanceof HttpsError) throw error;

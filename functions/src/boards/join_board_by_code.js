@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
+const { addBoardMember } = require('../utils/redis');
 
 const VISIBILITY_PUBLIC = 'public';
 const VISIBILITY_PRIVATE = 'private';
@@ -40,7 +41,7 @@ module.exports = async (request) => {
     const boardRef = firestore.collection(FirestorePaths.BOARDS).doc(joinCode);
     const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
 
-    return await firestore.runTransaction(async (transaction) => {
+    const result = await firestore.runTransaction(async (transaction) => {
           const boardDoc = await transaction.get(boardRef);
           if (!boardDoc.exists) {
             throw new HttpsError('not-found', 'Board not found. Check the join code and try again.');
@@ -151,6 +152,12 @@ module.exports = async (request) => {
             role: resolvedRole,
           };
         });
+
+    if (result.success && !result.alreadyMember) {
+      await addBoardMember(joinCode, uid);
+    }
+
+    return result;
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error;

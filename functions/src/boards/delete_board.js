@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
+const { deleteBoardMembers } = require('../utils/redis');
 
 function toNonNegativeInt(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -82,6 +83,10 @@ module.exports = async (request) => {
         removedMembers: members.length,
       };
     });
+
+    if (result.success) {
+      await deleteBoardMembers(boardId.trim());
+    }
 
     logger.info('Board deleted successfully', {
       uid,

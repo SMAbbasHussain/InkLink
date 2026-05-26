@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
+const { addBoardMember } = require('../utils/redis');
 
 module.exports = async (request) => {
   const uid = request.auth?.uid;
@@ -18,7 +19,7 @@ module.exports = async (request) => {
 
     const firestore = admin.firestore();
 
-    return await firestore.runTransaction(async (transaction) => {
+    const result = await firestore.runTransaction(async (transaction) => {
       const inviteRef = firestore.collection(FirestorePaths.WORKSPACE_INVITES).doc(inviteId.trim());
       const inviteDoc = await transaction.get(inviteRef);
 
@@ -177,8 +178,20 @@ module.exports = async (request) => {
 
       transaction.delete(inviteRef);
 
-      return { success: true, workspaceId };
+      return {
+        success: true,
+        workspaceId,
+        boardIds: boardMembershipTargets.map((t) => t.boardId),
+      };
     });
+
+    if (result.success && result.boardIds) {
+      for (const boardId of result.boardIds) {
+        await addBoardMember(boardId, uid);
+      }
+    }
+
+    return result;
   } catch (error) {
     if (error instanceof HttpsError) throw error;
     logger.error('acceptWorkspaceInvite failed', error);

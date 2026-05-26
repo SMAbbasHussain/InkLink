@@ -60,6 +60,54 @@ const memoryQueue = {};
 // Cleared on reconnect (new socket → re‑authenticated → new connection event).
 const loggedOutUids = new Set();
 
+// In-memory cache for board member lists.
+// Avoids reading boards/{boardId}/members on every CRDT update (the #1 source of reads).
+const boardMembersCache = new Map();
+const MEMBERS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+async function getBoardMembersCached(boardId) {
+  const cached = boardMembersCache.get(boardId);
+  if (cached && Date.now() - cached.fetchedAt < MEMBERS_CACHE_TTL_MS) {
+    return cached.members;
+  }
+
+  // 1. Try Redis (Cloud Functions keep this up-to-date on member changes)
+  if (redisAvailable) {
+    try {
+      const key = `board_members:${boardId}`;
+      const members = await redis.smembers(key);
+      if (members && members.length > 0) {
+        await redis.expire(key, 604800); // refresh 7-day TTL on access
+        boardMembersCache.set(boardId, { members, fetchedAt: Date.now() });
+        return members;
+      }
+    } catch (e) {
+      console.warn(`Redis read failed for board_members:${boardId}, falling back to Firestore`);
+    }
+  }
+
+  // 2. Fallback to Firestore
+  if (!db) return [];
+  const snapshot = await db
+    .collection('boards')
+    .doc(boardId)
+    .collection('members')
+    .get();
+  const members = snapshot.docs.map((doc) => doc.id);
+  boardMembersCache.set(boardId, { members, fetchedAt: Date.now() });
+
+  // Seed Redis so subsequent reads skip Firestore
+  if (redisAvailable && members.length > 0) {
+    try {
+      const key = `board_members:${boardId}`;
+      await redis.sadd(key, ...members);
+      await redis.expire(key, 604800);
+    } catch (_) {}
+  }
+
+  return members;
+}
+
 redis.on('connect', () => {
   redisAvailable = true;
   console.log('✓ Redis connected');
@@ -166,6 +214,14 @@ io.on('connection', (socket) => {
     console.log(`[watch_board] User ${uid} joined board ${boardId} (socket: ${socket.id})`);
   });
 
+  // Force-refresh the member list cache for a board.
+  // Emitted by the client after a Cloud Function adds them as a member,
+  // so the server picks up the updated list from Redis immediately.
+  socket.on('refresh_board_members', (boardId) => {
+    boardMembersCache.delete(boardId);
+    console.log(`[refresh_board_members] Invalidated cache for board ${boardId} (triggered by ${uid})`);
+  });
+
   socket.on('leave_board', (boardId) => {
     socket.leave(`board_room:${boardId}`);
     console.log(`[leave_board] User ${uid} left board ${boardId}`);
@@ -201,12 +257,7 @@ io.on('connection', (socket) => {
       }
 
       // 3. Redis-Backed Offline Queue
-      let members = [];
-      if (db) {
-        const membersSnapshot = await db.collection('boards').doc(boardId).collection('members').get();
-        members = membersSnapshot.docs.map(doc => doc.id);
-        console.log(`[crdt_update] Board ${boardId} has members: ${members.join(', ')}`);
-      }
+      const members = await getBoardMembersCached(boardId);
 
       const connectedUids = await getConnectedSocketsInRoom(`board_room:${boardId}`);
       console.log(`[crdt_update] Connected UIDs in board ${boardId}: ${connectedUids.join(', ')}`);
