@@ -40,8 +40,6 @@ class _HomeScreenState extends State<HomeScreen>
       const BoardInvitationsLoadRequested(),
     );
 
-    context.read<DashboardBloc>().add(LoadDashboardRequested());
-
     final authState = context.read<AuthBloc>().state;
     final authUser = authState is Authenticated ? authState : null;
     _syncProfileWatch(authUser?.uid);

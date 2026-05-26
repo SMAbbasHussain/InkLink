@@ -149,20 +149,28 @@ module.exports = async (request) => {
 
         transaction.update(target.boardRef, {
           members: admin.firestore.FieldValue.arrayUnion(uid),
+          [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(1),
           [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
         });
-
+        const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
         transaction.set(
-          firestore.collection(FirestorePaths.USERS).doc(uid),
-          boardOwnerId === uid
-            ? {
-                [FirestorePaths.OWNED_BOARDS]: admin.firestore.FieldValue.arrayUnion(target.boardId),
-                [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-              }
-            : {
-                [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayUnion(target.boardId),
-                [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-              },
+          userRef,
+          {
+            [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(1),
+            [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+
+        // Also add per-user board index doc for new schema
+        transaction.set(
+          userRef.collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION).doc(target.boardId),
+          {
+            boardId: target.boardId,
+            relation: boardOwnerId === uid ? 'owned' : 'joined',
+            addedAt: admin.firestore.FieldValue.serverTimestamp(),
+            [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+          },
           { merge: true },
         );
       }

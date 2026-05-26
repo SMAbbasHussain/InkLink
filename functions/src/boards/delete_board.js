@@ -52,9 +52,6 @@ module.exports = async (request) => {
 
       transaction.set(ownerRef, {
         [FirestorePaths.BOARD_COUNT]: Math.max(0, ownerCount - 1),
-        [FirestorePaths.OWNED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
-        [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
-        [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
 
       for (const memberUid of members) {
@@ -66,11 +63,15 @@ module.exports = async (request) => {
           transaction.set(
             firestore.collection(FirestorePaths.USERS).doc(memberUid.trim()),
             {
-              [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
               [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(-1),
-              [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
             },
             { merge: true },
+          );
+          // Also remove user's board index doc
+          transaction.delete(
+            firestore.collection(FirestorePaths.USERS).doc(memberUid.trim())
+              .collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION)
+              .doc(boardId.trim()),
           );
         }
       }

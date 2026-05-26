@@ -31,6 +31,7 @@ class LocalNonFriendProfile {
     this.id,
     required this.uid,
     required this.displayName,
+    DateTime? cachedAtOverride,
     this.email,
     this.bio,
     this.photoURL,
@@ -38,5 +39,5 @@ class LocalNonFriendProfile {
     this.boardCount = 0,
     this.lastSource,
     this.lastSeenAt,
-  });
+  }) : cachedAt = cachedAtOverride ?? DateTime.now();
 }

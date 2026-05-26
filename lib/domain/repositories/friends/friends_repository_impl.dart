@@ -10,6 +10,7 @@ import '../../../core/database/collections/local_friend_request.dart';
 import '../../../core/database/collections/local_non_friend_profile.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
+import '../../../core/services/stream_registry.dart';
 import '../../models/user_model.dart';
 import 'friends_repository.dart';
 
@@ -200,11 +201,15 @@ class FriendsRepositoryImpl implements FriendsRepository {
               );
             }, onError: controller.addError);
 
-        remoteSub = _firestoreService
-            .collection('friend_requests')
-            .where('toUid', isEqualTo: uid)
-            .where('status', isEqualTo: 'pending')
-            .snapshots()
+        remoteSub = StreamRegistry.instance
+            .getOrCreate<QuerySnapshot<Map<String, dynamic>>>(
+              'friend_requests:to:$uid:pending',
+              () => _firestoreService
+                  .collection('friend_requests')
+                  .where('toUid', isEqualTo: uid)
+                  .where('status', isEqualTo: 'pending')
+                  .snapshots(),
+            )
             .listen((snapshot) async {
               final requests = _sortRequestsByTimestampDesc(
                 snapshot.docs
@@ -253,11 +258,15 @@ class FriendsRepositoryImpl implements FriendsRepository {
               );
             }, onError: controller.addError);
 
-        remoteSub = _firestoreService
-            .collection('friend_requests')
-            .where('fromUid', isEqualTo: uid)
-            .where('status', isEqualTo: 'pending')
-            .snapshots()
+        remoteSub = StreamRegistry.instance
+            .getOrCreate<QuerySnapshot<Map<String, dynamic>>>(
+              'friend_requests:from:$uid:pending',
+              () => _firestoreService
+                  .collection('friend_requests')
+                  .where('fromUid', isEqualTo: uid)
+                  .where('status', isEqualTo: 'pending')
+                  .snapshots(),
+            )
             .listen((snapshot) async {
               final requests = _sortRequestsByTimestampDesc(
                 snapshot.docs
@@ -324,11 +333,15 @@ class FriendsRepositoryImpl implements FriendsRepository {
               );
             }, onError: controller.addError);
 
-        remoteSub = _firestoreService
-            .collection('users')
-            .doc(currentUid)
-            .collection('friends')
-            .snapshots()
+        remoteSub = StreamRegistry.instance
+            .getOrCreate<QuerySnapshot<Map<String, dynamic>>>(
+              'user_friends:$currentUid',
+              () => _firestoreService
+                  .collection('users')
+                  .doc(currentUid)
+                  .collection('friends')
+                  .snapshots(),
+            )
             .listen((snapshot) async {
               final friendUids = snapshot.docs.map((doc) => doc.id).toList();
 
@@ -337,8 +350,72 @@ class FriendsRepositoryImpl implements FriendsRepository {
                 return;
               }
 
-              final users = await _fetchUsersByIds(friendUids);
-              await _cacheFriendProfiles(users);
+              final isar = await _localDatabaseService.database;
+
+              // Check local cache first to avoid refetching all friends
+              final cachedFriends = await isar.localFriendProfiles.getAllByUid(
+                friendUids,
+              );
+              final cachedNonFriends = await isar.localNonFriendProfiles
+                  .getAllByUid(friendUids);
+              final cachedModels = await isar.userModels.getAllByUid(
+                friendUids,
+              );
+
+              final usersFromCache = <Map<String, dynamic>>[];
+              final missingUids = <String>[];
+
+              for (var i = 0; i < friendUids.length; i++) {
+                final uid = friendUids[i];
+                final friend = cachedFriends[i];
+                final nonFriend = cachedNonFriends[i];
+                final model = cachedModels[i];
+
+                if (friend != null) {
+                  usersFromCache.add({
+                    'uid': uid,
+                    'displayName': friend.displayName,
+                    'email': friend.email,
+                    'photoURL': friend.photoURL,
+                    'friendCount': friend.friendCount,
+                    'boardCount': friend.boardCount,
+                    'cachedAt': friend.cachedAt,
+                  });
+                } else if (nonFriend != null) {
+                  usersFromCache.add({
+                    'uid': uid,
+                    'displayName': nonFriend.displayName,
+                    'email': nonFriend.email,
+                    'photoURL': nonFriend.photoURL,
+                    'friendCount': nonFriend.friendCount,
+                    'boardCount': nonFriend.boardCount,
+                    'cachedAt': nonFriend.cachedAt,
+                  });
+                } else if (model != null) {
+                  usersFromCache.add({
+                    'uid': uid,
+                    'displayName': model.displayName,
+                    'email': model.email,
+                    'photoURL': model.photoURL,
+                    'friendCount': model.friendCount,
+                    'boardCount': model.boardCount,
+                    'cachedAt': model.createdAt,
+                  });
+                } else {
+                  missingUids.add(uid);
+                }
+              }
+
+              // Fetch only missing UIDs from Firestore
+              final fetched = missingUids.isNotEmpty
+                  ? await _fetchUsersByIds(missingUids)
+                  : <Map<String, dynamic>>[];
+
+              final combined = <Map<String, dynamic>>[];
+              combined.addAll(usersFromCache);
+              combined.addAll(fetched);
+
+              await _cacheFriendProfiles(combined);
             }, onError: controller.addError);
       }();
     };

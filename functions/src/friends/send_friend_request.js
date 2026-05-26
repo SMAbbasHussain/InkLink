@@ -118,7 +118,6 @@ module.exports = async (request) => {
             firestore.collection(FirestorePaths.USERS).doc(senderUid),
             {
               [FirestorePaths.FRIEND_COUNT]: senderFriendCount + 1,
-              [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
             },
           );
         }
@@ -128,7 +127,6 @@ module.exports = async (request) => {
             firestore.collection(FirestorePaths.USERS).doc(targetUid),
             {
               [FirestorePaths.FRIEND_COUNT]: targetFriendCount + 1,
-              [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
             },
           );
         }

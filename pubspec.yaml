@@ -33,18 +33,15 @@ dependencies:
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
+   # Keep these as they are
   cupertino_icons: ^1.0.8
   flutter_bloc: ^9.1.1
   firebase_core: ^4.4.0
-  firebase_auth: ^6.1.4
+  firebase_auth: ^6.5.1
   cloud_firestore: ^6.1.2
-  google_sign_in: ^6.2.1
-  cloud_functions: ^6.0.6
   firebase_messaging: ^16.0.1
-  firebase_database: ^12.0.1
-  awesome_notifications: ^0.10.1
+  awesome_notifications: ^0.11.0
   rxdart: ^0.28.0
-  shared_preferences: ^2.5.4
   isar_community: ^3.3.2
   isar_community_flutter_libs: ^3.3.2
   uuid: ^4.5.3
@@ -52,10 +49,16 @@ dependencies:
   hlc: ^1.0.4
   yjs_dart: ^1.1.15
   flutter_dotenv: ^6.0.0
-  image_picker: ^1.0.0
-  permission_handler: ^11.0.0
+  permission_handler: ^12.0.1
   image: ^4.0.0
   socket_io_client: ^3.1.4
+
+  # Relax these version constraints so they can resolve to versions with Built-in Kotlin support:
+  google_sign_in: ^7.2.0
+  cloud_functions: ^6.3.1
+  firebase_database: ^12.4.1
+  shared_preferences: ^2.5.5
+  image_picker: ^1.2.2
 
 dev_dependencies:
   flutter_test:
@@ -66,7 +69,7 @@ dev_dependencies:
   # activated in the `analysis_options.yaml` file located at the root of your
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
-  flutter_lints: ^5.0.0
+  flutter_lints: ^6.0.0
   build_runner: ^2.4.13
   isar_community_generator: ^3.3.2
   flutter_launcher_icons: ^0.14.1

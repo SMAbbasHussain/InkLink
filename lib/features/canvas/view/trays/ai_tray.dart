@@ -103,7 +103,7 @@ class AITray extends StatelessWidget {
                         : ListView.separated(
                             scrollDirection: Axis.horizontal,
                             itemCount: recentImages.length,
-                            separatorBuilder: (_, __) =>
+                            separatorBuilder: (_, _) =>
                                 const SizedBox(width: 8),
                             itemBuilder: (context, i) {
                               return ClipRRect(

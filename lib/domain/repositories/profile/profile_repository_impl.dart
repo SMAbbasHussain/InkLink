@@ -41,9 +41,22 @@ class ProfileRepositoryImpl implements ProfileRepository {
   Future<Map<String, dynamic>?> getUserById(String uid) async {
     final cached = await _getCachedUserMap(uid);
     if (cached != null) {
-      // Return cached data immediately for fast page load, but revalidate
-      // in background to catch profile edits made on other devices
-      _revalidateUserFromFirestore(uid, cached.bucket);
+      // Return cached data immediately for fast page load.
+      // Revalidate in background only if cached value is stale.
+      if (cached.bucket != _ProfileBucket.self) {
+        final cachedAtRaw = cached.data['cachedAt'];
+        if (cachedAtRaw is DateTime) {
+          final age = DateTime.now().difference(cachedAtRaw);
+          // TTL: 5 minutes
+          if (age > const Duration(minutes: 5)) {
+            _revalidateUserFromFirestore(uid, cached.bucket);
+          }
+        } else {
+          // If no cachedAt, conservatively revalidate
+          _revalidateUserFromFirestore(uid, cached.bucket);
+        }
+      }
+
       return cached.data;
     }
 
@@ -240,8 +253,6 @@ class ProfileRepositoryImpl implements ProfileRepository {
     model.photoURL = (data['photoURL'] as String?) ?? model.photoURL;
     model.friendCount = _toInt(data['friendCount']);
     model.boardCount = _toInt(data['boardCount']);
-    model.isOnline = data['isOnline'] as bool? ?? model.isOnline;
-    model.lastActive = _toDateTime(data['lastActive']) ?? model.lastActive;
 
     final createdAtRaw = data['createdAt'];
     if (createdAtRaw != null) {
@@ -266,8 +277,6 @@ class ProfileRepositoryImpl implements ProfileRepository {
       'boardCount': user.boardCount,
       'createdAt': user.createdAt,
       'updatedAt': user.updatedAt,
-      'isOnline': user.isOnline,
-      'lastActive': user.lastActive,
     };
   }
 

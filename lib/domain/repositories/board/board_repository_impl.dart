@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -9,8 +10,11 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../../core/database/collections/local_board.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
+import '../../../core/database/collections/local_friend_profile.dart';
+import '../../../core/database/collections/local_non_friend_profile.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
+import '../../../core/services/stream_registry.dart';
 import '../../../core/services/firestore_service.dart';
 import '../../models/board.dart';
 import 'board_repository.dart';
@@ -21,16 +25,14 @@ class FirestoreBoardRepository implements BoardRepository {
   final LocalDatabaseService _localDatabaseService;
   static const String crdtEngine = 'crdt_v1';
   static const String _membersSubcollection = 'members';
-  static const String _crdtUpdatesSubcollection = 'crdt_updates';
 
-  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
-  _userBoardIndexSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _userBoardIndexSub;
   StreamSubscription<User?>? _authStateSub;
   String? _syncUserId;
+  Future<void>? _syncInProgress;
   String? _activeBoardId;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   _activeBoardMetadataSub;
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _activeBoardCrdtSub;
   StreamController<Board?>? _activeBoardController;
 
   Set<String> _ownedBoardIds = <String>{};
@@ -79,6 +81,21 @@ class FirestoreBoardRepository implements BoardRepository {
 
   @override
   Future<void> startBoardsSync() async {
+    // Prevent concurrent re‑entrant calls that would cancel each other's
+    // Firestore listeners and leave the sync in a broken state.
+    if (_syncInProgress != null) {
+      return _syncInProgress;
+    }
+    final future = _doStartBoardsSync();
+    _syncInProgress = future;
+    try {
+      await future;
+    } finally {
+      _syncInProgress = null;
+    }
+  }
+
+  Future<void> _doStartBoardsSync() async {
     final uid = currentUserId;
     if (uid == null) {
       _authStateSub ??= _authService.getInstance().authStateChanges().listen((
@@ -98,20 +115,56 @@ class FirestoreBoardRepository implements BoardRepository {
     await stopBoardsSync();
     _syncUserId = uid;
 
-    _userBoardIndexSub = _firestoreService
-        .collection('users')
-        .doc(uid)
-        .snapshots()
+    _userBoardIndexSub = StreamRegistry.instance
+        .getOrCreate<QuerySnapshot<Map<String, dynamic>>>(
+          'user_boards:$uid',
+          () => _firestoreService
+              .collection('users')
+              .doc(uid)
+              .collection('boards')
+              .snapshots(),
+        )
         .listen(
           (snapshot) async {
             try {
-              final data = snapshot.data() ?? const <String, dynamic>{};
-              final ownedIds = _toStringSet(data['ownedBoards']);
-              final joinedIds = _toStringSet(data['joinedBoards'])
-                ..removeAll(ownedIds);
+              final owned = <String>{};
+              final joined = <String>{};
 
-              _ownedBoardIds = ownedIds;
-              _joinedBoardIds = joinedIds;
+              for (final doc in snapshot.docs) {
+                final data = doc.data();
+                final boardId = (data['boardId'] as String?) ?? doc.id;
+                final relation = (data['relation'] as String?) ?? 'joined';
+                if (relation == 'owned') {
+                  owned.add(boardId);
+                } else {
+                  joined.add(boardId);
+                }
+              }
+
+              // When subcollection is empty, try fallback query for legacy
+              // boards that existed before the subcollection migration.
+              if (snapshot.docs.isEmpty) {
+                developer.log(
+                  'Board subcollection empty, trying fallback',
+                  name: 'BoardRepo',
+                );
+                final fallback = await _fallbackSyncBoardsForUser(uid);
+                if (fallback != null) {
+                  owned.addAll(fallback.owned);
+                  joined.addAll(fallback.joined);
+                }
+              }
+
+              // Ensure owned set does not appear in joined
+              joined.removeAll(owned);
+
+              _ownedBoardIds = owned;
+              _joinedBoardIds = joined;
+
+              developer.log(
+                'Board IDs resolved: owned=$owned joined=$joined',
+                name: 'BoardRepo',
+              );
 
               final activeBoardId = _activeBoardId;
               if (activeBoardId != null &&
@@ -123,11 +176,22 @@ class FirestoreBoardRepository implements BoardRepository {
               await _syncVisibleBoardsToLocal(
                 visibleBoardIds: {..._ownedBoardIds, ..._joinedBoardIds},
               );
-            } catch (_) {
-              // Keep the previous sync state on transient snapshot issues.
+            } catch (e, st) {
+              developer.log(
+                'Board sync failed: $e',
+                name: 'BoardRepo',
+                error: e,
+                stackTrace: st,
+              );
             }
           },
           onError: (error, stackTrace) {
+            developer.log(
+              'Board sync stream error: $error',
+              name: 'BoardRepo',
+              error: error,
+              stackTrace: stackTrace,
+            );
             if (error is FirebaseException &&
                 error.code == 'permission-denied') {
               return;
@@ -167,10 +231,14 @@ class FirestoreBoardRepository implements BoardRepository {
     _activeBoardController = StreamController<Board?>.broadcast();
 
     // Phase 4A: Separate listener for board metadata
-    _activeBoardMetadataSub = _firestoreService
-        .collection('boards')
-        .doc(trimmedBoardId)
-        .snapshots()
+    _activeBoardMetadataSub = StreamRegistry.instance
+        .getOrCreate<DocumentSnapshot<Map<String, dynamic>>>(
+          'board_doc:$trimmedBoardId',
+          () => _firestoreService
+              .collection('boards')
+              .doc(trimmedBoardId)
+              .snapshots(),
+        )
         .listen(
           (doc) async {
             try {
@@ -201,30 +269,6 @@ class FirestoreBoardRepository implements BoardRepository {
             _activeBoardController?.add(null);
           },
         );
-
-    // Phase 4A: Separate incremental listener for CRDT updates
-    _activeBoardCrdtSub = _firestoreService
-        .collection('boards')
-        .doc(trimmedBoardId)
-        .collection(_crdtUpdatesSubcollection)
-        .orderBy('timestamp')
-        .snapshots()
-        .listen(
-          (snapshot) async {
-            try {
-              for (final doc in snapshot.docs) {
-                final data = doc.data();
-                // Process CRDT updates incrementally
-                await _processCrdtUpdate(trimmedBoardId, data);
-              }
-            } catch (_) {
-              // Keep CRDT stream alive on errors
-            }
-          },
-          onError: (error, stackTrace) {
-            // Errors in CRDT stream don't affect main board stream
-          },
-        );
   }
 
   @override
@@ -232,8 +276,6 @@ class FirestoreBoardRepository implements BoardRepository {
     final activeBoardId = _activeBoardId;
     await _activeBoardMetadataSub?.cancel();
     _activeBoardMetadataSub = null;
-    await _activeBoardCrdtSub?.cancel();
-    _activeBoardCrdtSub = null;
     if (_activeBoardController != null && !_activeBoardController!.isClosed) {
       await _activeBoardController!.close();
     }
@@ -297,6 +339,11 @@ class FirestoreBoardRepository implements BoardRepository {
             if (controller.isClosed) {
               return;
             }
+
+            developer.log(
+              'Isar ${owned ? "owned" : "joined"} boards watcher fired: ${localBoards.length} boards',
+              name: 'BoardRepo',
+            );
 
             controller.add(
               localBoards
@@ -363,21 +410,112 @@ class FirestoreBoardRepository implements BoardRepository {
           }
 
           final members = <BoardMember>[];
+
+          // Collect UIDs and map member fields from members subcollection
+          final uids = <String>[];
+          final memberFieldsByUid = <String, Map<String, dynamic>>{};
           for (final doc in membersSnapshot.docs) {
             final data = doc.data();
             final uid = doc.id;
+            uids.add(uid);
+            memberFieldsByUid[uid] = data;
+          }
+
+          if (uids.isEmpty) return <BoardMember>[];
+
+          // First consult local Isar cache for profiles
+          final isar = await _localDatabaseService.database;
+          final cachedProfiles = <String, Map<String, dynamic>>{};
+          for (final uid in uids) {
+            final localNonFriend = await isar.localNonFriendProfiles
+                .filter()
+                .uidEqualTo(uid)
+                .findFirst();
+            final localFriend = await isar.localFriendProfiles
+                .filter()
+                .uidEqualTo(uid)
+                .findFirst();
+
+            if (localFriend != null) {
+              cachedProfiles[uid] = {
+                'displayName': localFriend.displayName,
+                'email': localFriend.email,
+                'photoURL': localFriend.photoURL,
+              };
+            } else if (localNonFriend != null) {
+              cachedProfiles[uid] = {
+                'displayName': localNonFriend.displayName,
+                'email': localNonFriend.email,
+                'photoURL': localNonFriend.photoURL,
+              };
+            }
+          }
+
+          // Determine missing UIDs to fetch via whereIn batching
+          final missingUids = uids
+              .where((u) => !cachedProfiles.containsKey(u))
+              .toList();
+          final fetchedProfiles = <String, Map<String, dynamic>>{};
+
+          const chunkSize = 30;
+          for (var i = 0; i < missingUids.length; i += chunkSize) {
+            final chunk = missingUids.sublist(
+              i,
+              (i + chunkSize).clamp(0, missingUids.length),
+            );
+            try {
+              final snapshot = await _firestoreService
+                  .collection('users')
+                  .where(FieldPath.documentId, whereIn: chunk)
+                  .get();
+              for (final doc in snapshot.docs) {
+                fetchedProfiles[doc.id] = doc.data();
+              }
+            } catch (_) {
+              // Fallback: individual gets
+              for (final id in chunk) {
+                final doc = await _firestoreService
+                    .collection('users')
+                    .doc(id)
+                    .get();
+                if (doc.exists) {
+                  fetchedProfiles[id] = doc.data() ?? const <String, dynamic>{};
+                }
+              }
+            }
+          }
+
+          // Merge cached + fetched and build BoardMember list
+          for (final uid in uids) {
+            final data = memberFieldsByUid[uid] ?? {};
             final role = data['role'] as String? ?? 'viewer';
             final status = data['status'] as String? ?? 'active';
             final joinedAt = data['joinedAt'] != null
                 ? (data['joinedAt'] as Timestamp).toDate()
                 : null;
 
-            // Fetch user data for display name, email, photoUrl
-            final userDoc = await _firestoreService
-                .collection('users')
-                .doc(uid)
-                .get();
-            final userData = userDoc.data();
+            final profile = cachedProfiles[uid] ?? fetchedProfiles[uid];
+
+            final displayName = profile?['displayName'] as String?;
+            final email = profile?['email'] as String?;
+            final photoUrl = profile?['photoURL'] as String?;
+
+            // Persist fetched profiles to local cache for future use
+            if (profile != null && !cachedProfiles.containsKey(uid)) {
+              unawaited(
+                isar.writeTxn(() async {
+                  await isar.localNonFriendProfiles.put(
+                    LocalNonFriendProfile(
+                      uid: uid,
+                      displayName: displayName ?? '',
+                      email: email,
+                      photoURL: photoUrl,
+                      cachedAtOverride: DateTime.now(),
+                    ),
+                  );
+                }),
+              );
+            }
 
             members.add(
               BoardMember(
@@ -385,12 +523,13 @@ class FirestoreBoardRepository implements BoardRepository {
                 role: role,
                 status: status,
                 joinedAt: joinedAt,
-                displayName: userData?['displayName'] as String?,
-                email: userData?['email'] as String?,
-                photoUrl: userData?['photoURL'] as String?,
+                displayName: displayName,
+                email: email,
+                photoUrl: photoUrl,
               ),
             );
           }
+
           return members;
         });
   }
@@ -432,47 +571,74 @@ class FirestoreBoardRepository implements BoardRepository {
     Map<String, dynamic> data,
   ) async {
     final uid = _syncUserId;
-    if (uid == null) return;
+    if (uid == null) {
+      developer.log(
+        'Board sync: _syncUserId is null, skipping $boardId',
+        name: 'BoardRepo',
+      );
+      return;
+    }
 
-    final isar = await _localDatabaseService.database;
-    final existingBoard = await isar.localBoards.getByBoardId(boardId);
-    final localBoard = existingBoard ?? LocalBoard();
+    developer.log(
+      'Board sync: writing $boardId to Isar',
+      name: 'BoardRepo',
+    );
 
-    localBoard
-      ..boardId = boardId
-      ..title = data['title'] ?? data['name'] ?? 'Untitled Board'
-      ..ownerId = data['ownerId'] ?? ''
-      ..members = List<String>.from(data['members'] ?? const <String>[])
-      ..engine = data['engine'] ?? crdtEngine
-      ..visibility = (data['visibility'] as String?) ?? Board.visibilityPrivate
-      ..privateJoinPolicy =
-          (data['privateJoinPolicy'] as String?) ?? Board.policyOwnerOnlyInvite
-      ..tags = List<String>.from(data['tags'] ?? const <String>[])
-      ..joinViaCodeEnabled = (data['joinViaCodeEnabled'] as bool?) ?? false
-      ..whoCanInvite =
-          ((data['invitePolicy'] as Map<String, dynamic>?)?['whoCanInvite']
-              as String?) ??
-          Board.inviteOwnerOnly
-      ..defaultLinkJoinRole =
-          ((data['invitePolicy']
-                  as Map<String, dynamic>?)?['defaultLinkJoinRole']
-              as String?) ??
-          Board.roleViewer
-      ..currentUserRole = await _resolveCurrentUserRole(
-        boardId: boardId,
-        ownerId: (data['ownerId'] as String?) ?? '',
-        uid: uid,
-      )
-      ..previewPath = existingBoard?.previewPath
-      ..createdAt =
-          (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()
-      ..updatedAt =
-          (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now()
-      ..isSynced = true;
+    try {
+      final isar = await _localDatabaseService.database;
+      final existingBoard = await isar.localBoards.getByBoardId(boardId);
+      final localBoard = existingBoard ?? LocalBoard();
 
-    await isar.writeTxn(() async {
-      await isar.localBoards.putByBoardId(localBoard);
-    });
+      localBoard
+        ..boardId = boardId
+        ..title = data['title'] ?? data['name'] ?? 'Untitled Board'
+        ..ownerId = data['ownerId'] ?? ''
+        ..members = List<String>.from(data['members'] ?? const <String>[])
+        ..engine = data['engine'] ?? crdtEngine
+        ..visibility =
+            (data['visibility'] as String?) ?? Board.visibilityPrivate
+        ..privateJoinPolicy =
+            (data['privateJoinPolicy'] as String?) ??
+            Board.policyOwnerOnlyInvite
+        ..tags = List<String>.from(data['tags'] ?? const <String>[])
+        ..joinViaCodeEnabled = (data['joinViaCodeEnabled'] as bool?) ?? false
+        ..whoCanInvite =
+            ((data['invitePolicy'] as Map<String, dynamic>?)?['whoCanInvite']
+                as String?) ??
+            Board.inviteOwnerOnly
+        ..defaultLinkJoinRole =
+            ((data['invitePolicy']
+                    as Map<String, dynamic>?)?['defaultLinkJoinRole']
+                as String?) ??
+            Board.roleViewer
+        ..currentUserRole = await _resolveCurrentUserRole(
+          boardId: boardId,
+          ownerId: (data['ownerId'] as String?) ?? '',
+          uid: uid,
+        )
+        ..previewPath = existingBoard?.previewPath
+        ..createdAt =
+            (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()
+        ..updatedAt =
+            (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now()
+        ..isSynced = true;
+
+      await isar.writeTxn(() async {
+        await isar.localBoards.putByBoardId(localBoard);
+      });
+
+      developer.log(
+        'Board sync: $boardId written to Isar successfully',
+        name: 'BoardRepo',
+      );
+    } catch (e, st) {
+      developer.log(
+        'Board sync: _syncSingleBoardToLocal failed for $boardId: $e',
+        name: 'BoardRepo',
+        error: e,
+        stackTrace: st,
+      );
+    }
   }
 
   Future<Board?> _loadLocalBoard(String boardId) async {
@@ -496,18 +662,60 @@ class FirestoreBoardRepository implements BoardRepository {
     });
   }
 
+  /// Fallback: query the boards collection directly when `users/{uid}/boards`
+  /// subcollection is empty but the user may have legacy boards that existed
+  /// before the subcollection migration was deployed.
+  Future<({Set<String> owned, Set<String> joined})?> _fallbackSyncBoardsForUser(
+    String uid,
+  ) async {
+    try {
+      final userDoc = await _firestoreService
+          .collection('users')
+          .doc(uid)
+          .get();
+      final count = _toInt(userDoc.data()?['boardCount']);
+      if (count <= 0) return null;
+
+      final snapshot = await _firestoreService
+          .collection('boards')
+          .where('ownerId', isEqualTo: uid)
+          .get();
+
+      if (snapshot.docs.isEmpty) return null;
+
+      final owned = snapshot.docs.map((doc) => doc.id).toSet();
+      return (owned: owned, joined: <String>{});
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _syncVisibleBoardsToLocal({
     required Set<String> visibleBoardIds,
   }) async {
     if (visibleBoardIds.isEmpty) {
+      developer.log(
+        'Board sync: no visible board IDs, clearing cache',
+        name: 'BoardRepo',
+      );
       _ownedBoardDocs.clear();
       _joinedBoardDocs.clear();
       await _pruneLocalBoards(visibleBoardIds: visibleBoardIds);
       return;
     }
 
+    developer.log(
+      'Board sync: fetching ${visibleBoardIds.length} boards',
+      name: 'BoardRepo',
+    );
+
     final fetchResult = await _fetchBoardDocumentsByIdSet(
       ids: visibleBoardIds.toList(growable: false),
+    );
+
+    developer.log(
+      'Board sync: fetched=${fetchResult.docsById.length} missing=${fetchResult.missingIds.length}',
+      name: 'BoardRepo',
     );
 
     for (final entry in fetchResult.docsById.entries) {
@@ -551,10 +759,19 @@ class FirestoreBoardRepository implements BoardRepository {
       );
 
       try {
+        developer.log(
+          'Board fetch: whereIn chunk size=${chunk.length}',
+          name: 'BoardRepo',
+        );
         final snapshot = await _firestoreService
             .collection('boards')
             .where(FieldPath.documentId, whereIn: chunk)
             .get();
+
+        developer.log(
+          'Board fetch: whereIn returned ${snapshot.docs.length} docs',
+          name: 'BoardRepo',
+        );
 
         for (final doc in snapshot.docs) {
           docsById[doc.id] = doc.data();
@@ -565,6 +782,11 @@ class FirestoreBoardRepository implements BoardRepository {
             .where((id) => !foundIds.contains(id))
             .toList(growable: false);
 
+        developer.log(
+          'Board fetch: whereIn missing ${missingChunkIds.length} IDs, falling back to individual gets',
+          name: 'BoardRepo',
+        );
+
         for (final id in missingChunkIds) {
           try {
             final doc = await _firestoreService
@@ -574,13 +796,21 @@ class FirestoreBoardRepository implements BoardRepository {
             if (doc.exists) {
               docsById[id] = doc.data() ?? const <String, dynamic>{};
             } else {
+              developer.log('Board fetch: doc $id does not exist', name: 'BoardRepo');
               missingIds.add(id);
             }
-          } catch (_) {
-            // Keep existing local data when doc checks fail transiently.
+          } catch (e) {
+            developer.log(
+              'Board fetch: individual get for $id failed: $e',
+              name: 'BoardRepo',
+            );
           }
         }
-      } catch (_) {
+      } catch (e) {
+        developer.log(
+          'Board fetch: whereIn failed ($e), falling back to individual gets for chunk',
+          name: 'BoardRepo',
+        );
         for (final id in chunk) {
           try {
             final doc = await _firestoreService
@@ -590,10 +820,17 @@ class FirestoreBoardRepository implements BoardRepository {
             if (doc.exists) {
               docsById[id] = doc.data() ?? const <String, dynamic>{};
             } else {
+              developer.log(
+                'Board fetch: doc $id does not exist (fallback)',
+                name: 'BoardRepo',
+              );
               missingIds.add(id);
             }
-          } catch (_) {
-            // Keep existing local data when doc checks fail transiently.
+          } catch (e) {
+            developer.log(
+              'Board fetch: individual get for $id failed (fallback): $e',
+              name: 'BoardRepo',
+            );
           }
         }
       }
@@ -718,9 +955,13 @@ class FirestoreBoardRepository implements BoardRepository {
       });
       transaction.set(userRef, {
         'boardCount': FieldValue.increment(1),
-        'ownedBoards': FieldValue.arrayUnion([docRef.id]),
-        'joinedBoards': FieldValue.arrayRemove([docRef.id]),
-        'lastActive': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      transaction.set(userRef.collection('boards').doc(docRef.id), {
+        'boardId': docRef.id,
+        'relation': 'owned',
+        'addedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     });
 
@@ -769,10 +1010,11 @@ class FirestoreBoardRepository implements BoardRepository {
         final boardData = boardDoc.data() ?? const <String, dynamic>{};
         final ownerId = boardData['ownerId']?.toString();
         if (ownerId == uid) {
-          transaction.set(userRef, {
-            'ownedBoards': FieldValue.arrayUnion([boardId]),
-            'joinedBoards': FieldValue.arrayRemove([boardId]),
-            'lastActive': FieldValue.serverTimestamp(),
+          transaction.set(userRef.collection('boards').doc(boardId), {
+            'boardId': boardId,
+            'relation': 'owned',
+            'addedAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
           return;
         }
@@ -782,10 +1024,11 @@ class FirestoreBoardRepository implements BoardRepository {
           'updatedAt': FieldValue.serverTimestamp(),
         });
 
-        transaction.set(userRef, {
-          'joinedBoards': FieldValue.arrayUnion([boardId]),
-          'ownedBoards': FieldValue.arrayRemove([boardId]),
-          'lastActive': FieldValue.serverTimestamp(),
+        transaction.set(userRef.collection('boards').doc(boardId), {
+          'boardId': boardId,
+          'relation': 'joined',
+          'addedAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       });
     } on FirebaseException catch (e) {
@@ -961,39 +1204,6 @@ class FirestoreBoardRepository implements BoardRepository {
           .watch(fireImmediately: true)
           .map((boards) => boards.isEmpty ? null : boards.first.previewPath);
     });
-  }
-
-  Future<void> _processCrdtUpdate(
-    String boardId,
-    Map<String, dynamic> updateData,
-  ) async {
-    final isar = await _localDatabaseService.database;
-
-    // Store CRDT update for later processing by canvas sync engine
-    final localUpdate = LocalCrdtUpdate()
-      ..boardId = boardId
-      ..updateId =
-          updateData['updateId'] as String? ??
-          'update_${DateTime.now().millisecondsSinceEpoch}'
-      ..elementId = updateData['elementId'] as String?
-      ..payloadBase64 = updateData['payloadBase64'] as String? ?? ''
-      ..sourceClientId = updateData['sourceClientId'] as String? ?? ''
-      ..appliedAt =
-          (updateData['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
-
-    await isar.writeTxn(() async {
-      await isar.localCrdtUpdates.put(localUpdate);
-    });
-  }
-
-  Set<String> _toStringSet(dynamic value) {
-    if (value is! Iterable) {
-      return <String>{};
-    }
-    return value
-        .map((item) => item?.toString() ?? '')
-        .where((item) => item.isNotEmpty)
-        .toSet();
   }
 
   int _toInt(dynamic value) {

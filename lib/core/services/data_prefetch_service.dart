@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../../domain/repositories/board/board_repository.dart';
 import '../../domain/repositories/friends/friends_repository.dart';
 import '../../domain/repositories/invitation/invitation_repository.dart';
@@ -14,7 +16,7 @@ class DataPrefetchService {
   });
 
   /// Phase 4E: Prefetch data on app launch to warm cache
-  Future<void> prefetchInitialData(String _uid) async {
+  Future<void> prefetchInitialData(String uid) async {
     try {
       // Start syncing boards in background
       await boardRepository.startBoardsSync();
@@ -26,7 +28,7 @@ class DataPrefetchService {
       await _prefetchInvitations();
     } catch (e) {
       // Silently fail - prefetching is a performance optimization, not critical
-      print('Prefetch failed: $e');
+      debugPrint('Prefetch failed: $e');
     }
   }
 

@@ -81,7 +81,7 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
     if (photoUrl.isNotEmpty) {
       return CircleAvatar(
         backgroundImage: NetworkImage(photoUrl),
-        onBackgroundImageError: (_, __) {},
+        onBackgroundImageError: (_, _) {},
         child: const SizedBox.shrink(),
       );
     }
@@ -101,7 +101,7 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
       return CircleAvatar(
         radius: 24,
         backgroundImage: NetworkImage(url),
-        onBackgroundImageError: (_, __) {},
+        onBackgroundImageError: (_, _) {},
       );
     }
 

@@ -56,11 +56,14 @@ module.exports = async (request) => {
       transaction.set(
         targetUserRef,
         {
-          joinedBoards: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
           [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(-1),
-          lastActive: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
+      );
+
+      // Also remove per-user board index doc for new schema
+      transaction.delete(
+        targetUserRef.collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION).doc(boardId.trim()),
       );
 
       return {

@@ -23,12 +23,8 @@ class FirestorePaths {
   static const String displayName = 'displayName';
   static const String photoURL = 'photoURL';
   static const String bio = 'bio';
-  static const String isOnline = 'isOnline';
   static const String createdAt = 'createdAt';
-  static const String lastActive = 'lastActive';
   static const String searchKeywords = 'searchKeywords';
-  static const String ownedBoards = 'ownedBoards';
-  static const String joinedBoards = 'joinedBoards';
   static const String boardCount = 'boardCount';
   static const String friendCount = 'friendCount';
   static const String workspaceIds = 'workspaceIds';

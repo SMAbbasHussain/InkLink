@@ -81,13 +81,11 @@ module.exports = async (request) => {
       if (currentUserDoc.exists) {
         transaction.update(currentUserRef, {
           [FirestorePaths.FRIEND_COUNT]: Math.max(0, currentCount - 1),
-          [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
         });
       }
       if (targetUserDoc.exists) {
         transaction.update(targetUserRef, {
           [FirestorePaths.FRIEND_COUNT]: Math.max(0, targetCount - 1),
-          [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
         });
       }
 

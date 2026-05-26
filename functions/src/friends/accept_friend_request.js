@@ -194,11 +194,9 @@ module.exports = async (request) => {
 
       transaction.update(senderRef, {
         [FirestorePaths.FRIEND_COUNT]: senderFriendCount + 1,
-        [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
       });
       transaction.update(recipientRef, {
         [FirestorePaths.FRIEND_COUNT]: recipientFriendCount + 1,
-        [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
       });
 
       // Delete the request

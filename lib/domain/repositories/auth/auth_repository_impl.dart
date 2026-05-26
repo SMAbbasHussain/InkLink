@@ -1,20 +1,33 @@
+import 'dart:developer' as developer;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'auth_repository.dart';
-import '../../../core/services/firestore_service.dart';
 import '../../../core/services/auth_service.dart';
+import '../../../core/services/firestore_service.dart';
 
 class FirebaseAuthRepository implements AuthRepository {
   final AuthService _authService;
   final FirestoreService _firestoreService;
-  final GoogleSignIn _googleSignIn = GoogleSignIn();
+  final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
+  bool _googleInitialized = false;
 
   FirebaseAuthRepository({
     required AuthService authService,
     required FirestoreService firestoreService,
   }) : _authService = authService,
        _firestoreService = firestoreService;
+
+  Future<void> _ensureGoogleInitialized() async {
+    if (_googleInitialized) return;
+    _googleInitialized = true;
+    await _googleSignIn.initialize(
+      serverClientId: dotenv.env['GOOGLE_WEB_CLIENT_ID'],
+    );
+  }
 
   @override
   Stream<User?> get user => _authService.getInstance().authStateChanges();
@@ -31,13 +44,20 @@ class FirebaseAuthRepository implements AuthRepository {
   @override
   Future<User?> signInWithGoogle() async {
     try {
-      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-      if (googleUser == null) return null;
+      await _ensureGoogleInitialized();
+      final GoogleSignInAccount googleUser = await _googleSignIn.authenticate();
 
       final GoogleSignInAuthentication googleAuth =
           await googleUser.authentication;
+      if (googleAuth.idToken == null) {
+        developer.log('Google sign-in returned no idToken.', name: 'Auth');
+        throw FirebaseAuthException(
+          code: 'missing-google-token',
+          message:
+              'Google sign-in returned no idToken. Check SHA-1/web client ID configuration.',
+        );
+      }
       final AuthCredential credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
@@ -45,8 +65,24 @@ class FirebaseAuthRepository implements AuthRepository {
           .getInstance()
           .signInWithCredential(credential);
       return userCredential.user;
+    } on GoogleSignInException catch (e) {
+      if (e.code == GoogleSignInExceptionCode.canceled) return null;
+      developer.log(
+        'Google sign-in exception: ${e.code}',
+        name: 'Auth',
+        error: e,
+      );
+      throw 'Google sign-in failed (${e.code}). Check OAuth client configuration.';
     } on FirebaseAuthException catch (e) {
+      developer.log('Google sign-in failed: ${e.code}', name: 'Auth', error: e);
       throw _mapFirebaseAuthError(e);
+    } on PlatformException catch (e) {
+      developer.log(
+        'Google sign-in platform error: ${e.code}',
+        name: 'Auth',
+        error: e,
+      );
+      throw 'Google sign-in failed (${e.code}). Check SHA-1 / OAuth client configuration.';
     }
   }
 
@@ -63,7 +99,6 @@ class FirebaseAuthRepository implements AuthRepository {
     return upsertUserData(uid, {
       'fcmToken': token,
       'fcmTokens': FieldValue.arrayUnion([token]),
-      'lastActive': FieldValue.serverTimestamp(),
     });
   }
 
@@ -71,7 +106,6 @@ class FirebaseAuthRepository implements AuthRepository {
   Future<void> removeFcmTokenOnSignOut(String uid, {String? token}) {
     final userUpdates = <String, dynamic>{
       'fcmToken': FieldValue.delete(),
-      'lastActive': FieldValue.serverTimestamp(),
     };
 
     if (token != null && token.isNotEmpty) {
@@ -90,9 +124,10 @@ class FirebaseAuthRepository implements AuthRepository {
     required List<String> searchKeywords,
     required bool isNewUser,
   }) {
+    final normalizedEmail = email?.trim().toLowerCase();
     return upsertUserData(uid, {
       'uid': uid,
-      'email': email,
+      'email': normalizedEmail,
       'displayName': displayName,
       'photoURL': photoURL,
       'lastActive': FieldValue.serverTimestamp(),
@@ -100,17 +135,19 @@ class FirebaseAuthRepository implements AuthRepository {
       if (isNewUser) 'createdAt': FieldValue.serverTimestamp(),
       if (isNewUser) 'friendCount': 0,
       if (isNewUser) 'boardCount': 0,
-      if (isNewUser) 'ownedBoards': <String>[],
-      if (isNewUser) 'joinedBoards': <String>[],
     });
   }
 
   @override
   Future<User?> signUp(String name, String email, String password) async {
     try {
+      final normalizedEmail = email.trim().toLowerCase();
       final credential = await _authService
           .getInstance()
-          .createUserWithEmailAndPassword(email: email, password: password);
+          .createUserWithEmailAndPassword(
+            email: normalizedEmail,
+            password: password,
+          );
       return credential.user;
     } on FirebaseAuthException catch (e) {
       throw _mapFirebaseAuthError(e);
@@ -120,11 +157,13 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<User?> signIn(String email, String password) async =>
-      (await _authService.getInstance().signInWithEmailAndPassword(
-        email: email,
-        password: password,
-      )).user;
+  Future<User?> signIn(String email, String password) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    return (await _authService.getInstance().signInWithEmailAndPassword(
+      email: normalizedEmail,
+      password: password,
+    )).user;
+  }
 
   @override
   Future<void> signOut() async {
@@ -134,6 +173,12 @@ class FirebaseAuthRepository implements AuthRepository {
 
   String _mapFirebaseAuthError(FirebaseAuthException e) {
     switch (e.code) {
+      case 'account-exists-with-different-credential':
+        return 'Account exists with different credentials.';
+      case 'invalid-credential':
+        return 'Invalid credential. Check Google sign-in configuration.';
+      case 'operation-not-allowed':
+        return 'Google sign-in is disabled for this project.';
       case 'user-disabled':
         return "This account has been disabled.";
       case 'user-not-found':
@@ -143,7 +188,7 @@ class FirebaseAuthRepository implements AuthRepository {
       case 'network-request-failed':
         return "Check your internet connection.";
       default:
-        return "Authentication failed. Please try again.";
+        return "Authentication failed (${e.code}). Please try again.";
     }
   }
 }

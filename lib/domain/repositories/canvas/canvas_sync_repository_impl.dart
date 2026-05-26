@@ -779,12 +779,40 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       for (final updateId in syncedUpdateIds) {
         await markCrdtUpdateSynced(updateId);
       }
+      
+      // Clean up old synced updates to keep Isar bounded
+      await _cleanupOldSyncedUpdates(boardId);
+      
       return true;
     } catch (error) {
       if (_isPermissionDenied(error)) {
         return false;
       }
       rethrow;
+    }
+  }
+
+  Future<void> _cleanupOldSyncedUpdates(String boardId) async {
+    try {
+      final isar = await _localDatabaseService.database;
+      final oneHourAgo = DateTime.now().subtract(const Duration(hours: 1));
+      await isar.writeTxn(() async {
+        await isar.localCrdtUpdates
+            .filter()
+            .boardIdEqualTo(boardId)
+            .isSyncedEqualTo(true)
+            .appliedAtLessThan(oneHourAgo)
+            .deleteAll();
+      });
+    } catch (error, stackTrace) {
+      _logError(
+        'Failed to cleanup old synced CRDT updates',
+        error,
+        stackTrace,
+        boardId: boardId,
+        event: 'cleanup_old_updates',
+      );
+      // Don't rethrow; cleanup failures shouldn't break sync
     }
   }
 

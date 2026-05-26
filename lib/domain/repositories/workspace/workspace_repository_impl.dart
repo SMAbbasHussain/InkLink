@@ -234,22 +234,19 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
             return <Board>[];
           }
 
-          final userSnapshot = await _firestoreService
+            final userBoardsSnapshot = await _firestoreService
               .collection(FirestorePaths.users)
               .doc(currentUid)
+              .collection('boards')
               .get();
-          final userData = userSnapshot.data() ?? {};
-          final ownedBoards =
-              (userData[FirestorePaths.ownedBoards] as List<dynamic>?)
-                  ?.whereType<String>()
-                  .toSet() ??
-              <String>{};
-          final joinedBoards =
-              (userData[FirestorePaths.joinedBoards] as List<dynamic>?)
-                  ?.whereType<String>()
-                  .toSet() ??
-              <String>{};
-          final readableBoardIds = {...ownedBoards, ...joinedBoards};
+            final readableBoardIds = <String>{};
+            for (final doc in userBoardsSnapshot.docs) {
+            final data = doc.data();
+            final boardId = (data['boardId'] as String?) ?? doc.id;
+            if (boardId.isNotEmpty) {
+              readableBoardIds.add(boardId);
+            }
+            }
 
           final isar = await _localDatabaseService.database;
           final localBoards = await isar.localBoards.where().anyId().findAll();

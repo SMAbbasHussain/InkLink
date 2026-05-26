@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:inklink/app_view.dart';
 import 'package:inklink/core/theme/app_theme.dart';
 import 'package:inklink/core/services/firestore_service.dart';
@@ -10,6 +9,7 @@ import 'package:inklink/core/services/cloud_functions_service.dart';
 import 'package:inklink/core/services/local_notification_service.dart';
 import 'package:inklink/core/services/messaging_service.dart';
 import 'package:inklink/core/services/data_prefetch_service.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:inklink/domain/repositories/auth/auth_repository.dart';
 import 'package:inklink/domain/repositories/auth/auth_repository_impl.dart';
 import 'package:inklink/domain/repositories/board/board_repository.dart';
@@ -60,6 +60,10 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
   await _ensureFirebaseInitialized();
+  final rtdb = FirebaseDatabase.instanceFor(
+    app: Firebase.app(),
+    databaseURL: dotenv.env['FIREBASE_RTDB_URL']!,
+  );
   final messagingService = MessagingServiceImpl();
   await LocalNotificationService.initialize(navigatorKey: appNavigatorKey);
   messagingService.onMessage.listen(
@@ -100,12 +104,7 @@ void main() async {
           ),
         ),
         RepositoryProvider<PresenceRepository>(
-          create: (context) => FirebasePresenceRepository(
-            database: FirebaseDatabase.instanceFor(
-              app: Firebase.app(),
-              databaseURL: dotenv.env['FIREBASE_RTDB_URL'],
-            ),
-          ),
+          create: (context) => FirebasePresenceRepository(database: rtdb),
         ),
         RepositoryProvider<FriendsRepository>(
           create: (context) => FriendsRepositoryImpl(

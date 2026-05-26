@@ -96,16 +96,11 @@ module.exports = async (request) => {
           if (memberUid !== boardOwnerId) {
             transaction.delete(memberDoc.ref);
 
-            // Remove board from their joinedBoards
-            transaction.set(
-              firestore.collection(FirestorePaths.USERS).doc(memberUid),
-              {
-                [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove(
-                  boardId.trim(),
-                ),
-                [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-              },
-              { merge: true },
+            // Remove per-user board index doc
+            transaction.delete(
+              firestore.collection(FirestorePaths.USERS).doc(memberUid)
+                .collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION)
+                .doc(boardId.trim()),
             );
           }
         });

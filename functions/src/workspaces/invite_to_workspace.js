@@ -54,22 +54,14 @@ module.exports = async (request) => {
       if (identifier.includes('@')) {
         const normalizedEmail = identifier.toLowerCase();
 
-        let userByEmail = await firestore
+        const userByEmail = await firestore
           .collection(FirestorePaths.USERS)
           .where(FirestorePaths.EMAIL, '==', normalizedEmail)
           .limit(1)
           .get();
 
-        // Fallback for historical records that may not have lowercased emails.
-        if (userByEmail.docs.length === 0 && identifier !== normalizedEmail) {
-          userByEmail = await firestore
-            .collection(FirestorePaths.USERS)
-            .where(FirestorePaths.EMAIL, '==', identifier)
-            .limit(1)
-            .get();
-        }
-
         if (userByEmail.docs.length === 0) {
+          // If migration has not yet run, record unresolved email for operator review.
           unresolvedEmails.push(identifier);
           continue;
         }

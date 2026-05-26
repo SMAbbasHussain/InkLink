@@ -139,3 +139,6 @@ server/service-account.json
 server/.env
 websocket_migration_plan.md
 optimizations_plan.md
+plan.md
+firestore.indexes.json
+.opencode/

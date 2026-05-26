@@ -104,13 +104,15 @@ module.exports = async (request) => {
         transaction.set(
           firestore.collection(FirestorePaths.USERS).doc(uid),
           {
-            [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove(
-              boardId,
-            ),
-            [FirestorePaths.OWNED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId),
             [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },
+        );
+        // Also remove per-user board index doc
+        transaction.delete(
+          firestore.collection(FirestorePaths.USERS).doc(uid)
+            .collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION)
+            .doc(boardId),
         );
       });
 

@@ -49,14 +49,29 @@ module.exports = async (request) => {
     const now = admin.firestore.FieldValue.serverTimestamp();
 
     return await firestore.runTransaction(async (transaction) => {
-      // Create board document
+      // Create board document with full schema (matching client-side createBoard)
+      const defaultInvitePolicy = {
+        whoCanInvite: 'owner_only',
+        defaultLinkJoinRole: 'viewer',
+      };
       transaction.set(boardRef, {
+        [FirestorePaths.BOARD_ID]: boardId,
         [FirestorePaths.OWNER_ID]: uid,
         [FirestorePaths.TITLE]: title.trim(),
+        [FirestorePaths.NAME]: title.trim(),
         [FirestorePaths.DESCRIPTION]: description?.trim() || '',
         [FirestorePaths.VISIBILITY]: visibility || 'private',
+        [FirestorePaths.PRIVATE_JOIN_POLICY]: 'owner_only_invite',
+        members: [uid],
+        [FirestorePaths.MEMBER_COUNT]: 1,
+        engine: 'crdt_v1',
+        tags: [],
+        [FirestorePaths.JOIN_VIA_CODE_ENABLED]: false,
+        [FirestorePaths.JOIN_CODE]: boardId,
+        [FirestorePaths.INVITE_POLICY]: defaultInvitePolicy,
         [FirestorePaths.CREATED_AT]: now,
         [FirestorePaths.UPDATED_AT]: now,
+        lastEditedBy: uid,
       });
 
       // Add creator as board owner in members subcollection
@@ -86,12 +101,23 @@ module.exports = async (request) => {
         },
       );
 
-      // Update user's ownedBoards list
+      // Update user's board count
       transaction.set(
         firestore.collection(FirestorePaths.USERS).doc(uid),
         {
-          [FirestorePaths.OWNED_BOARDS]: admin.firestore.FieldValue.arrayUnion(boardId),
           [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(1),
+          [FirestorePaths.UPDATED_AT]: now,
+        },
+        { merge: true },
+      );
+
+      // Also add per-user board index doc for new schema
+      transaction.set(
+        firestore.collection(FirestorePaths.USERS).doc(uid).collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION).doc(boardId),
+        {
+          boardId,
+          relation: 'owned',
+          addedAt: now,
           [FirestorePaths.UPDATED_AT]: now,
         },
         { merge: true },

@@ -94,10 +94,20 @@ module.exports = async (request) => {
         [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
       });
       transaction.set(userRef, {
-        [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayUnion(boardId),
         [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(1),
-        [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
+
+      // Also add per-user board index doc
+      transaction.set(
+        userRef.collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION).doc(boardId),
+        {
+          boardId,
+          relation: 'joined',
+          addedAt: admin.firestore.FieldValue.serverTimestamp(),
+          [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
 
       // Keep board_invites as a pending-only collection.
       // Once accepted, remove the invite document.

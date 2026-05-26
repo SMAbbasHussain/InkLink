@@ -55,107 +55,118 @@ module.exports = async (request) => {
       throw new HttpsError('permission-denied', 'You are not an active workspace member.');
     }
 
-    const userDoc = await firestore.collection(FirestorePaths.USERS).doc(uid).get();
-    const userData = userDoc.data() || {};
-    const ownedBoards = Array.isArray(userData.ownedBoards) ? userData.ownedBoards : [];
-    const joinedBoards = Array.isArray(userData.joinedBoards) ? userData.joinedBoards : [];
+    const boardData = boardDoc.data() || {};
+    const boardOwnerId = boardData[FirestorePaths.OWNER_ID];
+    const boardMembers = Array.isArray(boardData.members) ? boardData.members : [];
 
-    if (!ownedBoards.includes(boardId.trim()) && !joinedBoards.includes(boardId.trim())) {
+    if (boardOwnerId !== uid && !boardMembers.includes(uid)) {
       throw new HttpsError('permission-denied', 'You can only add boards you own or joined.');
     }
 
-    return await firestore.runTransaction(async (transaction) => {
-      const boardData = boardDoc.data() || {};
-      const boardOwnerId = boardData[FirestorePaths.OWNER_ID];
-      const now = admin.firestore.FieldValue.serverTimestamp();
+    // Use a batched write to avoid long transactions and repeated locks for large workspaces.
+    const now = admin.firestore.FieldValue.serverTimestamp();
 
-      const memberTargets = [];
-      for (const memberDoc of workspaceMembersSnapshot.docs) {
-        const memberData = memberDoc.data() || {};
-        const memberUid = (memberData[FirestorePaths.UID] || memberDoc.id).toString().trim();
-        if (!memberUid) {
-          continue;
-        }
+    // Prepare member UIDs and their board-member doc refs
+    const memberUids = [];
+    const boardMemberRefs = [];
+    for (const memberDoc of workspaceMembersSnapshot.docs) {
+      const memberData = memberDoc.data() || {};
+      const memberUid = (memberData[FirestorePaths.UID] || memberDoc.id).toString().trim();
+      if (!memberUid) continue;
+      memberUids.push(memberUid);
+      boardMemberRefs.push(
+        boardRef.collection(FirestorePaths.BOARD_MEMBERS_SUBCOLLECTION).doc(memberUid),
+      );
+    }
 
-        const boardMemberRef = boardRef
-          .collection(FirestorePaths.BOARD_MEMBERS_SUBCOLLECTION)
-          .doc(memberUid);
-        const existingBoardMemberDoc = await transaction.get(boardMemberRef);
+    const batch = firestore.batch();
 
-        memberTargets.push({
-          memberUid,
-          boardMemberRef,
-          existingBoardMemberDoc,
-        });
-      }
+    // Upsert workspace->board link
+    batch.set(
+      workspaceRef.collection(FirestorePaths.WORKSPACE_BOARDS_SUBCOLLECTION).doc(boardId.trim()),
+      {
+        boardId: boardId.trim(),
+        [FirestorePaths.BOARD_SOURCE]: 'imported',
+        addedBy: uid,
+        addedAt: now,
+        visibilityInWorkspace: 'private',
+        [FirestorePaths.UPDATED_AT]: now,
+      },
+      { merge: true },
+    );
 
-      transaction.set(
-        workspaceRef
-          .collection(FirestorePaths.WORKSPACE_BOARDS_SUBCOLLECTION)
-          .doc(boardId.trim()),
+    if (!workspaceBoardDoc.exists) {
+      batch.set(
+        workspaceRef,
         {
-          boardId: boardId.trim(),
-          [FirestorePaths.BOARD_SOURCE]: 'imported',
-          addedBy: uid,
-          addedAt: now,
-          visibilityInWorkspace: 'private',
+          boardCount: admin.firestore.FieldValue.increment(1),
           [FirestorePaths.UPDATED_AT]: now,
         },
         { merge: true },
       );
+    }
 
-      if (!workspaceBoardDoc.exists) {
-        transaction.set(
-          workspaceRef,
+    // Fetch existing board member docs in parallel to determine whether to insert full doc or just update status
+    const existingPromises = boardMemberRefs.map((ref) => ref.get());
+    const existingDocs = await Promise.all(existingPromises);
+
+    for (let idx = 0; idx < memberUids.length; idx++) {
+      const memberUid = memberUids[idx];
+      const existing = existingDocs[idx];
+      if (existing.exists) {
+        batch.set(
+          boardMemberRefs[idx],
           {
-            boardCount: admin.firestore.FieldValue.increment(1),
+            status: 'active',
+            [FirestorePaths.UPDATED_AT]: now,
+          },
+          { merge: true },
+        );
+      } else {
+        batch.set(
+          boardMemberRefs[idx],
+          {
+            uid: memberUid,
+            role: boardOwnerId === memberUid ? 'owner' : 'viewer',
+            status: 'active',
+            joinedAt: now,
+            invitedBy: uid,
             [FirestorePaths.UPDATED_AT]: now,
           },
           { merge: true },
         );
       }
+    }
 
-      for (const target of memberTargets) {
-        transaction.set(
-          target.boardMemberRef,
-          target.existingBoardMemberDoc.exists
-            ? {
-                status: 'active',
-                [FirestorePaths.UPDATED_AT]: now,
-              }
-            : {
-                uid: target.memberUid,
-                role: boardOwnerId === target.memberUid ? 'owner' : 'viewer',
-                status: 'active',
-                joinedAt: now,
-                invitedBy: uid,
-                [FirestorePaths.UPDATED_AT]: now,
-              },
-          { merge: true },
-        );
+    // Update board members array once with all member UIDs
+    if (memberUids.length > 0) {
+      batch.update(boardRef, {
+        members: admin.firestore.FieldValue.arrayUnion(...memberUids),
+        [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(memberUids.length),
+        [FirestorePaths.UPDATED_AT]: now,
+      });
+    }
 
-        transaction.update(boardRef, {
-          members: admin.firestore.FieldValue.arrayUnion(target.memberUid),
-          [FirestorePaths.UPDATED_AT]: now,
-        });
+    for (const memberUid of memberUids) {
+      const userRef = firestore.collection(FirestorePaths.USERS).doc(memberUid);
+      // Increment user's board count
+      batch.set(userRef, {
+        [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(1),
+        [FirestorePaths.UPDATED_AT]: now,
+      }, { merge: true });
+      // Also create user-level board index document for newer schema
+      const userBoardRef = userRef.collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION).doc(boardId.trim());
+      const relation = boardOwnerId === memberUid ? 'owned' : 'joined';
+      batch.set(userBoardRef, {
+        boardId: boardId.trim(),
+        relation,
+        addedAt: now,
+        [FirestorePaths.UPDATED_AT]: now,
+      }, { merge: true });
+    }
 
-        transaction.set(
-          firestore.collection(FirestorePaths.USERS).doc(target.memberUid),
-          boardOwnerId === target.memberUid
-            ? {
-                [FirestorePaths.OWNED_BOARDS]: admin.firestore.FieldValue.arrayUnion(boardId.trim()),
-                [FirestorePaths.UPDATED_AT]: now,
-              }
-            : {
-                [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayUnion(boardId.trim()),
-                [FirestorePaths.UPDATED_AT]: now,
-              },
-          { merge: true },
-        );
-      }
-
-      return { success: true, workspaceId: workspaceId.trim(), boardId: boardId.trim() };
-    });
+    await batch.commit();
+    return { success: true, workspaceId: workspaceId.trim(), boardId: boardId.trim() };
   } catch (error) {
     if (error instanceof HttpsError) throw error;
     logger.error('addBoardToWorkspace failed', error);

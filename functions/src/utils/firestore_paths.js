@@ -17,6 +17,7 @@ const FirestorePaths = {
   // User subcollections
   FRIENDS_SUBCOLLECTION: 'friends',
   NOTIFICATIONS_SUBCOLLECTION: 'notifications',
+  USER_BOARDS_SUBCOLLECTION: 'boards',
   BOARD_MEMBERS_SUBCOLLECTION: 'members',
   WORKSPACE_MEMBERS_SUBCOLLECTION: 'members',
   WORKSPACE_BOARDS_SUBCOLLECTION: 'boards',
@@ -27,16 +28,12 @@ const FirestorePaths = {
   DISPLAY_NAME: 'displayName',
   PHOTO_URL: 'photoURL',
   BIO: 'bio',
-  IS_ONLINE: 'isOnline',
   CREATED_AT: 'createdAt',
-  LAST_ACTIVE: 'lastActive',
   SEARCH_KEYWORDS: 'searchKeywords',
   FCM_TOKEN: 'fcmToken',
   FCM_TOKENS: 'fcmTokens',
   FRIEND_COUNT: 'friendCount',
   BOARD_COUNT: 'boardCount',
-  OWNED_BOARDS: 'ownedBoards',
-  JOINED_BOARDS: 'joinedBoards',
   WORKSPACE_IDS: 'workspaceIds',
   
   // Friend request fields
