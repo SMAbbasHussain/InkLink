@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:isar_community/isar.dart';
@@ -64,8 +65,16 @@ class InvitationRepositoryImpl implements InvitationRepository {
                     .toList(),
               );
               await _upsertInvites(invites, uid: uid);
-              await _cacheInviteProfiles(invites);
-            }, onError: controller.addError);
+              try {
+                await _cacheInviteProfiles(invites);
+              } catch (_) {}
+            }, onError: (error) {
+              developer.log(
+                'Failed to watch board invites',
+                name: 'InvitationRepository',
+                error: error,
+              );
+            });
       }();
     };
 
@@ -225,7 +234,7 @@ class InvitationRepositoryImpl implements InvitationRepository {
           'photoURL': invite['senderPic']?.toString(),
         };
 
-        _upsertUserModelSync(isar, fromUid, userData, userModelMap[fromUid]);
+        await _upsertUserModelAsync(isar, fromUid, userData, userModelMap[fromUid]);
 
         final isFriend = friendMap[fromUid] != null;
         if (isFriend) {
@@ -306,12 +315,12 @@ class InvitationRepositoryImpl implements InvitationRepository {
     return invites;
   }
 
-  void _upsertUserModelSync(
+  Future<void> _upsertUserModelAsync(
     Isar isar,
     String uid,
     Map<String, dynamic> userData,
     UserModel? existing,
-  ) {
+  ) async {
     final model =
         existing ??
         UserModel(
@@ -354,7 +363,7 @@ class InvitationRepositoryImpl implements InvitationRepository {
       model.updatedAt = updatedAt;
     }
 
-    isar.userModels.putByUidSync(model);
+    await isar.userModels.putByUid(model);
   }
 
   void _populateProfileModel(
