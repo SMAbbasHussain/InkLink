@@ -39,10 +39,15 @@ class CanvasState {
   final String currentUserRole;
   final List<BoardMember> boardMembers;
   final String memberSearchQuery;
-  final String? selectedShapeId; // ID of currently selected shape for editing
+  final String? selectedShapeId; // ID of currently selected element for editing
   final bool selectedShapeIsFilled; // Whether the selected shape is filled
   final double selectedShapeRotation;
   final double selectedShapeBorderRadius;
+  // Stroke-specific edit state
+  final int selectedStrokeColor;
+  final double selectedStrokeWidth;
+  final double selectedStrokeOpacity;
+  final String selectedStrokeBrushType;
 
   CanvasState({
     this.boardTitle,
@@ -64,6 +69,10 @@ class CanvasState {
     this.selectedShapeIsFilled = false,
     this.selectedShapeRotation = 0,
     this.selectedShapeBorderRadius = 0,
+    this.selectedStrokeColor = 0xFF000000,
+    this.selectedStrokeWidth = 5,
+    this.selectedStrokeOpacity = 1.0,
+    this.selectedStrokeBrushType = 'solid',
   });
 
   /// Create a copy with optional field overrides
@@ -87,6 +96,10 @@ class CanvasState {
     bool? selectedShapeIsFilled,
     double? selectedShapeRotation,
     double? selectedShapeBorderRadius,
+    int? selectedStrokeColor,
+    double? selectedStrokeWidth,
+    double? selectedStrokeOpacity,
+    String? selectedStrokeBrushType,
   }) {
     return CanvasState(
       boardTitle: boardTitle == _unset
@@ -118,6 +131,14 @@ class CanvasState {
           selectedShapeRotation ?? this.selectedShapeRotation,
       selectedShapeBorderRadius:
           selectedShapeBorderRadius ?? this.selectedShapeBorderRadius,
+      selectedStrokeColor:
+          selectedStrokeColor ?? this.selectedStrokeColor,
+      selectedStrokeWidth:
+          selectedStrokeWidth ?? this.selectedStrokeWidth,
+      selectedStrokeOpacity:
+          selectedStrokeOpacity ?? this.selectedStrokeOpacity,
+      selectedStrokeBrushType:
+          selectedStrokeBrushType ?? this.selectedStrokeBrushType,
     );
   }
 
@@ -155,7 +176,11 @@ class CanvasState {
           selectedShapeId == other.selectedShapeId &&
           selectedShapeIsFilled == other.selectedShapeIsFilled &&
           selectedShapeBorderRadius == other.selectedShapeBorderRadius &&
-          selectedShapeRotation == other.selectedShapeRotation;
+          selectedShapeRotation == other.selectedShapeRotation &&
+          selectedStrokeColor == other.selectedStrokeColor &&
+          selectedStrokeWidth == other.selectedStrokeWidth &&
+          selectedStrokeOpacity == other.selectedStrokeOpacity &&
+          selectedStrokeBrushType == other.selectedStrokeBrushType;
 
   @override
   int get hashCode =>
@@ -177,7 +202,11 @@ class CanvasState {
       selectedShapeId.hashCode ^
       selectedShapeIsFilled.hashCode ^
       selectedShapeBorderRadius.hashCode ^
-      selectedShapeRotation.hashCode;
+      selectedShapeRotation.hashCode ^
+      selectedStrokeColor.hashCode ^
+      selectedStrokeWidth.hashCode ^
+      selectedStrokeOpacity.hashCode ^
+      selectedStrokeBrushType.hashCode;
 }
 
 /// Old-style states for board creation (backward compatibility)

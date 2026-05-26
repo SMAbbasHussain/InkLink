@@ -95,6 +95,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasToggleTray>(_onToggleTray);
     on<CanvasShowTrayTips>(_onShowTrayTips);
     on<CanvasDismissTrayTips>(_onDismissTrayTips);
+    on<CanvasMoveSelectedStroke>(_onMoveSelectedStroke);
+    on<CanvasUpdateSelectedStrokeColor>(_onUpdateSelectedStrokeColor);
+    on<CanvasUpdateSelectedStrokeWidth>(_onUpdateSelectedStrokeWidth);
+    on<CanvasUpdateSelectedStrokeOpacity>(_onUpdateSelectedStrokeOpacity);
+    on<CanvasUpdateSelectedStrokeBrushType>(_onUpdateSelectedStrokeBrushType);
     on<CanvasSaveBoardPreviewRequested>(_onSaveBoardPreviewRequested);
     on<CanvasBoardMembersUpdated>(_onBoardMembersUpdated);
     on<CanvasMemberSearchQueryChanged>(_onMemberSearchQueryChanged);
@@ -744,15 +749,32 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       }
     }
     final data = selected?.data as Map<String, dynamic>?;
-    emit(
-      state.copyWith(
-        selectedShapeId: event.shapeId,
-        selectedShapeIsFilled: (data?['isFilled'] as bool?) ?? false,
-        selectedShapeBorderRadius:
-            (data?['borderRadius'] as num?)?.toDouble() ?? 0.0,
-        selectedShapeRotation: (data?['rotation'] as num?)?.toDouble() ?? 0.0,
-      ),
-    );
+    if (selected?.type == 'stroke') {
+      emit(
+        state.copyWith(
+          selectedShapeId: event.shapeId,
+          selectedStrokeColor:
+              (data?['color'] as num?)?.toInt() ?? Colors.black.value,
+          selectedStrokeWidth:
+              (data?['strokeWidth'] as num?)?.toDouble() ?? 5.0,
+          selectedStrokeOpacity:
+              (data?['opacity'] as num?)?.toDouble() ?? 1.0,
+          selectedStrokeBrushType:
+              (data?['brushType'] as String?) ?? 'solid',
+        ),
+      );
+    } else {
+      emit(
+        state.copyWith(
+          selectedShapeId: event.shapeId,
+          selectedShapeIsFilled: (data?['isFilled'] as bool?) ?? false,
+          selectedShapeBorderRadius:
+              (data?['borderRadius'] as num?)?.toDouble() ?? 0.0,
+          selectedShapeRotation:
+              (data?['rotation'] as num?)?.toDouble() ?? 0.0,
+        ),
+      );
+    }
   }
 
   Future<void> _onPreviewMoveSelectedShape(
@@ -929,6 +951,101 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         selectedShapeBorderRadius:
             (data['borderRadius'] as num?)?.toDouble() ?? 0.0,
       ),
+    );
+  }
+
+  Future<void> _onMoveSelectedStroke(
+    CanvasMoveSelectedStroke event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final element = _selectedShape();
+    if (element == null || element.type != 'stroke') return;
+    final data = Map<String, dynamic>.from(element.data as Map<String, dynamic>);
+    final points = (data['points'] as List<dynamic>?) ?? [];
+    data['points'] = points.map((p) {
+      final x = (p is Map ? (p['x'] as num?)?.toDouble() : null) ?? 0.0;
+      final y = (p is Map ? (p['y'] as num?)?.toDouble() : null) ?? 0.0;
+      return <String, double>{'x': x + event.delta.dx, 'y': y + event.delta.dy};
+    }).toList();
+    await _updateStroke(element.id, data, emit);
+  }
+
+  Future<void> _onUpdateSelectedStrokeColor(
+    CanvasUpdateSelectedStrokeColor event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final element = _selectedShape();
+    if (element == null || element.type != 'stroke' || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(element.data as Map<String, dynamic>)
+      ..['color'] = event.color;
+    await _updateStroke(element.id, data, emit);
+    emit(state.copyWith(selectedStrokeColor: event.color));
+  }
+
+  Future<void> _onUpdateSelectedStrokeWidth(
+    CanvasUpdateSelectedStrokeWidth event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final element = _selectedShape();
+    if (element == null || element.type != 'stroke' || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(element.data as Map<String, dynamic>)
+      ..['strokeWidth'] = event.strokeWidth;
+    await _updateStroke(element.id, data, emit);
+    emit(state.copyWith(selectedStrokeWidth: event.strokeWidth));
+  }
+
+  Future<void> _onUpdateSelectedStrokeOpacity(
+    CanvasUpdateSelectedStrokeOpacity event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final element = _selectedShape();
+    if (element == null || element.type != 'stroke' || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(element.data as Map<String, dynamic>)
+      ..['opacity'] = event.opacity;
+    await _updateStroke(element.id, data, emit);
+    emit(state.copyWith(selectedStrokeOpacity: event.opacity));
+  }
+
+  Future<void> _onUpdateSelectedStrokeBrushType(
+    CanvasUpdateSelectedStrokeBrushType event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final element = _selectedShape();
+    if (element == null || element.type != 'stroke' || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(element.data as Map<String, dynamic>)
+      ..['brushType'] = event.brushType;
+    await _updateStroke(element.id, data, emit);
+    emit(state.copyWith(selectedStrokeBrushType: event.brushType));
+  }
+
+  Future<void> _updateStroke(
+    String elementId,
+    Map<String, dynamic> data,
+    Emitter<CanvasState> emit,
+  ) async {
+    CanvasElement? existing;
+    for (final element in state.elements) {
+      if (element.id == elementId) {
+        existing = element;
+        break;
+      }
+    }
+    if (existing == null) return;
+    final next = state.elements
+        .map(
+          (e) => e.id == elementId
+              ? CanvasElement(id: e.id, type: e.type, data: data)
+              : e,
+        )
+        .toList(growable: false);
+    emit(state.copyWith(elements: next));
+    await _saveCrdtOperation(
+      action: 'update',
+      type: existing.type,
+      objectId: elementId,
+      data: data,
+      emit: emit,
     );
   }
 
