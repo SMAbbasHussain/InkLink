@@ -237,13 +237,15 @@ io.on('connection', (socket) => {
       `[updateId] ${update.updateId}`,
       `[elementId] ${update.elementId ?? 'n/a'}`,
     ]);
-    
-    // 1. Broadcast to room
-    socket.to(`board_room:${boardId}`).emit('crdt_update', { boardId, update });
-    console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId}`);
+
+    const isSingleUser = update._singleUser === true;
+    // Strip the client-side flag before persisting
+    if (isSingleUser) {
+      delete update._singleUser;
+    }
 
     try {
-      // 2. Forward to Firestore
+      // Save to Firestore (always)
       if (db) {
         await db.collection('boards').doc(boardId).collection('crdt_updates')
           .doc(update.updateId)
@@ -256,9 +258,20 @@ io.on('connection', (socket) => {
         console.log(`[crdt_update] Wrote update ${update.updateId} to Firestore`);
       }
 
-      // 3. Redis-Backed Offline Queue
-      const members = await getBoardMembersCached(boardId);
+      if (isSingleUser) {
+        // Single-user board: skip broadcast, skip Redis, skip offline queue
+        console.log(`[crdt_update] Single-user board — saved directly, no broadcast/queue`);
+        if (typeof ack === 'function') {
+          ack({ status: 'success', updateId: update.updateId, boardId });
+        }
+        return;
+      }
 
+      // Multi-user: broadcast + offline queue
+      socket.to(`board_room:${boardId}`).emit('crdt_update', { boardId, update });
+      console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId}`);
+
+      const members = await getBoardMembersCached(boardId);
       const connectedUids = await getConnectedSocketsInRoom(`board_room:${boardId}`);
       console.log(`[crdt_update] Connected UIDs in board ${boardId}: ${connectedUids.join(', ')}`);
       const offlineMembers = members.filter(
@@ -283,7 +296,6 @@ io.on('connection', (socket) => {
             memoryQueue[queueKey].push(update);
           }
         } else {
-          // Use in-memory fallback
           if (!memoryQueue[queueKey]) memoryQueue[queueKey] = [];
           memoryQueue[queueKey].push(update);
           console.log(`[crdt_update] Queued update to memory for ${queueKey}`);
@@ -328,84 +340,92 @@ io.on('connection', (socket) => {
 
   // Phase 3: Offline Sync Demand & Fallback
   socket.on('sync_offline', async ({ boardId }, callback) => {
-      logWsEvent('SYNC REQUEST RECEIVED', [
-        `[event] sync_offline`,
-        `[direction] client -> server`,
-        `[user] ${uid}`,
-        `[board] ${boardId}`,
-      ]);
-      try {
-          const queueKey = `queue:${uid}:board:${boardId}`;
-          console.log(`[sync_offline] Looking for queue key: ${queueKey}`);
-          let elements = [];
-          let source = 'redis';
-          
-          if (redisAvailable) {
-              try {
-                  elements = await redis.lrange(queueKey, 0, -1);
-                  console.log(`[sync_offline] Retrieved ${elements.length} elements from Redis for ${queueKey}`);
-              } catch (redisError) {
-                  console.warn(`Redis sync_offline failed, checking memory queue: ${redisError.message}`);
-                  elements = memoryQueue[queueKey] || [];
-                  source = 'memory';
-              }
-          } else {
-              // Use in-memory queue
-              elements = memoryQueue[queueKey] || [];
-              source = 'memory';
-              console.log(`[sync_offline] Using memory queue for ${queueKey}, found ${elements.length} elements`);
-          }
+    logWsEvent('SYNC REQUEST RECEIVED', [
+      `[event] sync_offline`,
+      `[direction] client -> server`,
+      `[user] ${uid}`,
+      `[board] ${boardId}`,
+    ]);
+    try {
+      const queueKey = `queue:${uid}:board:${boardId}`;
+      console.log(`[sync_offline] Draining queue: ${queueKey}`);
+      let elements = [];
+      let source = 'redis';
 
-          if (elements && elements.length > 0) {
-              const updates = elements.map(el => typeof el === 'string' ? JSON.parse(el) : el);
-              logWsEvent('SYNC RESPONSE SENT', [
-                `[event] sync_offline`,
-                `[direction] server -> client`,
-                `[user] ${uid}`,
-                `[board] ${boardId}`,
-                `[source] ${source}`,
-                `[updates] ${updates.length}`,
-              ]);
-              
-              // Clean up queue
-              if (redisAvailable) {
-                  try {
-                      await redis.del(queueKey);
-                      console.log(`[sync_offline] Deleted queue key from Redis: ${queueKey}`);
-                  } catch (e) {
-                      delete memoryQueue[queueKey];
-                  }
-              } else {
-                  delete memoryQueue[queueKey];
-              }
-              
-              if (typeof callback === 'function') {
-                  callback({ status: 'success', updates, source });
-              } else {
-                  socket.emit('sync_offline_response', { status: 'success', boardId, updates, source });
-              }
+      if (redisAvailable) {
+        // Atomically pop the entire queue: rename to a temp key so no other
+        // consumer (or repeated request) can touch it, then read + delete.
+        const tmpKey = `${queueKey}:processing`;
+        try {
+          const renamed = await redis.renamenx(queueKey, tmpKey);
+          if (renamed === 1) {
+            elements = await redis.lrange(tmpKey, 0, -1);
+            await redis.del(tmpKey);
+            console.log(`[sync_offline] Drained ${elements.length} elements from Redis for ${queueKey}`);
           } else {
-              // The list is empty (due to TTL expiration or no updates) -> Special payload
-              logWsEvent('SYNC FALLBACK REQUESTED', [
-                `[event] sync_offline`,
-                `[direction] server -> client`,
-                `[user] ${uid}`,
-                `[board] ${boardId}`,
-                `[result] fallback_required`,
-              ]);
-              const payload = { status: 'fallback_required', boardId };
-              if (typeof callback === 'function') {
-                  callback(payload);
-              } else {
-                  socket.emit('sync_offline_response', payload);
-              }
+            // Queue either doesn't exist or another consumer is already draining it
+            console.log(`[sync_offline] Queue ${queueKey} already drained or claimed by another consumer`);
           }
-      } catch (error) {
-          console.error('Error in sync_offline:', error);
-          if (typeof callback === 'function') {
-              callback({ status: 'error', error: error.message });
-          }
+        } catch (redisError) {
+          console.warn(`Redis sync_offline failed for ${queueKey}: ${redisError.message}`);
+          elements = memoryQueue[queueKey] || [];
+          source = 'memory';
+          delete memoryQueue[queueKey];
+        }
+      } else {
+        elements = memoryQueue[queueKey] || [];
+        source = 'memory';
+        delete memoryQueue[queueKey];
+        console.log(`[sync_offline] Drained ${elements.length} elements from memory for ${queueKey}`);
       }
+
+      if (elements && elements.length > 0) {
+        let updates;
+        try {
+          updates = elements.map(el => typeof el === 'string' ? JSON.parse(el) : el);
+        } catch (parseError) {
+          console.error(`[sync_offline] Corrupt queue data for ${queueKey}: ${parseError.message}`);
+          if (typeof callback === 'function') {
+            callback({ status: 'error', boardId, error: 'corrupt_queue' });
+          }
+          return;
+        }
+
+        logWsEvent('SYNC RESPONSE SENT', [
+          `[event] sync_offline`,
+          `[direction] server -> client`,
+          `[user] ${uid}`,
+          `[board] ${boardId}`,
+          `[source] ${source}`,
+          `[updates] ${updates.length}`,
+        ]);
+
+        if (typeof callback === 'function') {
+          callback({ status: 'success', updates, source });
+        } else {
+          socket.emit('sync_offline_response', { status: 'success', boardId, updates, source });
+        }
+      } else {
+        logWsEvent('SYNC FALLBACK REQUESTED', [
+          `[event] sync_offline`,
+          `[direction] server -> client`,
+          `[user] ${uid}`,
+          `[board] ${boardId}`,
+          `[result] fallback_required`,
+        ]);
+        const payload = { status: 'fallback_required', boardId };
+        if (typeof callback === 'function') {
+          callback(payload);
+        } else {
+          socket.emit('sync_offline_response', payload);
+        }
+      }
+    } catch (error) {
+      console.error('Error in sync_offline:', error);
+      if (typeof callback === 'function') {
+        callback({ status: 'error', error: error.message });
+      }
+    }
   });
 
   socket.on('disconnect', () => {

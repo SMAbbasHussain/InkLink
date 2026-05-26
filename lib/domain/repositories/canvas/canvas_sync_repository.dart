@@ -44,6 +44,10 @@ abstract class CanvasSyncRepository {
     String? elementId,
   });
 
+  /// Mark the current board as single-user so CRDT updates carry a server-side
+  /// flag that skips broadcasting and offline queuing.
+  void setBoardSingleUserStatus(bool isSingleUser);
+
   /// Sync all pending local CRDT updates in a single Firestore batch.
   /// Returns true if the batch succeeded.
   Future<bool> batchSyncPendingUpdates(String boardId, String userId);

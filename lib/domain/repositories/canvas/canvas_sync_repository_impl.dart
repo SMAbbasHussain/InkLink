@@ -20,6 +20,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   static const int _maxPayloadBase64Length = 900000;
   // Socket.IO client (optional). When present and connected, we'll prefer websocket transport.
   io.Socket? _socket;
+  bool _isSingleUserBoard = false;
   StreamController<List<LocalCrdtUpdate>>? _socketUpdatesController;
   StreamController<List<LocalCrdtUpdate>>? _socketPreviewController;
 
@@ -30,6 +31,11 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   }) : _firestoreService = firestoreService,
        _authService = authService,
        _localDatabaseService = localDatabaseService;
+
+  @override
+  void setBoardSingleUserStatus(bool isSingleUser) {
+    _isSingleUserBoard = isSingleUser;
+  }
 
   @override
   String? get currentUserId => _authService.getCurrentUserId();
@@ -203,14 +209,19 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           elementId: existing.elementId,
         );
 
+        final updateData = <String, dynamic>{
+          'updateId': updateId,
+          'payloadBase64': payloadBase64,
+          'sourceClientId': sourceClientId,
+          'elementId': existing.elementId,
+        };
+        if (_isSingleUserBoard) {
+          updateData['_singleUser'] = true;
+        }
+
         final ack = await _emitWithAck('crdt_update', {
           'boardId': boardId,
-          'update': {
-            'updateId': updateId,
-            'payloadBase64': payloadBase64,
-            'sourceClientId': sourceClientId,
-            'elementId': existing.elementId,
-          },
+          'update': updateData,
         });
 
         if (ack != null && ack['status'] == 'success') {
@@ -637,14 +648,19 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           elementId: elementId,
         );
 
+        final updateData = <String, dynamic>{
+          'updateId': updateId,
+          'payloadBase64': payloadBase64,
+          'sourceClientId': sourceClientId,
+          'elementId': elementId,
+        };
+        if (_isSingleUserBoard) {
+          updateData['_singleUser'] = true;
+        }
+
         final ack = await _emitWithAck('crdt_update', {
           'boardId': boardId,
-          'update': {
-            'updateId': updateId,
-            'payloadBase64': payloadBase64,
-            'sourceClientId': sourceClientId,
-            'elementId': elementId,
-          },
+          'update': updateData,
         });
 
         if (ack != null && ack['status'] == 'success') {

@@ -29,6 +29,7 @@ abstract class CanvasService {
     required String elementId,
     required Uint8List payload,
   });
+  void setBoardSingleUserStatus(bool isSingleUser);
   Future<void> markCrdtUpdateDeleted(String updateId, bool isDeleted);
   Future<LocalCrdtUpdate?> getElementCrdtUpdate({
     required String boardId,
@@ -57,6 +58,11 @@ class CanvasServiceImpl implements CanvasService {
 
   @override
   String? get currentClientId => _syncRepository.currentUserId;
+
+  @override
+  void setBoardSingleUserStatus(bool isSingleUser) {
+    _syncRepository.setBoardSingleUserStatus(isSingleUser);
+  }
 
   @override
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes) {

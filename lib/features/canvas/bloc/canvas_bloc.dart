@@ -1510,6 +1510,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       _boardUnavailableTimer?.cancel();
       _boardUnavailableTimer = null;
       _hasSeenBoardMetadata = true;
+      _canvasService?.setBoardSingleUserStatus(board.members.length <= 1);
       add(
         CanvasBoardTitleUpdated(
           board.title,
