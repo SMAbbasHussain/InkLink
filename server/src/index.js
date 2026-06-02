@@ -719,7 +719,41 @@ io.on('connection', (socket) => {
           }
         }
 
-        // Client is caught up to snapshot but we have no cursor — seed from current version
+        // Snapshot path didn't apply (no snapshot, or client is current).
+        // Try reading any pending entries from the Redis stream directly
+        // before giving up.  This handles boards with < 100 updates where
+        // no snapshot has been created yet.
+        const streamKey = `board_updates:${boardId}`;
+        const raw = await redis.xread('COUNT', 100, 'STREAMS', streamKey, '0-0');
+        if (raw && raw[0] && raw[0][1] && raw[0][1].length > 0) {
+          const entries = raw[0][1];
+          const updates = [];
+          let lastEntryId = '0-0';
+          let lastVer = 0;
+          for (const [entryId, fields] of entries) {
+            const entry = parseStreamEntry(fields);
+            entry.appliedAt = entry.timestamp;
+            updates.push(entry);
+            lastEntryId = entryId;
+            if (entry.version > lastVer) lastVer = entry.version;
+          }
+          const newCursor = `${lastEntryId}:${lastVer}`;
+          await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => {});
+
+          logWsEvent('SYNC RESPONSE (stream catch-up)', [
+            `[user] ${uid}`,
+            `[board] ${boardId}`,
+            `[updates] ${updates.length}`,
+            `[cursor] ${newCursor}`,
+          ]);
+
+          if (typeof callback === 'function') {
+            callback({ status: 'success', updates, cursor: newCursor, hasMore: entries.length >= 100, source: 'cursor' });
+          }
+          return;
+        }
+
+        // Stream is empty — seed cursor from current version
         const currentVersion = await redis.get(`board:${boardId}:version`) || '0';
         const dummyCursor = `0-0:${currentVersion}`;
         await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, dummyCursor, 'EX', 604800).catch(() => {});
