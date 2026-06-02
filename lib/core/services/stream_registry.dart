@@ -29,4 +29,8 @@ class StreamRegistry {
   void remove(String key) {
     _streams.remove(key);
   }
+
+  void clearAll() {
+    _streams.clear();
+  }
 }

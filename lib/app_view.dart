@@ -20,6 +20,11 @@ class AppView extends StatelessWidget {
       listenWhen: (previous, current) =>
           previous is! Authenticated && current is Authenticated,
       listener: (context, state) {
+        // Pop pushed routes (e.g. LoginScreen from SettingsScreen's logout listener)
+        // so the declarative MainWrapper from the builder is visible.
+        Navigator.of(context, rootNavigator: true)
+            .popUntil((route) => route.isFirst);
+
         // Phase 4E: Prefetch data on auth
         final authState = state is Authenticated ? state : null;
         if (authState != null) {
@@ -40,6 +45,7 @@ class AppView extends StatelessWidget {
         context.read<FriendsBloc>().add(LoadFriendsInfo());
       },
       builder: (context, state) {
+        print('[APPVIEW] builder: state=${state.runtimeType} ${state is Authenticated ? "Authenticated" : state is Unauthenticated ? "Unauthenticated" : state is AuthError ? "AuthError(${state.message})" : state is AuthLoading ? "AuthLoading" : state is AuthInitial ? "AuthInitial" : "other"}');
         if (state is Authenticated) {
           return const MainWrapper();
         }

@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../core/services/auth_service.dart';
+import '../../../core/services/database_network_service.dart';
 import '../../../core/services/messaging_service.dart';
+import '../../../core/services/stream_registry.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/utils/helpers.dart';
 import '../../repositories/auth/auth_repository.dart';
@@ -15,6 +19,7 @@ abstract class AuthSessionService {
   Future<User?> signInWithGoogle();
   Future<void> onAuthenticated(User user);
   Future<void> signOut();
+  User? get currentUser;
 }
 
 class AuthSessionServiceImpl implements AuthSessionService {
@@ -24,8 +29,10 @@ class AuthSessionServiceImpl implements AuthSessionService {
   final LocalDatabaseService _localDatabaseService;
   final PresenceService _presenceService;
   final CanvasSyncRepository _canvasSyncRepository;
+  final DatabaseNetworkService _networkService;
   bool _tokenRefreshBound = false;
   String? _lastSyncedToken;
+  StreamSubscription<String>? _tokenRefreshSub;
 
   AuthSessionServiceImpl({
     required AuthRepository authRepository,
@@ -34,15 +41,20 @@ class AuthSessionServiceImpl implements AuthSessionService {
     required LocalDatabaseService localDatabaseService,
     required PresenceService presenceService,
     required CanvasSyncRepository canvasSyncRepository,
+    required DatabaseNetworkService networkService,
   }) : _authRepository = authRepository,
        _authService = authService,
        _messagingService = messagingService,
        _localDatabaseService = localDatabaseService,
        _presenceService = presenceService,
-       _canvasSyncRepository = canvasSyncRepository;
+       _canvasSyncRepository = canvasSyncRepository,
+       _networkService = networkService;
 
   @override
   Stream<User?> get user => _authRepository.user;
+
+  @override
+  User? get currentUser => _authService.getCurrentUser();
 
   @override
   Future<User?> signIn(String email, String password) {
@@ -70,12 +82,29 @@ class AuthSessionServiceImpl implements AuthSessionService {
 
   @override
   Future<void> onAuthenticated(User user) async {
+    print('[AUTH_SVC] onAuthenticated: uid=${user.uid}');
+    // Restore Firestore and RTDB connectivity (was disabled during sign-out).
+    try {
+      await _networkService.enableNetwork();
+      print('[AUTH_SVC] enableNetwork done');
+    } catch (e) {
+      print('[AUTH_SVC] enableNetwork error=$e');
+    }
+    try {
+      await _networkService.goOnline();
+      print('[AUTH_SVC] goOnline done');
+    } catch (e) {
+      print('[AUTH_SVC] goOnline error=$e');
+    }
     await _presenceService.setUserOnline();
+    print('[AUTH_SVC] setUserOnline done');
     await _syncFcmToken();
+    print('[AUTH_SVC] syncFcmToken done');
   }
 
   @override
   Future<void> signOut() async {
+    print('[AUTH_SVC] signOut: start');
     final current = _authService.getCurrentUser();
     if (current != null) {
       await _presenceService.setUserOffline();
@@ -103,6 +132,11 @@ class AuthSessionServiceImpl implements AuthSessionService {
       }
     }
 
+    // Cancel FCM token refresh listener to prevent leaks.
+    await _tokenRefreshSub?.cancel();
+    _tokenRefreshSub = null;
+    _tokenRefreshBound = false;
+
     // Explicitly inform server of logout so it can clear server-side queues,
     // then disconnect locally. Do not fail sign-out if logout handshake fails.
     try {
@@ -110,9 +144,31 @@ class AuthSessionServiceImpl implements AuthSessionService {
     } catch (_) {}
     await _canvasSyncRepository.disconnectSocket();
 
+    // Clear cached shared stream references.
+    StreamRegistry.instance.clearAll();
+
+    // Disable Firestore network and take RTDB offline — this immediately
+    // stops all native listeners so they won't try to re-authenticate (and
+    // fail with permission-denied) when the auth token is invalidated below.
+    try {
+      await _networkService.disableNetwork();
+      print('[AUTH_SVC] disableNetwork done');
+    } catch (e) {
+      print('[AUTH_SVC] disableNetwork error=$e');
+    }
+    try {
+      await _networkService.goOffline();
+      print('[AUTH_SVC] goOffline done');
+    } catch (e) {
+      print('[AUTH_SVC] goOffline error=$e');
+    }
+
+    print('[AUTH_SVC] signOut: calling _authRepository.signOut()');
     await _authRepository.signOut();
+    print('[AUTH_SVC] signOut: FirebaseAuth.signOut done');
     await _localDatabaseService.clearLocalCache();
     _lastSyncedToken = null;
+    print('[AUTH_SVC] signOut: complete');
   }
 
   Future<void> _syncFcmToken() async {
@@ -138,7 +194,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
 
     if (_tokenRefreshBound) return;
     _tokenRefreshBound = true;
-    _messagingService.onTokenRefresh.listen((newToken) async {
+    _tokenRefreshSub = _messagingService.onTokenRefresh.listen((newToken) async {
       final user = _authService.getCurrentUser();
       if (user == null || newToken.isEmpty || _lastSyncedToken == newToken) {
         return;

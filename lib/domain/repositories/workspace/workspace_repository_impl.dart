@@ -634,6 +634,7 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
         .where(FirestorePaths.toUid, isEqualTo: uid)
         .where(FirestorePaths.status, isEqualTo: 'pending')
         .snapshots()
+        .handleError((_) {})
         .map((snapshot) {
           try {
             return snapshot.docs.map((doc) {

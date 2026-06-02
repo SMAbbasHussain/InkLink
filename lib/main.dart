@@ -8,6 +8,7 @@ import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/services/cloud_functions_service.dart';
 import 'package:inklink/core/services/local_notification_service.dart';
 import 'package:inklink/core/services/messaging_service.dart';
+import 'package:inklink/core/services/database_network_service.dart';
 import 'package:inklink/core/services/data_prefetch_service.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:inklink/domain/repositories/auth/auth_repository.dart';
@@ -95,6 +96,9 @@ void main() async {
           create: (context) => CloudFunctionsServiceImpl(),
         ),
         RepositoryProvider<MessagingService>.value(value: messagingService),
+        RepositoryProvider<DatabaseNetworkService>(
+          create: (context) => DatabaseNetworkService(database: rtdb),
+        ),
         RepositoryProvider<ThemeService>.value(value: themeService),
         // Other services
         RepositoryProvider<LocalDatabaseService>.value(
@@ -179,6 +183,7 @@ void main() async {
             localDatabaseService: context.read<LocalDatabaseService>(),
             presenceService: context.read<PresenceService>(),
             canvasSyncRepository: context.read<CanvasSyncRepository>(),
+            networkService: context.read<DatabaseNetworkService>(),
           ),
         ),
         RepositoryProvider<FriendsService>(
