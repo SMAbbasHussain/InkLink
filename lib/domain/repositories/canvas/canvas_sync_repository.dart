@@ -17,6 +17,8 @@ abstract class CanvasSyncRepository {
     required String updateId,
     required String payloadBase64,
   });
+  Future<String?> getLastSeenCursor(String boardId);
+
   Future<void> publishCanvasPreview({
     required String boardId,
     required String previewId,
@@ -28,6 +30,7 @@ abstract class CanvasSyncRepository {
   Future<List<LocalCrdtUpdate>> fetchRemoteCrdtUpdates(
     String boardId, {
     DateTime? since,
+    String? lastSeenCursor,
     bool preferSocket = true,
   });
   Stream<List<LocalCrdtUpdate>> watchRemoteCanvasPreviews(String boardId);
@@ -48,14 +51,14 @@ abstract class CanvasSyncRepository {
   /// flag that skips broadcasting and offline queuing.
   void setBoardSingleUserStatus(bool isSingleUser);
 
-  /// Sync all pending local CRDT updates in a single Firestore batch.
-  /// Returns true if the batch succeeded.
+  /// Sync all pending local CRDT updates via socket.
+  /// Returns true if all updates were acknowledged.
   Future<bool> batchSyncPendingUpdates(String boardId, String userId);
 
-  /// Send an explicit logout handshake to the server which clears server-side queues.
+  /// Send an explicit logout handshake to the server which clears cursor tracking.
   Future<void> logoutSocket();
 
-  /// Disconnect WebSocket locally. Server will NOT clear user queues on simple
-  /// disconnects; queues are preserved until an explicit `logout` is received.
+  /// Disconnect WebSocket locally. Server will preserve cursor tracking until
+  /// an explicit `logout` is received.
   Future<void> disconnectSocket();
 }

@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const Redis = require('ioredis');
 const admin = require('firebase-admin');
 const cors = require('cors');
+const Y = require('yjs');
 require('dotenv').config();
 
 const app = express();
@@ -49,31 +50,15 @@ function loadFirebaseServiceAccount() {
   return require('../service-account.json');
 }
 
-// 1. Redis Provisioning Setup
+// ============================================================
+// REDIS PROVISIONING
+// ============================================================
 const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
 let redisAvailable = false;
 
-// In-memory fallback queue for local development (expires after server restart)
-const memoryQueue = {};
-
-// Track UIDs that explicitly logged out so we skip queueing updates for them.
-// Cleared on reconnect (new socket → re‑authenticated → new connection event).
-const loggedOutUids = new Set();
-
-// Periodic cleanup: prune stale entries from loggedOutUids every 30 minutes
-const LOGGED_OUT_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
-const loggedOutTimestamps = new Map();
-setInterval(() => {
-  const cutoff = Date.now() - LOGGED_OUT_CLEANUP_INTERVAL_MS;
-  for (const [uid, ts] of loggedOutTimestamps.entries()) {
-    if (ts < cutoff) {
-      loggedOutUids.delete(uid);
-      loggedOutTimestamps.delete(uid);
-    }
-  }
-}, LOGGED_OUT_CLEANUP_INTERVAL_MS);
-
-// Per-socket rate limiting: max events per window
+// ============================================================
+// RATE LIMITING
+// ============================================================
 const RATE_LIMIT_WINDOW_MS = 1000;
 const RATE_LIMIT_MAX_EVENTS = 30;
 const socketEventCounts = new Map();
@@ -90,7 +75,6 @@ function isRateLimited(socketId) {
   return entry.count > RATE_LIMIT_MAX_EVENTS;
 }
 
-// Cleanup rate limit entries for disconnected sockets
 setInterval(() => {
   const now = Date.now();
   for (const [sid, entry] of socketEventCounts.entries()) {
@@ -100,7 +84,9 @@ setInterval(() => {
   }
 }, 30000);
 
-// Input validation helpers
+// ============================================================
+// VALIDATION HELPERS
+// ============================================================
 function isValidBoardId(value) {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= 128;
 }
@@ -115,54 +101,6 @@ function isValidPreview(preview) {
   return preview.previewId != null;
 }
 
-// In-memory cache for board member lists.
-// Avoids reading boards/{boardId}/members on every CRDT update (the #1 source of reads).
-const boardMembersCache = new Map();
-const MEMBERS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-async function getBoardMembersCached(boardId) {
-  const cached = boardMembersCache.get(boardId);
-  if (cached && Date.now() - cached.fetchedAt < MEMBERS_CACHE_TTL_MS) {
-    return cached.members;
-  }
-
-  // 1. Try Redis (Cloud Functions keep this up-to-date on member changes)
-  if (redisAvailable) {
-    try {
-      const key = `board_members:${boardId}`;
-      const members = await redis.smembers(key);
-      if (members && members.length > 0) {
-        await redis.expire(key, 604800); // refresh 7-day TTL on access
-        boardMembersCache.set(boardId, { members, fetchedAt: Date.now() });
-        return members;
-      }
-    } catch (e) {
-      console.warn(`Redis read failed for board_members:${boardId}, falling back to Firestore`);
-    }
-  }
-
-  // 2. Fallback to Firestore
-  if (!db) return [];
-  const snapshot = await db
-    .collection('boards')
-    .doc(boardId)
-    .collection('members')
-    .get();
-  const members = snapshot.docs.map((doc) => doc.id);
-  boardMembersCache.set(boardId, { members, fetchedAt: Date.now() });
-
-  // Seed Redis so subsequent reads skip Firestore
-  if (redisAvailable && members.length > 0) {
-    try {
-      const key = `board_members:${boardId}`;
-      await redis.sadd(key, ...members);
-      await redis.expire(key, 604800);
-    } catch (_) {}
-  }
-
-  return members;
-}
-
 redis.on('connect', () => {
   redisAvailable = true;
   console.log('✓ Redis connected');
@@ -170,11 +108,12 @@ redis.on('connect', () => {
 
 redis.on('error', (error) => {
   redisAvailable = false;
-  console.warn('⚠ Redis unavailable, using in-memory queue fallback for offline sync');
-  console.warn(`  To enable Redis: redis-server or set REDIS_URL env var`);
+  console.warn('⚠ Redis unavailable, cursor-based sync will not be available');
 });
 
-// 2. Firebase Admin Setup
+// ============================================================
+// FIREBASE ADMIN
+// ============================================================
 try {
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     admin.initializeApp({
@@ -204,49 +143,222 @@ function logWsEvent(title, lines) {
   console.log('==================================================');
 }
 
-async function clearUserQueues(uid) {
-  if (redisAvailable) {
-    try {
-      const keys = await redis.keys(`queue:${uid}:board:*`);
-      if (keys && keys.length > 0) {
-        for (const key of keys) {
-          await redis.del(key);
-          console.log(`[logout] Cleared Redis queue: ${key}`);
-        }
-      }
-    } catch (e) {
-      console.warn(`[logout] Failed clearing Redis queues for ${uid}: ${e.message}`);
-    }
-    return;
-  }
-
-  const queuePrefix = `queue:${uid}:board:`;
-  for (const key in memoryQueue) {
-    if (key.startsWith(queuePrefix)) {
-      delete memoryQueue[key];
-      console.log(`[logout] Cleared memory queue: ${key}`);
-    }
-  }
-}
-
-// Helper to get connected users in a room
 async function getConnectedSocketsInRoom(roomName) {
   const sockets = await io.in(roomName).fetchSockets();
-  // We'll store decoded auth UID in socket.data.uid, or extract from connected socket custom data
   return sockets.map(s => s.data.uid).filter(Boolean);
 }
 
-// 3. Socket.io Connection & Authenticate
+// ============================================================
+// REDIS LUA SCRIPT — atomic append to board op log
+// KEYS[1] = board:{boardId}:version       (INCR counter)
+// KEYS[2] = board_updates:{boardId}       (STREAM)
+// KEYS[3] = board:dedup:{boardId}         (SET for dedup)
+// ARGV[1] = maxlen                        (e.g., "1000")
+// ARGV[2] = updateId
+// ARGV[3] = payloadBase64
+// ARGV[4] = elementId
+// ARGV[5] = sourceClientId
+// ARGV[6] = timestamp (ISO8601)
+// ARGV[7] = _singleUser ("true"|"false")
+// Returns: version number, or -1 if duplicate
+// ============================================================
+const APPEND_UPDATE_LUA = `
+local seen = redis.call('SADD', KEYS[3], ARGV[2])
+if seen == 0 then
+  return -1
+end
+redis.call('EXPIRE', KEYS[3], 3600)
+local version = redis.call('INCR', KEYS[1])
+redis.call('XADD', KEYS[2], 'MAXLEN', '~', ARGV[1], '*',
+  'version', version,
+  'updateId', ARGV[2],
+  'payloadBase64', ARGV[3],
+  'elementId', ARGV[4],
+  'sourceClientId', ARGV[5],
+  'timestamp', ARGV[6],
+  '_singleUser', ARGV[7]
+)
+return version
+`;
+
+let appendUpdateSha = null;
+
+// Load Lua script after Redis connects
+redis.on('connect', async () => {
+  try {
+    appendUpdateSha = await redis.script('LOAD', APPEND_UPDATE_LUA);
+    console.log('✓ Lua script loaded (SHA:', appendUpdateSha, ')');
+  } catch (e) {
+    console.warn('⚠ Failed to load Lua script:', e.message);
+  }
+});
+
+// ============================================================
+// PARSE REDIS STREAM ENTRY (field-value array → object)
+// ============================================================
+function parseStreamEntry(fields) {
+  const obj = {};
+  for (let i = 0; i < fields.length; i += 2) {
+    obj[fields[i]] = fields[i + 1];
+  }
+  if (obj.version) obj.version = parseInt(obj.version, 10);
+  if (obj._singleUser) obj._singleUser = obj._singleUser === 'true';
+  return obj;
+}
+
+// ============================================================
+// SEED Redis version from Firestore snapshot (recovery)
+// ============================================================
+async function seedRedisFromFirestore(boardId) {
+  if (!redisAvailable || !db) return;
+  const versionKey = `board:${boardId}:version`;
+  const exists = await redis.exists(versionKey);
+  if (exists) return;
+
+  try {
+    const snap = await db.collection('boards').doc(boardId)
+      .collection('snapshot').doc('latest').get();
+    if (snap.exists) {
+      const data = snap.data();
+      if (data.lastAppliedVersion) {
+        await redis.set(versionKey, data.lastAppliedVersion.toString(), 'EX', 604800);
+        console.log(`[seed] Board ${boardId}: version seeded to ${data.lastAppliedVersion} from Firestore`);
+      }
+      if (data.lastAppliedStreamId) {
+        await redis.set(`board:lastSnapshotCursor:${boardId}`, data.lastAppliedStreamId, 'EX', 604800);
+        await redis.set(`board:lastSnapshotVersion:${boardId}`, data.lastAppliedVersion.toString(), 'EX', 604800);
+      }
+    } else {
+      await redis.set(versionKey, '0', 'EX', 604800);
+    }
+  } catch (e) {
+    console.warn(`[seed] Failed to seed board ${boardId}: ${e.message}`);
+  }
+}
+
+// ============================================================
+// SNAPSHOT WORKER (Phase 3)
+// ============================================================
+async function triggerSnapshot(boardId) {
+  if (!redisAvailable || !db) {
+    console.warn(`[snapshot] Skipped board ${boardId}: Redis or Firestore unavailable`);
+    return;
+  }
+
+  const streamKey = `board_updates:${boardId}`;
+  const versionKey = `board:${boardId}:version`;
+  const snapshotCursorKey = `board:lastSnapshotCursor:${boardId}`;
+  const snapshotVersionKey = `board:lastSnapshotVersion:${boardId}`;
+
+  // 1. Freeze the target version at the START of snapshot process
+  const snapshotTargetVersion = parseInt(await redis.get(versionKey) || '0', 10);
+  const lastSnapshotVersion = parseInt(await redis.get(snapshotVersionKey) || '0', 10);
+  if (snapshotTargetVersion <= lastSnapshotVersion) return;
+
+  // 2. Read stream entries since last snapshot cursor — incremental, not full scan
+  const lastCursor = await redis.get(snapshotCursorKey) || '0-0';
+  const rawEntries = await redis.xrange(streamKey, lastCursor, '+');
+
+  // 3. Filter entries: only those with version <= snapshotTargetVersion
+  //    (excludes entries that arrived during snapshot build)
+  const entries = rawEntries
+    .map(([id, fields]) => {
+      const entry = parseStreamEntry(fields);
+      entry._streamId = id;
+      return entry;
+    })
+    .filter(e => e.version > lastSnapshotVersion && e.version <= snapshotTargetVersion)
+    .sort((a, b) => a.version - b.version);
+
+  if (entries.length === 0) return;
+
+  // 4. Build materialized Yjs doc state
+  const doc = new Y.Doc();
+  for (const entry of entries) {
+    if (!entry.payloadBase64 || entry._singleUser === true) continue;
+    try {
+      const buffer = Buffer.from(entry.payloadBase64, 'base64');
+      Y.applyUpdate(doc, buffer);
+    } catch (e) {
+      console.warn(`[snapshot] Skipping corrupt update ${entry.updateId}: ${e.message}`);
+    }
+  }
+
+  const stateUpdate = Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64');
+  const stateVector = Buffer.from(Y.encodeStateVector(doc)).toString('base64');
+  const elementCount = doc.getMap('elements').size;
+
+  // 5. Find the stream ID of the LAST entry where version <= snapshotTargetVersion
+  const lastIncluded = entries.filter(e => e.version <= snapshotTargetVersion).pop();
+  const lastAppliedStreamId = lastIncluded ? lastIncluded._streamId : lastCursor;
+
+  // 6. Write to Firestore
+  const snapshotRef = db.collection('boards').doc(boardId)
+    .collection('snapshot').doc('latest');
+
+  try {
+    await snapshotRef.set({
+      boardId,
+      lastAppliedVersion: snapshotTargetVersion,
+      lastAppliedStreamId,
+      stateUpdate,
+      stateVector,
+      elementCount,
+      snapshotVersion: lastSnapshotVersion + 1,
+      lastSnapshotAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: '__snapshot_worker__',
+    });
+
+    // 7. Update Redis cursor only after Firestore write succeeds
+    await redis.set(snapshotCursorKey, lastAppliedStreamId, 'EX', 604800);
+    await redis.set(snapshotVersionKey, snapshotTargetVersion.toString(), 'EX', 604800);
+
+    // 8. Trim stream at snapshot boundary — remove entries before last applied stream ID
+    await redis.xtrim(streamKey, 'MINID', lastAppliedStreamId).catch(() => {});
+
+    console.log(`[snapshot] Board ${boardId}: v${lastSnapshotVersion} → v${snapshotTargetVersion} (${entries.length} updates, ${elementCount} elements)`);
+  } catch (e) {
+    console.warn(`[snapshot] Firestore write FAILED for board ${boardId}: ${e.message} — will retry`);
+    // Do NOT update Redis cursor or trim — next attempt will include same entries
+  }
+}
+
+// ============================================================
+// CLEANUP WORKER (Phase 3) — snapshot stale boards, then trim
+// ============================================================
+setInterval(async () => {
+  if (!redisAvailable) return;
+
+  const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+  const stream = redis.scanStream({ match: 'board:lastActivity:*', count: 100 });
+
+  stream.on('data', async (keys) => {
+    for (const key of keys) {
+      try {
+        const boardId = key.replace('board:lastActivity:', '');
+        const lastActivity = parseInt(await redis.get(key) || '0', 10);
+        if (lastActivity === 0 || lastActivity > threeDaysAgo) continue;
+        console.log(`[cleanup] Board ${boardId} inactive > 3 days — taking snapshot`);
+        await triggerSnapshot(boardId);
+      } catch (e) {
+        console.warn(`[cleanup] Failed for ${key}: ${e.message}`);
+      }
+    }
+  });
+}, 60 * 60 * 1000);
+
+// ============================================================
+// SOCKET.IO AUTH MIDDLEWARE
+// ============================================================
 io.use(async (socket, next) => {
   try {
     const {token} = socket.handshake.auth;
     if (!token) return next(new Error('Authentication error: Token missing'));
 
-    if (db) { // only run actual auth if Firebase is running
+    if (db) {
         const decodedToken = await admin.auth().verifyIdToken(token);
         socket.data.uid = decodedToken.uid;
     } else {
-        // Fallback for local testing without valid service-account
         socket.data.uid = socket.handshake.auth.uid || "test-user";
     }
     next();
@@ -255,15 +367,16 @@ io.use(async (socket, next) => {
   }
 });
 
+// ============================================================
+// SOCKET.IO CONNECTION
+// ============================================================
 io.on('connection', (socket) => {
   const {uid} = socket.data;
   console.log(`User connected: ${uid} (socket: ${socket.id})`);
 
-  // User re‑authenticated (new login) — resume queueing for them
-  loggedOutUids.delete(uid);
-  loggedOutTimestamps.delete(uid);
-
-  // Phase 2: Live Sync - Join Room
+  // ----------------------------------------------------------
+  // watch_board
+  // ----------------------------------------------------------
   socket.on('watch_board', (boardId) => {
     if (!isValidBoardId(boardId)) {
       console.warn(`[watch_board] Invalid boardId from ${uid}`);
@@ -274,18 +387,9 @@ io.on('connection', (socket) => {
     console.log(`[watch_board] User ${uid} joined board ${boardId} (socket: ${socket.id})`);
   });
 
-  // Force-refresh the member list cache for a board.
-  // Emitted by the client after a Cloud Function adds them as a member,
-  // so the server picks up the updated list from Redis immediately.
-  socket.on('refresh_board_members', (boardId) => {
-    if (!isValidBoardId(boardId)) {
-      console.warn(`[refresh_board_members] Invalid boardId from ${uid}`);
-      return;
-    }
-    boardMembersCache.delete(boardId);
-    console.log(`[refresh_board_members] Invalidated cache for board ${boardId} (triggered by ${uid})`);
-  });
-
+  // ----------------------------------------------------------
+  // leave_board
+  // ----------------------------------------------------------
   socket.on('leave_board', (boardId) => {
     if (!isValidBoardId(boardId)) {
       console.warn(`[leave_board] Invalid boardId from ${uid}`);
@@ -295,7 +399,9 @@ io.on('connection', (socket) => {
     console.log(`[leave_board] User ${uid} left board ${boardId}`);
   });
 
-  // Phase 2 & 3: Incoming Update Relay
+  // ============================================================
+  // crdt_update — LIVE UPDATE RELAY + PERSISTENCE
+  // ============================================================
   socket.on('crdt_update', async ({ boardId, update }, ack) => {
     if (isRateLimited(socket.id)) {
       console.warn(`[crdt_update] Rate limited ${uid} (socket: ${socket.id})`);
@@ -319,85 +425,126 @@ io.on('connection', (socket) => {
     ]);
 
     const isSingleUser = update._singleUser === true;
-    // Strip the client-side flag before persisting
     if (isSingleUser) {
       delete update._singleUser;
     }
 
     try {
-      // Save to Firestore (always)
-      if (db) {
-        await db.collection('boards').doc(boardId).collection('crdt_updates')
-          .doc(update.updateId)
-          .set({
-            ...update,
-            updateId: update.updateId,
-            appliedAt: admin.firestore.FieldValue.serverTimestamp(),
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-          });
-        console.log(`[crdt_update] Wrote update ${update.updateId} to Firestore`);
+      // -------------------------------------------------------
+      // PHASE 1: Atomic append to Redis STREAM via Lua script
+      // -------------------------------------------------------
+      let version = null;
+      let isDuplicate = false;
+
+      if (redisAvailable && !isSingleUser) {
+        // Seed Redis version from Firestore if missing (handles Redis loss recovery)
+        await seedRedisFromFirestore(boardId);
+
+        const now = new Date().toISOString();
+        try {
+          let result;
+          try {
+            result = await redis.evalsha(appendUpdateSha, 3,
+              `board:${boardId}:version`,
+              `board_updates:${boardId}`,
+              `board:dedup:${boardId}`,
+              1000,
+              update.updateId,
+              update.payloadBase64,
+              update.elementId || '',
+              update.sourceClientId || '',
+              now,
+              isSingleUser ? 'true' : 'false'
+            );
+          } catch (shaError) {
+            if (shaError.message && shaError.message.includes('NOSCRIPT')) {
+              result = await redis.eval(APPEND_UPDATE_LUA, 3,
+                `board:${boardId}:version`,
+                `board_updates:${boardId}`,
+                `board:dedup:${boardId}`,
+                1000,
+                update.updateId,
+                update.payloadBase64,
+                update.elementId || '',
+                update.sourceClientId || '',
+                now,
+                isSingleUser ? 'true' : 'false'
+              );
+            } else {
+              throw shaError;
+            }
+          }
+
+          if (result === -1) {
+            isDuplicate = true;
+            console.log(`[crdt_update] Duplicate updateId ${update.updateId} — acking success, skipping storage`);
+          } else {
+            version = result;
+
+            // Update last activity timestamp (best-effort)
+            redis.set(`board:lastActivity:${boardId}`, Date.now().toString(), 'EX', 604800).catch(() => {});
+          }
+        } catch (luaError) {
+          console.warn(`[crdt_update] Lua script failed: ${luaError.message}`);
+        }
       }
 
       if (isSingleUser) {
-        // Single-user board: skip broadcast, skip Redis, skip offline queue
         console.log(`[crdt_update] Single-user board — saved directly, no broadcast/queue`);
         if (typeof ack === 'function') {
-          ack({ status: 'success', updateId: update.updateId, boardId });
+          ack({ status: 'success', updateId: update.updateId, boardId, version: version || 0 });
         }
         return;
       }
 
-      // Multi-user: broadcast + offline queue
-      socket.to(`board_room:${boardId}`).emit('crdt_update', { boardId, update });
-      console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId}`);
-
-      const members = await getBoardMembersCached(boardId);
-      const connectedUids = await getConnectedSocketsInRoom(`board_room:${boardId}`);
-      console.log(`[crdt_update] Connected UIDs in board ${boardId}: ${connectedUids.join(', ')}`);
-      const offlineMembers = members.filter(
-        memberUid => !connectedUids.includes(memberUid) && !loggedOutUids.has(memberUid)
-      );
-      console.log(`[crdt_update] Offline members (excluding logged‑out) for board ${boardId}: ${offlineMembers.join(', ')}`);
-
-      const ttlSeconds = 604800; // 7 days
-
-      for (const memberUid of offlineMembers) {
-        const queueKey = `queue:${memberUid}:board:${boardId}`;
-        console.log(`[crdt_update] Queueing update ${update.updateId} for offline member ${memberUid} (key: ${queueKey})`);
-
-        if (redisAvailable) {
-          try {
-            await redis.rpush(queueKey, JSON.stringify(update));
-            await redis.expire(queueKey, ttlSeconds);
-            console.log(`[crdt_update] Successfully queued update to Redis for ${queueKey}`);
-          } catch (redisError) {
-            console.warn(`Redis queue failed for ${queueKey}, using memory fallback`);
-            if (!memoryQueue[queueKey]) memoryQueue[queueKey] = [];
-            memoryQueue[queueKey].push(update);
-          }
-        } else {
-          if (!memoryQueue[queueKey]) memoryQueue[queueKey] = [];
-          memoryQueue[queueKey].push(update);
-          console.log(`[crdt_update] Queued update to memory for ${queueKey}`);
+      if (isDuplicate) {
+        // Duplicate: ack success but no broadcast (already broadcast the first time)
+        if (typeof ack === 'function') {
+          ack({ status: 'success', updateId: update.updateId, boardId, version: 0 });
         }
+        return;
+      }
+
+      // If persistence failed (Redis unavailable or Lua error), reject so client retries
+      if (version === null && !isSingleUser) {
+        if (typeof ack === 'function') {
+          ack({ status: 'error', message: 'persistence_unavailable' });
+        }
+        return;
+      }
+
+      // -------------------------------------------------------
+      // Broadcast to room (with version for client cursor tracking)
+      // -------------------------------------------------------
+      const broadcastPayload = { boardId, update: { ...update, version } };
+      socket.to(`board_room:${boardId}`).emit('crdt_update', broadcastPayload);
+      console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId} version=${version}`);
+
+      // -------------------------------------------------------
+      // Trigger snapshot every 100 updates (fire-and-forget)
+      // -------------------------------------------------------
+      if (redisAvailable && version !== null && version % 100 === 0) {
+        triggerSnapshot(boardId).catch(e =>
+          console.warn(`[snapshot] trigger failed: ${e.message}`)
+        );
       }
 
       if (typeof ack === 'function') {
-        ack({ status: 'success', updateId: update.updateId, boardId });
+        ack({ status: 'success', updateId: update.updateId, boardId, version: version || 0 });
       }
     } catch (error) {
       console.error('Failed processing crdt_update:', error);
       if (typeof ack === 'function') {
         try {
           ack({ status: 'error', message: error.message });
-        } catch (e) {
-          // ignore
-        }
+        } catch (e) {}
       }
     }
   });
 
-  // Live preview relay for in-progress canvas edits.
+  // ----------------------------------------------------------
+  // crdt_preview — EPHEMERAL RELAY (unchanged)
+  // ----------------------------------------------------------
   socket.on('crdt_preview', async ({ boardId, preview }, ack) => {
     if (isRateLimited(socket.id)) {
       console.warn(`[crdt_preview] Rate limited ${uid} (socket: ${socket.id})`);
@@ -421,17 +568,16 @@ io.on('connection', (socket) => {
     ]);
 
     socket.to(`board_room:${boardId}`).emit('crdt_preview', { boardId, preview });
-    console.log(
-      `[WS PREVIEW SENT] board_room:${boardId} previewId=${preview?.previewId ?? 'n/a'}`,
-    );
 
     if (typeof ack === 'function') {
       ack({ status: 'success', previewId: preview?.previewId ?? null, boardId });
     }
   });
 
-  // Phase 3: Offline Sync Demand & Fallback
-  socket.on('sync_offline', async ({ boardId }, callback) => {
+  // ============================================================
+  // sync_offline — VERSION-BASED SYNC (Phase 2+)
+  // ============================================================
+  socket.on('sync_offline', async ({ boardId, lastSeenCursor, sinceVersion }, callback) => {
     if (!isValidBoardId(boardId)) {
       console.warn(`[sync_offline] Invalid boardId from ${uid}`);
       if (typeof callback === 'function') callback({ status: 'error', boardId, error: 'invalid_board_id' });
@@ -443,80 +589,167 @@ io.on('connection', (socket) => {
       `[direction] client -> server`,
       `[user] ${uid}`,
       `[board] ${boardId}`,
+      `[cursor] ${lastSeenCursor || sinceVersion || 'none'}`,
     ]);
+
     try {
-      const queueKey = `queue:${uid}:board:${boardId}`;
-      console.log(`[sync_offline] Draining queue: ${queueKey}`);
-      let elements = [];
-      let source = 'redis';
+      // ============================================================
+      // PATH 1 (PRIMARY): Stream cursor-based incremental sync
+      // ============================================================
+      if (redisAvailable && lastSeenCursor) {
+        const streamKey = `board_updates:${boardId}`;
+        const streamId = lastSeenCursor.split(':')[0];
 
-      if (redisAvailable) {
-        // Atomically pop the entire queue: rename to a temp key so no other
-        // consumer (or repeated request) can touch it, then read + delete.
-        const tmpKey = `${queueKey}:processing`;
-        try {
-          const renamed = await redis.renamenx(queueKey, tmpKey);
-          if (renamed === 1) {
-            elements = await redis.lrange(tmpKey, 0, -1);
-            await redis.del(tmpKey);
-            console.log(`[sync_offline] Drained ${elements.length} elements from Redis for ${queueKey}`);
-          } else {
-            // Queue either doesn't exist or another consumer is already draining it
-            console.log(`[sync_offline] Queue ${queueKey} already drained or claimed by another consumer`);
+        const raw = await redis.xread('COUNT', 100, 'STREAMS', streamKey, streamId);
+
+        if (raw && raw[0] && raw[0][1] && raw[0][1].length > 0) {
+          const entries = raw[0][1];
+          const updates = [];
+          let lastEntryId = streamId;
+          let lastVersion = parseInt(lastSeenCursor.split(':')[1] || '0', 10);
+
+          for (const [entryId, fields] of entries) {
+            const entry = parseStreamEntry(fields);
+            entry.appliedAt = entry.timestamp;
+            updates.push(entry);
+            lastEntryId = entryId;
+            if (entry.version > lastVersion) lastVersion = entry.version;
           }
-        } catch (redisError) {
-          console.warn(`Redis sync_offline failed for ${queueKey}: ${redisError.message}`);
-          elements = memoryQueue[queueKey] || [];
-          source = 'memory';
-          delete memoryQueue[queueKey];
-        }
-      } else {
-        elements = memoryQueue[queueKey] || [];
-        source = 'memory';
-        delete memoryQueue[queueKey];
-        console.log(`[sync_offline] Drained ${elements.length} elements from memory for ${queueKey}`);
-      }
 
-      if (elements && elements.length > 0) {
-        let updates;
-        try {
-          updates = elements.map(el => typeof el === 'string' ? JSON.parse(el) : el);
-        } catch (parseError) {
-          console.error(`[sync_offline] Corrupt queue data for ${queueKey}: ${parseError.message}`);
+          const newCursor = `${lastEntryId}:${lastVersion}`;
+          const hasMore = entries.length >= 100;
+
+          // Store cursor for this user
+          await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => {});
+
+          logWsEvent('SYNC RESPONSE (cursor)', [
+            `[user] ${uid}`,
+            `[board] ${boardId}`,
+            `[updates] ${updates.length}`,
+            `[cursor] ${newCursor}`,
+            `[hasMore] ${hasMore}`,
+          ]);
+
           if (typeof callback === 'function') {
-            callback({ status: 'error', boardId, error: 'corrupt_queue' });
+            callback({ status: 'success', updates, cursor: newCursor, hasMore, source: 'cursor' });
           }
           return;
         }
 
-        logWsEvent('SYNC RESPONSE SENT', [
-          `[event] sync_offline`,
-          `[direction] server -> client`,
-          `[user] ${uid}`,
-          `[board] ${boardId}`,
-          `[source] ${source}`,
-          `[updates] ${updates.length}`,
-        ]);
+        // XREAD returned empty — no new entries; return current cursor
+        if (typeof callback === 'function') {
+          callback({ status: 'success', updates: [], cursor: lastSeenCursor, hasMore: false, source: 'cursor' });
+        }
+        return;
+      }
+
+      // ============================================================
+      // PATH 2 (SECONDARY): Snapshot + remaining deltas
+      // ============================================================
+      if (redisAvailable && db) {
+        const snapshotCursorKey = `board:lastSnapshotCursor:${boardId}`;
+        const snapshotVersionKey = `board:lastSnapshotVersion:${boardId}`;
+        const lastSnapshotVersion = parseInt(await redis.get(snapshotVersionKey) || '0', 10);
+        const lastServerVersion = parseInt(await redis.get(`board:${boardId}:version`) || '0', 10);
+
+        // Only use snapshot path if client is behind the snapshot version
+        const effectiveServerVersion = sinceVersion || lastServerVersion;
+        if (lastSnapshotVersion > 0 && lastSnapshotVersion > effectiveServerVersion) {
+          // Load Firestore snapshot
+          const snapDoc = await db.collection('boards').doc(boardId)
+            .collection('snapshot').doc('latest').get();
+
+          if (snapDoc.exists) {
+            const snapshotData = snapDoc.data();
+            const lastCursor = await redis.get(snapshotCursorKey) || '0-0';
+
+            // Fetch deltas after snapshot from stream
+            const raw = await redis.xread('COUNT', 100, 'STREAMS', `board_updates:${boardId}`, lastCursor);
+
+            let updates = [];
+            let lastEntryId = lastCursor;
+            let lastVer = snapshotData.lastAppliedVersion || 0;
+
+            if (raw && raw[0] && raw[0][1]) {
+              for (const [entryId, fields] of raw[0][1]) {
+                const entry = parseStreamEntry(fields);
+                entry.appliedAt = entry.timestamp;
+                updates.push(entry);
+                lastEntryId = entryId;
+                if (entry.version > lastVer) lastVer = entry.version;
+              }
+            }
+
+            const newCursor = `${lastEntryId}:${lastVer}`;
+            await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => {});
+
+            logWsEvent('SYNC RESPONSE (snapshot+delta)', [
+              `[user] ${uid}`,
+              `[board] ${boardId}`,
+              `[snapshotVersion] ${snapshotData.lastAppliedVersion}`,
+              `[deltas] ${updates.length}`,
+              `[cursor] ${newCursor}`,
+            ]);
+
+            if (typeof callback === 'function') {
+              callback({
+                status: 'success',
+                snapshot: {
+                  stateUpdate: snapshotData.stateUpdate,
+                  lastAppliedVersion: snapshotData.lastAppliedVersion,
+                  lastAppliedStreamId: lastCursor,
+                },
+                updates,
+                cursor: newCursor,
+                source: 'snapshot_with_deltas',
+              });
+            }
+            return;
+          }
+        }
+
+        // Client is caught up to snapshot but we have no cursor — seed from current version
+        const currentVersion = await redis.get(`board:${boardId}:version`) || '0';
+        const dummyCursor = `0-0:${currentVersion}`;
+        await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, dummyCursor, 'EX', 604800).catch(() => {});
 
         if (typeof callback === 'function') {
-          callback({ status: 'success', updates, source });
-        } else {
-          socket.emit('sync_offline_response', { status: 'success', boardId, updates, source });
+          callback({ status: 'success', updates: [], cursor: dummyCursor, hasMore: false, source: 'cursor' });
         }
-      } else {
-        logWsEvent('SYNC FALLBACK REQUESTED', [
-          `[event] sync_offline`,
-          `[direction] server -> client`,
-          `[user] ${uid}`,
-          `[board] ${boardId}`,
-          `[result] fallback_required`,
-        ]);
-        const payload = { status: 'fallback_required', boardId };
-        if (typeof callback === 'function') {
-          callback(payload);
-        } else {
-          socket.emit('sync_offline_response', payload);
+        return;
+      }
+
+      // ============================================================
+      // PATH 3 (TERTIARY): Firestore snapshot only (Redis unavailable)
+      // ============================================================
+      if (!redisAvailable && db) {
+        const snapDoc = await db.collection('boards').doc(boardId)
+          .collection('snapshot').doc('latest').get();
+        if (snapDoc.exists) {
+          const snapshotData = snapDoc.data();
+          logWsEvent('SYNC RESPONSE (snapshot only)', [
+            `[user] ${uid}`,
+            `[board] ${boardId}`,
+            `[snapshotVersion] ${snapshotData.lastAppliedVersion}`,
+          ]);
+          if (typeof callback === 'function') {
+            callback({
+              status: 'success',
+              snapshot: {
+                stateUpdate: snapshotData.stateUpdate,
+                lastAppliedVersion: snapshotData.lastAppliedVersion,
+              },
+              updates: [],
+              cursor: null,
+              source: 'snapshot_only',
+            });
+          }
+          return;
         }
+      }
+
+      if (typeof callback === 'function') {
+        callback({ status: 'fallback_required', boardId });
       }
     } catch (error) {
       console.error('Error in sync_offline:', error);
@@ -526,16 +759,17 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ----------------------------------------------------------
+  // disconnect
+  // ----------------------------------------------------------
   socket.on('disconnect', () => {
     console.log(`[WS DISCONNECT] user=${uid} socket=${socket.id}`);
-    // IMPORTANT: Do NOT clear user queues on simple disconnect. Queues
-    // must be preserved across transient disconnects. Clearing should be
-    // done only on explicit logout (handled via 'logout' event).
-    // This preserves pending offline updates for later delivery.
     socketEventCounts.delete(socket.id);
   });
 
-  // Explicit logout: clear per-user queues only when client intentionally logs out
+  // ----------------------------------------------------------
+  // logout
+  // ----------------------------------------------------------
   socket.on('logout', async (payload, callback) => {
     logWsEvent('LOGOUT RECEIVED', [
       `[event] logout`,
@@ -543,20 +777,30 @@ io.on('connection', (socket) => {
       `[user] ${uid}`,
     ]);
     try {
-      await clearUserQueues(uid);
-      loggedOutUids.add(uid);
-      loggedOutTimestamps.set(uid, Date.now());
-      console.log(`[logout] Added ${uid} to logged‑out set — future updates for this user will NOT be queued until they log in again`);
+      // Clear cursor tracking for this user
+      if (redisAvailable) {
+        const keys = await redis.keys(`user:lastSeenCursor:${uid}:*`);
+        if (keys && keys.length > 0) {
+          for (const key of keys) {
+            await redis.del(key);
+          }
+        }
+      }
+
+      console.log(`[logout] Cleared cursors for ${uid}`);
       if (typeof callback === 'function') callback({ status: 'success' });
       else socket.emit('logout_response', { status: 'success' });
     } catch (e) {
-      console.error(`[logout] Failed clearing queues for ${uid}: ${e.message}`);
+      console.error(`[logout] Failed clearing cursors for ${uid}: ${e.message}`);
       if (typeof callback === 'function') callback({ status: 'error', message: e.message });
       else socket.emit('logout_response', { status: 'error', message: e.message });
     }
   });
 });
 
+// ============================================================
+// SERVER START
+// ============================================================
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`WebSocket server listening on port ${PORT}`);
@@ -576,7 +820,6 @@ function gracefulShutdown(signal) {
       process.exit(0);
     }
   });
-  // Force shutdown after 10 seconds
   setTimeout(() => {
     console.error('Forced shutdown after timeout');
     process.exit(1);

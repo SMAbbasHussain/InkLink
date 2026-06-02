@@ -133,7 +133,6 @@ void main() async {
         ),
         RepositoryProvider<CanvasSyncRepository>(
           create: (context) => FirestoreCanvasSyncRepository(
-            firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
             localDatabaseService: context.read<LocalDatabaseService>(),
           ),

@@ -1,8 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:developer' as developer;
 
-import 'package:cloud_firestore/cloud_firestore.dart' as firestore;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:isar_community/isar.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
@@ -11,11 +9,9 @@ import '../../../core/database/collections/local_canvas_sync_state.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
-import '../../../core/services/firestore_service.dart';
 import 'canvas_sync_repository.dart';
 
 class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
-  final FirestoreService _firestoreService;
   final AuthService _authService;
   final LocalDatabaseService _localDatabaseService;
   static const int _maxPayloadBase64Length = 900000;
@@ -26,11 +22,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   StreamController<List<LocalCrdtUpdate>>? _socketPreviewController;
 
   FirestoreCanvasSyncRepository({
-    required FirestoreService firestoreService,
     required AuthService authService,
     required LocalDatabaseService localDatabaseService,
-  }) : _firestoreService = firestoreService,
-       _authService = authService,
+  }) : _authService = authService,
        _localDatabaseService = localDatabaseService;
 
   @override
@@ -238,7 +232,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       }
     } catch (error, stackTrace) {
       _logError(
-        'Socket in-place update failed; falling back to Firestore write',
+        'Socket in-place update failed; leaving unsynced for retry',
         error,
         stackTrace,
         boardId: boardId,
@@ -246,23 +240,17 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         updateId: updateId,
       );
     }
+  }
 
-    // Fallback to Firestore if websocket is unavailable.
-    await _firestoreService
-        .collection('boards')
-        .doc(boardId)
-        .collection('crdt_updates')
-        .doc(updateId)
-        .set({
-          'updateId': updateId,
-          'boardId': boardId,
-          'payloadBase64': payloadBase64,
-          'sourceClientId': sourceClientId,
-          'elementId': existing.elementId,
-          'appliedAt': firestore.FieldValue.serverTimestamp(),
-        }, firestore.SetOptions(merge: true));
-
-    await markCrdtUpdateSynced(updateId);
+  @override
+  Future<String?> getLastSeenCursor(String boardId) async {
+    try {
+      final isar = await _localDatabaseService.database;
+      final syncState = await isar.localCanvasSyncStates.getByBoardId(boardId);
+      return syncState?.lastSeenCursor;
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
@@ -319,13 +307,12 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   Future<List<LocalCrdtUpdate>> fetchRemoteCrdtUpdates(
     String boardId, {
     DateTime? since,
+    String? lastSeenCursor,
     bool preferSocket = true,
   }) async {
     if (preferSocket) {
-      // Try socket-backed pull first when possible (offline queue on server)
       try {
         if (_socket == null || !_socket!.connected) {
-          // attempt to connect lazily
           final token = await _authService.getIdToken();
           if (token != null) {
             final serverUrl =
@@ -339,7 +326,6 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
                   .build(),
             );
             _socket!.connect();
-            // small timeout to let socket connect
             final connectCompleter = Completer<void>();
             _socket!.onConnect((_) {
               if (!connectCompleter.isCompleted) connectCompleter.complete();
@@ -352,82 +338,21 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         }
 
         if (_socket != null && _socket!.connected) {
-          final completer = Completer<List<LocalCrdtUpdate>>();
-          _logWs(
-            'UPDATE REQUEST SENT',
-            boardId,
-            'sync_offline (fetch)',
-            since: since?.toIso8601String(),
-          );
-          _socket!.emitWithAck(
-            'sync_offline',
-            {'boardId': boardId, 'since': since?.toIso8601String()},
-            ack: (dynamic response) {
-              if (response != null && response['status'] == 'success') {
-                final updates =
-                    (response['updates'] as List?)
-                        ?.map((dynamic data) {
-                          final map = data as Map<String, dynamic>;
-                          final appliedAtStr =
-                              map['appliedAt'] as String? ??
-                              map['timestamp'] as String?;
-                          return LocalCrdtUpdate()
-                            ..updateId =
-                                (map['updateId'] as String?) ??
-                                (map['id'] as String?) ??
-                                ''
-                            ..boardId = (map['boardId'] as String?) ?? boardId
-                            ..elementId = map['elementId'] as String?
-                            ..payloadBase64 =
-                                map['payloadBase64'] as String? ?? ''
-                            ..sourceClientId =
-                                map['sourceClientId'] as String? ?? ''
-                            ..appliedAt = appliedAtStr != null
-                                ? DateTime.tryParse(appliedAtStr) ??
-                                      DateTime.now()
-                                : DateTime.now()
-                            ..isSynced = true;
-                        })
-                        .toList(growable: false) ??
-                    <LocalCrdtUpdate>[];
-                _logWs(
-                  'UPDATE RESPONSE RECEIVED',
-                  boardId,
-                  'sync_offline',
-                  updateCount: updates.length,
-                  source: response['source'] as String?,
-                );
-                completer.complete(updates);
-              } else if (response != null &&
-                  response['status'] == 'fallback_required') {
-                _logWs(
-                  'UPDATE RESPONSE RECEIVED',
-                  boardId,
-                  'sync_offline',
-                  detail: 'fallback_required',
-                );
-                completer.completeError('fallback_required');
-              } else {
-                completer.completeError('socket_sync_failed');
-              }
-            },
-          );
-
-          try {
-            return await completer.future.timeout(const Duration(seconds: 5));
-          } catch (error, stackTrace) {
-            _logError(
-              'Socket sync_offline fetch timed out/failed; falling back to Firestore query',
-              error,
-              stackTrace,
-              boardId: boardId,
-              event: 'sync_offline (fetch)',
-            );
+          // Load stored cursor from local sync state if not provided
+          String? cursor = lastSeenCursor;
+          if (cursor == null) {
+            final isar = await _localDatabaseService.database;
+            final syncState =
+                await isar.localCanvasSyncStates.getByBoardId(boardId);
+            cursor = syncState?.lastSeenCursor;
           }
+
+          final result = await _fetchWithCursor(boardId, cursor);
+          return result;
         }
       } catch (error, stackTrace) {
         _logError(
-          'Socket-based remote fetch setup failed; falling back to Firestore query',
+          'Socket-based remote fetch setup failed',
           error,
           stackTrace,
           boardId: boardId,
@@ -436,32 +361,112 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       }
     }
 
-    firestore.Query<Map<String, dynamic>> query = _firestoreService
-        .collection('boards')
-        .doc(boardId)
-        .collection('crdt_updates');
+    return <LocalCrdtUpdate>[];
+  }
 
-    // On fresh login (no local updates yet), fetch ALL updates from Firestore.
-    // Otherwise, fetch only since the last local update.
-    if (since != null) {
-      query = query.where(
-        'appliedAt',
-        isGreaterThan: firestore.Timestamp.fromDate(since),
-      );
+  /// Fetches remote updates using cursor-based sync (supports snapshot + deltas).
+  /// Handles pagination via [hasMore] flag from the server using a loop.
+  Future<List<LocalCrdtUpdate>> _fetchWithCursor(
+    String boardId,
+    String? cursor,
+  ) async {
+    final allUpdates = <LocalCrdtUpdate>[];
+    String? currentCursor = cursor;
+    const int maxPages = 10;
+    int pages = 0;
+
+    while (pages < maxPages) {
+      pages++;
+      final response = await _emitWithAck('sync_offline', {
+        'boardId': boardId,
+        if (currentCursor != null && currentCursor.isNotEmpty)
+          'lastSeenCursor': currentCursor,
+      });
+
+      if (response == null || response['status'] != 'success') {
+        if (response != null && response['status'] == 'fallback_required') {
+          throw 'fallback_required';
+        }
+        throw 'socket_sync_failed';
+      }
+
+      final source = response['source'] as String?;
+
+      // --- Handle snapshot-first responses ---
+      if (source == 'snapshot_with_deltas' || source == 'snapshot_only') {
+        final snapshotData = response['snapshot'] as Map<String, dynamic>?;
+        if (snapshotData != null) {
+          final stateUpdate = snapshotData['stateUpdate'] as String?;
+          if (stateUpdate != null && stateUpdate.isNotEmpty) {
+            allUpdates.add(LocalCrdtUpdate()
+              ..updateId = '__snapshot__${snapshotData['lastAppliedVersion'] ?? 0}'
+              ..boardId = boardId
+              ..elementId = null
+              ..payloadBase64 = stateUpdate
+              ..sourceClientId = '__server_snapshot__'
+              ..appliedAt = DateTime.now()
+              ..isSynced = true
+              ..version = snapshotData['lastAppliedVersion'] as int? ?? 0);
+          }
+        }
+      }
+
+      // --- Parse updates list ---
+      final updatesList = (response['updates'] as List?) ?? <dynamic>[];
+      for (final data in updatesList) {
+        final map = data as Map<String, dynamic>;
+        final appliedAtStr = map['appliedAt'] as String? ??
+            map['timestamp'] as String?;
+        allUpdates.add(LocalCrdtUpdate()
+          ..updateId = (map['updateId'] as String?) ?? ''
+          ..boardId = (map['boardId'] as String?) ?? boardId
+          ..elementId = map['elementId'] as String?
+          ..payloadBase64 = map['payloadBase64'] as String? ?? ''
+          ..sourceClientId = map['sourceClientId'] as String? ?? ''
+          ..appliedAt = appliedAtStr != null
+              ? DateTime.tryParse(appliedAtStr) ?? DateTime.now()
+              : DateTime.now()
+          ..isSynced = true
+          ..version = (map['version'] as num?)?.toInt() ?? 0);
+      }
+
+      // --- Store cursor ---
+      final newCursor = response['cursor'] as String?;
+      if (newCursor != null && newCursor.isNotEmpty) {
+        currentCursor = newCursor;
+        await _saveCursor(boardId, newCursor);
+      }
+
+      final hasMore = response['hasMore'] as bool? ?? false;
+      if (!hasMore) {
+        _logWs(
+          'UPDATE RESPONSE RECEIVED',
+          boardId,
+          'sync_offline',
+          updateCount: allUpdates.length,
+          source: source,
+          cursor: currentCursor,
+        );
+        return allUpdates;
+      }
     }
 
-    firestore.QuerySnapshot<Map<String, dynamic>> snapshot;
+    // Max pages reached — return what we have
+    return allUpdates;
+  }
+
+  Future<void> _saveCursor(String boardId, String cursor) async {
+    if (cursor.isEmpty) return;
     try {
-      snapshot = await query.get();
-    } on firestore.FirebaseException catch (e) {
-      if (e.code == 'permission-denied') return <LocalCrdtUpdate>[];
-      rethrow;
-    }
-
-    return snapshot.docs
-        .map((doc) => _mapRemoteDoc(doc, boardId))
-        .whereType<LocalCrdtUpdate>()
-        .toList(growable: false);
+      final isar = await _localDatabaseService.database;
+      await isar.writeTxn(() async {
+        await isar.localCanvasSyncStates.putByBoardId(
+          LocalCanvasSyncState()
+            ..boardId = boardId
+            ..lastSeenCursor = cursor,
+        );
+      });
+    } catch (_) {}
   }
 
   @override
@@ -554,6 +559,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
             final map = data as Map<String, dynamic>;
             if ((map['boardId'] as String?) == boardId) {
               final payload = (map['update'] as Map<String, dynamic>?) ?? {};
+              final version = (payload['version'] as num?)?.toInt() ?? 0;
               final update = LocalCrdtUpdate()
                 ..updateId =
                     (payload['updateId'] as String?) ??
@@ -564,13 +570,15 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
                 ..payloadBase64 = payload['payloadBase64'] as String? ?? ''
                 ..sourceClientId = payload['sourceClientId'] as String? ?? ''
                 ..appliedAt = DateTime.now()
-                ..isSynced = true;
+                ..isSynced = true
+                ..version = version;
               _logWs(
                 'UPDATE RECEIVED',
                 boardId,
                 'crdt_update',
                 updateId: update.updateId,
                 elementId: update.elementId,
+                detail: 'version=$version',
               );
               _socketUpdatesController?.add([update]);
             }
@@ -598,32 +606,13 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       }
     } catch (error, stackTrace) {
       _logError(
-        'Socket watchRemote setup failed; falling back to Firestore snapshots',
+        'Socket watchRemote setup failed',
         error,
         stackTrace,
         boardId: boardId,
         event: 'watch_board',
       );
     }
-
-    firestore.Query<Map<String, dynamic>> query = _firestoreService
-        .collection('boards')
-        .doc(boardId)
-        .collection('crdt_updates');
-
-    if (since != null) {
-      query = query.where(
-        'appliedAt',
-        isGreaterThan: firestore.Timestamp.fromDate(since),
-      );
-    }
-
-    yield* query.snapshots().map(
-      (snapshot) => snapshot.docs
-          .map((doc) => _mapRemoteDoc(doc, boardId))
-          .whereType<LocalCrdtUpdate>()
-          .toList(growable: false),
-    );
   }
 
   @override
@@ -641,9 +630,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
     final socketConnected = _socket != null && _socket!.connected;
 
-    // Prefer socket when connected. If socket send/ack fails, keep the update
-    // unsynced for retry and avoid immediate Firestore fallback writes that may
-    // fail with stale permission context after role changes.
+      // If socket send/ack fails, keep the update unsynced for retry
     if (socketConnected) {
       try {
         _logWs(
@@ -692,29 +679,6 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         return;
       }
     }
-
-    // Fallback to Firestore write only when socket is unavailable.
-    await _firestoreService
-        .collection('boards')
-        .doc(boardId)
-        .collection('crdt_updates')
-        .doc(updateId)
-        .set({
-          'updateId': updateId,
-          'boardId': boardId,
-          'payloadBase64': payloadBase64,
-          'sourceClientId': sourceClientId,
-          'elementId': elementId,
-          'appliedAt': firestore.FieldValue.serverTimestamp(),
-        });
-    await markCrdtUpdateSynced(updateId);
-  }
-
-  // Helper to detect permission errors, mirroring the service layer implementation.
-  bool _isPermissionDenied(Object error) {
-    final message = error.toString().toLowerCase();
-    return message.contains('permission-denied') ||
-        message.contains('missing or insufficient permissions');
   }
 
   @override
@@ -722,7 +686,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     final pending = await getLocalCrdtUpdates(boardId);
     final toSync = pending.where((u) => !u.isSynced).toList();
     if (toSync.isEmpty) return true;
-    // If socket connected, push each pending update to server for relay + persistence
+    // Push each pending update to server via socket
     try {
       if (_socket != null && _socket!.connected) {
         for (final local in toSync) {
@@ -749,11 +713,37 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
             return false;
           }
         }
+        // Clean up old synced entries and update sync state
+        try {
+          final isar = await _localDatabaseService.database;
+          await isar.writeTxn(() async {
+            await isar.localCrdtUpdates
+                .filter()
+                .boardIdEqualTo(boardId)
+                .isSyncedEqualTo(true)
+                .appliedAtLessThan(DateTime.now().subtract(const Duration(hours: 1)))
+                .deleteAll();
+          });
+          final latest = await isar.localCrdtUpdates
+              .filter()
+              .boardIdEqualTo(boardId)
+              .sortByAppliedAtDesc()
+              .findFirst();
+          if (latest != null) {
+            await isar.writeTxn(() async {
+              await isar.localCanvasSyncStates.putByBoardId(
+                LocalCanvasSyncState()
+                  ..boardId = boardId
+                  ..lastSyncedAppliedAt = latest.appliedAt,
+              );
+            });
+          }
+        } catch (_) {}
         return true;
       }
     } catch (error, stackTrace) {
       _logError(
-        'Socket batch sync failed; falling back to Firestore batch write',
+        'Socket batch sync failed',
         error,
         stackTrace,
         boardId: boardId,
@@ -761,155 +751,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       );
     }
 
-    final batch = _firestoreService.getInstance().batch();
-    var wroteAny = false;
-    final syncedUpdateIds = <String>[];
-    for (final local in toSync) {
-      if (!_isValidPayloadBase64(local.payloadBase64)) {
-        developer.log(
-          'Skipping oversized or invalid CRDT payload during batch sync | [board] $boardId [updateId] ${local.updateId}',
-          name: 'CanvasSyncRepository::WARN',
-          level: 900,
-        );
-        continue;
-      }
-
-      final docRef = _firestoreService
-          .collection('boards')
-          .doc(boardId)
-          .collection('crdt_updates')
-          .doc(local.updateId);
-      batch.set(docRef, {
-        'updateId': local.updateId,
-        'boardId': boardId,
-        'payloadBase64': local.payloadBase64,
-        'sourceClientId': userId,
-        'elementId': local.elementId,
-        'appliedAt': firestore.FieldValue.serverTimestamp(),
-      });
-      wroteAny = true;
-      syncedUpdateIds.add(local.updateId);
-    }
-
-    if (!wroteAny) {
-      return true;
-    }
-
-    try {
-      await batch.commit();
-      // Mark all as synced
-      for (final updateId in syncedUpdateIds) {
-        await markCrdtUpdateSynced(updateId);
-      }
-      
-      // Update sync state with latest timestamp
-      await _updateSyncState(boardId);
-      
-      // Clean up old synced updates to keep Isar bounded
-      await _cleanupOldSyncedUpdates(boardId);
-      
-      return true;
-    } catch (error) {
-      if (_isPermissionDenied(error)) {
-        return false;
-      }
-      rethrow;
-    }
-  }
-
-  Future<void> _cleanupOldSyncedUpdates(String boardId) async {
-    try {
-      final isar = await _localDatabaseService.database;
-      final oneHourAgo = DateTime.now().subtract(const Duration(hours: 1));
-      await isar.writeTxn(() async {
-        await isar.localCrdtUpdates
-            .filter()
-            .boardIdEqualTo(boardId)
-            .isSyncedEqualTo(true)
-            .appliedAtLessThan(oneHourAgo)
-            .deleteAll();
-      });
-    } catch (error, stackTrace) {
-      _logError(
-        'Failed to cleanup old synced CRDT updates',
-        error,
-        stackTrace,
-        boardId: boardId,
-        event: 'cleanup_old_updates',
-      );
-      // Don't rethrow; cleanup failures shouldn't break sync
-    }
-  }
-
-  Future<void> _updateSyncState(String boardId) async {
-    try {
-      final isar = await _localDatabaseService.database;
-      final latest = await isar.localCrdtUpdates
-          .filter()
-          .boardIdEqualTo(boardId)
-          .sortByAppliedAtDesc()
-          .findFirst();
-      if (latest != null) {
-        await isar.writeTxn(() async {
-          await isar.localCanvasSyncStates.putByBoardId(
-            LocalCanvasSyncState()
-              ..boardId = boardId
-              ..lastSyncedAppliedAt = latest.appliedAt,
-          );
-        });
-      }
-    } catch (_) {
-      // Non-critical; sync continues without sync state tracking
-    }
-  }
-
-  LocalCrdtUpdate? _mapRemoteDoc(
-    firestore.DocumentSnapshot<Map<String, dynamic>> doc,
-    String boardId,
-  ) {
-    final data = doc.data() ?? const <String, dynamic>{};
-    final payloadBase64 = (data['payloadBase64'] as String?) ?? '';
-    if (!_isValidPayloadBase64(payloadBase64)) {
-      return null;
-    }
-
-    final appliedAt =
-        (data['appliedAt'] as firestore.Timestamp?)?.toDate() ??
-        (data['timestamp'] as firestore.Timestamp?)?.toDate();
-    if (appliedAt == null) {
-      return null;
-    }
-
-    final updateId = (data['updateId'] as String?)?.trim();
-
-    return LocalCrdtUpdate()
-      ..updateId = (updateId != null && updateId.isNotEmpty) ? updateId : doc.id
-      ..boardId = (data['boardId'] as String?) ?? boardId
-      ..elementId = (data['elementId'] as String?)
-      ..payloadBase64 = payloadBase64
-      ..sourceClientId = (data['sourceClientId'] as String?) ?? ''
-      ..appliedAt = appliedAt
-      ..isSynced = true;
-  }
-
-  bool _isValidPayloadBase64(String payloadBase64) {
-    if (payloadBase64.isEmpty ||
-        payloadBase64.length > _maxPayloadBase64Length) {
-      return false;
-    }
-
-    try {
-      final decoded = base64Decode(payloadBase64);
-      return decoded.isNotEmpty;
-    } catch (error, stackTrace) {
-      _logError(
-        'Invalid payloadBase64 encountered during validation',
-        error,
-        stackTrace,
-        event: 'payload_validation',
-      );
-      return false;
-    }
+    return false;
   }
 
   /// Disconnect WebSocket on logout.
@@ -951,8 +793,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     }
   }
 
-  /// Send explicit logout handshake to the server. Server will clear server-side
-  /// queues only when an explicit logout is received.
+  /// Send explicit logout handshake to the server.
   @override
   Future<void> logoutSocket() async {
     if (_socket != null && _socket!.connected) {
@@ -999,8 +840,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     );
   }
 
-  /// Disconnect WebSocket locally. Server will NOT clear user queues on simple
-  /// disconnects; queues are preserved until an explicit `logout` is received.
+  /// Disconnect WebSocket locally.
   @override
   Future<void> disconnectSocket() async {
     if (_socket != null && _socket!.connected) {
@@ -1021,6 +861,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     String? source,
     int? updateCount,
     String? detail,
+    String? cursor,
   }) {
     final lines = <String>[
       '[event] $event',
@@ -1032,6 +873,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       if (source != null) '[source] $source',
       if (updateCount != null) '[updates] $updateCount',
       if (detail != null) '[detail] $detail',
+      if (cursor != null) '[cursor] $cursor',
     ];
 
     developer.log(lines.join(' | '), name: 'CanvasWebSocket::$title');

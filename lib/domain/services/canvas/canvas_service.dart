@@ -224,9 +224,12 @@ class CanvasServiceImpl implements CanvasService {
     final latestLocalUpdateAt = useFirestoreFirst
         ? null
         : await _syncRepository.getLatestLocalCrdtUpdateAt(boardId);
+    final lastSeenCursor = await _syncRepository.getLastSeenCursor(boardId);
+
     final remoteUpdates = await _syncRepository.fetchRemoteCrdtUpdates(
       boardId,
       since: latestLocalUpdateAt,
+      lastSeenCursor: lastSeenCursor,
       preferSocket: !useFirestoreFirst,
     );
     if (remoteUpdates.isNotEmpty) {

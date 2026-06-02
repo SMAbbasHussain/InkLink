@@ -298,7 +298,37 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final adapter = _crdtAdapter;
     if (adapter == null) return;
+
+    // Separate snapshot from regular updates
+    List<LocalCrdtUpdate> snapshotUpdate = [];
+    List<LocalCrdtUpdate> regularUpdates = [];
+
     for (final update in event.updates) {
+      if (update.updateId.startsWith('__snapshot__')) {
+        snapshotUpdate.add(update);
+      } else {
+        regularUpdates.add(update);
+      }
+    }
+
+    // Apply snapshot FIRST (full state restore via CRDT hydration)
+    for (final snapshot in snapshotUpdate) {
+      if (snapshot.payloadBase64.isEmpty) continue;
+      try {
+        final bytes = base64Decode(snapshot.payloadBase64);
+        if (bytes.isEmpty) continue;
+        adapter.applyUpdate(bytes, origin: 'remote');
+        _appliedCrdtUpdateIds.add(snapshot.updateId);
+        _remotePreviewClearsBoard = false;
+        _remotePreviewElements.clear();
+        _remotePreviewDeletedIds.clear();
+      } catch (_) {
+        _appliedCrdtUpdateIds.add(snapshot.updateId);
+      }
+    }
+
+    // Then apply remaining deltas in order
+    for (final update in regularUpdates) {
       if (update.isDeleted) {
         _appliedCrdtUpdateIds.add(update.updateId);
         continue;
