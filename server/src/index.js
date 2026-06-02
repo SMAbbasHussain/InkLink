@@ -19,7 +19,7 @@ app.get('/health', (req, res) => {
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: '*' },
+  cors: { origin: process.env.CORS_ORIGIN || '*' },
 });
 
 function loadFirebaseServiceAccount() {
@@ -59,6 +59,61 @@ const memoryQueue = {};
 // Track UIDs that explicitly logged out so we skip queueing updates for them.
 // Cleared on reconnect (new socket → re‑authenticated → new connection event).
 const loggedOutUids = new Set();
+
+// Periodic cleanup: prune stale entries from loggedOutUids every 30 minutes
+const LOGGED_OUT_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
+const loggedOutTimestamps = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - LOGGED_OUT_CLEANUP_INTERVAL_MS;
+  for (const [uid, ts] of loggedOutTimestamps.entries()) {
+    if (ts < cutoff) {
+      loggedOutUids.delete(uid);
+      loggedOutTimestamps.delete(uid);
+    }
+  }
+}, LOGGED_OUT_CLEANUP_INTERVAL_MS);
+
+// Per-socket rate limiting: max events per window
+const RATE_LIMIT_WINDOW_MS = 1000;
+const RATE_LIMIT_MAX_EVENTS = 30;
+const socketEventCounts = new Map();
+
+function isRateLimited(socketId) {
+  const now = Date.now();
+  const entry = socketEventCounts.get(socketId) || { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+  if (now > entry.resetAt) {
+    entry.count = 0;
+    entry.resetAt = now + RATE_LIMIT_WINDOW_MS;
+  }
+  entry.count++;
+  socketEventCounts.set(socketId, entry);
+  return entry.count > RATE_LIMIT_MAX_EVENTS;
+}
+
+// Cleanup rate limit entries for disconnected sockets
+setInterval(() => {
+  const now = Date.now();
+  for (const [sid, entry] of socketEventCounts.entries()) {
+    if (now > entry.resetAt + RATE_LIMIT_WINDOW_MS) {
+      socketEventCounts.delete(sid);
+    }
+  }
+}, 30000);
+
+// Input validation helpers
+function isValidBoardId(value) {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= 128;
+}
+
+function isValidUpdate(update) {
+  if (!update || typeof update !== 'object') return false;
+  return typeof update.updateId === 'string' && update.updateId.length > 0;
+}
+
+function isValidPreview(preview) {
+  if (!preview || typeof preview !== 'object') return false;
+  return preview.previewId != null;
+}
 
 // In-memory cache for board member lists.
 // Avoids reading boards/{boardId}/members on every CRDT update (the #1 source of reads).
@@ -206,9 +261,14 @@ io.on('connection', (socket) => {
 
   // User re‑authenticated (new login) — resume queueing for them
   loggedOutUids.delete(uid);
+  loggedOutTimestamps.delete(uid);
 
   // Phase 2: Live Sync - Join Room
   socket.on('watch_board', (boardId) => {
+    if (!isValidBoardId(boardId)) {
+      console.warn(`[watch_board] Invalid boardId from ${uid}`);
+      return;
+    }
     socket.join(`board_room:${boardId}`);
     socket.data.currentBoardId = boardId;
     console.log(`[watch_board] User ${uid} joined board ${boardId} (socket: ${socket.id})`);
@@ -218,17 +278,37 @@ io.on('connection', (socket) => {
   // Emitted by the client after a Cloud Function adds them as a member,
   // so the server picks up the updated list from Redis immediately.
   socket.on('refresh_board_members', (boardId) => {
+    if (!isValidBoardId(boardId)) {
+      console.warn(`[refresh_board_members] Invalid boardId from ${uid}`);
+      return;
+    }
     boardMembersCache.delete(boardId);
     console.log(`[refresh_board_members] Invalidated cache for board ${boardId} (triggered by ${uid})`);
   });
 
   socket.on('leave_board', (boardId) => {
+    if (!isValidBoardId(boardId)) {
+      console.warn(`[leave_board] Invalid boardId from ${uid}`);
+      return;
+    }
     socket.leave(`board_room:${boardId}`);
     console.log(`[leave_board] User ${uid} left board ${boardId}`);
   });
 
   // Phase 2 & 3: Incoming Update Relay
   socket.on('crdt_update', async ({ boardId, update }, ack) => {
+    if (isRateLimited(socket.id)) {
+      console.warn(`[crdt_update] Rate limited ${uid} (socket: ${socket.id})`);
+      if (typeof ack === 'function') ack({ status: 'error', message: 'rate_limited' });
+      return;
+    }
+
+    if (!isValidBoardId(boardId) || !isValidUpdate(update)) {
+      console.warn(`[crdt_update] Invalid payload from ${uid}`);
+      if (typeof ack === 'function') ack({ status: 'error', message: 'invalid_payload' });
+      return;
+    }
+
     logWsEvent('UPDATE RECEIVED', [
       `[event] crdt_update`,
       `[direction] client -> server`,
@@ -319,6 +399,18 @@ io.on('connection', (socket) => {
 
   // Live preview relay for in-progress canvas edits.
   socket.on('crdt_preview', async ({ boardId, preview }, ack) => {
+    if (isRateLimited(socket.id)) {
+      console.warn(`[crdt_preview] Rate limited ${uid} (socket: ${socket.id})`);
+      if (typeof ack === 'function') ack({ status: 'error', message: 'rate_limited' });
+      return;
+    }
+
+    if (!isValidBoardId(boardId) || !isValidPreview(preview)) {
+      console.warn(`[crdt_preview] Invalid payload from ${uid}`);
+      if (typeof ack === 'function') ack({ status: 'error', message: 'invalid_payload' });
+      return;
+    }
+
     logWsEvent('PREVIEW RECEIVED', [
       `[event] crdt_preview`,
       `[direction] client -> server`,
@@ -340,6 +432,12 @@ io.on('connection', (socket) => {
 
   // Phase 3: Offline Sync Demand & Fallback
   socket.on('sync_offline', async ({ boardId }, callback) => {
+    if (!isValidBoardId(boardId)) {
+      console.warn(`[sync_offline] Invalid boardId from ${uid}`);
+      if (typeof callback === 'function') callback({ status: 'error', boardId, error: 'invalid_board_id' });
+      return;
+    }
+
     logWsEvent('SYNC REQUEST RECEIVED', [
       `[event] sync_offline`,
       `[direction] client -> server`,
@@ -434,6 +532,7 @@ io.on('connection', (socket) => {
     // must be preserved across transient disconnects. Clearing should be
     // done only on explicit logout (handled via 'logout' event).
     // This preserves pending offline updates for later delivery.
+    socketEventCounts.delete(socket.id);
   });
 
   // Explicit logout: clear per-user queues only when client intentionally logs out
@@ -446,6 +545,7 @@ io.on('connection', (socket) => {
     try {
       await clearUserQueues(uid);
       loggedOutUids.add(uid);
+      loggedOutTimestamps.set(uid, Date.now());
       console.log(`[logout] Added ${uid} to logged‑out set — future updates for this user will NOT be queued until they log in again`);
       if (typeof callback === 'function') callback({ status: 'success' });
       else socket.emit('logout_response', { status: 'success' });
@@ -461,3 +561,27 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`WebSocket server listening on port ${PORT}`);
 });
+
+// Graceful shutdown
+function gracefulShutdown(signal) {
+  console.log(`\nReceived ${signal}, shutting down gracefully...`);
+  server.close(() => {
+    console.log('HTTP server closed');
+    if (redisAvailable) {
+      redis.quit().then(() => {
+        console.log('Redis connection closed');
+        process.exit(0);
+      }).catch(() => process.exit(0));
+    } else {
+      process.exit(0);
+    }
+  });
+  // Force shutdown after 10 seconds
+  setTimeout(() => {
+    console.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

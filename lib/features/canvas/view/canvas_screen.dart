@@ -24,6 +24,8 @@ import 'trays/shapes_tray.dart';
 import 'trays/tools_tray.dart';
 import 'widgets/tray_tips_overlay.dart';
 
+part 'canvas_painter.dart';
+
 class CanvasScreen extends StatefulWidget {
   final String boardId;
   final bool showTrayTipsOnEntry;
@@ -93,7 +95,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Future<void> _maybeShowTrayTipsOverlay() async {
     if (!widget.showTrayTipsOnEntry) return;
 
-    final showTips = await TrayTipsPreferences.getShowTrayTips();
+    final showTips = await TrayTipsPreferences.checkShowTrayTips();
     if (!mounted || !showTips) return;
     _canvasBloc.add(const CanvasShowTrayTips());
   }
@@ -145,27 +147,25 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   Offset _getElementWorldCenter(CanvasElement element) {
-    final data = element.data as Map<String, dynamic>? ?? const {};
-    if (element.type == 'stroke') {
-      final pointMaps = (data['points'] as List?) ?? const [];
-      if (pointMaps.isEmpty) return Offset.zero;
-      double minX = double.infinity, minY = double.infinity;
-      double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
-      for (final pm in pointMaps) {
-        if (pm is Map) {
-          final x = (pm['x'] as num?)?.toDouble() ?? 0;
-          final y = (pm['y'] as num?)?.toDouble() ?? 0;
-          if (x < minX) minX = x;
-          if (y < minY) minY = y;
-          if (x > maxX) maxX = x;
-          if (y > maxY) maxY = y;
-        }
-      }
-      return Offset((minX + maxX) / 2, (minY + maxY) / 2);
+    return switch (element) {
+      StrokeElement e => _strokeCenter(e.points),
+      ShapeElement e => e.center,
+      TextElement e => e.center,
+      ImageElement e => e.center,
+    };
+  }
+
+  Offset _strokeCenter(List<Offset> points) {
+    if (points.isEmpty) return Offset.zero;
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+    for (final p in points) {
+      if (p.dx < minX) minX = p.dx;
+      if (p.dy < minY) minY = p.dy;
+      if (p.dx > maxX) maxX = p.dx;
+      if (p.dy > maxY) maxY = p.dy;
     }
-    final cx = (data['cx'] as num?)?.toDouble() ?? 0;
-    final cy = (data['cy'] as num?)?.toDouble() ?? 0;
-    return Offset(cx, cy);
+    return Offset((minX + maxX) / 2, (minY + maxY) / 2);
   }
 
   void _centerViewportOn(Offset worldPoint) {
@@ -381,7 +381,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   void _pruneImageCache(List<CanvasElement> elements) {
     final activeImageIds = elements
-        .where((element) => element.type == 'image')
+        .whereType<ImageElement>()
         .map((element) => element.id)
         .toSet();
 
@@ -524,56 +524,43 @@ class _CanvasScreenState extends State<CanvasScreen> {
     Rect? bounds;
 
     for (final element in elements) {
-      final data = element.data as Map<String, dynamic>? ?? const {};
-      Rect? candidate;
+      Rect candidate;
 
-      if (element.type == 'stroke') {
-        final pointMaps = (data['points'] as List?) ?? const [];
-        if (pointMaps.isEmpty) continue;
-        double minX = double.infinity;
-        double minY = double.infinity;
-        double maxX = -double.infinity;
-        double maxY = -double.infinity;
-        for (final p in pointMaps.whereType<Map>()) {
-          final x = (p['x'] as num?)?.toDouble() ?? 0.0;
-          final y = (p['y'] as num?)?.toDouble() ?? 0.0;
-          minX = math.min(minX, x);
-          minY = math.min(minY, y);
-          maxX = math.max(maxX, x);
-          maxY = math.max(maxY, y);
-        }
-        final pad = ((data['strokeWidth'] as num?)?.toDouble() ?? 5.0) + 8;
-        candidate = Rect.fromLTRB(minX, minY, maxX, maxY).inflate(pad);
-      } else if (element.type == 'shape') {
-        final cx = (data['cx'] as num?)?.toDouble() ?? 0.0;
-        final cy = (data['cy'] as num?)?.toDouble() ?? 0.0;
-        final size = (data['size'] as num?)?.toDouble() ?? 64.0;
-        candidate = Rect.fromCenter(
-          center: Offset(cx, cy),
-          width: size * 1.6,
-          height: size * 1.6,
-        );
-      } else if (element.type == 'text') {
-        final cx = (data['cx'] as num?)?.toDouble() ?? 0.0;
-        final cy = (data['cy'] as num?)?.toDouble() ?? 0.0;
-        candidate = Rect.fromCenter(
-          center: Offset(cx, cy),
-          width: 220,
-          height: 72,
-        );
-      } else if (element.type == 'image') {
-        final cx = (data['cx'] as num?)?.toDouble() ?? 0.0;
-        final cy = (data['cy'] as num?)?.toDouble() ?? 0.0;
-        final width = (data['width'] as num?)?.toDouble() ?? 220.0;
-        final height = (data['height'] as num?)?.toDouble() ?? 160.0;
-        candidate = Rect.fromCenter(
-          center: Offset(cx, cy),
-          width: width,
-          height: height,
-        );
+      switch (element) {
+        case StrokeElement e:
+          if (e.points.isEmpty) continue;
+          double minX = double.infinity;
+          double minY = double.infinity;
+          double maxX = -double.infinity;
+          double maxY = -double.infinity;
+          for (final p in e.points) {
+            minX = math.min(minX, p.dx);
+            minY = math.min(minY, p.dy);
+            maxX = math.max(maxX, p.dx);
+            maxY = math.max(maxY, p.dy);
+          }
+          final pad = e.strokeWidth + 8;
+          candidate = Rect.fromLTRB(minX, minY, maxX, maxY).inflate(pad);
+        case ShapeElement e:
+          candidate = Rect.fromCenter(
+            center: e.center,
+            width: e.size * 1.6,
+            height: e.size * 1.6,
+          );
+        case TextElement e:
+          candidate = Rect.fromCenter(
+            center: e.center,
+            width: 220,
+            height: 72,
+          );
+        case ImageElement e:
+          candidate = Rect.fromCenter(
+            center: e.center,
+            width: e.width,
+            height: e.height,
+          );
       }
 
-      if (candidate == null) continue;
       bounds = bounds == null ? candidate : bounds.expandToInclude(candidate);
     }
 
@@ -639,7 +626,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   void _openSettings(String currentTitle) {
-    final dashboardState = context.read<DashboardBloc>().state;
+    final dashboardBloc = context.read<DashboardBloc>();
+    final dashboardState = dashboardBloc.state;
     Board? board;
 
     if (dashboardState is DashboardLoaded) {
@@ -1056,69 +1044,41 @@ class _CanvasScreenState extends State<CanvasScreen> {
   List<_CanvasElement> _mapElements(List<CanvasElement> elements) {
     final mapped = elements
         .map((element) {
-          final data = element.data as Map<String, dynamic>? ?? const {};
-
-          if (element.type == 'stroke') {
-            final pointMaps = (data['points'] as List?) ?? const [];
-            final points = pointMaps
-                .whereType<Map>()
-                .map(
-                  (p) => Offset(
-                    (p['x'] as num?)?.toDouble() ?? 0,
-                    (p['y'] as num?)?.toDouble() ?? 0,
-                  ),
-                )
-                .toList(growable: false);
-
-            return _CanvasElement.stroke(
-              id: element.id,
-              points: points,
-              color: Color(
-                (data['color'] as num?)?.toInt() ?? Colors.black.value,
+          return switch (element) {
+            StrokeElement e => _CanvasElement.stroke(
+                id: e.id,
+                points: e.points,
+                color: e.color,
+                strokeWidth: e.strokeWidth,
+                opacity: e.opacity,
+                brushType: e.brushType,
               ),
-              strokeWidth: (data['strokeWidth'] as num?)?.toDouble() ?? 5,
-              opacity: (data['opacity'] as num?)?.toDouble() ?? 1,
-              brushType: (data['brushType'] as String?) ?? 'solid',
-              data: data,
-            );
-          }
-
-          if (element.type == 'shape') {
-            final shapeName = (data['shapeType'] as String?) ?? 'square';
-            final shapeType = CanvasShapeType.values.firstWhere(
-              (s) => s.name == shapeName,
-              orElse: () => CanvasShapeType.square,
-            );
-
-            return _CanvasElement.shape(
-              id: element.id,
-              shapeType: shapeType,
-              center: Offset(
-                (data['cx'] as num?)?.toDouble() ?? 0,
-                (data['cy'] as num?)?.toDouble() ?? 0,
+            ShapeElement e => _CanvasElement.shape(
+                id: e.id,
+                shapeType: e.shapeType,
+                center: e.center,
+                size: e.size,
+                color: e.color,
+                strokeWidth: e.strokeWidth,
+                isFilled: e.isFilled,
+                data: {
+                  'rotation': e.rotation,
+                  'borderRadius': e.borderRadius,
+                },
               ),
-              size: (data['size'] as num?)?.toDouble() ?? 64,
-              color: Color(
-                (data['color'] as num?)?.toInt() ?? Colors.black.value,
+            TextElement e => _CanvasElement.text(
+                id: e.id,
+                center: e.center,
+                text: e.text,
+                color: e.color,
               ),
-              strokeWidth: (data['strokeWidth'] as num?)?.toDouble() ?? 3,
-              isFilled: (data['isFilled'] as bool?) ?? false,
-              data: data,
-            );
-          }
-
-          return _CanvasElement.text(
-            id: element.id,
-            center: Offset(
-              (data['cx'] as num?)?.toDouble() ?? 0,
-              (data['cy'] as num?)?.toDouble() ?? 0,
-            ),
-            text: (data['text'] as String?) ?? '',
-            color: Color(
-              (data['color'] as num?)?.toInt() ?? Colors.black.value,
-            ),
-            data: data,
-          );
+            ImageElement e => _CanvasElement.text(
+                id: e.id,
+                center: e.center,
+                text: '',
+                color: Colors.black,
+              ),
+          };
         })
         .toList(growable: false);
 
@@ -2103,9 +2063,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
   List<Widget> _buildImageOverlays(CanvasState state) {
     final overlays = <Widget>[];
     for (final element in state.elements) {
-      if (element.type != 'image') continue;
-      final data = element.data as Map<String, dynamic>? ?? const {};
-      final imageBase64 = (data['imageBase64'] as String?) ?? '';
+      if (element is! ImageElement) continue;
+      final imageBase64 = element.imageBase64;
       if (imageBase64.isEmpty) continue;
 
       final cacheKey = '${imageBase64.length}:${imageBase64.hashCode}';
@@ -2125,10 +2084,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
         continue;
       }
 
-      final cx = (data['cx'] as num?)?.toDouble() ?? 0;
-      final cy = (data['cy'] as num?)?.toDouble() ?? 0;
-      final width = (data['width'] as num?)?.toDouble() ?? 220;
-      final height = (data['height'] as num?)?.toDouble() ?? 160;
+      final cx = element.center.dx;
+      final cy = element.center.dy;
+      final width = element.width;
+      final height = element.height;
 
       final draft = _imageDrafts[element.id];
       final effectiveCx = draft?.cx ?? cx;
@@ -2391,452 +2350,5 @@ class _ShapeTransformDraft {
       size: size ?? this.size,
       rotation: rotation ?? this.rotation,
     );
-  }
-}
-
-enum _ElementKind { stroke, shape, text }
-
-class _CanvasElement {
-  final String id;
-  final _ElementKind kind;
-  final List<Offset> points;
-  final Color color;
-  final double strokeWidth;
-  final double opacity;
-  final String brushType;
-  final CanvasShapeType? shapeType;
-  final Offset center;
-  final double size;
-  final bool isFilled;
-  final String text;
-  final Map<String, dynamic> data;
-
-  Rect? get bounds {
-    if (points.isEmpty) return null;
-    double minX = points.first.dx;
-    double minY = points.first.dy;
-    double maxX = points.first.dx;
-    double maxY = points.first.dy;
-    for (final p in points) {
-      if (p.dx < minX) minX = p.dx;
-      if (p.dy < minY) minY = p.dy;
-      if (p.dx > maxX) maxX = p.dx;
-      if (p.dy > maxY) maxY = p.dy;
-    }
-    return Rect.fromLTRB(minX, minY, maxX, maxY).inflate(strokeWidth + 8);
-  }
-
-  const _CanvasElement._({
-    required this.id,
-    required this.kind,
-    this.points = const [],
-    required this.color,
-    this.strokeWidth = 2,
-    this.opacity = 1,
-    this.brushType = 'solid',
-    this.shapeType,
-    this.center = Offset.zero,
-    this.size = 0,
-    this.isFilled = false,
-    this.text = '',
-    this.data = const {},
-  });
-
-  factory _CanvasElement.stroke({
-    required String id,
-    required List<Offset> points,
-    required Color color,
-    required double strokeWidth,
-    required double opacity,
-    required String brushType,
-    Map<String, dynamic> data = const {},
-  }) {
-    return _CanvasElement._(
-      id: id,
-      kind: _ElementKind.stroke,
-      points: points,
-      color: color,
-      strokeWidth: strokeWidth,
-      opacity: opacity,
-      brushType: brushType,
-      data: data,
-    );
-  }
-
-  factory _CanvasElement.shape({
-    required String id,
-    required CanvasShapeType shapeType,
-    required Offset center,
-    required double size,
-    required Color color,
-    required double strokeWidth,
-    required bool isFilled,
-    required Map<String, dynamic> data,
-  }) {
-    return _CanvasElement._(
-      id: id,
-      kind: _ElementKind.shape,
-      shapeType: shapeType,
-      center: center,
-      size: size,
-      color: color,
-      strokeWidth: strokeWidth,
-      isFilled: isFilled,
-      data: data,
-    );
-  }
-
-  factory _CanvasElement.text({
-    required String id,
-    required Offset center,
-    required String text,
-    required Color color,
-    Map<String, dynamic> data = const {},
-  }) {
-    return _CanvasElement._(
-      id: id,
-      kind: _ElementKind.text,
-      center: center,
-      text: text,
-      color: color,
-      data: data,
-    );
-  }
-
-  _CanvasElement copyWith({
-    List<Offset>? points,
-    Offset? center,
-    double? size,
-    Map<String, dynamic>? data,
-    bool? isFilled,
-  }) {
-    return _CanvasElement._(
-      id: id,
-      kind: kind,
-      points: points ?? this.points,
-      color: color,
-      strokeWidth: strokeWidth,
-      opacity: opacity,
-      brushType: brushType,
-      shapeType: shapeType,
-      center: center ?? this.center,
-      size: size ?? this.size,
-      isFilled: isFilled ?? this.isFilled,
-      text: text,
-      data: data ?? this.data,
-    );
-  }
-}
-
-class _CanvasPainter extends CustomPainter {
-  final List<_CanvasElement> elements;
-  final List<Offset> currentPoints;
-  final Color currentColor;
-  final double currentStrokeWidth;
-  final String currentBrushType;
-  final String? selectedShapeId;
-  final double viewportScale;
-  final Offset viewportOffset;
-  final bool showEraserPreview;
-
-  const _CanvasPainter({
-    required this.elements,
-    required this.currentPoints,
-    required this.currentColor,
-    required this.currentStrokeWidth,
-    required this.currentBrushType,
-    required this.selectedShapeId,
-    required this.viewportScale,
-    required this.viewportOffset,
-    required this.showEraserPreview,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.save();
-    canvas.translate(viewportOffset.dx, viewportOffset.dy);
-    canvas.scale(viewportScale);
-
-    for (final element in elements) {
-      switch (element.kind) {
-        case _ElementKind.stroke:
-          if (selectedShapeId == element.id) {
-            _paintStrokeHighlight(canvas, element);
-          }
-          _paintStroke(
-            canvas,
-            element.points,
-            element.color,
-            element.strokeWidth,
-            opacity: element.opacity,
-            brushType: element.brushType,
-          );
-          break;
-        case _ElementKind.shape:
-          _paintShape(canvas, element);
-          break;
-        case _ElementKind.text:
-          _paintText(canvas, element);
-          break;
-      }
-    }
-
-    if (currentPoints.length > 1) {
-      if (currentBrushType != 'eraser') {
-        _paintStroke(
-          canvas,
-          currentPoints,
-          currentColor,
-          currentStrokeWidth,
-          opacity: 1,
-          brushType: currentBrushType,
-        );
-      } else if (showEraserPreview) {
-        _paintEraserPreview(canvas, currentPoints.last, currentStrokeWidth);
-      }
-    }
-
-    canvas.restore();
-  }
-
-  void _paintStroke(
-    Canvas canvas,
-    List<Offset> points,
-    Color color,
-    double width, {
-    required double opacity,
-    required String brushType,
-  }) {
-    final effectiveWidth = brushType == 'watercolor'
-        ? width * 1.25
-        : brushType == 'textured'
-        ? width * 0.95
-        : width;
-    final effectiveOpacity = brushType == 'watercolor'
-        ? opacity * 0.45
-        : brushType == 'textured'
-        ? opacity * 0.8
-        : opacity;
-    final paint = Paint()
-      ..color = color.withOpacity(effectiveOpacity.clamp(0, 1))
-      ..strokeWidth = effectiveWidth
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke
-      ..maskFilter = brushType == 'watercolor'
-          ? const MaskFilter.blur(BlurStyle.normal, 2.5)
-          : null;
-
-    for (int i = 0; i < points.length - 1; i++) {
-      canvas.drawLine(points[i], points[i + 1], paint);
-    }
-  }
-
-  void _paintStrokeHighlight(Canvas canvas, _CanvasElement element) {
-    final points = element.points;
-    if (points.length < 2) return;
-    final paint = Paint()
-      ..color = Colors.blue.withOpacity(0.5)
-      ..strokeWidth = element.strokeWidth + 3
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-    for (int i = 0; i < points.length - 1; i++) {
-      canvas.drawLine(points[i], points[i + 1], paint);
-    }
-  }
-
-  void _paintShape(Canvas canvas, _CanvasElement element) {
-    final paint = Paint()
-      ..color = element.color
-      ..style = element.isFilled ? PaintingStyle.fill : PaintingStyle.stroke
-      ..strokeWidth = element.strokeWidth;
-
-    final highlightPaint = Paint()
-      ..color = Colors.blue.withOpacity(0.35)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-
-    final c = element.center;
-    final s = element.size;
-    final borderRadius =
-        (element.data['borderRadius'] as num?)?.toDouble() ?? 0.0;
-
-    canvas.save();
-    canvas.translate(c.dx, c.dy);
-    final rotation = (element.data['rotation'] as num?)?.toDouble() ?? 0.0;
-    canvas.rotate(rotation);
-    canvas.translate(-c.dx, -c.dy);
-
-    switch (element.shapeType!) {
-      case CanvasShapeType.square:
-        final rect = Rect.fromCenter(center: c, width: s, height: s);
-        if (borderRadius > 0) {
-          final clamped = borderRadius.clamp(0.0, s / 2);
-          canvas.drawRRect(
-            RRect.fromRectAndRadius(rect, Radius.circular(clamped)),
-            paint,
-          );
-        } else {
-          canvas.drawRect(rect, paint);
-        }
-        break;
-      case CanvasShapeType.rectangle:
-        final rect = Rect.fromCenter(
-          center: c,
-          width: s * 1.35,
-          height: s * 0.8,
-        );
-        if (borderRadius > 0) {
-          final clamped = borderRadius.clamp(
-            0.0,
-            math.min(rect.width, rect.height) / 2,
-          );
-          canvas.drawRRect(
-            RRect.fromRectAndRadius(rect, Radius.circular(clamped)),
-            paint,
-          );
-        } else {
-          canvas.drawRect(rect, paint);
-        }
-        break;
-      case CanvasShapeType.circle:
-        canvas.drawCircle(c, s / 2, paint);
-        break;
-      case CanvasShapeType.ellipse:
-        canvas.drawOval(
-          Rect.fromCenter(center: c, width: s * 1.3, height: s * 0.85),
-          paint,
-        );
-        break;
-      case CanvasShapeType.triangle:
-        final p = Path()
-          ..moveTo(c.dx, c.dy - s / 2)
-          ..lineTo(c.dx - s / 2, c.dy + s / 2)
-          ..lineTo(c.dx + s / 2, c.dy + s / 2)
-          ..close();
-        canvas.drawPath(p, paint);
-        break;
-      case CanvasShapeType.diamond:
-        final p = Path()
-          ..moveTo(c.dx, c.dy - s / 2)
-          ..lineTo(c.dx - s / 2, c.dy)
-          ..lineTo(c.dx, c.dy + s / 2)
-          ..lineTo(c.dx + s / 2, c.dy)
-          ..close();
-        canvas.drawPath(p, paint);
-        break;
-      case CanvasShapeType.star:
-        final p = Path();
-        for (int i = 0; i < 5; i++) {
-          final outerAngle = (math.pi / 2) + i * (2 * math.pi / 5);
-          final innerAngle = outerAngle + (math.pi / 5);
-          final outer = Offset(
-            c.dx + math.cos(outerAngle) * (s / 2),
-            c.dy - math.sin(outerAngle) * (s / 2),
-          );
-          final inner = Offset(
-            c.dx + math.cos(innerAngle) * (s / 4),
-            c.dy - math.sin(innerAngle) * (s / 4),
-          );
-          if (i == 0) {
-            p.moveTo(outer.dx, outer.dy);
-          } else {
-            p.lineTo(outer.dx, outer.dy);
-          }
-          p.lineTo(inner.dx, inner.dy);
-        }
-        p.close();
-        canvas.drawPath(p, paint);
-        break;
-      case CanvasShapeType.pentagon:
-        final p = Path();
-        for (int i = 0; i < 5; i++) {
-          final angle = (math.pi / 2) + i * (2 * math.pi / 5);
-          final point = Offset(
-            c.dx + math.cos(angle) * (s / 2),
-            c.dy - math.sin(angle) * (s / 2),
-          );
-          if (i == 0) {
-            p.moveTo(point.dx, point.dy);
-          } else {
-            p.lineTo(point.dx, point.dy);
-          }
-        }
-        p.close();
-        canvas.drawPath(p, paint);
-        break;
-      case CanvasShapeType.line:
-        canvas.drawLine(
-          Offset(c.dx - s / 2, c.dy),
-          Offset(c.dx + s / 2, c.dy),
-          paint,
-        );
-        break;
-      case CanvasShapeType.hexagon:
-        final p = Path();
-        for (int i = 0; i < 6; i++) {
-          final angle = (math.pi / 2) + i * (2 * math.pi / 6);
-          final point = Offset(
-            c.dx + math.cos(angle) * (s / 2),
-            c.dy - math.sin(angle) * (s / 2),
-          );
-          if (i == 0) {
-            p.moveTo(point.dx, point.dy);
-          } else {
-            p.lineTo(point.dx, point.dy);
-          }
-        }
-        p.close();
-        canvas.drawPath(p, paint);
-        break;
-      case CanvasShapeType.semicircle:
-        final rect = Rect.fromCenter(center: c, width: s, height: s);
-        canvas.drawArc(rect, math.pi, math.pi, true, paint);
-        break;
-    }
-
-    if (selectedShapeId == element.id) {
-      canvas.drawCircle(c, (s / 2) + 10, highlightPaint);
-    }
-
-    canvas.restore();
-  }
-
-  void _paintEraserPreview(Canvas canvas, Offset position, double radius) {
-    final previewPaint = Paint()
-      ..color = Colors.black.withOpacity(0.18)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawCircle(position, radius, previewPaint);
-  }
-
-  void _paintText(Canvas canvas, _CanvasElement element) {
-    final textSpan = TextSpan(
-      text: element.text,
-      style: TextStyle(
-        color: element.color,
-        fontSize: 16,
-        fontWeight: FontWeight.w600,
-      ),
-    );
-    final textPainter = TextPainter(
-      text: textSpan,
-      textDirection: TextDirection.ltr,
-      maxLines: 2,
-      ellipsis: '...',
-    )..layout(maxWidth: 220);
-
-    textPainter.paint(canvas, Offset(element.center.dx, element.center.dy));
-  }
-
-  @override
-  bool shouldRepaint(covariant _CanvasPainter oldDelegate) {
-    return oldDelegate.elements != elements ||
-        oldDelegate.currentPoints != currentPoints ||
-        oldDelegate.currentColor != currentColor ||
-        oldDelegate.currentStrokeWidth != currentStrokeWidth ||
-        oldDelegate.currentBrushType != currentBrushType ||
-        oldDelegate.selectedShapeId != selectedShapeId ||
-        oldDelegate.viewportScale != viewportScale ||
-        oldDelegate.viewportOffset != viewportOffset;
   }
 }

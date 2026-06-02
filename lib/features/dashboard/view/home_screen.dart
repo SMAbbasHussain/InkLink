@@ -1,20 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/features/canvas/view/canvas_route.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
-import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
-import 'package:inklink/features/dashboard/view/create_board_route.dart';
-import 'package:inklink/features/dashboard/view/board_settings_route.dart';
-import 'package:inklink/features/dashboard/view/widgets/board_card.dart';
-import 'package:inklink/features/dashboard/view/widgets/quick_action_button.dart';
-import 'package:inklink/features/board_invitations/bloc/board_invitations_bloc.dart';
-import 'package:inklink/features/board_invitations/view/board_invites_screen.dart';
-import 'package:inklink/features/notifications/bloc/notifications_bloc.dart';
-import 'package:inklink/features/notifications/view/notifications_route.dart';
-import 'package:inklink/features/profile/view/profile_route.dart';
-import '../../../core/constants/app_colors.dart';
+import '../../canvas/view/canvas_route.dart';
+import '../../board_invitations/bloc/board_invitations_bloc.dart';
+import '../../board_invitations/view/board_invites_screen.dart';
+import '../../notifications/bloc/notifications_bloc.dart';
+import '../../notifications/view/notifications_route.dart';
+import '../../profile/view/profile_route.dart';
 import '../../theme/bloc/theme_bloc.dart';
+import '../../dashboard/bloc/dashboard_bloc.dart';
+import '../../dashboard/view/create_board_route.dart';
+import '../../dashboard/view/board_settings_route.dart';
+import '../../dashboard/view/widgets/board_card.dart';
+import '../../dashboard/view/widgets/quick_action_button.dart';
+import '../../../core/constants/app_colors.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -40,7 +40,8 @@ class _HomeScreenState extends State<HomeScreen>
       const BoardInvitationsLoadRequested(),
     );
 
-    final authState = context.read<AuthBloc>().state;
+    final authBloc = context.read<AuthBloc>();
+    final authState = authBloc.state;
     final authUser = authState is Authenticated ? authState : null;
     _syncProfileWatch(authUser?.uid);
   }

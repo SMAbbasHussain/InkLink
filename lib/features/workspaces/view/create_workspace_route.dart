@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../domain/repositories/board/board_repository.dart';
+import '../../../domain/services/board/board_service.dart';
 import 'create_workspace_screen.dart';
 
 Route<void> buildCreateWorkspaceRoute(BuildContext context) {
-  final boardRepository = context.read<BoardRepository>();
+  final boardService = context.read<BoardService>();
   return MaterialPageRoute(
     builder: (_) => CreateWorkspaceScreen(
-      ownedBoardsStream: boardRepository.getOwnedBoards(),
-      joinedBoardsStream: boardRepository.getJoinedBoards(),
+      ownedBoardsStream: boardService.getOwnedBoards(),
+      joinedBoardsStream: boardService.getJoinedBoards(),
     ),
   );
 }

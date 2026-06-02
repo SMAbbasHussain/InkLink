@@ -9,7 +9,6 @@ import 'features/workspaces/bloc/workspace_bloc.dart';
 import 'features/notifications/bloc/notifications_bloc.dart';
 import 'features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'features/friends/bloc/friends_bloc.dart';
-import 'features/friends/bloc/friends_event.dart';
 import 'core/services/data_prefetch_service.dart';
 
 class AppView extends StatelessWidget {

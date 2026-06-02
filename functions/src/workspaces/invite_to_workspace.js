@@ -85,35 +85,46 @@ module.exports = async (request) => {
 
     const results = [];
     const failedRecipients = [];
-    for (const targetUid of [...new Set(resolvedRecipientUids)]) {
-      if (!targetUid || targetUid === uid) continue;
+    const uniqueTargetUids = [...new Set(resolvedRecipientUids)]
+      .filter((id) => id && id !== uid);
 
+    // Phase 1: Batch write all invite docs
+    const batch = firestore.batch();
+    const inviteRefs = {};
+    for (const targetUid of uniqueTargetUids) {
       const inviteRef = firestore
         .collection(FirestorePaths.WORKSPACE_INVITES)
         .doc(`${workspaceId.trim()}_${targetUid}`);
+      inviteRefs[targetUid] = inviteRef;
+      batch.set(inviteRef, {
+        workspaceId: workspaceId.trim(),
+        [FirestorePaths.FROM_UID]: uid,
+        [FirestorePaths.TO_UID]: targetUid,
+        [FirestorePaths.SENDER_NAME]: senderName,
+        [FirestorePaths.SENDER_PIC]: senderPhotoUrl,
+        [FirestorePaths.NAME]: workspaceName,
+        [FirestorePaths.STATUS]: 'pending',
+        [FirestorePaths.TIMESTAMP]: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
 
+    try {
+      await batch.commit();
+    } catch (batchError) {
+      logger.error('inviteToWorkspace batch commit failed', batchError);
+      throw new HttpsError('internal', 'Failed to create workspace invites.');
+    }
+
+    // Phase 2: Send notifications in parallel
+    const notificationPromises = uniqueTargetUids.map(async (targetUid) => {
       try {
-        await inviteRef.set(
-          {
-            workspaceId: workspaceId.trim(),
-            [FirestorePaths.FROM_UID]: uid,
-            [FirestorePaths.TO_UID]: targetUid,
-            [FirestorePaths.SENDER_NAME]: senderName,
-            [FirestorePaths.SENDER_PIC]: senderPhotoUrl,
-            [FirestorePaths.NAME]: workspaceName,
-            [FirestorePaths.STATUS]: 'pending',
-            [FirestorePaths.TIMESTAMP]: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true },
-        );
-
         await sendUserNotification({
           recipientUid: targetUid,
           title: `${senderName} invited you to a workspace`,
           body: `Invitation to join "${workspaceName}"`,
           type: 'workspace_invite',
           action: 'open_workspace_invites',
-          targetId: inviteRef.id,
+          targetId: inviteRefs[targetUid].id,
           senderUid: uid,
           senderName,
           senderPhotoUrl,
@@ -121,21 +132,22 @@ module.exports = async (request) => {
           extraData: {
             workspaceId: workspaceId.trim(),
             workspaceName,
-            inviteId: inviteRef.id,
+            inviteId: inviteRefs[targetUid].id,
           },
         });
-
-        results.push({ targetUid, inviteId: inviteRef.id });
-      } catch (inviteError) {
-        logger.warn('inviteToWorkspace recipient failed', {
+        results.push({ targetUid, inviteId: inviteRefs[targetUid].id });
+      } catch (notifError) {
+        logger.warn('inviteToWorkspace notification failed', {
           workspaceId: workspaceId.trim(),
           senderUid: uid,
           targetUid,
-          errorMessage: inviteError instanceof Error ? inviteError.message : String(inviteError),
+          errorMessage: notifError instanceof Error ? notifError.message : String(notifError),
         });
         failedRecipients.push(targetUid);
       }
-    }
+    });
+
+    await Promise.all(notificationPromises);
 
     return {
       success: true,

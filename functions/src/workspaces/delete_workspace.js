@@ -12,7 +12,7 @@ module.exports = async (request) => {
       throw new HttpsError('unauthenticated', 'User must be logged in.');
     }
 
-    if (typeof workspaceId !== 'string' || workspaceId.trim().isEmpty) {
+    if (typeof workspaceId !== 'string' || workspaceId.trim().length === 0) {
       throw new HttpsError('invalid-argument', 'workspaceId is required.');
     }
 

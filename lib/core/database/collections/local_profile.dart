@@ -1,9 +1,16 @@
 import 'package:isar_community/isar.dart';
 
-part 'local_non_friend_profile.g.dart';
+part 'local_profile.g.dart';
+
+enum FriendshipStatus {
+  friend,
+  nonFriend,
+  self,
+  blocked,
+}
 
 @collection
-class LocalNonFriendProfile {
+class LocalProfile {
   Id? id;
 
   @Index(unique: true, replace: true)
@@ -27,11 +34,14 @@ class LocalNonFriendProfile {
 
   late DateTime cachedAt;
 
-  LocalNonFriendProfile({
+  @enumerated
+  late FriendshipStatus friendshipStatus;
+
+  LocalProfile({
     this.id,
     required this.uid,
     required this.displayName,
-    DateTime? cachedAtOverride,
+    required this.friendshipStatus,
     this.email,
     this.bio,
     this.photoURL,
@@ -39,5 +49,6 @@ class LocalNonFriendProfile {
     this.boardCount = 0,
     this.lastSource,
     this.lastSeenAt,
+    DateTime? cachedAtOverride,
   }) : cachedAt = cachedAtOverride ?? DateTime.now();
 }

@@ -7,6 +7,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:isar_community/isar.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
+import '../../../core/database/collections/local_canvas_sync_state.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
@@ -45,6 +46,11 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     final isar = await _localDatabaseService.database;
     await isar.writeTxn(() async {
       await isar.localCrdtUpdates.putByUpdateId(update);
+      await isar.localCanvasSyncStates.putByBoardId(
+        LocalCanvasSyncState()
+          ..boardId = update.boardId
+          ..lastSyncedAppliedAt = update.appliedAt,
+      );
     });
   }
 
@@ -796,6 +802,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         await markCrdtUpdateSynced(updateId);
       }
       
+      // Update sync state with latest timestamp
+      await _updateSyncState(boardId);
+      
       // Clean up old synced updates to keep Isar bounded
       await _cleanupOldSyncedUpdates(boardId);
       
@@ -829,6 +838,28 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         event: 'cleanup_old_updates',
       );
       // Don't rethrow; cleanup failures shouldn't break sync
+    }
+  }
+
+  Future<void> _updateSyncState(String boardId) async {
+    try {
+      final isar = await _localDatabaseService.database;
+      final latest = await isar.localCrdtUpdates
+          .filter()
+          .boardIdEqualTo(boardId)
+          .sortByAppliedAtDesc()
+          .findFirst();
+      if (latest != null) {
+        await isar.writeTxn(() async {
+          await isar.localCanvasSyncStates.putByBoardId(
+            LocalCanvasSyncState()
+              ..boardId = boardId
+              ..lastSyncedAppliedAt = latest.appliedAt,
+          );
+        });
+      }
+    } catch (_) {
+      // Non-critical; sync continues without sync state tracking
     }
   }
 

@@ -4,8 +4,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/utils/helpers.dart';
 import '../../../domain/models/workspace.dart';
 import '../../friends/bloc/friends_bloc.dart';
-import '../../friends/bloc/friends_event.dart';
-import '../../friends/bloc/friends_state.dart';
 import '../../profile/view/profile_route.dart';
 import '../bloc/workspace_bloc.dart';
 

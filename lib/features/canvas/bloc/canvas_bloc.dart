@@ -12,10 +12,15 @@ import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../domain/models/board.dart';
 import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
+import '../models/canvas_element.dart';
 import '../view/trays/canvas_shape_type.dart';
+import 'canvas_state.dart';
+
+export '../models/canvas_element.dart';
+export 'canvas_state.dart';
 
 part 'canvas_event.dart';
-part 'canvas_state.dart';
+part 'canvas_helpers.dart';
 
 class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final CanvasService? _canvasService;
@@ -38,7 +43,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   bool _remotePreviewClearsBoard = false;
   final Map<String, String> _lastShapePayloadFingerprint = <String, String>{};
   final Map<String, String> _lastShapeUpdateId =
-      <String, String>{}; // Track last update ID per shape
+      <String, String>{};
   final Map<String, _QueuedPreviewPublish> _pendingPreviewPublishes =
       <String, _QueuedPreviewPublish>{};
   String? _activeStrokeId;
@@ -109,13 +114,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
   String? get _currentClientId => _canvasService?.currentClientId;
 
+  // ──────────────────────────────────────────────
+  // Board & rename
+  // ──────────────────────────────────────────────
+
   Future<void> _onCanvasRenameBoardRequested(
     CanvasRenameBoardRequested event,
     Emitter<CanvasState> emit,
   ) async {
     final boardService = _boardService;
     if (boardService == null || _boardId.isEmpty) return;
-
     try {
       await boardService.renameBoard(_boardId, event.newName);
       emit(state.copyWith(error: null));
@@ -123,6 +131,28 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       emit(state.copyWith(error: 'Failed to rename board: $e'));
     }
   }
+
+  void _onCanvasBoardTitleUpdated(
+    CanvasBoardTitleUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    _currentUserRole = event.currentUserRole;
+    emit(state.copyWith(
+      boardTitle: event.title,
+      currentUserRole: event.currentUserRole,
+    ));
+  }
+
+  void _onCanvasBoardUnavailable(
+    CanvasBoardUnavailable event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(error: event.message, isLoading: false));
+  }
+
+  // ──────────────────────────────────────────────
+  // CRDT init & sync
+  // ──────────────────────────────────────────────
 
   Future<void> _onInitializeCrdt(
     CanvasInitializeCrdt event,
@@ -134,7 +164,6 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _boardUnavailableTimer?.cancel();
     _boardUnavailableTimer = null;
     emit(state.copyWith(isLoading: true, error: null));
-
     try {
       _startBoardMetadataListener();
       await _ensureCrdtReady();
@@ -147,25 +176,121 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
   }
 
-  void _onCanvasBoardTitleUpdated(
-    CanvasBoardTitleUpdated event,
-    Emitter<CanvasState> emit,
-  ) {
-    _currentUserRole = event.currentUserRole;
-    emit(
-      state.copyWith(
-        boardTitle: event.title,
-        currentUserRole: event.currentUserRole,
-      ),
+  Future<void> _initializeCrdtSync() async {
+    if (_crdtAdapter != null && _crdtUpdatesSub != null) return;
+    try {
+      _crdtAdapter ??= await CanvasDocAdapterFactory.create();
+      _appliedCrdtUpdateIds.clear();
+      _lastShapeUpdateId.clear();
+      await _rebuildElementUpdateIdMapping();
+      _startCrdtUpdatesListener();
+    } finally {
+      _crdtInitFuture = null;
+    }
+  }
+
+  Future<void> _ensureCrdtReady() async {
+    if (_crdtAdapter != null) return;
+    _crdtInitFuture ??= _initializeCrdtSync();
+    await _crdtInitFuture;
+  }
+
+  Future<void> _rebuildElementUpdateIdMapping() async {
+    final canvasService = _canvasService;
+    if (canvasService == null || _boardId.isEmpty) return;
+    try {
+      final remoteUpdates =
+          await canvasService.listenToCrdtUpdates(_boardId).first;
+      for (final update in remoteUpdates) {
+        if (update.elementId != null && !update.isDeleted) {
+          _lastShapeUpdateId[update.elementId!] = update.updateId;
+        }
+      }
+    } catch (_) {
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // Listeners
+  // ──────────────────────────────────────────────
+
+  void _startCrdtUpdatesListener() {
+    if (_crdtUpdatesSub != null || !_canSync) return;
+    final canvasService = _canvasService;
+    if (canvasService == null) return;
+    _crdtUpdatesSub =
+        canvasService.listenToCrdtUpdates(_boardId).listen((updates) {
+      add(CanvasApplyRemoteUpdate(updates));
+    });
+  }
+
+  void _startPreviewUpdatesListener() {
+    if (_previewUpdatesSub != null || !_canSync) return;
+    final canvasService = _canvasService;
+    if (canvasService == null) return;
+    _previewUpdatesSub =
+        canvasService.listenToCanvasPreviews(_boardId).listen((previews) {
+      add(CanvasApplyRemotePreview(previews));
+    });
+  }
+
+  void _startBoardMetadataListener() {
+    final canvasService = _canvasService;
+    if (canvasService == null || _boardId.isEmpty) return;
+    _boardMetaSub?.cancel();
+    _boardMetaSub = canvasService.watchBoardById(_boardId).listen((board) {
+      if (board == null) {
+        if (!_hasSeenBoardMetadata) return;
+        _scheduleBoardUnavailableCheck();
+        return;
+      }
+      _boardUnavailableTimer?.cancel();
+      _boardUnavailableTimer = null;
+      _hasSeenBoardMetadata = true;
+      _canvasService?.setBoardSingleUserStatus(board.members.length <= 1);
+      add(CanvasBoardTitleUpdated(
+        board.title,
+        currentUserRole: board.currentUserRole,
+      ));
+    });
+    _startBoardMembersListener();
+  }
+
+  void _startBoardMembersListener() {
+    final boardService = _boardService;
+    if (boardService == null || _boardId.isEmpty) return;
+    _membersSub?.cancel();
+    _membersSub = boardService
+        .getBoardMembers(_boardId)
+        .listen(
+          (members) => add(CanvasBoardMembersUpdated(members)),
+          onError: (_) {},
+        );
+  }
+
+  void _scheduleBoardUnavailableCheck() {
+    _boardUnavailableTimer?.cancel();
+    _boardUnavailableTimer = Timer(
+      const Duration(milliseconds: 1400),
+      () async {
+        final canvasService = _canvasService;
+        if (canvasService == null || _boardId.isEmpty || isClosed) return;
+        try {
+          await canvasService.ensureBoardCached(_boardId);
+        } catch (_) {}
+        final latestBoard =
+            await canvasService.watchBoardById(_boardId).first;
+        if (latestBoard != null || isClosed) return;
+        add(CanvasBoardUnavailable(
+          'This board is no longer available. Returning to the home screen.',
+        ));
+      },
     );
   }
 
-  void _onCanvasBoardUnavailable(
-    CanvasBoardUnavailable event,
-    Emitter<CanvasState> emit,
-  ) {
-    emit(state.copyWith(error: event.message, isLoading: false));
-  }
+  // ──────────────────────────────────────────────
+  // Remote updates
+  // ──────────────────────────────────────────────
 
   Future<void> _onApplyRemoteUpdate(
     CanvasApplyRemoteUpdate event,
@@ -173,30 +298,22 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final adapter = _crdtAdapter;
     if (adapter == null) return;
-
     for (final update in event.updates) {
-      // Skip updates that have been marked as deleted (undone)
       if (update.isDeleted) {
         _appliedCrdtUpdateIds.add(update.updateId);
         continue;
       }
-
-      if (_appliedCrdtUpdateIds.contains(update.updateId)) {
-        continue;
-      }
-
+      if (_appliedCrdtUpdateIds.contains(update.updateId)) continue;
       try {
         if (update.payloadBase64.isEmpty) {
           _appliedCrdtUpdateIds.add(update.updateId);
           continue;
         }
-
         final bytes = base64Decode(update.payloadBase64);
         if (bytes.isEmpty) {
           _appliedCrdtUpdateIds.add(update.updateId);
           continue;
         }
-
         adapter.applyUpdate(bytes, origin: 'remote');
         _remotePreviewClearsBoard = false;
         if (update.elementId != null) {
@@ -204,11 +321,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         }
         _appliedCrdtUpdateIds.add(update.updateId);
       } catch (_) {
-        // Skip malformed updates instead of crashing canvas state restoration.
         _appliedCrdtUpdateIds.add(update.updateId);
       }
     }
-
     _refreshFromCrdtAdapter(emit);
   }
 
@@ -217,98 +332,341 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final currentClientId = _currentClientId;
-
     for (final preview in event.previews) {
-      if (preview.elementId == null || preview.payloadBase64.isEmpty) {
-        continue;
-      }
-
+      if (preview.elementId == null || preview.payloadBase64.isEmpty) continue;
       if (currentClientId != null &&
           currentClientId.isNotEmpty &&
           preview.sourceClientId == currentClientId) {
         continue;
       }
-
       try {
-        final decoded = jsonDecode(
-          utf8.decode(base64Decode(preview.payloadBase64)),
-        );
-        if (decoded is! Map<String, dynamic>) {
-          continue;
-        }
-
+        final decoded =
+            jsonDecode(utf8.decode(base64Decode(preview.payloadBase64)));
+        if (decoded is! Map<String, dynamic>) continue;
         final action = (decoded['action'] as String?) ?? 'upsert';
         final type = (decoded['type'] as String?) ?? 'shape';
         final elementId = preview.elementId!;
-
         if (action == 'delete' && type == 'board') {
           _remotePreviewClearsBoard = true;
           _remotePreviewElements.clear();
           _remotePreviewDeletedIds.clear();
           continue;
         }
-
         _remotePreviewClearsBoard = false;
-
         if (action == 'delete') {
           _remotePreviewDeletedIds.add(elementId);
           _remotePreviewElements.remove(elementId);
           continue;
         }
-
         _remotePreviewDeletedIds.remove(elementId);
-        _remotePreviewElements[preview.elementId!] = CanvasElement(
-          id: elementId,
-          type: type,
-          data: decoded,
-        );
-      } catch (_) {
-        // Ignore malformed previews.
-      }
+        _remotePreviewElements[preview.elementId!] =
+            CanvasElement.fromMap(elementId, decoded);
+      } catch (_) {}
     }
-
     _refreshFromCrdtAdapter(emit);
   }
 
-  Future<void> _onPreviewPendingShapeEdits(
-    CanvasPreviewPendingShapeEdits event,
-    Emitter<CanvasState> emit,
-  ) async {
-    final shape = _selectedShape();
-    final canvasService = _canvasService;
-    if (shape == null || canvasService == null || _boardId.isEmpty) return;
-    if (!_ensureCanEdit(emit)) return;
+  // ──────────────────────────────────────────────
+  // CRDT save / publish
+  // ──────────────────────────────────────────────
 
-    final data = Map<String, dynamic>.from(
-      shape.data as Map<String, dynamic>? ?? const {},
-    );
-    for (final entry in event.pendingData.entries) {
-      if (entry.key == 'rotation') {
-        final rotation = _toDoubleValue(entry.value);
-        if (rotation == null) continue;
-        data[entry.key] = _normalizeRotation(rotation);
-      } else if (entry.key == 'size') {
-        final size = _toDoubleValue(entry.value);
-        if (size == null) continue;
-        data[entry.key] = size.clamp(24.0, 320.0);
-      } else if (entry.key == 'borderRadius') {
-        final borderRadius = _toDoubleValue(entry.value);
-        if (borderRadius == null) continue;
-        final size = _toDoubleValue(data['size']) ?? 64.0;
-        final maxRadius = (size / 2).clamp(0.0, 180.0);
-        data[entry.key] = borderRadius.clamp(0.0, maxRadius);
-      } else {
-        data[entry.key] = entry.value;
-      }
+  Future<void> _saveCrdtOperation({
+    required String action,
+    required String type,
+    required String objectId,
+    required Map<String, dynamic> data,
+    required Emitter<CanvasState> emit,
+  }) async {
+    if (!_canSync) return;
+    await _ensureCrdtReady();
+    final adapter = _crdtAdapter;
+    if (adapter == null) return;
+    Uint8List update;
+    if (action == 'delete' && type == 'board') {
+      update = adapter.clearElements(origin: 'local');
+    } else if (action == 'delete') {
+      update = adapter.deleteElement(objectId, origin: 'local');
+    } else {
+      final payload = <String, dynamic>{'type': type, ...data};
+      update = adapter.upsertElement(objectId, payload, origin: 'local');
     }
-
-    await _publishSelectedShapePreview(shape.id, data);
-  }
-
-  void _onStartStroke(CanvasStartStroke event, Emitter<CanvasState> emit) {
-    if (!_ensureCanEditWithOptions(emit, clearStroke: true)) {
+    if (update.isEmpty) {
+      _refreshFromCrdtAdapter(emit);
       return;
     }
+    await _publishOperationPreview(
+      action: action,
+      type: type,
+      objectId: objectId,
+      data: data,
+    );
+    final elementId = objectId;
+    final publishedUpdateId =
+        await _publishCrdtUpdate(update, elementId: elementId);
+    if (publishedUpdateId != null) {
+      _lastShapeUpdateId[objectId] = publishedUpdateId;
+    }
+    _refreshFromCrdtAdapter(emit);
+  }
+
+  Future<String?> _publishCrdtUpdate(
+    Uint8List update, {
+    String? elementId,
+  }) async {
+    if (!_canSync || update.isEmpty) return null;
+    final canvasService = _canvasService;
+    if (canvasService == null) return null;
+    final updateId = _uuid.v4();
+    _appliedCrdtUpdateIds.add(updateId);
+    await canvasService.pushCrdtUpdate(
+      boardId: _boardId,
+      updateId: updateId,
+      payload: update,
+      elementId: elementId,
+    );
+    return updateId;
+  }
+
+  Future<void> _publishOperationPreview({
+    required String action,
+    required String type,
+    required String objectId,
+    required Map<String, dynamic> data,
+  }) async {
+    final canvasService = _canvasService;
+    if (canvasService == null || _boardId.isEmpty) return;
+    final previewId = _uuid.v4();
+    final previewPayload = <String, dynamic>{
+      'action': action == 'delete' ? 'delete' : 'upsert',
+      'type': type,
+      'elementId': objectId,
+      ...data,
+    };
+    await canvasService.publishCanvasPreview(
+      boardId: _boardId,
+      previewId: previewId,
+      elementId: objectId,
+      payload: Uint8List.fromList(utf8.encode(jsonEncode(previewPayload))),
+    );
+  }
+
+  void _refreshFromCrdtAdapter(Emitter<CanvasState> emit) {
+    final adapter = _crdtAdapter;
+    if (adapter == null) return;
+    final rebuilt = _rebuildElementsFromCrdtState(
+      adapter.materializeElements(),
+    );
+    emit(state.copyWith(elements: _composeElementsWithPreviews(rebuilt)));
+  }
+
+  List<CanvasElement> _composeElementsWithPreviews(
+    List<CanvasElement> committedElements,
+  ) {
+    if (_remotePreviewClearsBoard) return const <CanvasElement>[];
+    if (_remotePreviewElements.isEmpty && _remotePreviewDeletedIds.isEmpty) {
+      return committedElements;
+    }
+    final byId = <String, CanvasElement>{
+      for (final element in committedElements)
+        if (!_remotePreviewDeletedIds.contains(element.id)) element.id: element,
+    };
+    for (final preview in _remotePreviewElements.values) {
+      byId[preview.id] = preview;
+    }
+    final composed = byId.values.toList(growable: false);
+    composed.sort((a, b) {
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
+    return composed;
+  }
+
+  Future<void> _publishSelectedShapePreview(
+    String elementId,
+    Map<String, dynamic> data,
+  ) async {
+    final canvasService = _canvasService;
+    if (canvasService == null || _boardId.isEmpty) return;
+    final preview = _pendingPreviewPublishes.putIfAbsent(
+      elementId,
+      _QueuedPreviewPublish.new,
+    );
+    preview.previewId = _uuid.v4();
+    preview.elementId = elementId;
+    preview.payload = Uint8List.fromList(utf8.encode(jsonEncode(data)));
+    preview.dirty = true;
+    if (preview.timer != null) return;
+    _flushQueuedPreviewPublish(elementId);
+  }
+
+  void _flushQueuedPreviewPublish(String elementId) {
+    final canvasService = _canvasService;
+    final preview = _pendingPreviewPublishes[elementId];
+    if (canvasService == null || _boardId.isEmpty || preview == null) {
+      preview?.timer?.cancel();
+      _pendingPreviewPublishes.remove(elementId);
+      return;
+    }
+    preview.dirty = false;
+    unawaited(
+      canvasService.publishCanvasPreview(
+        boardId: _boardId,
+        previewId: preview.previewId,
+        elementId: preview.elementId,
+        payload: preview.payload,
+      ),
+    );
+    preview.timer = Timer(_previewPublishThrottle, () {
+      preview.timer = null;
+      final current = _pendingPreviewPublishes[elementId];
+      if (current == null) return;
+      if (current.dirty) {
+        _flushQueuedPreviewPublish(elementId);
+      } else {
+        _pendingPreviewPublishes.remove(elementId);
+      }
+    });
+  }
+
+  List<CanvasElement> _rebuildElementsFromCrdtState(
+    Map<String, Map<String, dynamic>> elementsById,
+  ) {
+    final rebuilt = <CanvasElement>[];
+    final currentOrder = <String, int>{
+      for (var i = 0; i < state.elements.length; i++) state.elements[i].id: i,
+    };
+    final maxExistingOrder = currentOrder.isEmpty
+        ? 0
+        : currentOrder.values.reduce(math.max) + 1;
+    for (final entry in elementsById.entries) {
+      final id = entry.key;
+      final payload = entry.value;
+      final type = payload['type'] as String?;
+      if (type == 'stroke') {
+        final z = _readElementOrder(
+          elementId: id,
+          payload: payload,
+          currentOrder: currentOrder,
+          fallbackOrder: maxExistingOrder + rebuilt.length,
+        );
+        final pointMaps = (payload['points'] as List?) ?? const [];
+        final points = pointMaps
+            .whereType<Map>()
+            .map((p) => Offset(
+                  (p['x'] as num?)?.toDouble() ?? 0.0,
+                  (p['y'] as num?)?.toDouble() ?? 0.0,
+                ))
+            .toList(growable: false);
+        rebuilt.add(StrokeElement(
+          id: id,
+          z: z,
+          color: Color((payload['color'] as num?)?.toInt() ?? Colors.black.value),
+          strokeWidth: (payload['strokeWidth'] as num?)?.toDouble() ?? 5.0,
+          opacity: (payload['opacity'] as num?)?.toDouble() ?? 1.0,
+          brushType: (payload['brushType'] as String?) ?? 'solid',
+          points: points,
+        ));
+        continue;
+      }
+      if (type == 'shape') {
+        final z = _readElementOrder(
+          elementId: id,
+          payload: payload,
+          currentOrder: currentOrder,
+          fallbackOrder: maxExistingOrder + rebuilt.length,
+        );
+        final shapeName =
+            (payload['shapeType'] as String?) ?? CanvasShapeType.square.name;
+        final shapeType = CanvasShapeType.values.firstWhere(
+          (s) => s.name == shapeName,
+          orElse: () => CanvasShapeType.square,
+        );
+        rebuilt.add(ShapeElement(
+          id: id,
+          z: z,
+          shapeType: shapeType,
+          center: Offset(
+            (payload['cx'] as num?)?.toDouble() ?? 0.0,
+            (payload['cy'] as num?)?.toDouble() ?? 0.0,
+          ),
+          size: (payload['size'] as num?)?.toDouble() ?? 64.0,
+          color: Color((payload['color'] as num?)?.toInt() ?? Colors.black.value),
+          strokeWidth: (payload['strokeWidth'] as num?)?.toDouble() ?? 3.0,
+          isFilled: _parseBool(payload['isFilled']),
+          rotation: (payload['rotation'] as num?)?.toDouble() ?? 0.0,
+          borderRadius: (payload['borderRadius'] as num?)?.toDouble() ?? 0.0,
+        ));
+        continue;
+      }
+      if (type == 'text') {
+        final z = _readElementOrder(
+          elementId: id,
+          payload: payload,
+          currentOrder: currentOrder,
+          fallbackOrder: maxExistingOrder + rebuilt.length,
+        );
+        rebuilt.add(TextElement(
+          id: id,
+          z: z,
+          text: (payload['text'] as String?) ?? '',
+          center: Offset(
+            (payload['cx'] as num?)?.toDouble() ?? 0.0,
+            (payload['cy'] as num?)?.toDouble() ?? 0.0,
+          ),
+          color: Color((payload['color'] as num?)?.toInt() ?? Colors.black.value),
+        ));
+        continue;
+      }
+      if (type == 'image') {
+        final z = _readElementOrder(
+          elementId: id,
+          payload: payload,
+          currentOrder: currentOrder,
+          fallbackOrder: maxExistingOrder + rebuilt.length,
+        );
+        rebuilt.add(ImageElement(
+          id: id,
+          z: z,
+          center: Offset(
+            (payload['cx'] as num?)?.toDouble() ?? 0.0,
+            (payload['cy'] as num?)?.toDouble() ?? 0.0,
+          ),
+          width: (payload['width'] as num?)?.toDouble() ?? 220.0,
+          height: (payload['height'] as num?)?.toDouble() ?? 160.0,
+          imageBase64: (payload['imageBase64'] as String?) ?? '',
+        ));
+      }
+    }
+    rebuilt.sort((a, b) {
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
+    return rebuilt;
+  }
+
+  int _nextZIndex() {
+    var maxZ = -1;
+    for (final element in state.elements) {
+      if (element.z > maxZ) maxZ = element.z;
+    }
+    return maxZ + 1;
+  }
+
+  String _elementType(CanvasElement element) {
+    return switch (element) {
+      StrokeElement() => 'stroke',
+      ShapeElement() => 'shape',
+      TextElement() => 'text',
+      ImageElement() => 'image',
+    };
+  }
+
+  // ──────────────────────────────────────────────
+  // Stroke operations
+  // ──────────────────────────────────────────────
+
+  void _onStartStroke(CanvasStartStroke event, Emitter<CanvasState> emit) {
+    if (!_ensureCanEditWithOptions(emit, clearStroke: true)) return;
     _activeStrokeId = _uuid.v4();
     emit(state.copyWith(currentStroke: [event.point]));
   }
@@ -317,19 +675,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasAppendStroke event,
     Emitter<CanvasState> emit,
   ) async {
-    if (!_ensureCanEditWithOptions(emit, clearStroke: true)) {
-      return;
-    }
-
+    if (!_ensureCanEditWithOptions(emit, clearStroke: true)) return;
     final updated = List<Offset>.from(state.currentStroke)..add(event.point);
     emit(state.copyWith(currentStroke: updated));
-
     final canvasService = _canvasService;
     final strokeId = _activeStrokeId;
-    if (canvasService == null || strokeId == null || _boardId.isEmpty) {
-      return;
-    }
-
+    if (canvasService == null || strokeId == null || _boardId.isEmpty) return;
     final previewData = {
       'type': 'stroke',
       'z': _nextZIndex(),
@@ -341,7 +692,6 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           .map((p) => {'x': p.dx, 'y': p.dy})
           .toList(growable: false),
     };
-
     await _publishSelectedShapePreview(strokeId, previewData);
   }
 
@@ -349,30 +699,22 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasEndStroke event,
     Emitter<CanvasState> emit,
   ) async {
-    if (!_ensureCanEditWithOptions(emit, clearStroke: true)) {
-      return;
-    }
-
+    if (!_ensureCanEditWithOptions(emit, clearStroke: true)) return;
     final usePoints = event.smoothedPoints ?? state.currentStroke;
     if (usePoints.length < 2) {
       emit(state.copyWith(currentStroke: const []));
       return;
     }
-
     if (state.brushType == 'eraser') {
       final eraserResult = _applyEraserStroke(
         erasePath: usePoints,
         eraserRadius: state.strokeWidth / 2,
         eraseEverything: state.eraserEraseEverything,
       );
-
-      emit(
-        state.copyWith(
-          elements: eraserResult.nextElements,
-          currentStroke: const [],
-        ),
-      );
-
+      emit(state.copyWith(
+        elements: eraserResult.nextElements,
+        currentStroke: const [],
+      ));
       for (final elementId in eraserResult.deletedElementIds) {
         await _saveCrdtOperation(
           action: 'delete',
@@ -382,89 +724,72 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           emit: emit,
         );
       }
-
       for (final createdStroke in eraserResult.createdStrokes) {
         await _saveCrdtOperation(
           action: 'create',
           type: 'stroke',
           objectId: createdStroke.id,
-          data: createdStroke.data as Map<String, dynamic>,
+          data: createdStroke.toMap(),
           emit: emit,
         );
       }
       return;
     }
-
     final strokeId = _activeStrokeId ?? _uuid.v4();
-    final strokeData = {
-      'z': _nextZIndex(),
-      'color': state.selectedColor.value,
-      'strokeWidth': state.strokeWidth,
-      'opacity': state.brushOpacity,
-      'brushType': state.brushType,
-      'points': usePoints
-          .map((p) => {'x': p.dx, 'y': p.dy})
-          .toList(growable: false),
-    };
-
-    final stroke = CanvasElement(
+    final stroke = StrokeElement(
       id: strokeId,
-      type: 'stroke',
-      data: strokeData,
+      z: _nextZIndex(),
+      color: state.selectedColor,
+      strokeWidth: state.strokeWidth,
+      opacity: state.brushOpacity,
+      brushType: state.brushType,
+      points: usePoints,
     );
     final nextElements = List<CanvasElement>.from(state.elements)..add(stroke);
     emit(state.copyWith(elements: nextElements, currentStroke: const []));
     _activeStrokeId = null;
-
     await _saveCrdtOperation(
       action: 'create',
-      type: 'stroke',
+      type: _elementType(stroke),
       objectId: strokeId,
-      data: strokeData,
+      data: stroke.toMap(),
       emit: emit,
     );
   }
+
+  // ──────────────────────────────────────────────
+  // Element creation
+  // ──────────────────────────────────────────────
 
   Future<void> _onAddShape(
     CanvasAddShape event,
     Emitter<CanvasState> emit,
   ) async {
-    if (!_ensureCanEdit(emit)) {
-      return;
-    }
-
+    if (!_ensureCanEdit(emit)) return;
     final shapeId = _uuid.v4();
-    final shapeData = {
-      'z': _nextZIndex(),
-      'shapeType': event.shapeType.name,
-      'cx': event.center.dx,
-      'cy': event.center.dy,
-      'size': 64.0,
-      'color': state.selectedColor.value,
-      'strokeWidth': 3.0,
-      'isFilled': false,
-      'borderRadius': 0.0,
-      'rotation': 0.0,
-    };
-
-    final shape = CanvasElement(id: shapeId, type: 'shape', data: shapeData);
-    final nextElements = List<CanvasElement>.from(state.elements)..add(shape);
-
-    emit(
-      state.copyWith(
-        elements: nextElements,
-        activeTray: null,
-        selectedShapeId: shapeId,
-        selectedShapeIsFilled: false,
-        selectedShapeBorderRadius: 0.0,
-      ),
+    final shape = ShapeElement(
+      id: shapeId,
+      z: _nextZIndex(),
+      shapeType: event.shapeType,
+      center: event.center,
+      size: 64.0,
+      color: state.selectedColor,
+      strokeWidth: 3.0,
+      isFilled: false,
     );
-
+    final nextElements = List<CanvasElement>.from(state.elements)..add(shape);
+    emit(state.copyWith(
+      elements: nextElements,
+      activeTray: null,
+      selectedShapeId: shapeId,
+      selectedShapeIsFilled: false,
+      selectedShapeBorderRadius: 0.0,
+    ));
     await _saveCrdtOperation(
       action: 'create',
-      type: 'shape',
+      type: _elementType(shape),
       objectId: shapeId,
-      data: shapeData,
+      data: shape.toMap(),
       emit: emit,
     );
   }
@@ -473,33 +798,25 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasAddAiText event,
     Emitter<CanvasState> emit,
   ) async {
-    if (!_ensureCanEdit(emit)) {
-      return;
-    }
-
+    if (!_ensureCanEdit(emit)) return;
     final prompt = event.prompt.trim();
     if (prompt.isEmpty) return;
-
     final textId = _uuid.v4();
-    final textData = {
-      'z': _nextZIndex(),
-      'text': prompt,
-      'cx': event.position.dx,
-      'cy': event.position.dy,
-      'color': state.selectedColor.value,
-    };
-
-    final textElement = CanvasElement(id: textId, type: 'text', data: textData);
-    final nextElements = List<CanvasElement>.from(state.elements)
-      ..add(textElement);
-
+    final textElement = TextElement(
+      id: textId,
+      z: _nextZIndex(),
+      text: prompt,
+      center: event.position,
+      color: state.selectedColor,
+    );
+    final nextElements =
+        List<CanvasElement>.from(state.elements)..add(textElement);
     emit(state.copyWith(elements: nextElements, activeTray: null));
-
     await _saveCrdtOperation(
       action: 'create',
-      type: 'text',
+      type: _elementType(textElement),
       objectId: textId,
-      data: textData,
+      data: textElement.toMap(),
       emit: emit,
     );
   }
@@ -508,35 +825,24 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasAddImageElement event,
     Emitter<CanvasState> emit,
   ) async {
-    if (!_ensureCanEdit(emit)) {
-      return;
-    }
-
+    if (!_ensureCanEdit(emit)) return;
     final imageId = _uuid.v4();
-    final imageData = {
-      'z': _nextZIndex(),
-      'cx': event.center.dx,
-      'cy': event.center.dy,
-      'width': event.width.clamp(80.0, 720.0),
-      'height': event.height.clamp(80.0, 720.0),
-      'imageBase64': base64Encode(event.imageBytes),
-    };
-
-    final imageElement = CanvasElement(
+    final imageElement = ImageElement(
       id: imageId,
-      type: 'image',
-      data: imageData,
+      z: _nextZIndex(),
+      center: event.center,
+      width: event.width.clamp(80.0, 720.0),
+      height: event.height.clamp(80.0, 720.0),
+      imageBase64: base64Encode(event.imageBytes),
     );
-    final nextElements = List<CanvasElement>.from(state.elements)
-      ..add(imageElement);
-
+    final nextElements =
+        List<CanvasElement>.from(state.elements)..add(imageElement);
     emit(state.copyWith(elements: nextElements, activeTray: null));
-
     await _saveCrdtOperation(
       action: 'create',
-      type: 'image',
+      type: _elementType(imageElement),
       objectId: imageId,
-      data: imageData,
+      data: imageElement.toMap(),
       emit: emit,
     );
   }
@@ -545,59 +851,51 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasUpdateImageElement event,
     Emitter<CanvasState> emit,
   ) async {
-    if (!_ensureCanEdit(emit)) {
-      return;
-    }
-
+    if (!_ensureCanEdit(emit)) return;
     CanvasElement? target;
     for (final element in state.elements) {
-      if (element.id == event.elementId && element.type == 'image') {
+      if (element.id == event.elementId && element is ImageElement) {
         target = element;
         break;
       }
     }
     if (target == null) return;
-
-    final data = Map<String, dynamic>.from(target.data as Map<String, dynamic>)
-      ..['cx'] = event.center.dx
-      ..['cy'] = event.center.dy
-      ..['width'] = event.width.clamp(80.0, 720.0)
-      ..['height'] = event.height.clamp(80.0, 720.0);
-
-    final oldData = target.data as Map<String, dynamic>;
-    final oldCx = (oldData['cx'] as num?)?.toDouble() ?? 0.0;
-    final oldCy = (oldData['cy'] as num?)?.toDouble() ?? 0.0;
-    final oldW = (oldData['width'] as num?)?.toDouble() ?? 220.0;
-    final oldH = (oldData['height'] as num?)?.toDouble() ?? 160.0;
-    final newCx = (data['cx'] as num).toDouble();
-    final newCy = (data['cy'] as num).toDouble();
-    final newW = (data['width'] as num).toDouble();
-    final newH = (data['height'] as num).toDouble();
-
-    final unchanged =
-        (newCx - oldCx).abs() < 0.1 &&
-        (newCy - oldCy).abs() < 0.1 &&
-        (newW - oldW).abs() < 0.1 &&
-        (newH - oldH).abs() < 0.1;
-    if (unchanged) {
-      return;
-    }
-
+    final oldElement = target as ImageElement;
+    final newCx = event.center.dx;
+    final newCy = event.center.dy;
+    final newW = event.width.clamp(80.0, 720.0);
+    final newH = event.height.clamp(80.0, 720.0);
+    final unchanged = (newCx - oldElement.center.dx).abs() < 0.1 &&
+        (newCy - oldElement.center.dy).abs() < 0.1 &&
+        (newW - oldElement.width).abs() < 0.1 &&
+        (newH - oldElement.height).abs() < 0.1;
+    if (unchanged) return;
     final next = state.elements
-        .map(
-          (e) => e.id == event.elementId
-              ? CanvasElement(id: e.id, type: e.type, data: data)
-              : e,
-        )
+        .map((e) => e.id == event.elementId
+            ? ImageElement(
+                id: e.id,
+                z: e.z,
+                center: Offset(newCx, newCy),
+                width: newW,
+                height: newH,
+                imageBase64: (e as ImageElement).imageBase64,
+              )
+            : e)
         .toList(growable: false);
-
     emit(state.copyWith(elements: next));
-
+    final updateData = <String, dynamic>{
+      'type': 'image',
+      'cx': newCx,
+      'cy': newCy,
+      'width': newW,
+      'height': newH,
+      'imageBase64': oldElement.imageBase64,
+    };
     await _saveCrdtOperation(
       action: 'update',
       type: 'image',
       objectId: event.elementId,
-      data: data,
+      data: updateData,
       emit: emit,
     );
   }
@@ -609,7 +907,6 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     if (canvasService == null || _boardId.isEmpty) return;
     if (!_ensureCanEdit(emit)) return;
-
     final payload = {
       'type': 'image',
       'action': 'upsert',
@@ -619,37 +916,30 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       'width': event.width.clamp(80.0, 720.0),
       'height': event.height.clamp(80.0, 720.0),
     };
-
     await _publishSelectedShapePreview(event.elementId, payload);
   }
 
-  Future<void> _onUndo(CanvasUndo event, Emitter<CanvasState> emit) async {
-    if (!_ensureCanEdit(emit)) {
-      return;
-    }
+  // ──────────────────────────────────────────────
+  // Undo / Redo / Clear / Delete
+  // ──────────────────────────────────────────────
 
+  Future<void> _onUndo(CanvasUndo event, Emitter<CanvasState> emit) async {
+    if (!_ensureCanEdit(emit)) return;
     final adapter = _crdtAdapter;
     if (adapter == null) return;
-
     final update = adapter.undoLast(origin: 'local');
     if (update == null || update.isEmpty) return;
-
     await _publishCrdtUpdate(update);
     _refreshFromCrdtAdapter(emit);
     emit(state.copyWith(activeTray: null));
   }
 
   Future<void> _onRedo(CanvasRedo event, Emitter<CanvasState> emit) async {
-    if (!_ensureCanEdit(emit)) {
-      return;
-    }
-
+    if (!_ensureCanEdit(emit)) return;
     final adapter = _crdtAdapter;
     if (adapter == null) return;
-
     final update = adapter.redoLast(origin: 'local');
     if (update == null || update.isEmpty) return;
-
     await _publishCrdtUpdate(update);
     _refreshFromCrdtAdapter(emit);
     emit(state.copyWith(activeTray: null));
@@ -659,12 +949,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasClearAll event,
     Emitter<CanvasState> emit,
   ) async {
-    if (!_ensureCanEdit(emit)) {
-      return;
-    }
-
+    if (!_ensureCanEdit(emit)) return;
     if (state.elements.isEmpty) return;
-
     emit(state.copyWith(elements: const [], activeTray: null));
     await _saveCrdtOperation(
       action: 'delete',
@@ -679,22 +965,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasDeleteElement event,
     Emitter<CanvasState> emit,
   ) async {
-    if (!_ensureCanEdit(emit)) {
-      return;
-    }
-
+    if (!_ensureCanEdit(emit)) return;
     final nextElements = state.elements
         .where((e) => e.id != event.elementId)
         .toList(growable: false);
-
-    emit(
-      state.copyWith(
-        elements: nextElements,
-        selectedShapeId: state.selectedShapeId == event.elementId
-            ? null
-            : state.selectedShapeId,
-      ),
-    );
+    emit(state.copyWith(
+      elements: nextElements,
+      selectedShapeId:
+          state.selectedShapeId == event.elementId ? null : state.selectedShapeId,
+    ));
     await _saveCrdtOperation(
       action: 'delete',
       type: 'element',
@@ -703,6 +982,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       emit: emit,
     );
   }
+
+  // ──────────────────────────────────────────────
+  // Brush & tool settings
+  // ──────────────────────────────────────────────
 
   void _onUpdateColor(CanvasUpdateColor event, Emitter<CanvasState> emit) {
     emit(state.copyWith(selectedColor: event.color));
@@ -736,12 +1019,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(eraserEraseEverything: event.eraseEverything));
   }
 
+  // ──────────────────────────────────────────────
+  // Selection
+  // ──────────────────────────────────────────────
+
   void _onSelectShape(CanvasSelectShape event, Emitter<CanvasState> emit) {
     if (event.shapeId == null) {
       emit(state.copyWith(selectedShapeId: null));
       return;
     }
-
     CanvasElement? selected;
     for (final element in state.elements) {
       if (element.id == event.shapeId) {
@@ -749,77 +1035,42 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         break;
       }
     }
-    final data = selected?.data as Map<String, dynamic>?;
-    if (selected?.type == 'stroke') {
-      emit(
-        state.copyWith(
-          selectedShapeId: event.shapeId,
-          selectedStrokeColor:
-              (data?['color'] as num?)?.toInt() ?? Colors.black.value,
-          selectedStrokeWidth:
-              (data?['strokeWidth'] as num?)?.toDouble() ?? 5.0,
-          selectedStrokeOpacity:
-              (data?['opacity'] as num?)?.toDouble() ?? 1.0,
-          selectedStrokeBrushType:
-              (data?['brushType'] as String?) ?? 'solid',
-        ),
-      );
+    if (selected == null) {
+      emit(state.copyWith(selectedShapeId: null));
+      return;
+    }
+    if (selected is StrokeElement) {
+      emit(state.copyWith(
+        selectedShapeId: event.shapeId,
+        selectedStrokeColor: selected.color.value,
+        selectedStrokeWidth: selected.strokeWidth,
+        selectedStrokeOpacity: selected.opacity,
+        selectedStrokeBrushType: selected.brushType,
+      ));
+    } else if (selected is ShapeElement) {
+      emit(state.copyWith(
+        selectedShapeId: event.shapeId,
+        selectedShapeIsFilled: selected.isFilled,
+        selectedShapeBorderRadius: selected.borderRadius,
+        selectedShapeRotation: selected.rotation,
+      ));
     } else {
-      emit(
-        state.copyWith(
-          selectedShapeId: event.shapeId,
-          selectedShapeIsFilled: (data?['isFilled'] as bool?) ?? false,
-          selectedShapeBorderRadius:
-              (data?['borderRadius'] as num?)?.toDouble() ?? 0.0,
-          selectedShapeRotation:
-              (data?['rotation'] as num?)?.toDouble() ?? 0.0,
-        ),
-      );
+      emit(state.copyWith(selectedShapeId: event.shapeId));
     }
   }
 
-  Future<void> _onPreviewMoveSelectedShape(
-    CanvasPreviewMoveSelectedShape event,
-    Emitter<CanvasState> emit,
-  ) async {
-    final shape = _selectedShape();
-    final canvasService = _canvasService;
-    if (shape == null || canvasService == null || _boardId.isEmpty) return;
-    if (!_ensureCanEdit(emit)) return;
-
-    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
-      ..['cx'] = event.center.dx
-      ..['cy'] = event.center.dy;
-    await _publishSelectedShapePreview(shape.id, data);
+  CanvasElement? _selectedShape() {
+    final selectedId = state.selectedShapeId;
+    if (selectedId == null) return null;
+    for (final element in state.elements) {
+      if (element.id == selectedId) return element;
+    }
+    return null;
   }
 
-  Future<void> _onPreviewResizeSelectedShape(
-    CanvasPreviewResizeSelectedShape event,
-    Emitter<CanvasState> emit,
-  ) async {
-    final shape = _selectedShape();
-    final canvasService = _canvasService;
-    if (shape == null || canvasService == null || _boardId.isEmpty) return;
-    if (!_ensureCanEdit(emit)) return;
-
-    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
-      ..['size'] = event.size.clamp(24.0, 320.0);
-    await _publishSelectedShapePreview(shape.id, data);
-  }
-
-  Future<void> _onPreviewRotateSelectedShape(
-    CanvasPreviewRotateSelectedShape event,
-    Emitter<CanvasState> emit,
-  ) async {
-    final shape = _selectedShape();
-    final canvasService = _canvasService;
-    if (shape == null || canvasService == null || _boardId.isEmpty) return;
-    if (!_ensureCanEdit(emit)) return;
-
-    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
-      ..['rotation'] = _normalizeRotation(event.rotation);
-    await _publishSelectedShapePreview(shape.id, data);
-  }
+  // ──────────────────────────────────────────────
+  // Shape editing
+  // ──────────────────────────────────────────────
 
   Future<void> _onMoveSelectedShape(
     CanvasMoveSelectedShape event,
@@ -827,7 +1078,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
+    final data = Map<String, dynamic>.from(shape.toMap())
       ..['cx'] = event.center.dx
       ..['cy'] = event.center.dy;
     await _updateShape(shape.id, data, emit);
@@ -839,10 +1090,62 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
+    final data = Map<String, dynamic>.from(shape.toMap())
       ..['rotation'] = _normalizeRotation(event.rotation);
     await _updateShape(shape.id, data, emit);
     emit(state.copyWith(selectedShapeRotation: data['rotation'] as double));
+  }
+
+  Future<void> _onResizeSelectedShape(
+    CanvasResizeSelectedShape event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(shape.toMap())
+      ..['size'] = event.size.clamp(24.0, 320.0);
+    await _updateShape(shape.id, data, emit);
+  }
+
+  Future<void> _onToggleSelectedShapeFill(
+    CanvasToggleSelectedShapeFill event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(shape.toMap())
+      ..['isFilled'] = event.isFilled;
+    await _updateShape(shape.id, data, emit);
+    emit(state.copyWith(selectedShapeIsFilled: event.isFilled));
+  }
+
+  Future<void> _onUpdateSelectedShapeColor(
+    CanvasUpdateSelectedShapeColor event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(shape.toMap())
+      ..['color'] = event.color.value;
+    await _updateShape(shape.id, data, emit);
+  }
+
+  Future<void> _onUpdateSelectedShapeBorderRadius(
+    CanvasUpdateSelectedShapeBorderRadius event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || !_ensureCanEdit(emit)) return;
+    if (shape is! ShapeElement) return;
+    final size = shape.size;
+    final maxRadius = (size / 2).clamp(0.0, 180.0);
+    final data = Map<String, dynamic>.from(shape.toMap())
+      ..['borderRadius'] = event.borderRadius.clamp(0.0, maxRadius);
+    await _updateShape(shape.id, data, emit);
+    emit(state.copyWith(
+      selectedShapeBorderRadius:
+          (data['borderRadius'] as num?)?.toDouble() ?? 0.0,
+    ));
   }
 
   Future<void> _onCommitPendingShapeEdits(
@@ -852,13 +1155,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (!_ensureCanEdit(emit)) return;
     final shape = _selectedShape();
     if (shape == null) return;
-
-    // Merge current shape data with pending changes
-    final data = Map<String, dynamic>.from(
-      shape.data as Map<String, dynamic>? ?? const {},
-    );
-
-    // Apply pending changes, with normalization for specific fields
+    final data = Map<String, dynamic>.from(shape.toMap());
     for (final entry in event.pendingData.entries) {
       if (entry.key == 'rotation') {
         final rotation = _toDoubleValue(entry.value);
@@ -878,8 +1175,6 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         data[entry.key] = entry.value;
       }
     }
-
-    // Update UI state for tracked fields
     if (event.pendingData.containsKey('rotation')) {
       final rotation = _toDoubleValue(data['rotation']);
       if (rotation != null) {
@@ -895,65 +1190,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         emit(state.copyWith(selectedShapeBorderRadius: borderRadius));
       }
     }
-
-    // Publish single batched update
     await _updateShape(shape.id, data, emit);
   }
 
-  Future<void> _onResizeSelectedShape(
-    CanvasResizeSelectedShape event,
-    Emitter<CanvasState> emit,
-  ) async {
-    final shape = _selectedShape();
-    if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
-      ..['size'] = event.size.clamp(24.0, 320.0);
-    await _updateShape(shape.id, data, emit);
-  }
-
-  Future<void> _onToggleSelectedShapeFill(
-    CanvasToggleSelectedShapeFill event,
-    Emitter<CanvasState> emit,
-  ) async {
-    final shape = _selectedShape();
-    if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
-      ..['isFilled'] = event.isFilled;
-    await _updateShape(shape.id, data, emit);
-    emit(state.copyWith(selectedShapeIsFilled: event.isFilled));
-  }
-
-  Future<void> _onUpdateSelectedShapeColor(
-    CanvasUpdateSelectedShapeColor event,
-    Emitter<CanvasState> emit,
-  ) async {
-    final shape = _selectedShape();
-    if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
-      ..['color'] = event.color.value;
-    await _updateShape(shape.id, data, emit);
-  }
-
-  Future<void> _onUpdateSelectedShapeBorderRadius(
-    CanvasUpdateSelectedShapeBorderRadius event,
-    Emitter<CanvasState> emit,
-  ) async {
-    final shape = _selectedShape();
-    if (shape == null || !_ensureCanEdit(emit)) return;
-    final size =
-        ((shape.data as Map<String, dynamic>)['size'] as num?)?.toDouble() ??
-        64.0;
-    final maxRadius = (size / 2).clamp(0.0, 180.0);
-    final data = Map<String, dynamic>.from(shape.data as Map<String, dynamic>)
-      ..['borderRadius'] = event.borderRadius.clamp(0.0, maxRadius);
-    await _updateShape(shape.id, data, emit);
-    emit(
-      state.copyWith(
-        selectedShapeBorderRadius:
-            (data['borderRadius'] as num?)?.toDouble() ?? 0.0,
-      ),
-    );
-  }
+  // ──────────────────────────────────────────────
+  // Stroke editing
+  // ──────────────────────────────────────────────
 
   Future<void> _onMoveSelectedStroke(
     CanvasMoveSelectedStroke event,
@@ -961,15 +1203,27 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     if (!_ensureCanEdit(emit)) return;
     final element = _selectedShape();
-    if (element == null || element.type != 'stroke') return;
-    final data = Map<String, dynamic>.from(element.data as Map<String, dynamic>);
-    final points = (data['points'] as List<dynamic>?) ?? [];
-    data['points'] = points.map((p) {
-      final x = (p is Map ? (p['x'] as num?)?.toDouble() : null) ?? 0.0;
-      final y = (p is Map ? (p['y'] as num?)?.toDouble() : null) ?? 0.0;
-      return <String, double>{'x': x + event.delta.dx, 'y': y + event.delta.dy};
-    }).toList();
-    await _updateStroke(element.id, data, emit);
+    if (element is! StrokeElement) return;
+    final newPoints = element.points.map((p) => p + event.delta).toList();
+    final updated = StrokeElement(
+      id: element.id,
+      z: element.z,
+      color: element.color,
+      strokeWidth: element.strokeWidth,
+      opacity: element.opacity,
+      brushType: element.brushType,
+      points: newPoints,
+    );
+    final next =
+        state.elements.map((e) => e.id == element.id ? updated : e).toList();
+    emit(state.copyWith(elements: next));
+    await _saveCrdtOperation(
+      action: 'update',
+      type: _elementType(updated),
+      objectId: element.id,
+      data: updated.toMap(),
+      emit: emit,
+    );
   }
 
   Future<void> _onUpdateSelectedStrokeColor(
@@ -977,8 +1231,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final element = _selectedShape();
-    if (element == null || element.type != 'stroke' || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(element.data as Map<String, dynamic>)
+    if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(element.toMap())
       ..['color'] = event.color;
     await _updateStroke(element.id, data, emit);
     emit(state.copyWith(selectedStrokeColor: event.color));
@@ -989,8 +1243,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final element = _selectedShape();
-    if (element == null || element.type != 'stroke' || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(element.data as Map<String, dynamic>)
+    if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(element.toMap())
       ..['strokeWidth'] = event.strokeWidth;
     await _updateStroke(element.id, data, emit);
     emit(state.copyWith(selectedStrokeWidth: event.strokeWidth));
@@ -1001,8 +1255,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final element = _selectedShape();
-    if (element == null || element.type != 'stroke' || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(element.data as Map<String, dynamic>)
+    if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(element.toMap())
       ..['opacity'] = event.opacity;
     await _updateStroke(element.id, data, emit);
     emit(state.copyWith(selectedStrokeOpacity: event.opacity));
@@ -1013,12 +1267,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final element = _selectedShape();
-    if (element == null || element.type != 'stroke' || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(element.data as Map<String, dynamic>)
+    if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(element.toMap())
       ..['brushType'] = event.brushType;
     await _updateStroke(element.id, data, emit);
     emit(state.copyWith(selectedStrokeBrushType: event.brushType));
   }
+
+  // ──────────────────────────────────────────────
+  // Update helpers
+  // ──────────────────────────────────────────────
 
   Future<void> _updateStroke(
     String elementId,
@@ -1034,31 +1292,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     if (existing == null) return;
     final next = state.elements
-        .map(
-          (e) => e.id == elementId
-              ? CanvasElement(id: e.id, type: e.type, data: data)
-              : e,
-        )
+        .map((e) =>
+            e.id == elementId ? CanvasElement.fromMap(e.id, data) : e)
         .toList(growable: false);
     emit(state.copyWith(elements: next));
     await _saveCrdtOperation(
       action: 'update',
-      type: existing.type,
+      type: _elementType(existing),
       objectId: elementId,
       data: data,
       emit: emit,
     );
-  }
-
-  CanvasElement? _selectedShape() {
-    final selectedId = state.selectedShapeId;
-    if (selectedId == null) return null;
-    for (final element in state.elements) {
-      if (element.id == selectedId) {
-        return element;
-      }
-    }
-    return null;
   }
 
   Future<void> _updateShape(
@@ -1073,20 +1317,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         break;
       }
     }
-
     if (existing == null) return;
-
-    final currentData = existing.data as Map<String, dynamic>? ?? const {};
-    final currentCx = (currentData['cx'] as num?)?.toDouble() ?? 0.0;
-    final currentCy = (currentData['cy'] as num?)?.toDouble() ?? 0.0;
-    final currentSize = (currentData['size'] as num?)?.toDouble() ?? 64.0;
-    final currentRotation =
-        ((currentData['rotation'] as num?)?.toDouble() ?? 0.0) % (math.pi * 2);
-    final currentBorderRadius =
-        (currentData['borderRadius'] as num?)?.toDouble() ?? 0.0;
-    final currentColor = (currentData['color'] as num?)?.toInt() ?? 0;
-    final currentFilled = (currentData['isFilled'] as bool?) ?? false;
-
+    if (existing is! ShapeElement) return;
+    final currentCx = existing.center.dx;
+    final currentCy = existing.center.dy;
+    final currentSize = existing.size;
+    final currentRotation = existing.rotation % (math.pi * 2);
+    final currentBorderRadius = existing.borderRadius;
+    final currentColor = existing.color.value;
+    final currentFilled = existing.isFilled;
     final nextCx = (data['cx'] as num?)?.toDouble() ?? 0.0;
     final nextCy = (data['cy'] as num?)?.toDouble() ?? 0.0;
     final nextSize = (data['size'] as num?)?.toDouble() ?? 64.0;
@@ -1095,9 +1334,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final nextBorderRadius = (data['borderRadius'] as num?)?.toDouble() ?? 0.0;
     final nextColor = (data['color'] as num?)?.toInt() ?? 0;
     final nextFilled = (data['isFilled'] as bool?) ?? false;
-
-    final unchanged =
-        (nextCx - currentCx).abs() < 0.01 &&
+    final unchanged = (nextCx - currentCx).abs() < 0.01 &&
         (nextCy - currentCy).abs() < 0.01 &&
         (nextSize - currentSize).abs() < 0.01 &&
         (nextRotation - currentRotation).abs() < 0.0001 &&
@@ -1105,70 +1342,101 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         nextColor == currentColor &&
         nextFilled == currentFilled;
     if (unchanged) return;
-
     final fingerprint = _shapeFingerprint(shapeId, data);
-    if (_lastShapePayloadFingerprint[shapeId] == fingerprint) {
-      return;
-    }
+    if (_lastShapePayloadFingerprint[shapeId] == fingerprint) return;
     _lastShapePayloadFingerprint[shapeId] = fingerprint;
-
     final next = state.elements
-        .map(
-          (e) => e.id == shapeId
-              ? CanvasElement(id: e.id, type: e.type, data: data)
-              : e,
-        )
+        .map((e) =>
+            e.id == shapeId ? CanvasElement.fromMap(e.id, data) : e)
         .toList(growable: false);
     emit(state.copyWith(elements: next));
     await _saveCrdtOperation(
       action: 'update',
-      type: existing
-          .type, // <-- Pass the correct type instead of hardcoded 'shape'
+      type: _elementType(existing),
       objectId: shapeId,
       data: data,
       emit: emit,
     );
   }
 
-  double _normalizeRotation(double value) {
-    if (value.isNaN || value.isInfinite) return 0.0;
-    final twoPi = math.pi * 2;
-    var normalized = value % twoPi;
-    if (normalized < 0) {
-      normalized += twoPi;
+  // ──────────────────────────────────────────────
+  // Preview helpers
+  // ──────────────────────────────────────────────
+
+  Future<void> _onPreviewPendingShapeEdits(
+    CanvasPreviewPendingShapeEdits event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    final canvasService = _canvasService;
+    if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    if (!_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(shape.toMap());
+    for (final entry in event.pendingData.entries) {
+      if (entry.key == 'rotation') {
+        final rotation = _toDoubleValue(entry.value);
+        if (rotation == null) continue;
+        data[entry.key] = _normalizeRotation(rotation);
+      } else if (entry.key == 'size') {
+        final size = _toDoubleValue(entry.value);
+        if (size == null) continue;
+        data[entry.key] = size.clamp(24.0, 320.0);
+      } else if (entry.key == 'borderRadius') {
+        final borderRadius = _toDoubleValue(entry.value);
+        if (borderRadius == null) continue;
+        final size = _toDoubleValue(data['size']) ?? 64.0;
+        final maxRadius = (size / 2).clamp(0.0, 180.0);
+        data[entry.key] = borderRadius.clamp(0.0, maxRadius);
+      } else {
+        data[entry.key] = entry.value;
+      }
     }
-    return normalized;
+    await _publishSelectedShapePreview(shape.id, data);
   }
 
-  double? _toDoubleValue(dynamic value) {
-    if (value is num) return value.toDouble();
-    if (value is String) return double.tryParse(value);
-    return null;
+  Future<void> _onPreviewMoveSelectedShape(
+    CanvasPreviewMoveSelectedShape event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    final canvasService = _canvasService;
+    if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    if (!_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(shape.toMap())
+      ..['cx'] = event.center.dx
+      ..['cy'] = event.center.dy;
+    await _publishSelectedShapePreview(shape.id, data);
   }
 
-  bool _parseBool(dynamic value) {
-    if (value is bool) return value;
-    if (value is String) {
-      return value.trim().toLowerCase() == 'true';
-    }
-    return false;
+  Future<void> _onPreviewResizeSelectedShape(
+    CanvasPreviewResizeSelectedShape event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    final canvasService = _canvasService;
+    if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    if (!_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(shape.toMap())
+      ..['size'] = event.size.clamp(24.0, 320.0);
+    await _publishSelectedShapePreview(shape.id, data);
   }
 
-  String _shapeFingerprint(String shapeId, Map<String, dynamic> data) {
-    final cx = ((data['cx'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(3);
-    final cy = ((data['cy'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(3);
-    final size = ((data['size'] as num?)?.toDouble() ?? 64.0).toStringAsFixed(
-      3,
-    );
-    final rotation = _normalizeRotation(
-      (data['rotation'] as num?)?.toDouble() ?? 0.0,
-    ).toStringAsFixed(5);
-    final borderRadius = ((data['borderRadius'] as num?)?.toDouble() ?? 0.0)
-        .toStringAsFixed(3);
-    final color = ((data['color'] as num?)?.toInt() ?? 0).toString();
-    final filled = _parseBool(data['isFilled']).toString();
-    return '$shapeId|$cx|$cy|$size|$rotation|$borderRadius|$color|$filled';
+  Future<void> _onPreviewRotateSelectedShape(
+    CanvasPreviewRotateSelectedShape event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    final canvasService = _canvasService;
+    if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    if (!_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(shape.toMap())
+      ..['rotation'] = _normalizeRotation(event.rotation);
+    await _publishSelectedShapePreview(shape.id, data);
   }
+
+  // ──────────────────────────────────────────────
+  // Eraser
+  // ──────────────────────────────────────────────
 
   _EraserResult _applyEraserStroke({
     required List<Offset> erasePath,
@@ -1178,11 +1446,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final deletedIds = <String>[];
     final createdStrokes = <CanvasElement>[];
     final nextElements = <CanvasElement>[];
-
     for (final element in state.elements) {
-      if (element.type != 'stroke') {
-        final shouldDeleteWholeElement =
-            eraseEverything &&
+      if (element is! StrokeElement) {
+        final shouldDeleteWholeElement = eraseEverything &&
             _elementTouchesErasePath(element, erasePath, eraserRadius);
         if (shouldDeleteWholeElement) {
           deletedIds.add(element.id);
@@ -1191,46 +1457,35 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         }
         continue;
       }
-
-      final touched = _elementTouchesErasePath(
-        element,
-        erasePath,
-        eraserRadius,
-      );
+      final touched =
+          _elementTouchesErasePath(element, erasePath, eraserRadius);
       if (!touched) {
         nextElements.add(element);
         continue;
       }
-
-      final data = element.data as Map<String, dynamic>? ?? const {};
-      final strokePoints = _pointsFromData(data);
-      final strokeWidth = (data['strokeWidth'] as num?)?.toDouble() ?? 5.0;
+      final strokePoints = element.points;
+      final strokeWidth = element.strokeWidth;
       final keepSegments = _splitStrokeByErasePath(
         strokePoints: strokePoints,
         erasePath: erasePath,
         eraseRadius: eraserRadius + (strokeWidth / 2),
       );
-
       deletedIds.add(element.id);
-
       for (final segment in keepSegments) {
         if (segment.length < 2) continue;
-        final segmentData = Map<String, dynamic>.from(data)
-          ..['points'] = segment
-              .map((p) => {'x': p.dx, 'y': p.dy})
-              .toList(growable: false)
-          ..['z'] = _nextZIndex();
-
-        final replacement = CanvasElement(
+        final replacement = StrokeElement(
           id: _uuid.v4(),
-          type: 'stroke',
-          data: segmentData,
+          z: _nextZIndex(),
+          color: element.color,
+          strokeWidth: element.strokeWidth,
+          opacity: element.opacity,
+          brushType: element.brushType,
+          points: segment,
         );
         nextElements.add(replacement);
         createdStrokes.add(replacement);
       }
     }
-
     return _EraserResult(
       nextElements: nextElements,
       deletedElementIds: deletedIds,
@@ -1238,149 +1493,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
   }
 
-  List<List<Offset>> _splitStrokeByErasePath({
-    required List<Offset> strokePoints,
-    required List<Offset> erasePath,
-    required double eraseRadius,
-  }) {
-    if (strokePoints.length < 2 || erasePath.length < 2) {
-      return <List<Offset>>[strokePoints];
-    }
-
-    final keepMask = List<bool>.filled(strokePoints.length, true);
-    for (var i = 0; i < strokePoints.length; i++) {
-      final point = strokePoints[i];
-      for (var j = 0; j < erasePath.length - 1; j++) {
-        final distance = _distanceToSegment(
-          point,
-          erasePath[j],
-          erasePath[j + 1],
-        );
-        if (distance <= eraseRadius) {
-          keepMask[i] = false;
-          break;
-        }
-      }
-    }
-
-    final segments = <List<Offset>>[];
-    var currentSegment = <Offset>[];
-
-    for (var i = 0; i < strokePoints.length; i++) {
-      if (keepMask[i]) {
-        currentSegment.add(strokePoints[i]);
-      } else {
-        if (currentSegment.length >= 2) {
-          segments.add(List<Offset>.from(currentSegment));
-        }
-        currentSegment = <Offset>[];
-      }
-    }
-
-    if (currentSegment.length >= 2) {
-      segments.add(currentSegment);
-    }
-
-    return segments;
-  }
-
-  bool _elementTouchesErasePath(
-    CanvasElement element,
-    List<Offset> points,
-    double brushRadius,
-  ) {
-    final data = element.data as Map<String, dynamic>? ?? const {};
-
-    if (element.type == 'stroke') {
-      final strokePoints = _pointsFromData(data);
-      if (strokePoints.length < 2 || points.isEmpty) return false;
-
-      final strokeRadius = (data['strokeWidth'] as num?)?.toDouble() ?? 5.0;
-      for (final erasePoint in points) {
-        for (var i = 0; i < strokePoints.length - 1; i++) {
-          final distance = _distanceToSegment(
-            erasePoint,
-            strokePoints[i],
-            strokePoints[i + 1],
-          );
-          if (distance <= brushRadius + (strokeRadius / 2)) {
-            return true;
-          }
-        }
-      }
-      return false;
-    }
-
-    final bounds = _elementBounds(element, data);
-    if (bounds == null) return false;
-    for (final erasePoint in points) {
-      if (bounds.inflate(brushRadius).contains(erasePoint)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  List<Offset> _pointsFromData(Map<String, dynamic> data) {
-    final pointMaps = (data['points'] as List?) ?? const [];
-    return pointMaps
-        .whereType<Map>()
-        .map(
-          (point) => Offset(
-            (point['x'] as num?)?.toDouble() ?? 0.0,
-            (point['y'] as num?)?.toDouble() ?? 0.0,
-          ),
-        )
-        .toList(growable: false);
-  }
-
-  Rect? _elementBounds(CanvasElement element, Map<String, dynamic> data) {
-    if (element.type == 'shape') {
-      final cx = (data['cx'] as num?)?.toDouble() ?? 0.0;
-      final cy = (data['cy'] as num?)?.toDouble() ?? 0.0;
-      final size = (data['size'] as num?)?.toDouble() ?? 64.0;
-      return Rect.fromCenter(center: Offset(cx, cy), width: size, height: size);
-    }
-
-    if (element.type == 'text') {
-      final cx = (data['cx'] as num?)?.toDouble() ?? 0.0;
-      final cy = (data['cy'] as num?)?.toDouble() ?? 0.0;
-      return Rect.fromCenter(center: Offset(cx, cy), width: 180, height: 48);
-    }
-
-    if (element.type == 'image') {
-      final cx = (data['cx'] as num?)?.toDouble() ?? 0.0;
-      final cy = (data['cy'] as num?)?.toDouble() ?? 0.0;
-      final width = (data['width'] as num?)?.toDouble() ?? 220.0;
-      final height = (data['height'] as num?)?.toDouble() ?? 160.0;
-      return Rect.fromCenter(
-        center: Offset(cx, cy),
-        width: width,
-        height: height,
-      );
-    }
-
-    return null;
-  }
-
-  double _distanceToSegment(Offset point, Offset start, Offset end) {
-    final dx = end.dx - start.dx;
-    final dy = end.dy - start.dy;
-    if (dx == 0 && dy == 0) {
-      return (point - start).distance;
-    }
-
-    final lengthSquared = (dx * dx) + (dy * dy);
-    final t =
-        (((point.dx - start.dx) * dx) + ((point.dy - start.dy) * dy)) /
-        lengthSquared;
-    final clampedT = t.clamp(0.0, 1.0);
-    final projection = Offset(
-      start.dx + (clampedT * dx),
-      start.dy + (clampedT * dy),
-    );
-    return (point - projection).distance;
-  }
+  // ──────────────────────────────────────────────
+  // Tray & UI
+  // ──────────────────────────────────────────────
 
   void _onToggleTray(CanvasToggleTray event, Emitter<CanvasState> emit) {
     final nextTray = state.activeTray == event.trayName ? null : event.trayName;
@@ -1398,20 +1513,6 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(showTrayTips: false));
   }
 
-  Future<void> _onSaveBoardPreviewRequested(
-    CanvasSaveBoardPreviewRequested event,
-    Emitter<CanvasState> emit,
-  ) async {
-    final canvasService = _canvasService;
-    if (canvasService == null || _boardId.isEmpty) return;
-
-    try {
-      await canvasService.saveBoardPreview(_boardId, event.pngBytes);
-    } catch (_) {
-      // Preview persistence failure should not interrupt canvas usage.
-    }
-  }
-
   void _onBoardMembersUpdated(
     CanvasBoardMembersUpdated event,
     Emitter<CanvasState> emit,
@@ -1426,118 +1527,20 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(memberSearchQuery: event.query));
   }
 
-  Future<void> _initializeCrdtSync() async {
-    if (_crdtAdapter != null && _crdtUpdatesSub != null) return;
-
-    try {
-      _crdtAdapter ??= await CanvasDocAdapterFactory.create();
-      _appliedCrdtUpdateIds.clear();
-      _lastShapeUpdateId.clear();
-
-      // Rebuild element -> updateId mapping from remote updates
-      await _rebuildElementUpdateIdMapping();
-
-      _startCrdtUpdatesListener();
-    } finally {
-      _crdtInitFuture = null;
-    }
-  }
-
-  Future<void> _ensureCrdtReady() async {
-    if (_crdtAdapter != null) return;
-    _crdtInitFuture ??= _initializeCrdtSync();
-    await _crdtInitFuture;
-  }
-
-  Future<void> _rebuildElementUpdateIdMapping() async {
+  Future<void> _onSaveBoardPreviewRequested(
+    CanvasSaveBoardPreviewRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
     final canvasService = _canvasService;
     if (canvasService == null || _boardId.isEmpty) return;
-
     try {
-      final remoteUpdates = await canvasService
-          .listenToCrdtUpdates(_boardId)
-          .first;
-      for (final update in remoteUpdates) {
-        if (update.elementId != null && !update.isDeleted) {
-          _lastShapeUpdateId[update.elementId!] = update.updateId;
-        }
-      }
-    } catch (_) {
-      // Silently handle errors - if rebuild fails, elements will get new updates on edit
-    }
+      await canvasService.saveBoardPreview(_boardId, event.pngBytes);
+    } catch (_) {}
   }
 
-  void _startCrdtUpdatesListener() {
-    if (_crdtUpdatesSub != null || !_canSync) return;
-
-    final canvasService = _canvasService;
-    if (canvasService == null) return;
-
-    _crdtUpdatesSub = canvasService.listenToCrdtUpdates(_boardId).listen((
-      updates,
-    ) {
-      add(CanvasApplyRemoteUpdate(updates));
-    });
-  }
-
-  void _startPreviewUpdatesListener() {
-    if (_previewUpdatesSub != null || !_canSync) return;
-
-    final canvasService = _canvasService;
-    if (canvasService == null) return;
-
-    _previewUpdatesSub = canvasService.listenToCanvasPreviews(_boardId).listen((
-      previews,
-    ) {
-      add(CanvasApplyRemotePreview(previews));
-    });
-  }
-
-  void _startBoardMetadataListener() {
-    final canvasService = _canvasService;
-    if (canvasService == null || _boardId.isEmpty) return;
-
-    _boardMetaSub?.cancel();
-    _boardMetaSub = canvasService.watchBoardById(_boardId).listen((board) {
-      if (board == null) {
-        if (!_hasSeenBoardMetadata) {
-          return;
-        }
-        _scheduleBoardUnavailableCheck();
-        return;
-      }
-
-      _boardUnavailableTimer?.cancel();
-      _boardUnavailableTimer = null;
-      _hasSeenBoardMetadata = true;
-      _canvasService?.setBoardSingleUserStatus(board.members.length <= 1);
-      add(
-        CanvasBoardTitleUpdated(
-          board.title,
-          currentUserRole: board.currentUserRole,
-        ),
-      );
-    });
-
-    _startBoardMembersListener();
-  }
-
-  void _startBoardMembersListener() {
-    final boardService = _boardService;
-    if (boardService == null || _boardId.isEmpty) return;
-
-    _membersSub?.cancel();
-    _membersSub = boardService
-        .getBoardMembers(_boardId)
-        .listen(
-          (members) {
-            add(CanvasBoardMembersUpdated(members));
-          },
-          onError: (e) {
-            // Silently handle member fetch errors; do not interrupt canvas
-          },
-        );
-  }
+  // ──────────────────────────────────────────────
+  // Permission checks
+  // ──────────────────────────────────────────────
 
   bool _ensureCanEdit(Emitter<CanvasState> emit) {
     return _ensureCanEditWithOptions(emit, clearStroke: false);
@@ -1547,420 +1550,21 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit, {
     required bool clearStroke,
   }) {
-    if (_currentUserRole != Board.roleViewer) {
-      return true;
-    }
-
+    if (_currentUserRole != Board.roleViewer) return true;
     const warningMessage =
         'You are a viewer. Request editor role from the owner to edit this board.';
-
     if (clearStroke && state.currentStroke.isNotEmpty) {
       emit(state.copyWith(currentStroke: const []));
     }
-
     final now = DateTime.now();
-    final shouldShowWarning =
-        _lastViewerWarningAt == null ||
+    final shouldShowWarning = _lastViewerWarningAt == null ||
         now.difference(_lastViewerWarningAt!).inMilliseconds > 1200;
-
     if (shouldShowWarning) {
       _lastViewerWarningAt = now;
       emit(state.copyWith(error: null));
       emit(state.copyWith(error: warningMessage));
     }
-
     return false;
-  }
-
-  void _scheduleBoardUnavailableCheck() {
-    _boardUnavailableTimer?.cancel();
-    _boardUnavailableTimer = Timer(
-      const Duration(milliseconds: 1400),
-      () async {
-        final canvasService = _canvasService;
-        if (canvasService == null || _boardId.isEmpty || isClosed) {
-          return;
-        }
-
-        try {
-          await canvasService.ensureBoardCached(_boardId);
-        } catch (_) {
-          // If recache fails, fallback to local check below.
-        }
-
-        final latestBoard = await canvasService.watchBoardById(_boardId).first;
-        if (latestBoard != null || isClosed) {
-          return;
-        }
-
-        add(
-          CanvasBoardUnavailable(
-            'This board is no longer available. Returning to the home screen.',
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _saveCrdtOperation({
-    required String action,
-    required String type,
-    required String objectId,
-    required Map<String, dynamic> data,
-    required Emitter<CanvasState> emit,
-  }) async {
-    if (!_canSync) return;
-
-    await _ensureCrdtReady();
-
-    final adapter = _crdtAdapter;
-    if (adapter == null) return;
-
-    Uint8List update;
-    if (action == 'delete' && type == 'board') {
-      update = adapter.clearElements(origin: 'local');
-    } else if (action == 'delete') {
-      update = adapter.deleteElement(objectId, origin: 'local');
-    } else {
-      final payload = <String, dynamic>{'type': type, ...data};
-      update = adapter.upsertElement(objectId, payload, origin: 'local');
-    }
-
-    if (update.isEmpty) {
-      _refreshFromCrdtAdapter(emit);
-      return;
-    }
-
-    await _publishOperationPreview(
-      action: action,
-      type: type,
-      objectId: objectId,
-      data: data,
-    );
-
-    final elementId = objectId;
-    final publishedUpdateId = await _publishCrdtUpdate(
-      update,
-      elementId: elementId,
-    );
-    if (publishedUpdateId != null) {
-      // Track the latest update for this element so future edits stay attached to the same shape.
-      _lastShapeUpdateId[objectId] = publishedUpdateId;
-    }
-
-    _refreshFromCrdtAdapter(emit);
-  }
-
-  Future<String?> _publishCrdtUpdate(
-    Uint8List update, {
-    String? elementId,
-  }) async {
-    if (!_canSync || update.isEmpty) return null;
-
-    final canvasService = _canvasService;
-    if (canvasService == null) return null;
-
-    final updateId = _uuid.v4();
-    _appliedCrdtUpdateIds.add(updateId);
-
-    await canvasService.pushCrdtUpdate(
-      boardId: _boardId,
-      updateId: updateId,
-      payload: update,
-      elementId: elementId,
-    );
-
-    return updateId;
-  }
-
-  Future<void> _publishOperationPreview({
-    required String action,
-    required String type,
-    required String objectId,
-    required Map<String, dynamic> data,
-  }) async {
-    final canvasService = _canvasService;
-    if (canvasService == null || _boardId.isEmpty) return;
-
-    final previewId = _uuid.v4();
-    final previewPayload = <String, dynamic>{
-      'action': action == 'delete' ? 'delete' : 'upsert',
-      'type': type,
-      'elementId': objectId,
-      ...data,
-    };
-
-    await canvasService.publishCanvasPreview(
-      boardId: _boardId,
-      previewId: previewId,
-      elementId: objectId,
-      payload: Uint8List.fromList(utf8.encode(jsonEncode(previewPayload))),
-    );
-  }
-
-  void _refreshFromCrdtAdapter(Emitter<CanvasState> emit) {
-    final adapter = _crdtAdapter;
-    if (adapter == null) return;
-
-    final rebuilt = _rebuildElementsFromCrdtState(
-      adapter.materializeElements(),
-    );
-    emit(state.copyWith(elements: _composeElementsWithPreviews(rebuilt)));
-  }
-
-  List<CanvasElement> _composeElementsWithPreviews(
-    List<CanvasElement> committedElements,
-  ) {
-    if (_remotePreviewClearsBoard) {
-      return const <CanvasElement>[];
-    }
-
-    if (_remotePreviewElements.isEmpty && _remotePreviewDeletedIds.isEmpty) {
-      return committedElements;
-    }
-
-    final byId = <String, CanvasElement>{
-      for (final element in committedElements)
-        if (!_remotePreviewDeletedIds.contains(element.id)) element.id: element,
-    };
-    for (final preview in _remotePreviewElements.values) {
-      byId[preview.id] = preview;
-    }
-
-    final composed = byId.values.toList(growable: false);
-    composed.sort((a, b) {
-      final za = ((a.data as Map<String, dynamic>)['z'] as num?)?.toInt() ?? 0;
-      final zb = ((b.data as Map<String, dynamic>)['z'] as num?)?.toInt() ?? 0;
-      if (za != zb) return za.compareTo(zb);
-      return a.id.compareTo(b.id);
-    });
-    return composed;
-  }
-
-  Future<void> _publishSelectedShapePreview(
-    String elementId,
-    Map<String, dynamic> data,
-  ) async {
-    final canvasService = _canvasService;
-    if (canvasService == null || _boardId.isEmpty) return;
-
-    final preview = _pendingPreviewPublishes.putIfAbsent(
-      elementId,
-      _QueuedPreviewPublish.new,
-    );
-    preview.previewId = _uuid.v4();
-    preview.elementId = elementId;
-    preview.payload = Uint8List.fromList(utf8.encode(jsonEncode(data)));
-    preview.dirty = true;
-
-    if (preview.timer != null) {
-      return;
-    }
-
-    _flushQueuedPreviewPublish(elementId);
-  }
-
-  void _flushQueuedPreviewPublish(String elementId) {
-    final canvasService = _canvasService;
-    final preview = _pendingPreviewPublishes[elementId];
-    if (canvasService == null || _boardId.isEmpty || preview == null) {
-      preview?.timer?.cancel();
-      _pendingPreviewPublishes.remove(elementId);
-      return;
-    }
-
-    preview.dirty = false;
-    unawaited(
-      canvasService.publishCanvasPreview(
-        boardId: _boardId,
-        previewId: preview.previewId,
-        elementId: preview.elementId,
-        payload: preview.payload,
-      ),
-    );
-
-    preview.timer = Timer(_previewPublishThrottle, () {
-      preview.timer = null;
-      final current = _pendingPreviewPublishes[elementId];
-      if (current == null) return;
-
-      if (current.dirty) {
-        _flushQueuedPreviewPublish(elementId);
-      } else {
-        _pendingPreviewPublishes.remove(elementId);
-      }
-    });
-  }
-
-  List<CanvasElement> _rebuildElementsFromCrdtState(
-    Map<String, Map<String, dynamic>> elementsById,
-  ) {
-    final rebuilt = <CanvasElement>[];
-    final currentOrder = <String, int>{
-      for (var i = 0; i < state.elements.length; i++) state.elements[i].id: i,
-    };
-    final maxExistingOrder = currentOrder.isEmpty
-        ? 0
-        : currentOrder.values.reduce(math.max) + 1;
-
-    for (final entry in elementsById.entries) {
-      final id = entry.key;
-      final payload = entry.value;
-      final type = payload['type'] as String?;
-
-      if (type == 'stroke') {
-        final pointMaps = (payload['points'] as List?) ?? const [];
-        final points = pointMaps
-            .whereType<Map>()
-            .map(
-              (p) => {
-                'x': (p['x'] as num?)?.toDouble() ?? 0.0,
-                'y': (p['y'] as num?)?.toDouble() ?? 0.0,
-              },
-            )
-            .toList(growable: false);
-
-        rebuilt.add(
-          CanvasElement(
-            id: id,
-            type: 'stroke',
-            data: {
-              'z': _readElementOrder(
-                elementId: id,
-                payload: payload,
-                currentOrder: currentOrder,
-                fallbackOrder: maxExistingOrder + rebuilt.length,
-              ),
-              'color':
-                  (payload['color'] as num?)?.toInt() ?? Colors.black.value,
-              'strokeWidth':
-                  (payload['strokeWidth'] as num?)?.toDouble() ?? 5.0,
-              'opacity': (payload['opacity'] as num?)?.toDouble() ?? 1.0,
-              'brushType': (payload['brushType'] as String?) ?? 'solid',
-              'points': points,
-            },
-          ),
-        );
-        continue;
-      }
-
-      if (type == 'shape') {
-        final shapeName =
-            (payload['shapeType'] as String?) ?? CanvasShapeType.square.name;
-        final shapeType = CanvasShapeType.values.firstWhere(
-          (s) => s.name == shapeName,
-          orElse: () => CanvasShapeType.square,
-        );
-
-        rebuilt.add(
-          CanvasElement(
-            id: id,
-            type: 'shape',
-            data: {
-              'z': _readElementOrder(
-                elementId: id,
-                payload: payload,
-                currentOrder: currentOrder,
-                fallbackOrder: maxExistingOrder + rebuilt.length,
-              ),
-              'shapeType': shapeType.name,
-              'cx': (payload['cx'] as num?)?.toDouble() ?? 0.0,
-              'cy': (payload['cy'] as num?)?.toDouble() ?? 0.0,
-              'size': (payload['size'] as num?)?.toDouble() ?? 64.0,
-              'rotation': (payload['rotation'] as num?)?.toDouble() ?? 0.0,
-              'borderRadius':
-                  (payload['borderRadius'] as num?)?.toDouble() ?? 0.0,
-              'isFilled': _parseBool(payload['isFilled']),
-              'color':
-                  (payload['color'] as num?)?.toInt() ?? Colors.black.value,
-              'strokeWidth':
-                  (payload['strokeWidth'] as num?)?.toDouble() ?? 3.0,
-            },
-          ),
-        );
-        continue;
-      }
-
-      if (type == 'text') {
-        rebuilt.add(
-          CanvasElement(
-            id: id,
-            type: 'text',
-            data: {
-              'z': _readElementOrder(
-                elementId: id,
-                payload: payload,
-                currentOrder: currentOrder,
-                fallbackOrder: maxExistingOrder + rebuilt.length,
-              ),
-              'text': (payload['text'] as String?) ?? '',
-              'cx': (payload['cx'] as num?)?.toDouble() ?? 0.0,
-              'cy': (payload['cy'] as num?)?.toDouble() ?? 0.0,
-              'color':
-                  (payload['color'] as num?)?.toInt() ?? Colors.black.value,
-            },
-          ),
-        );
-        continue;
-      }
-
-      if (type == 'image') {
-        rebuilt.add(
-          CanvasElement(
-            id: id,
-            type: 'image',
-            data: {
-              'z': _readElementOrder(
-                elementId: id,
-                payload: payload,
-                currentOrder: currentOrder,
-                fallbackOrder: maxExistingOrder + rebuilt.length,
-              ),
-              'cx': (payload['cx'] as num?)?.toDouble() ?? 0.0,
-              'cy': (payload['cy'] as num?)?.toDouble() ?? 0.0,
-              'width': (payload['width'] as num?)?.toDouble() ?? 220.0,
-              'height': (payload['height'] as num?)?.toDouble() ?? 160.0,
-              'imageBase64': (payload['imageBase64'] as String?) ?? '',
-            },
-          ),
-        );
-      }
-    }
-
-    rebuilt.sort((a, b) {
-      final za = ((a.data as Map<String, dynamic>)['z'] as num?)?.toInt() ?? 0;
-      final zb = ((b.data as Map<String, dynamic>)['z'] as num?)?.toInt() ?? 0;
-      if (za != zb) return za.compareTo(zb);
-      return a.id.compareTo(b.id);
-    });
-    return rebuilt;
-  }
-
-  int _nextZIndex() {
-    var maxZ = -1;
-    for (final element in state.elements) {
-      final z = ((element.data as Map<String, dynamic>)['z'] as num?)?.toInt();
-      if (z != null && z > maxZ) {
-        maxZ = z;
-      }
-    }
-    return maxZ + 1;
-  }
-
-  int _readElementOrder({
-    required String elementId,
-    required Map<String, dynamic> payload,
-    required Map<String, int> currentOrder,
-    required int fallbackOrder,
-  }) {
-    final explicit = (payload['z'] as num?)?.toInt();
-    if (explicit != null) return explicit;
-
-    if (currentOrder.containsKey(elementId)) {
-      return currentOrder[elementId]!;
-    }
-
-    return fallbackOrder;
   }
 
   Offset randomShapeCenter() =>
@@ -1984,24 +1588,4 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     await _canvasService?.stopCrdtRemoteSync(_boardId);
     return super.close();
   }
-}
-
-class _EraserResult {
-  final List<CanvasElement> nextElements;
-  final List<String> deletedElementIds;
-  final List<CanvasElement> createdStrokes;
-
-  const _EraserResult({
-    required this.nextElements,
-    required this.deletedElementIds,
-    required this.createdStrokes,
-  });
-}
-
-class _QueuedPreviewPublish {
-  Timer? timer;
-  bool dirty = false;
-  String previewId = '';
-  String elementId = '';
-  Uint8List payload = Uint8List(0);
 }

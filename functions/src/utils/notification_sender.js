@@ -98,9 +98,38 @@ async function sendUserNotification({
     data,
   });
 
+  // Clean up stale FCM tokens (unregistered, invalid, etc.)
+  if (response.failureCount > 0) {
+    const staleTokenIndices = [];
+    response.responses.forEach((resp, idx) => {
+      if (resp.error && (
+        resp.error.code === 'messaging/registration-token-not-registered' ||
+        resp.error.code === 'messaging/invalid-argument' ||
+        resp.error.code === 'messaging/invalid-registration-token'
+      )) {
+        staleTokenIndices.push(idx);
+      }
+    });
+
+    if (staleTokenIndices.length > 0) {
+      const staleTokens = staleTokenIndices.map(i => tokens[i]).filter(Boolean);
+      const userRef = firestore.collection(FirestorePaths.USERS).doc(recipientUid);
+      for (const staleToken of staleTokens) {
+        await userRef.update({
+          [FirestorePaths.FCM_TOKENS]: admin.firestore.FieldValue.arrayRemove(staleToken),
+        });
+      }
+      logger.info('Cleaned up stale FCM tokens', {
+        recipientUid,
+        removedCount: staleTokens.length,
+      });
+    }
+  }
+
   logger.info('Notification sent', {
     recipientUid,
     deliveredCount: response.successCount,
+    failedCount: response.failureCount,
     attemptedCount: tokens.length,
     notificationId: notificationRef.id,
     type,

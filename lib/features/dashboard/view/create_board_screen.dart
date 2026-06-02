@@ -3,8 +3,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/models/board.dart';
 import '../../friends/bloc/friends_bloc.dart';
-import '../../friends/bloc/friends_event.dart';
-import '../../friends/bloc/friends_state.dart';
 import '../bloc/dashboard_bloc.dart';
 
 class CreateBoardScreen extends StatefulWidget {

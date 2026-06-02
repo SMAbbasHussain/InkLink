@@ -57,13 +57,17 @@ class NotificationsError extends NotificationsState {
 
 class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
   final NotificationService _notificationService;
+  final NotificationPreferences _notificationPreferences;
   StreamSubscription<List<Map<String, dynamic>>>? _notificationsSub;
   Set<String> _readIds = <String>{};
   List<Map<String, dynamic>> _rawNotifications = <Map<String, dynamic>>[];
 
-  NotificationsBloc({required NotificationService notificationService})
-    : _notificationService = notificationService,
-      super(const NotificationsInitial()) {
+  NotificationsBloc({
+    required NotificationService notificationService,
+    required NotificationPreferences notificationPreferences,
+  }) : _notificationService = notificationService,
+       _notificationPreferences = notificationPreferences,
+       super(const NotificationsInitial()) {
     on<NotificationsLoadRequested>(_onLoadRequested);
     on<_NotificationsUpdated>(_onNotificationsUpdated);
     on<_NotificationsErrorOccurred>(_onErrorOccurred);
@@ -76,7 +80,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
   ) async {
     emit(const NotificationsLoading());
     await _notificationsSub?.cancel();
-    _readIds = await NotificationPreferences.getReadNotificationIds();
+    _readIds = await _notificationPreferences.getReadNotificationIds();
     _notificationsSub = _notificationService.watchNotifications().listen((
       items,
     ) {
@@ -106,7 +110,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
 
   Future<void> markNotificationRead(String notificationId) async {
     if (notificationId.isEmpty) return;
-    await NotificationPreferences.markAsRead(notificationId);
+    await _notificationPreferences.markAsRead(notificationId);
     _readIds.add(notificationId);
     if (_rawNotifications.isNotEmpty) {
       add(_NotificationsUpdated(_normalizeNotifications(_rawNotifications)));
@@ -119,7 +123,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     for (final item in _rawNotifications) {
       final id = item['id']?.toString() ?? '';
       if (id.isEmpty || _readIds.contains(id)) continue;
-      await NotificationPreferences.markAsRead(id);
+      await _notificationPreferences.markAsRead(id);
       _readIds.add(id);
     }
 
@@ -132,7 +136,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
   ) async {
     try {
       await _notificationService.deleteNotification(event.notificationId);
-      await NotificationPreferences.remove(event.notificationId);
+      await _notificationPreferences.remove(event.notificationId);
       _readIds.remove(event.notificationId);
       _rawNotifications.removeWhere(
         (item) => item['id']?.toString() == event.notificationId,

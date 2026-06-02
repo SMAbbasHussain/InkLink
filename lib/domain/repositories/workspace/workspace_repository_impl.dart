@@ -9,6 +9,8 @@ import '../../../core/database/collections/local_workspace.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
+import '../../../core/services/stream_registry.dart';
+import '../../../core/utils/firestore_batch_fetcher.dart';
 import '../../models/board.dart';
 import '../../models/user_model.dart';
 import '../../models/workspace.dart';
@@ -28,13 +30,17 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
   StreamController<List<Workspace>>? _ownedWorkspacesController;
   StreamController<List<Workspace>>? _memberWorkspacesController;
 
+  late final FirestoreBatchFetcher _batchFetcher;
+
   FirestoreWorkspaceRepository({
     required FirestoreService firestoreService,
     required AuthService authService,
     required LocalDatabaseService localDatabaseService,
   }) : _firestoreService = firestoreService,
        _authService = authService,
-       _localDatabaseService = localDatabaseService;
+       _localDatabaseService = localDatabaseService {
+    _batchFetcher = FirestoreBatchFetcher(firestoreService: firestoreService);
+  }
 
   @override
   String? get currentUserId => _authService.getCurrentUserId();
@@ -55,11 +61,13 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
     _syncUserId = uid;
     _ensureWorkspaceStreamControllers();
 
-    // Listen to user document for workspaceIds array
-    _userWorkspaceSub = _firestoreService
-        .collection(FirestorePaths.users)
-        .doc(uid)
-        .snapshots()
+    // Listen to user document for workspaceIds array (deduplicated via StreamRegistry)
+    _userWorkspaceSub = StreamRegistry.instance
+        .getOrCreate('user_workspaces:$uid', () => _firestoreService
+            .collection(FirestorePaths.users)
+            .doc(uid)
+            .snapshots()
+            .map((snapshot) => snapshot))
         .listen(
           (userSnapshot) async {
             try {
@@ -106,6 +114,9 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
   Future<void> stopWorkspaceSync() async {
     await _userWorkspaceSub?.cancel();
     _userWorkspaceSub = null;
+    if (_syncUserId != null) {
+      StreamRegistry.instance.remove('user_workspaces:$_syncUserId');
+    }
     _ownedWorkspaceDocs.clear();
     _memberWorkspaceDocs.clear();
     _syncUserId = null;
@@ -179,48 +190,6 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
         });
   }
 
-  Future<Map<String, Map<String, dynamic>>> _fetchDocumentsByIdSet({
-    required String collectionPath,
-    required List<String> ids,
-  }) async {
-    final documentsById = <String, Map<String, dynamic>>{};
-    final uniqueIds = ids.toSet().toList();
-    const chunkSize = 30;
-
-    for (var i = 0; i < uniqueIds.length; i += chunkSize) {
-      final chunk = uniqueIds.sublist(
-        i,
-        (i + chunkSize).clamp(0, uniqueIds.length),
-      );
-
-      try {
-        final snapshot = await _firestoreService
-            .collection(collectionPath)
-            .where(FieldPath.documentId, whereIn: chunk)
-            .get();
-        for (final doc in snapshot.docs) {
-          documentsById[doc.id] = doc.data();
-        }
-      } catch (_) {
-        for (final id in chunk) {
-          try {
-            final doc = await _firestoreService
-                .collection(collectionPath)
-                .doc(id)
-                .get();
-            if (doc.exists) {
-              documentsById[id] = doc.data() ?? {};
-            }
-          } catch (_) {
-            // Keep missing or inaccessible documents out of the cache.
-          }
-        }
-      }
-    }
-
-    return documentsById;
-  }
-
   @override
   Stream<List<Board>> getWorkspaceBoards(String workspaceId, {int? limit}) {
     return _firestoreService
@@ -273,10 +242,12 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
             return <Board>[];
           }
 
-          final boardDataById = await _fetchDocumentsByIdSet(
+          final boardFetchResult = await _batchFetcher.fetchDocumentsByIdSet(
             collectionPath: FirestorePaths.boards,
             ids: visibleBoardIds,
+            trackMissingIds: false,
           );
+          final boardDataById = boardFetchResult.docsById;
 
           final boards = <Board>[];
           for (final linkedBoardId in visibleBoardIds) {
@@ -344,10 +315,12 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
             }
           }
 
-          final userDataByUid = await _fetchDocumentsByIdSet(
+          final userFetchResult = await _batchFetcher.fetchDocumentsByIdSet(
             collectionPath: FirestorePaths.users,
             ids: uids,
+            trackMissingIds: false,
           );
+          final userDataByUid = userFetchResult.docsById;
           final cachedUsers = await isar.userModels.getAllByUid(uids);
           final cachedUserByUid = {
             for (var index = 0; index < uids.length; index++)
@@ -865,10 +838,12 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
       return;
     }
 
-    final docsById = await _fetchDocumentsByIdSet(
+    final workspaceFetchResult = await _batchFetcher.fetchDocumentsByIdSet(
       collectionPath: FirestorePaths.workspaces,
       ids: activeWorkspaceIds.toList(growable: false),
+      trackMissingIds: false,
     );
+    final docsById = workspaceFetchResult.docsById;
 
     for (final wsId in activeWorkspaceIds) {
       final data = docsById[wsId];

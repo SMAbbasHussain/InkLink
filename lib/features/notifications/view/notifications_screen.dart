@@ -4,7 +4,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../canvas/view/canvas_route.dart';
 import '../../friends/bloc/friends_bloc.dart';
-import '../../friends/bloc/friends_event.dart';
 import '../../friends/view/friend_requests_screen.dart';
 import '../../profile/view/profile_route.dart';
 import '../../board_invitations/bloc/board_invitations_bloc.dart';

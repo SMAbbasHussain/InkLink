@@ -10,12 +10,12 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../../core/database/collections/local_board.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
-import '../../../core/database/collections/local_friend_profile.dart';
-import '../../../core/database/collections/local_non_friend_profile.dart';
+import '../../../core/database/collections/local_profile.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/stream_registry.dart';
 import '../../../core/services/firestore_service.dart';
+import '../../../core/utils/firestore_batch_fetcher.dart';
 import '../../models/board.dart';
 import 'board_repository.dart';
 
@@ -42,13 +42,17 @@ class FirestoreBoardRepository implements BoardRepository {
   final Map<String, Map<String, dynamic>> _joinedBoardDocs =
       <String, Map<String, dynamic>>{};
 
+  late final FirestoreBatchFetcher _batchFetcher;
+
   FirestoreBoardRepository({
     required FirestoreService firestoreService,
     required AuthService authService,
     required LocalDatabaseService localDatabaseService,
   }) : _firestoreService = firestoreService,
        _authService = authService,
-       _localDatabaseService = localDatabaseService;
+       _localDatabaseService = localDatabaseService {
+    _batchFetcher = FirestoreBatchFetcher(firestoreService: firestoreService);
+  }
 
   @override
   String? get currentUserId => _authService.getCurrentUserId();
@@ -427,26 +431,16 @@ class FirestoreBoardRepository implements BoardRepository {
           final isar = await _localDatabaseService.database;
           final cachedProfiles = <String, Map<String, dynamic>>{};
           for (final uid in uids) {
-            final localNonFriend = await isar.localNonFriendProfiles
-                .filter()
-                .uidEqualTo(uid)
-                .findFirst();
-            final localFriend = await isar.localFriendProfiles
+            final localProfile = await isar.localProfiles
                 .filter()
                 .uidEqualTo(uid)
                 .findFirst();
 
-            if (localFriend != null) {
+            if (localProfile != null) {
               cachedProfiles[uid] = {
-                'displayName': localFriend.displayName,
-                'email': localFriend.email,
-                'photoURL': localFriend.photoURL,
-              };
-            } else if (localNonFriend != null) {
-              cachedProfiles[uid] = {
-                'displayName': localNonFriend.displayName,
-                'email': localNonFriend.email,
-                'photoURL': localNonFriend.photoURL,
+                'displayName': localProfile.displayName,
+                'email': localProfile.email,
+                'photoURL': localProfile.photoURL,
               };
             }
           }
@@ -504,12 +498,13 @@ class FirestoreBoardRepository implements BoardRepository {
             if (profile != null && !cachedProfiles.containsKey(uid)) {
               unawaited(
                 isar.writeTxn(() async {
-                  await isar.localNonFriendProfiles.put(
-                    LocalNonFriendProfile(
+                  await isar.localProfiles.put(
+                    LocalProfile(
                       uid: uid,
                       displayName: displayName ?? '',
                       email: email,
                       photoURL: photoUrl,
+                      friendshipStatus: FriendshipStatus.nonFriend,
                       cachedAtOverride: DateTime.now(),
                     ),
                   );
@@ -709,7 +704,8 @@ class FirestoreBoardRepository implements BoardRepository {
       name: 'BoardRepo',
     );
 
-    final fetchResult = await _fetchBoardDocumentsByIdSet(
+    final fetchResult = await _batchFetcher.fetchDocumentsByIdSet(
+      collectionPath: 'boards',
       ids: visibleBoardIds.toList(growable: false),
     );
 
@@ -742,101 +738,6 @@ class FirestoreBoardRepository implements BoardRepository {
     final prunableBoardIds = Set<String>.from(visibleBoardIds)
       ..removeAll(fetchResult.missingIds);
     await _pruneLocalBoards(visibleBoardIds: prunableBoardIds);
-  }
-
-  Future<_BoardFetchResult> _fetchBoardDocumentsByIdSet({
-    required List<String> ids,
-  }) async {
-    final docsById = <String, Map<String, dynamic>>{};
-    final missingIds = <String>{};
-    final uniqueIds = ids.toSet().toList(growable: false);
-    const chunkSize = 30;
-
-    for (var i = 0; i < uniqueIds.length; i += chunkSize) {
-      final chunk = uniqueIds.sublist(
-        i,
-        (i + chunkSize).clamp(0, uniqueIds.length),
-      );
-
-      try {
-        developer.log(
-          'Board fetch: whereIn chunk size=${chunk.length}',
-          name: 'BoardRepo',
-        );
-        final snapshot = await _firestoreService
-            .collection('boards')
-            .where(FieldPath.documentId, whereIn: chunk)
-            .get();
-
-        developer.log(
-          'Board fetch: whereIn returned ${snapshot.docs.length} docs',
-          name: 'BoardRepo',
-        );
-
-        for (final doc in snapshot.docs) {
-          docsById[doc.id] = doc.data();
-        }
-
-        final foundIds = snapshot.docs.map((doc) => doc.id).toSet();
-        final missingChunkIds = chunk
-            .where((id) => !foundIds.contains(id))
-            .toList(growable: false);
-
-        developer.log(
-          'Board fetch: whereIn missing ${missingChunkIds.length} IDs, falling back to individual gets',
-          name: 'BoardRepo',
-        );
-
-        for (final id in missingChunkIds) {
-          try {
-            final doc = await _firestoreService
-                .collection('boards')
-                .doc(id)
-                .get();
-            if (doc.exists) {
-              docsById[id] = doc.data() ?? const <String, dynamic>{};
-            } else {
-              developer.log('Board fetch: doc $id does not exist', name: 'BoardRepo');
-              missingIds.add(id);
-            }
-          } catch (e) {
-            developer.log(
-              'Board fetch: individual get for $id failed: $e',
-              name: 'BoardRepo',
-            );
-          }
-        }
-      } catch (e) {
-        developer.log(
-          'Board fetch: whereIn failed ($e), falling back to individual gets for chunk',
-          name: 'BoardRepo',
-        );
-        for (final id in chunk) {
-          try {
-            final doc = await _firestoreService
-                .collection('boards')
-                .doc(id)
-                .get();
-            if (doc.exists) {
-              docsById[id] = doc.data() ?? const <String, dynamic>{};
-            } else {
-              developer.log(
-                'Board fetch: doc $id does not exist (fallback)',
-                name: 'BoardRepo',
-              );
-              missingIds.add(id);
-            }
-          } catch (e) {
-            developer.log(
-              'Board fetch: individual get for $id failed (fallback): $e',
-              name: 'BoardRepo',
-            );
-          }
-        }
-      }
-    }
-
-    return _BoardFetchResult(docsById: docsById, missingIds: missingIds);
   }
 
   Future<void> _pruneLocalBoards({required Set<String> visibleBoardIds}) async {
@@ -1242,11 +1143,4 @@ class FirestoreBoardRepository implements BoardRepository {
       return Board.roleViewer;
     }
   }
-}
-
-class _BoardFetchResult {
-  final Map<String, Map<String, dynamic>> docsById;
-  final Set<String> missingIds;
-
-  const _BoardFetchResult({required this.docsById, required this.missingIds});
 }

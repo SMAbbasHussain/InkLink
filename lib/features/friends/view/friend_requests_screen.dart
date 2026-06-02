@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/features/profile/view/profile_route.dart';
+import '../../profile/view/profile_route.dart';
 import '../bloc/friends_bloc.dart';
-import '../bloc/friends_event.dart';
-import '../bloc/friends_state.dart';
 import './widgets/request_card.dart';
 
 class FriendRequestsScreen extends StatelessWidget {
