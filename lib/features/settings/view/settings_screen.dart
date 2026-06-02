@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/features/auth/view/login_screen.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
@@ -27,16 +26,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     return MultiBlocListener(
       listeners: [
-        BlocListener<AuthBloc, AuthState>(
-          listener: (context, state) {
-            if (state is Unauthenticated) {
-              Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (context) => const LoginScreen()),
-                (route) => false,
-              );
-            }
-          },
-        ),
         BlocListener<SettingsBloc, SettingsState>(
           listenWhen: (previous, current) =>
               current.message != null && current.message != previous.message,
