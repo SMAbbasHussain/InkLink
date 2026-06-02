@@ -599,48 +599,58 @@ io.on('connection', (socket) => {
       if (redisAvailable && lastSeenCursor) {
         const streamKey = `board_updates:${boardId}`;
         const streamId = lastSeenCursor.split(':')[0];
+        const cursorVersion = parseInt(lastSeenCursor.split(':')[1] || '0', 10);
 
-        const raw = await redis.xread('COUNT', 100, 'STREAMS', streamKey, streamId);
+        // If client cursor is behind the snapshot, the stream may have been trimmed.
+        // Skip cursor sync and fall through to snapshot + delta path below.
+        const snapVerKey = `board:lastSnapshotVersion:${boardId}`;
+        const snapVer = parseInt(await redis.get(snapVerKey) || '0', 10);
+        const needsSnapshot = snapVer > 0 && cursorVersion < snapVer;
 
-        if (raw && raw[0] && raw[0][1] && raw[0][1].length > 0) {
-          const entries = raw[0][1];
-          const updates = [];
-          let lastEntryId = streamId;
-          let lastVersion = parseInt(lastSeenCursor.split(':')[1] || '0', 10);
+        if (!needsSnapshot) {
+          const raw = await redis.xread('COUNT', 100, 'STREAMS', streamKey, streamId);
 
-          for (const [entryId, fields] of entries) {
-            const entry = parseStreamEntry(fields);
-            entry.appliedAt = entry.timestamp;
-            updates.push(entry);
-            lastEntryId = entryId;
-            if (entry.version > lastVersion) lastVersion = entry.version;
+          if (raw && raw[0] && raw[0][1] && raw[0][1].length > 0) {
+            const entries = raw[0][1];
+            const updates = [];
+            let lastEntryId = streamId;
+            let lastVersion = parseInt(lastSeenCursor.split(':')[1] || '0', 10);
+
+            for (const [entryId, fields] of entries) {
+              const entry = parseStreamEntry(fields);
+              entry.appliedAt = entry.timestamp;
+              updates.push(entry);
+              lastEntryId = entryId;
+              if (entry.version > lastVersion) lastVersion = entry.version;
+            }
+
+            const newCursor = `${lastEntryId}:${lastVersion}`;
+            const hasMore = entries.length >= 100;
+
+            // Store cursor for this user
+            await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => {});
+
+            logWsEvent('SYNC RESPONSE (cursor)', [
+              `[user] ${uid}`,
+              `[board] ${boardId}`,
+              `[updates] ${updates.length}`,
+              `[cursor] ${newCursor}`,
+              `[hasMore] ${hasMore}`,
+            ]);
+
+            if (typeof callback === 'function') {
+              callback({ status: 'success', updates, cursor: newCursor, hasMore, source: 'cursor' });
+            }
+            return;
           }
 
-          const newCursor = `${lastEntryId}:${lastVersion}`;
-          const hasMore = entries.length >= 100;
-
-          // Store cursor for this user
-          await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => {});
-
-          logWsEvent('SYNC RESPONSE (cursor)', [
-            `[user] ${uid}`,
-            `[board] ${boardId}`,
-            `[updates] ${updates.length}`,
-            `[cursor] ${newCursor}`,
-            `[hasMore] ${hasMore}`,
-          ]);
-
+          // XREAD returned empty — no new entries; return current cursor
           if (typeof callback === 'function') {
-            callback({ status: 'success', updates, cursor: newCursor, hasMore, source: 'cursor' });
+            callback({ status: 'success', updates: [], cursor: lastSeenCursor, hasMore: false, source: 'cursor' });
           }
           return;
         }
-
-        // XREAD returned empty — no new entries; return current cursor
-        if (typeof callback === 'function') {
-          callback({ status: 'success', updates: [], cursor: lastSeenCursor, hasMore: false, source: 'cursor' });
-        }
-        return;
+        // Fall through to PATH 2 when client needs snapshot
       }
 
       // ============================================================
@@ -652,8 +662,9 @@ io.on('connection', (socket) => {
         const lastSnapshotVersion = parseInt(await redis.get(snapshotVersionKey) || '0', 10);
         const lastServerVersion = parseInt(await redis.get(`board:${boardId}:version`) || '0', 10);
 
-        // Only use snapshot path if client is behind the snapshot version
-        const effectiveServerVersion = sinceVersion || lastServerVersion;
+        // Use snapshot path if client has no cursor (fresh login) or cursor is behind snapshot
+        const cursorVersion = lastSeenCursor ? parseInt(lastSeenCursor.split(':')[1] || '0', 10) : 0;
+        const effectiveServerVersion = sinceVersion ?? cursorVersion;
         if (lastSnapshotVersion > 0 && lastSnapshotVersion > effectiveServerVersion) {
           // Load Firestore snapshot
           const snapDoc = await db.collection('boards').doc(boardId)

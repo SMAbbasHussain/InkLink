@@ -230,7 +230,7 @@ class CanvasServiceImpl implements CanvasService {
       boardId,
       since: latestLocalUpdateAt,
       lastSeenCursor: lastSeenCursor,
-      preferSocket: !useFirestoreFirst,
+      preferSocket: true,
     );
     if (remoteUpdates.isNotEmpty) {
       for (final update in remoteUpdates) {
