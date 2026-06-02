@@ -55,6 +55,10 @@ abstract class CanvasSyncRepository {
   /// Returns true if all updates were acknowledged.
   Future<bool> batchSyncPendingUpdates(String boardId, String userId);
 
+  /// Persist the sync cursor for [boardId] based on the latest local update so
+  /// that the next sync can resume from where the user left off.
+  Future<void> persistCursorForBoard(String boardId);
+
   /// Send an explicit logout handshake to the server which clears cursor tracking.
   Future<void> logoutSocket();
 

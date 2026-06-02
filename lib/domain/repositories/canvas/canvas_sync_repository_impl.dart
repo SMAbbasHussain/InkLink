@@ -40,9 +40,10 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     final isar = await _localDatabaseService.database;
     await isar.writeTxn(() async {
       await isar.localCrdtUpdates.putByUpdateId(update);
+      final existing =
+          await isar.localCanvasSyncStates.getByBoardId(update.boardId);
       await isar.localCanvasSyncStates.putByBoardId(
-        LocalCanvasSyncState()
-          ..boardId = update.boardId
+        (existing ?? LocalCanvasSyncState()..boardId = update.boardId)
           ..lastSyncedAppliedAt = update.appliedAt,
       );
     });
@@ -460,9 +461,10 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     try {
       final isar = await _localDatabaseService.database;
       await isar.writeTxn(() async {
+        final existing =
+            await isar.localCanvasSyncStates.getByBoardId(boardId);
         await isar.localCanvasSyncStates.putByBoardId(
-          LocalCanvasSyncState()
-            ..boardId = boardId
+          (existing ?? LocalCanvasSyncState()..boardId = boardId)
             ..lastSeenCursor = cursor,
         );
       });
@@ -730,10 +732,11 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
               .sortByAppliedAtDesc()
               .findFirst();
           if (latest != null) {
+            final existing =
+                await isar.localCanvasSyncStates.getByBoardId(boardId);
             await isar.writeTxn(() async {
               await isar.localCanvasSyncStates.putByBoardId(
-                LocalCanvasSyncState()
-                  ..boardId = boardId
+                (existing ?? LocalCanvasSyncState()..boardId = boardId)
                   ..lastSyncedAppliedAt = latest.appliedAt,
               );
             });
@@ -791,6 +794,36 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       );
       return null;
     }
+  }
+
+  @override
+  Future<void> persistCursorForBoard(String boardId) async {
+    try {
+      final isar = await _localDatabaseService.database;
+      final latest = await isar.localCrdtUpdates
+          .filter()
+          .boardIdEqualTo(boardId)
+          .sortByAppliedAtDesc()
+          .findFirst();
+      if (latest == null) return;
+      if (latest.version == 0) return;
+
+      // Use "0-0" as the stream ID prefix so the server's XREAD returns all
+      // entries from the start.  The client's CRDT adapter deduplicates by
+      // updateId, so re-applying already-seen updates is safe.  This avoids
+      // mismatch between the client's appliedAt timestamp and the server's
+      // Redis stream entry IDs.
+      final cursor = '0-0:${latest.version}';
+
+      final existing =
+          await isar.localCanvasSyncStates.getByBoardId(boardId);
+      await isar.writeTxn(() async {
+        await isar.localCanvasSyncStates.putByBoardId(
+          (existing ?? LocalCanvasSyncState()..boardId = boardId)
+            ..lastSeenCursor = cursor,
+        );
+      });
+    } catch (_) {}
   }
 
   /// Send explicit logout handshake to the server.

@@ -114,9 +114,13 @@ class CanvasServiceImpl implements CanvasService {
   }
 
   @override
-  Future<void> stopCrdtRemoteSync(String boardId) {
+  Future<void> stopCrdtRemoteSync(String boardId) async {
     final sub = _remoteSubs.remove(boardId);
     return () async {
+      try {
+        // Persist the cursor before tearing down so the next open can resume.
+        await _syncRepository.persistCursorForBoard(boardId);
+      } catch (_) {}
       try {
         await sub?.cancel();
       } finally {
@@ -248,6 +252,8 @@ class CanvasServiceImpl implements CanvasService {
             for (final update in updates) {
               await _syncRepository.saveLocalCrdtUpdate(update);
             }
+            // Persist cursor so the next open resumes from the latest update.
+            await _syncRepository.persistCursorForBoard(boardId);
             await _syncPendingLocalUpdates(boardId, userId);
           },
           onError: (error, stackTrace) {
