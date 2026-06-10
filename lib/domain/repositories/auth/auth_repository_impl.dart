@@ -68,7 +68,7 @@ class FirebaseAuthRepository implements AuthRepository {
       final GoogleSignInAccount googleUser = await _googleSignIn.authenticate();
 
       final GoogleSignInAuthentication googleAuth =
-          await googleUser.authentication;
+          googleUser.authentication;
       if (googleAuth.idToken == null) {
         developer.log('Google sign-in returned no idToken.', name: 'Auth');
         throw FirebaseAuthException(

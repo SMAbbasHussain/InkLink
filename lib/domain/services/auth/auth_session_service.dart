@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -80,19 +81,19 @@ class AuthSessionServiceImpl implements AuthSessionService {
 
   @override
   Future<void> onAuthenticated(User user) async {
-    print('[AUTH_SVC] onAuthenticated: uid=${user.uid}');
+    developer.log('onAuthenticated: uid=${user.uid}', name: 'AuthSessionService');
     // Restore Firestore and RTDB connectivity (was disabled during sign-out).
     await _authRepository.enableNetwork();
-    print('[AUTH_SVC] enableNetwork done');
+    developer.log('enableNetwork done', name: 'AuthSessionService');
     await _presenceService.setUserOnline();
-    print('[AUTH_SVC] setUserOnline done');
+    developer.log('setUserOnline done', name: 'AuthSessionService');
     await _syncFcmToken();
-    print('[AUTH_SVC] syncFcmToken done');
+    developer.log('syncFcmToken done', name: 'AuthSessionService');
   }
 
   @override
   Future<void> signOut() async {
-    print('[AUTH_SVC] signOut: start');
+    developer.log('signOut: start', name: 'AuthSessionService');
     final current = _authService.getCurrentUser();
     if (current != null) {
       await _presenceService.setUserOffline();
@@ -137,14 +138,14 @@ class AuthSessionServiceImpl implements AuthSessionService {
 
     // Disable Firestore network and take RTDB offline.
     await _authRepository.disableNetwork();
-    print('[AUTH_SVC] disableNetwork done');
+    developer.log('disableNetwork done', name: 'AuthSessionService');
 
-    print('[AUTH_SVC] signOut: calling _authRepository.signOut()');
+    developer.log('signOut: calling _authRepository.signOut()', name: 'AuthSessionService');
     await _authRepository.signOut();
-    print('[AUTH_SVC] signOut: FirebaseAuth.signOut done');
+    developer.log('signOut: FirebaseAuth.signOut done', name: 'AuthSessionService');
     await _localDatabaseService.clearLocalCache();
     _lastSyncedToken = null;
-    print('[AUTH_SVC] signOut: complete');
+    developer.log('signOut: complete', name: 'AuthSessionService');
   }
 
   Future<void> _syncFcmToken() async {

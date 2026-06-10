@@ -272,8 +272,22 @@ async function triggerSnapshot(boardId) {
 
   if (entries.length === 0) return;
 
-  // 4. Build materialized Yjs doc state
+  // 4. Build materialized Yjs doc state, starting from the prior snapshot if any
   const doc = new Y.Doc();
+  if (lastSnapshotVersion > 0) {
+    try {
+      const prevSnap = await db.collection('boards').doc(boardId)
+        .collection('snapshot').doc('latest').get();
+      if (prevSnap.exists) {
+        const prevStateUpdate = prevSnap.data().stateUpdate;
+        if (prevStateUpdate) {
+          Y.applyUpdate(doc, Buffer.from(prevStateUpdate, 'base64'));
+        }
+      }
+    } catch (e) {
+      console.warn(`[snapshot] Could not load prior snapshot for board ${boardId}: ${e.message} — rebuilding from stream`);
+    }
+  }
   for (const entry of entries) {
     if (!entry.payloadBase64 || entry._singleUser === true) continue;
     try {

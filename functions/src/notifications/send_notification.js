@@ -22,6 +22,7 @@ module.exports = async (request) => {
       type,
       action,
       targetId,
+      senderUid,
       senderName,
       senderPhotoUrl,
       groupingKey,

@@ -44,7 +44,6 @@ class AppView extends StatelessWidget {
         context.read<FriendsBloc>().add(LoadFriendsInfo());
       },
       builder: (context, state) {
-        print('[APPVIEW] builder: state=${state.runtimeType} ${state is Authenticated ? "Authenticated" : state is Unauthenticated ? "Unauthenticated" : state is AuthError ? "AuthError(${(state as AuthError).message})" : state is AuthLoading ? "AuthLoading" : state is AuthInitial ? "AuthInitial" : "other"}');
         if (state is Authenticated) {
           return const MainWrapper();
         }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -21,21 +22,21 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
   AuthBloc({required this.authService}) : super(AuthInitial()) {
     on<AuthCheckRequested>((event, emit) async {
-      print('[AUTH] AuthCheckRequested: currentUser=${authService.currentUser?.uid}');
+      developer.log('AuthCheckRequested: currentUser=${authService.currentUser?.uid}', name: 'AuthBloc');
       final user = authService.currentUser;
       if (user != null) {
         await authService.onAuthenticated(user);
-        print('[AUTH] AuthCheckRequested: emitting Authenticated');
+        developer.log('AuthCheckRequested: emitting Authenticated', name: 'AuthBloc');
         emit(_toAuthenticated(user));
       } else {
-        print('[AUTH] AuthCheckRequested: emitting Unauthenticated');
+        developer.log('AuthCheckRequested: emitting Unauthenticated', name: 'AuthBloc');
         emit(Unauthenticated());
       }
     });
 
     // Listen for auth state changes (sign-in from another device, etc.)
     _authSub = authService.user.listen((user) {
-      print('[AUTH] _authSub: authStateChanges fired, user=${user?.uid}');
+      developer.log('_authSub: authStateChanges fired, user=${user?.uid}', name: 'AuthBloc');
       if (user != null) {
         add(AuthenticatedUserAvailable(user));
       } else {
@@ -44,20 +45,20 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     });
 
     on<LoginRequested>((event, emit) async {
-      print('[AUTH] LoginRequested: start');
+      developer.log('LoginRequested: start', name: 'AuthBloc');
       emit(AuthLoading());
       try {
         final user = await authService.signIn(event.email, event.password);
-        print('[AUTH] LoginRequested: signIn returned user=${user?.uid}');
+        developer.log('LoginRequested: signIn returned user=${user?.uid}', name: 'AuthBloc');
         if (user == null) {
           emit(Unauthenticated());
           return;
         }
         await authService.onAuthenticated(user);
-        print('[AUTH] LoginRequested: emitting Authenticated');
+        developer.log('LoginRequested: emitting Authenticated', name: 'AuthBloc');
         emit(_toAuthenticated(user));
       } catch (e) {
-        print('[AUTH] LoginRequested: caught error=$e');
+        developer.log('LoginRequested: caught error=$e', name: 'AuthBloc');
         emit(AuthError(e.toString()));
       }
     });
@@ -82,53 +83,53 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     });
 
     on<GoogleSignInRequested>((event, emit) async {
-      print('[AUTH] GoogleSignInRequested: start');
+      developer.log('GoogleSignInRequested: start', name: 'AuthBloc');
       emit(AuthLoading());
       try {
         final user = await authService.signInWithGoogle();
-        print('[AUTH] GoogleSignInRequested: signInWithGoogle returned user=${user?.uid}');
+        developer.log('GoogleSignInRequested: signInWithGoogle returned user=${user?.uid}', name: 'AuthBloc');
 
         if (user != null) {
-          print('[AUTH] GoogleSignInRequested: calling onAuthenticated');
+          developer.log('GoogleSignInRequested: calling onAuthenticated', name: 'AuthBloc');
           await authService.onAuthenticated(user);
-          print('[AUTH] GoogleSignInRequested: onAuthenticated done, emitting Authenticated');
+          developer.log('GoogleSignInRequested: onAuthenticated done, emitting Authenticated', name: 'AuthBloc');
           emit(_toAuthenticated(user, fallbackName: 'Creator'));
         } else {
-          print('[AUTH] GoogleSignInRequested: user was null (cancelled)');
+          developer.log('GoogleSignInRequested: user was null (cancelled)', name: 'AuthBloc');
           emit(Unauthenticated());
         }
       } catch (e) {
-        print('[AUTH] GoogleSignInRequested: caught error=$e');
+        developer.log('GoogleSignInRequested: caught error=$e', name: 'AuthBloc');
         emit(AuthError("Login failed: ${e.toString()}"));
         emit(Unauthenticated());
       }
     });
 
     on<LogoutRequested>((event, emit) async {
-      print('[AUTH] LogoutRequested: start');
+      developer.log('LogoutRequested: start', name: 'AuthBloc');
       await authService.signOut();
-      print('[AUTH] LogoutRequested: emitting Unauthenticated');
+      developer.log('LogoutRequested: emitting Unauthenticated', name: 'AuthBloc');
       emit(Unauthenticated());
     });
 
     on<AuthenticatedUserAvailable>((event, emit) async {
-      print('[AUTH] AuthenticatedUserAvailable: uid=${event.user.uid}, state is Authenticated=${state is Authenticated}');
+      developer.log('AuthenticatedUserAvailable: uid=${event.user.uid}, state is Authenticated=${state is Authenticated}', name: 'AuthBloc');
       if (state is Authenticated || state is AuthLoading) {
-        print('[AUTH] AuthenticatedUserAvailable: skipping (state=${state.runtimeType})');
+        developer.log('AuthenticatedUserAvailable: skipping (state=${state.runtimeType})', name: 'AuthBloc');
         return;
       }
       try {
         await authService.onAuthenticated(event.user);
-        print('[AUTH] AuthenticatedUserAvailable: emitting Authenticated');
+        developer.log('AuthenticatedUserAvailable: emitting Authenticated', name: 'AuthBloc');
         emit(_toAuthenticated(event.user));
       } catch (e) {
-        print('[AUTH] AuthenticatedUserAvailable: error=$e');
+        developer.log('AuthenticatedUserAvailable: error=$e', name: 'AuthBloc');
         emit(AuthError(e.toString()));
       }
     });
 
     on<SignedOut>((event, emit) async {
-      print('[AUTH] SignedOut: emitting Unauthenticated');
+      developer.log('SignedOut: emitting Unauthenticated', name: 'AuthBloc');
       emit(Unauthenticated());
     });
   }
