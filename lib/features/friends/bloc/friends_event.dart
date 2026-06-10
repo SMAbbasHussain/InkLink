@@ -49,3 +49,10 @@ class FriendsConnectivityUpdated extends FriendsEvent {
 
   FriendsConnectivityUpdated(this.isOffline);
 }
+
+class LoadBlockedUsers extends FriendsEvent {}
+
+class UnblockUserRequested extends FriendsEvent {
+  final String targetUid;
+  UnblockUserRequested(this.targetUid);
+}

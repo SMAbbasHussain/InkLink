@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
+const { removeBoardMember } = require('../utils/redis');
 
 module.exports = async (request) => {
   const uid = request.auth?.uid;
@@ -22,7 +23,7 @@ module.exports = async (request) => {
     const boardRef = firestore.collection(FirestorePaths.BOARDS).doc(boardId.trim());
     const targetUserRef = firestore.collection(FirestorePaths.USERS).doc(targetUid.trim());
 
-    return await firestore.runTransaction(async (transaction) => {
+    const result = await firestore.runTransaction(async (transaction) => {
       const boardDoc = await transaction.get(boardRef);
       if (!boardDoc.exists) {
         throw new HttpsError('not-found', 'Board not found.');
@@ -44,6 +45,7 @@ module.exports = async (request) => {
 
       transaction.update(boardRef, {
         members: admin.firestore.FieldValue.arrayRemove(targetUid.trim()),
+        [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(-1),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
@@ -55,10 +57,14 @@ module.exports = async (request) => {
       transaction.set(
         targetUserRef,
         {
-          joinedBoards: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
-          lastActive: admin.firestore.FieldValue.serverTimestamp(),
+          [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(-1),
         },
         { merge: true }
+      );
+
+      // Also remove per-user board index doc for new schema
+      transaction.delete(
+        targetUserRef.collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION).doc(boardId.trim()),
       );
 
       return {
@@ -67,6 +73,12 @@ module.exports = async (request) => {
         targetUid: targetUid.trim(),
       };
     });
+
+    if (result.success) {
+      await removeBoardMember(boardId.trim(), targetUid.trim());
+    }
+
+    return result;
   } catch (error) {
     if (error instanceof HttpsError) throw error;
     logger.error('removeBoardMember failed', error);

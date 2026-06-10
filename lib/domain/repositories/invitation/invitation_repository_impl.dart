@@ -1,11 +1,11 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:isar_community/isar.dart';
 
-import '../../../core/database/collections/local_friend_profile.dart';
 import '../../../core/database/collections/local_invitation.dart';
-import '../../../core/database/collections/local_non_friend_profile.dart';
+import '../../../core/database/collections/local_profile.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
@@ -64,8 +64,16 @@ class InvitationRepositoryImpl implements InvitationRepository {
                     .toList(),
               );
               await _upsertInvites(invites, uid: uid);
-              await _cacheInviteProfiles(invites);
-            }, onError: controller.addError);
+              try {
+                await _cacheInviteProfiles(invites);
+              } catch (_) {}
+            }, onError: (error) {
+              developer.log(
+                'Failed to watch board invites',
+                name: 'InvitationRepository',
+                error: error,
+              );
+            });
       }();
     };
 
@@ -194,23 +202,15 @@ class InvitationRepositoryImpl implements InvitationRepository {
     }
 
     final existingUserModels = await isar.userModels.getAllByUid(fromUids);
-    final existingFriendProfiles = await isar.localFriendProfiles.getAllByUid(
-      fromUids,
-    );
-    final existingNonFriendProfiles = await isar.localNonFriendProfiles
-        .getAllByUid(fromUids);
+    final existingProfiles = await isar.localProfiles.getAllByUid(fromUids);
 
     final userModelMap = <String, UserModel?>{
       for (var i = 0; i < fromUids.length; i++)
         fromUids[i]: existingUserModels[i],
     };
-    final friendMap = <String, LocalFriendProfile?>{
+    final profileMap = <String, LocalProfile?>{
       for (var i = 0; i < fromUids.length; i++)
-        fromUids[i]: existingFriendProfiles[i],
-    };
-    final nonFriendMap = <String, LocalNonFriendProfile?>{
-      for (var i = 0; i < fromUids.length; i++)
-        fromUids[i]: existingNonFriendProfiles[i],
+        fromUids[i]: existingProfiles[i],
     };
 
     await isar.writeTxn(() async {
@@ -225,34 +225,22 @@ class InvitationRepositoryImpl implements InvitationRepository {
           'photoURL': invite['senderPic']?.toString(),
         };
 
-        _upsertUserModelSync(isar, fromUid, userData, userModelMap[fromUid]);
+        await _upsertUserModelAsync(isar, fromUid, userData, userModelMap[fromUid]);
 
-        final isFriend = friendMap[fromUid] != null;
-        if (isFriend) {
-          final model =
-              friendMap[fromUid] ??
-              LocalFriendProfile(uid: fromUid, displayName: 'InkLink User');
-          _populateProfileModel(
-            model,
-            fromUid,
-            userData,
-            source: 'board_invite',
-          );
-          await isar.localFriendProfiles.putByUid(model);
-          await isar.localNonFriendProfiles.deleteByUid(fromUid);
-        } else {
-          final model =
-              nonFriendMap[fromUid] ??
-              LocalNonFriendProfile(uid: fromUid, displayName: 'InkLink User');
-          _populateProfileModel(
-            model,
-            fromUid,
-            userData,
-            source: 'board_invite',
-          );
-          await isar.localNonFriendProfiles.putByUid(model);
-          await isar.localFriendProfiles.deleteByUid(fromUid);
-        }
+        final existingProfile = profileMap[fromUid];
+        final model = existingProfile ??
+            LocalProfile(
+              uid: fromUid,
+              displayName: 'InkLink User',
+              friendshipStatus: FriendshipStatus.nonFriend,
+            );
+        _populateProfileModel(
+          model,
+          fromUid,
+          userData,
+          source: 'board_invite',
+        );
+        await isar.localProfiles.putByUid(model);
       }
     });
   }
@@ -306,12 +294,12 @@ class InvitationRepositoryImpl implements InvitationRepository {
     return invites;
   }
 
-  void _upsertUserModelSync(
+  Future<void> _upsertUserModelAsync(
     Isar isar,
     String uid,
     Map<String, dynamic> userData,
     UserModel? existing,
-  ) {
+  ) async {
     final model =
         existing ??
         UserModel(
@@ -354,7 +342,7 @@ class InvitationRepositoryImpl implements InvitationRepository {
       model.updatedAt = updatedAt;
     }
 
-    isar.userModels.putByUidSync(model);
+    await isar.userModels.putByUid(model);
   }
 
   void _populateProfileModel(

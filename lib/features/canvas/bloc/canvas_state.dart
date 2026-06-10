@@ -1,26 +1,7 @@
-part of 'canvas_bloc.dart';
+import 'package:flutter/material.dart';
 
-const Object _unset = Object();
-
-/// Canvas element model for the BLoC
-class CanvasElement {
-  final String id;
-  final String type; // 'stroke', 'shape', 'text'
-  final dynamic data;
-
-  CanvasElement({required this.id, required this.type, required this.data});
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CanvasElement &&
-          runtimeType == other.runtimeType &&
-          id == other.id &&
-          type == other.type;
-
-  @override
-  int get hashCode => id.hashCode ^ type.hashCode;
-}
+import '../../../domain/models/board.dart';
+import '../models/canvas_element.dart';
 
 /// State for CanvasBloc
 class CanvasState {
@@ -30,7 +11,7 @@ class CanvasState {
   final Color selectedColor;
   final double strokeWidth;
   final double brushOpacity;
-  final String brushType; // 'solid', 'textured', 'watercolor'
+  final String brushType;
   final bool eraserEraseEverything;
   final String? activeTray;
   final bool showTrayTips;
@@ -39,12 +20,16 @@ class CanvasState {
   final String currentUserRole;
   final List<BoardMember> boardMembers;
   final String memberSearchQuery;
-  final String? selectedShapeId; // ID of currently selected shape for editing
-  final bool selectedShapeIsFilled; // Whether the selected shape is filled
+  final String? selectedShapeId;
+  final bool selectedShapeIsFilled;
   final double selectedShapeRotation;
   final double selectedShapeBorderRadius;
+  final int selectedStrokeColor;
+  final double selectedStrokeWidth;
+  final double selectedStrokeOpacity;
+  final String selectedStrokeBrushType;
 
-  CanvasState({
+  const CanvasState({
     this.boardTitle,
     this.elements = const [],
     this.currentStroke = const [],
@@ -64,9 +49,14 @@ class CanvasState {
     this.selectedShapeIsFilled = false,
     this.selectedShapeRotation = 0,
     this.selectedShapeBorderRadius = 0,
+    this.selectedStrokeColor = 0xFF000000,
+    this.selectedStrokeWidth = 5,
+    this.selectedStrokeOpacity = 1.0,
+    this.selectedStrokeBrushType = 'solid',
   });
 
-  /// Create a copy with optional field overrides
+  static const Object _unset = Object();
+
   CanvasState copyWith({
     Object? boardTitle = _unset,
     List<CanvasElement>? elements,
@@ -87,6 +77,10 @@ class CanvasState {
     bool? selectedShapeIsFilled,
     double? selectedShapeRotation,
     double? selectedShapeBorderRadius,
+    int? selectedStrokeColor,
+    double? selectedStrokeWidth,
+    double? selectedStrokeOpacity,
+    String? selectedStrokeBrushType,
   }) {
     return CanvasState(
       boardTitle: boardTitle == _unset
@@ -118,10 +112,17 @@ class CanvasState {
           selectedShapeRotation ?? this.selectedShapeRotation,
       selectedShapeBorderRadius:
           selectedShapeBorderRadius ?? this.selectedShapeBorderRadius,
+      selectedStrokeColor:
+          selectedStrokeColor ?? this.selectedStrokeColor,
+      selectedStrokeWidth:
+          selectedStrokeWidth ?? this.selectedStrokeWidth,
+      selectedStrokeOpacity:
+          selectedStrokeOpacity ?? this.selectedStrokeOpacity,
+      selectedStrokeBrushType:
+          selectedStrokeBrushType ?? this.selectedStrokeBrushType,
     );
   }
 
-  /// Get filtered members based on search query (strict local filtering)
   List<BoardMember> get filteredBoardMembers {
     if (memberSearchQuery.trim().isEmpty) return boardMembers;
     final query = memberSearchQuery.trim().toLowerCase();
@@ -155,7 +156,11 @@ class CanvasState {
           selectedShapeId == other.selectedShapeId &&
           selectedShapeIsFilled == other.selectedShapeIsFilled &&
           selectedShapeBorderRadius == other.selectedShapeBorderRadius &&
-          selectedShapeRotation == other.selectedShapeRotation;
+          selectedShapeRotation == other.selectedShapeRotation &&
+          selectedStrokeColor == other.selectedStrokeColor &&
+          selectedStrokeWidth == other.selectedStrokeWidth &&
+          selectedStrokeOpacity == other.selectedStrokeOpacity &&
+          selectedStrokeBrushType == other.selectedStrokeBrushType;
 
   @override
   int get hashCode =>
@@ -177,26 +182,29 @@ class CanvasState {
       selectedShapeId.hashCode ^
       selectedShapeIsFilled.hashCode ^
       selectedShapeBorderRadius.hashCode ^
-      selectedShapeRotation.hashCode;
+      selectedShapeRotation.hashCode ^
+      selectedStrokeColor.hashCode ^
+      selectedStrokeWidth.hashCode ^
+      selectedStrokeOpacity.hashCode ^
+      selectedStrokeBrushType.hashCode;
 }
 
-/// Old-style states for board creation (backward compatibility)
 class CanvasInitial extends CanvasState {
-  CanvasInitial() : super();
+  const CanvasInitial() : super();
 }
 
 class CanvasCreating extends CanvasState {
-  CanvasCreating() : super(isLoading: true);
+  const CanvasCreating() : super(isLoading: true);
 }
 
 class CanvasReady extends CanvasState {
   final String boardId;
 
-  CanvasReady(this.boardId) : super();
+  const CanvasReady(this.boardId) : super();
 }
 
 class CanvasErrorState extends CanvasState {
   final String message;
 
-  CanvasErrorState(this.message) : super(error: message);
+  const CanvasErrorState(this.message) : super(error: message);
 }

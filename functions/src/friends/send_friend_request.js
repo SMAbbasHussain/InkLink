@@ -118,7 +118,6 @@ module.exports = async (request) => {
             firestore.collection(FirestorePaths.USERS).doc(senderUid),
             {
               [FirestorePaths.FRIEND_COUNT]: senderFriendCount + 1,
-              [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
             },
           );
         }
@@ -128,7 +127,6 @@ module.exports = async (request) => {
             firestore.collection(FirestorePaths.USERS).doc(targetUid),
             {
               [FirestorePaths.FRIEND_COUNT]: targetFriendCount + 1,
-              [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
             },
           );
         }
@@ -151,6 +149,10 @@ module.exports = async (request) => {
         [FirestorePaths.TO_UID]: targetUid,
         [FirestorePaths.SENDER_NAME]: senderData.displayName || 'InkLink User',
         [FirestorePaths.SENDER_PIC]: senderData.photoURL || null,
+        [FirestorePaths.SENDER_DISPLAY_NAME_SNAPSHOT]: senderData.displayName || 'InkLink User',
+        [FirestorePaths.SENDER_PHOTO_URL_SNAPSHOT]: senderData.photoURL || null,
+        [FirestorePaths.RECIPIENT_DISPLAY_NAME_SNAPSHOT]: targetData.displayName || 'InkLink User',
+        [FirestorePaths.RECIPIENT_PHOTO_URL_SNAPSHOT]: targetData.photoURL || null,
         recipientName: targetData.displayName || 'InkLink User',
         recipientPic: targetData.photoURL || null,
         [FirestorePaths.TIMESTAMP]: admin.firestore.FieldValue.serverTimestamp(),

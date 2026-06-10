@@ -11,6 +11,7 @@ class LocalCanvasSyncState {
 
   int lastAppliedVersion = 0;
   int lastSnapshotVersion = 0;
+  String? lastSeenCursor; // "<streamId>:<version>" used for XREAD cursor
   DateTime? lastSnapshotAt;
   DateTime? lastSyncedAppliedAt;
 }

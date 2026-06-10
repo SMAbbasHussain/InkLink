@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:inklink/core/constants/app_colors.dart';
 import 'package:inklink/domain/models/board.dart';
-import 'package:inklink/features/canvas/view/canvas_route.dart';
+import '../../../canvas/view/canvas_route.dart';
 
 class BoardCard extends StatelessWidget {
   final Board board;

@@ -24,6 +24,8 @@ import 'trays/shapes_tray.dart';
 import 'trays/tools_tray.dart';
 import 'widgets/tray_tips_overlay.dart';
 
+part 'canvas_painter.dart';
+
 class CanvasScreen extends StatefulWidget {
   final String boardId;
   final bool showTrayTipsOnEntry;
@@ -47,16 +49,24 @@ class _CanvasScreenState extends State<CanvasScreen> {
   final GlobalKey _canvasPreviewKey = GlobalKey();
   bool _savingPreview = false;
   bool _isDraggingShape = false;
+  bool _isDraggingStroke = false;
+  List<Offset>? _strokeDragOriginalPoints;
+  Offset? _strokeDragDelta;
+  Offset _strokeDragStartWorldPoint = Offset.zero;
   bool _isEditingShape = false;
   bool _isShapeEditTrayExpanded = false;
+  bool _isStrokeEditExpanded = false;
+  bool _smoothDoodlesEnabled = false;
   bool _isRotatingShape = false;
   bool _isResizingShape = false;
   bool _showEraserPreview = false;
   bool _isTransformingCanvas = false;
   bool _didAutoFrameContent = false;
   Size _lastCanvasSize = Size.zero;
-  Offset _shapeDragDelta = Offset.zero;
+  Offset _shapeDragStartCenter = Offset.zero;
+  Offset _shapeDragStartWorldPoint = Offset.zero;
   Offset? _shapeDragPreviewCenter;
+  double _shapeDragStartRotation = 0.0;
   _ShapeTransformDraft? _shapeTransformDraft;
   double _viewportScale = 1.0;
   Offset _viewportOffset = Offset.zero;
@@ -71,6 +81,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   late final CanvasBloc _canvasBloc;
   Timer? _shapeEditDebounceTimer;
   final Map<String, dynamic> _pendingShapeEdits = <String, dynamic>{};
+  Offset? _lastTapWorldPoint;
 
   static const double _viewportComparisonEpsilon = 0.01;
 
@@ -84,7 +95,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Future<void> _maybeShowTrayTipsOverlay() async {
     if (!widget.showTrayTipsOnEntry) return;
 
-    final showTips = await TrayTipsPreferences.getShowTrayTips();
+    final showTips = await TrayTipsPreferences.checkShowTrayTips();
     if (!mounted || !showTips) return;
     _canvasBloc.add(const CanvasShowTrayTips());
   }
@@ -108,6 +119,18 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
+  List<Offset> _smoothStrokePoints(List<Offset> points) {
+    if (points.length < 4) return points;
+    final result = List<Offset>.of(points);
+    for (int i = 1; i < points.length - 1; i++) {
+      result[i] = Offset(
+        (points[i - 1].dx + points[i].dx + points[i + 1].dx) / 3,
+        (points[i - 1].dy + points[i].dy + points[i + 1].dy) / 3,
+      );
+    }
+    return result;
+  }
+
   void _startStroke(Offset point) {
     _canvasBloc.add(CanvasStartStroke(point));
   }
@@ -117,16 +140,60 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   void _endStroke() {
-    _canvasBloc.add(const CanvasEndStroke());
+    final smoothed = _smoothDoodlesEnabled
+        ? _smoothStrokePoints(_canvasBloc.state.currentStroke)
+        : null;
+    _canvasBloc.add(CanvasEndStroke(smoothedPoints: smoothed));
+  }
+
+  Offset _getElementWorldCenter(CanvasElement element) {
+    return switch (element) {
+      StrokeElement e => _strokeCenter(e.points),
+      ShapeElement e => e.center,
+      TextElement e => e.center,
+      ImageElement e => e.center,
+    };
+  }
+
+  Offset _strokeCenter(List<Offset> points) {
+    if (points.isEmpty) return Offset.zero;
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+    for (final p in points) {
+      if (p.dx < minX) minX = p.dx;
+      if (p.dy < minY) minY = p.dy;
+      if (p.dx > maxX) maxX = p.dx;
+      if (p.dy > maxY) maxY = p.dy;
+    }
+    return Offset((minX + maxX) / 2, (minY + maxY) / 2);
+  }
+
+  void _centerViewportOn(Offset worldPoint) {
+    if (_lastCanvasSize.width <= 0 || _lastCanvasSize.height <= 0) return;
+    setState(() {
+      _viewportOffset = Offset(
+        (_lastCanvasSize.width / 2) - (worldPoint.dx * _viewportScale),
+        (_lastCanvasSize.height / 2) - (worldPoint.dy * _viewportScale),
+      );
+    });
   }
 
   void _selectShape(String? shapeId, {bool expandEditor = false}) {
     // Commit any pending edits before selecting a different shape
     _commitPendingShapeEdits();
 
+    if (shapeId != null) {
+      final elements = _canvasBloc.state.elements;
+      try {
+        final element = elements.firstWhere((e) => e.id == shapeId);
+        _centerViewportOn(_getElementWorldCenter(element));
+      } catch (_) {}
+    }
+
     if (mounted) {
       setState(() {
         _isShapeEditTrayExpanded = shapeId != null && expandEditor;
+        _isStrokeEditExpanded = false;
       });
     }
     _canvasBloc.add(CanvasSelectShape(shapeId));
@@ -314,7 +381,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   void _pruneImageCache(List<CanvasElement> elements) {
     final activeImageIds = elements
-        .where((element) => element.type == 'image')
+        .whereType<ImageElement>()
         .map((element) => element.id)
         .toSet();
 
@@ -457,56 +524,43 @@ class _CanvasScreenState extends State<CanvasScreen> {
     Rect? bounds;
 
     for (final element in elements) {
-      final data = element.data as Map<String, dynamic>? ?? const {};
-      Rect? candidate;
+      Rect candidate;
 
-      if (element.type == 'stroke') {
-        final pointMaps = (data['points'] as List?) ?? const [];
-        if (pointMaps.isEmpty) continue;
-        double minX = double.infinity;
-        double minY = double.infinity;
-        double maxX = -double.infinity;
-        double maxY = -double.infinity;
-        for (final p in pointMaps.whereType<Map>()) {
-          final x = (p['x'] as num?)?.toDouble() ?? 0.0;
-          final y = (p['y'] as num?)?.toDouble() ?? 0.0;
-          minX = math.min(minX, x);
-          minY = math.min(minY, y);
-          maxX = math.max(maxX, x);
-          maxY = math.max(maxY, y);
-        }
-        final pad = ((data['strokeWidth'] as num?)?.toDouble() ?? 5.0) + 8;
-        candidate = Rect.fromLTRB(minX, minY, maxX, maxY).inflate(pad);
-      } else if (element.type == 'shape') {
-        final cx = (data['cx'] as num?)?.toDouble() ?? 0.0;
-        final cy = (data['cy'] as num?)?.toDouble() ?? 0.0;
-        final size = (data['size'] as num?)?.toDouble() ?? 64.0;
-        candidate = Rect.fromCenter(
-          center: Offset(cx, cy),
-          width: size * 1.6,
-          height: size * 1.6,
-        );
-      } else if (element.type == 'text') {
-        final cx = (data['cx'] as num?)?.toDouble() ?? 0.0;
-        final cy = (data['cy'] as num?)?.toDouble() ?? 0.0;
-        candidate = Rect.fromCenter(
-          center: Offset(cx, cy),
-          width: 220,
-          height: 72,
-        );
-      } else if (element.type == 'image') {
-        final cx = (data['cx'] as num?)?.toDouble() ?? 0.0;
-        final cy = (data['cy'] as num?)?.toDouble() ?? 0.0;
-        final width = (data['width'] as num?)?.toDouble() ?? 220.0;
-        final height = (data['height'] as num?)?.toDouble() ?? 160.0;
-        candidate = Rect.fromCenter(
-          center: Offset(cx, cy),
-          width: width,
-          height: height,
-        );
+      switch (element) {
+        case StrokeElement e:
+          if (e.points.isEmpty) continue;
+          double minX = double.infinity;
+          double minY = double.infinity;
+          double maxX = -double.infinity;
+          double maxY = -double.infinity;
+          for (final p in e.points) {
+            minX = math.min(minX, p.dx);
+            minY = math.min(minY, p.dy);
+            maxX = math.max(maxX, p.dx);
+            maxY = math.max(maxY, p.dy);
+          }
+          final pad = e.strokeWidth + 8;
+          candidate = Rect.fromLTRB(minX, minY, maxX, maxY).inflate(pad);
+        case ShapeElement e:
+          candidate = Rect.fromCenter(
+            center: e.center,
+            width: e.size * 1.6,
+            height: e.size * 1.6,
+          );
+        case TextElement e:
+          candidate = Rect.fromCenter(
+            center: e.center,
+            width: 220,
+            height: 72,
+          );
+        case ImageElement e:
+          candidate = Rect.fromCenter(
+            center: e.center,
+            width: e.width,
+            height: e.height,
+          );
       }
 
-      if (candidate == null) continue;
       bounds = bounds == null ? candidate : bounds.expandToInclude(candidate);
     }
 
@@ -572,7 +626,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   void _openSettings(String currentTitle) {
-    final dashboardState = context.read<DashboardBloc>().state;
+    final dashboardBloc = context.read<DashboardBloc>();
+    final dashboardState = dashboardBloc.state;
     Board? board;
 
     if (dashboardState is DashboardLoaded) {
@@ -750,16 +805,29 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               );
                               if (state.selectedShapeId != null &&
                                   hitShapeId == state.selectedShapeId) {
-                                _isDraggingShape = true;
-                                _setShapeEditing(true);
-                                final shape = mappedElements.firstWhere(
+                                final hit = mappedElements.firstWhere(
                                   (e) => e.id == hitShapeId,
                                 );
-                                _shapeDragDelta = worldPoint - shape.center;
+                                if (hit.kind == _ElementKind.stroke) {
+                                  _isDraggingStroke = true;
+                                  _setShapeEditing(true);
+                                  _strokeDragOriginalPoints =
+                                      List<Offset>.from(hit.points);
+                                  _strokeDragStartWorldPoint = worldPoint;
+                                  _strokeDragDelta = null;
+                                  return;
+                                }
+                                _isDraggingShape = true;
+                                _setShapeEditing(true);
+                                _shapeDragStartCenter = hit.center;
+                                _shapeDragStartWorldPoint = worldPoint;
+                                _shapeDragStartRotation =
+                                    state.selectedShapeRotation;
                                 return;
                               }
 
                               _isDraggingShape = false;
+                              _isDraggingStroke = false;
                               _startStroke(worldPoint);
                             },
                             onScaleUpdate: (details) {
@@ -791,14 +859,45 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               final worldPoint = _toWorld(
                                 details.localFocalPoint,
                               );
+                              if (_isDraggingStroke) {
+                                final delta =
+                                    worldPoint - _strokeDragStartWorldPoint;
+                                setState(() {
+                                  _strokeDragDelta = delta;
+                                });
+                                return;
+                              }
+
                               if (_isDraggingShape) {
-                                final nextCenter = worldPoint - _shapeDragDelta;
+                                var dragDelta =
+                                    worldPoint - _shapeDragStartWorldPoint;
+                                // Unrotate dragDelta to convert from shape's rotated frame
+                                // back to screen frame
+                                if (_shapeDragStartRotation != 0.0) {
+                                  final cos = math.cos(
+                                    -_shapeDragStartRotation,
+                                  );
+                                  final sin = math.sin(
+                                    -_shapeDragStartRotation,
+                                  );
+                                  dragDelta = Offset(
+                                    dragDelta.dx * cos - dragDelta.dy * sin,
+                                    dragDelta.dx * sin + dragDelta.dy * cos,
+                                  );
+                                }
+                                final nextCenter =
+                                    _shapeDragStartCenter + dragDelta;
                                 setState(() {
                                   _shapeDragPreviewCenter = nextCenter;
                                 });
                                 _canvasBloc.add(
                                   CanvasPreviewMoveSelectedShape(nextCenter),
                                 );
+                                return;
+                              }
+                              if (state.selectedShapeId != null) {
+                                // Don't start a new stroke while an element
+                                // is selected. Deselect first.
                                 return;
                               }
                               final isEraser = state.brushType == 'eraser';
@@ -811,12 +910,33 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 return;
                               }
 
+                              if (_isDraggingStroke) {
+                                _isDraggingStroke = false;
+                                _setShapeEditing(false);
+                                if (_strokeDragDelta != null &&
+                                    _strokeDragDelta != Offset.zero) {
+                                  _canvasBloc.add(
+                                    CanvasMoveSelectedStroke(
+                                      _strokeDragDelta!,
+                                    ),
+                                  );
+                                }
+                                _strokeDragOriginalPoints = null;
+                                _strokeDragDelta = null;
+                                return;
+                              }
+
                               if (_isDraggingShape) {
                                 _isDraggingShape = false;
                                 if (_shapeDragPreviewCenter != null) {
-                                  _moveSelectedShape(_shapeDragPreviewCenter!);
+                                  _moveSelectedShape(
+                                    _shapeDragPreviewCenter!,
+                                  );
                                 }
                                 _shapeDragPreviewCenter = null;
+                                _shapeDragStartCenter = Offset.zero;
+                                _shapeDragStartWorldPoint = Offset.zero;
+                                _shapeDragStartRotation = 0.0;
                                 _setShapeEditing(false);
                                 return;
                               }
@@ -834,11 +954,36 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               final worldPoint = _toWorld(
                                 details.localPosition,
                               );
+                              _lastTapWorldPoint = worldPoint;
                               final hitShapeId = _hitTestShape(
                                 mappedElements,
                                 worldPoint,
                               );
+                              final hit = hitShapeId != null
+                                  ? mappedElements.firstWhere(
+                                      (e) => e.id == hitShapeId,
+                                    )
+                                  : null;
+                              if (hit?.kind == _ElementKind.stroke) {
+                                // Stroke selection is deferred to onDoubleTap
+                                return;
+                              }
                               _selectShape(hitShapeId, expandEditor: false);
+                            },
+                            onDoubleTap: () {
+                              final worldPoint = _lastTapWorldPoint;
+                              if (worldPoint == null) return;
+                              final hitShapeId = _hitTestShape(
+                                mappedElements,
+                                worldPoint,
+                              );
+                              if (hitShapeId == null) return;
+                              final hit = mappedElements.firstWhere(
+                                (e) => e.id == hitShapeId,
+                              );
+                              if (hit.kind == _ElementKind.stroke) {
+                                _selectShape(hitShapeId, expandEditor: false);
+                              }
                             },
                             onTap: () {
                               if (state.activeTray != null) {
@@ -870,18 +1015,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           ..._buildImageOverlays(state),
 
                           _buildAllTrays(state),
-                          if (state.selectedShapeId != null &&
-                              !_isEditingShape &&
-                              _isShapeEditTrayExpanded)
-                            _buildSelectedShapePanel(state, mappedElements),
-                          if (state.selectedShapeId != null &&
-                              !_isEditingShape &&
-                              !_isShapeEditTrayExpanded)
-                            _buildShapeEditBanner(
-                              Theme.of(context).brightness == Brightness.dark,
-                            ),
                           if (state.selectedShapeId != null)
-                            _buildShapeTransformOverlay(state, mappedElements),
+                            _buildSelectedElementPanel(
+                              state,
+                              mappedElements,
+                            ),
                           _buildEdgeTriggers(),
 
                           if (state.showTrayTips)
@@ -906,69 +1044,41 @@ class _CanvasScreenState extends State<CanvasScreen> {
   List<_CanvasElement> _mapElements(List<CanvasElement> elements) {
     final mapped = elements
         .map((element) {
-          final data = element.data as Map<String, dynamic>? ?? const {};
-
-          if (element.type == 'stroke') {
-            final pointMaps = (data['points'] as List?) ?? const [];
-            final points = pointMaps
-                .whereType<Map>()
-                .map(
-                  (p) => Offset(
-                    (p['x'] as num?)?.toDouble() ?? 0,
-                    (p['y'] as num?)?.toDouble() ?? 0,
-                  ),
-                )
-                .toList(growable: false);
-
-            return _CanvasElement.stroke(
-              id: element.id,
-              points: points,
-              color: Color(
-                (data['color'] as num?)?.toInt() ?? Colors.black.value,
+          return switch (element) {
+            StrokeElement e => _CanvasElement.stroke(
+                id: e.id,
+                points: e.points,
+                color: e.color,
+                strokeWidth: e.strokeWidth,
+                opacity: e.opacity,
+                brushType: e.brushType,
               ),
-              strokeWidth: (data['strokeWidth'] as num?)?.toDouble() ?? 5,
-              opacity: (data['opacity'] as num?)?.toDouble() ?? 1,
-              brushType: (data['brushType'] as String?) ?? 'solid',
-              data: data,
-            );
-          }
-
-          if (element.type == 'shape') {
-            final shapeName = (data['shapeType'] as String?) ?? 'square';
-            final shapeType = CanvasShapeType.values.firstWhere(
-              (s) => s.name == shapeName,
-              orElse: () => CanvasShapeType.square,
-            );
-
-            return _CanvasElement.shape(
-              id: element.id,
-              shapeType: shapeType,
-              center: Offset(
-                (data['cx'] as num?)?.toDouble() ?? 0,
-                (data['cy'] as num?)?.toDouble() ?? 0,
+            ShapeElement e => _CanvasElement.shape(
+                id: e.id,
+                shapeType: e.shapeType,
+                center: e.center,
+                size: e.size,
+                color: e.color,
+                strokeWidth: e.strokeWidth,
+                isFilled: e.isFilled,
+                data: {
+                  'rotation': e.rotation,
+                  'borderRadius': e.borderRadius,
+                },
               ),
-              size: (data['size'] as num?)?.toDouble() ?? 64,
-              color: Color(
-                (data['color'] as num?)?.toInt() ?? Colors.black.value,
+            TextElement e => _CanvasElement.text(
+                id: e.id,
+                center: e.center,
+                text: e.text,
+                color: e.color,
               ),
-              strokeWidth: (data['strokeWidth'] as num?)?.toDouble() ?? 3,
-              isFilled: (data['isFilled'] as bool?) ?? false,
-              data: data,
-            );
-          }
-
-          return _CanvasElement.text(
-            id: element.id,
-            center: Offset(
-              (data['cx'] as num?)?.toDouble() ?? 0,
-              (data['cy'] as num?)?.toDouble() ?? 0,
-            ),
-            text: (data['text'] as String?) ?? '',
-            color: Color(
-              (data['color'] as num?)?.toInt() ?? Colors.black.value,
-            ),
-            data: data,
-          );
+            ImageElement e => _CanvasElement.text(
+                id: e.id,
+                center: e.center,
+                text: '',
+                color: Colors.black,
+              ),
+          };
         })
         .toList(growable: false);
 
@@ -1010,6 +1120,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
               _shapeDragPreviewCenter != null &&
               result.id == _canvasBloc.state.selectedShapeId) {
             result = result.copyWith(center: _shapeDragPreviewCenter!);
+          } else if (_isDraggingStroke &&
+              _strokeDragDelta != null &&
+              _strokeDragOriginalPoints != null &&
+              result.id == _canvasBloc.state.selectedShapeId) {
+            final original = _strokeDragOriginalPoints!;
+            result = result.copyWith(
+              points: original.map((p) => p + _strokeDragDelta!).toList(),
+            );
           }
 
           return result;
@@ -1017,14 +1135,42 @@ class _CanvasScreenState extends State<CanvasScreen> {
         .toList(growable: false);
   }
 
+  /// Minimum distance from [point] to the line segment [a]–[b].
+  static double _pointToSegmentDistance(Offset point, Offset a, Offset b) {
+    final ab = b - a;
+    final ap = point - a;
+    final lenSq = ab.dx * ab.dx + ab.dy * ab.dy;
+    if (lenSq == 0) return (point - a).distance;
+    final t = (ap.dx * ab.dx + ap.dy * ab.dy) / lenSq;
+    final clamped = t.clamp(0.0, 1.0);
+    final closest = Offset(a.dx + clamped * ab.dx, a.dy + clamped * ab.dy);
+    return (point - closest).distance;
+  }
+
   String? _hitTestShape(List<_CanvasElement> elements, Offset position) {
     for (var i = elements.length - 1; i >= 0; i--) {
       final element = elements[i];
-      // Allow selecting shapes, images, strokes, and text!
       if (element.kind == _ElementKind.stroke) {
-        // Simple bounding box for strokes
-        if (element.bounds != null && element.bounds!.contains(position)) {
-          return element.id;
+        // Point-to‑segment distance check instead of bounding box,
+        // so you must tap near the actual doodle line, not anywhere in its box.
+        const tapPadding = 12.0;
+        final points = element.points;
+        if (points.length < 2) {
+          if (points.length == 1 &&
+              (points[0] - position).distance <= tapPadding) {
+            return element.id;
+          }
+          continue;
+        }
+        for (int j = 0; j < points.length - 1; j++) {
+          final dist = _pointToSegmentDistance(
+            position,
+            points[j],
+            points[j + 1],
+          );
+          if (dist <= element.strokeWidth / 2 + tapPadding) {
+            return element.id;
+          }
         }
       } else {
         // Shapes, images, text
@@ -1038,6 +1184,321 @@ class _CanvasScreenState extends State<CanvasScreen> {
       }
     }
     return null;
+  }
+
+  Widget _buildSelectedElementPanel(
+    CanvasState state,
+    List<_CanvasElement> mappedElements,
+  ) {
+    final selected = mappedElements.where((e) => e.id == state.selectedShapeId);
+    if (selected.isEmpty) return const SizedBox.shrink();
+    final element = selected.first;
+    if (element.kind == _ElementKind.stroke) {
+      return Stack(
+        children: [
+          _buildStrokeSelectionOverlay(state, element),
+          if (!_isEditingShape && _isStrokeEditExpanded)
+            _buildSelectedStrokePanel(state, element),
+          if (!_isEditingShape && !_isStrokeEditExpanded)
+            _buildStrokeEditBanner(),
+        ],
+      );
+    }
+    return Stack(
+      children: [
+        if (!_isEditingShape && _isShapeEditTrayExpanded)
+          _buildSelectedShapePanel(state, mappedElements),
+        if (!_isEditingShape && !_isShapeEditTrayExpanded)
+          _buildShapeEditBanner(
+            Theme.of(context).brightness == Brightness.dark,
+          ),
+        _buildShapeTransformOverlay(state, mappedElements),
+      ],
+    );
+  }
+
+  Widget _buildStrokeSelectionOverlay(
+    CanvasState state,
+    _CanvasElement element,
+  ) {
+    final bounds = element.bounds;
+    if (bounds == null) return const SizedBox.shrink();
+    final topLeft = _toScreen(bounds.topLeft);
+    final bottomRight = _toScreen(bounds.bottomRight);
+    final screenRect =
+        Rect.fromLTRB(topLeft.dx, topLeft.dy, bottomRight.dx, bottomRight.dy);
+
+    return Positioned(
+      left: screenRect.left - 6,
+      top: screenRect.top - 6,
+      width: screenRect.width + 12,
+      height: screenRect.height + 12,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Container(
+                decoration: BoxDecoration(
+                  border:
+                      Border.all(color: Colors.blueAccent, width: 1.5),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: -8,
+            right: -8,
+            child: GestureDetector(
+              onTap: () =>
+                  _canvasBloc.add(CanvasDeleteElement(element.id)),
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x22000000),
+                      blurRadius: 4,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: const Icon(Icons.delete, size: 14,
+                    color: Colors.white),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStrokeEditBanner() {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: bottomInset,
+      child: Container(
+        color: isDark ? AppColors.bgDark : AppColors.bgLight,
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Center(
+          child: ElevatedButton.icon(
+            onPressed: () {
+              setState(() {
+                _isStrokeEditExpanded = true;
+              });
+            },
+            icon: Icon(
+              Icons.brush,
+              size: 18,
+              color: isDark
+                  ? AppColors.textPrimaryDark
+                  : AppColors.textPrimaryLight,
+            ),
+            label: Text(
+              'Edit Doodle',
+              style: TextStyle(
+                color: isDark
+                    ? AppColors.textPrimaryDark
+                    : AppColors.textPrimaryLight,
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isDark
+                  ? AppColors.surfaceDark
+                  : AppColors.surfaceLight,
+              foregroundColor: isDark
+                  ? AppColors.textPrimaryDark
+                  : AppColors.textPrimaryLight,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              elevation: 0,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectedStrokePanel(
+    CanvasState state,
+    _CanvasElement element,
+  ) {
+    final palette = <Color>[
+      Colors.black,
+      Colors.red,
+      Colors.blue,
+      Colors.green,
+      Colors.orange,
+      Colors.purple,
+      Colors.white,
+      Colors.brown,
+      Colors.teal,
+    ];
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+
+    return Positioned(
+      left: 0,
+      right: 20,
+      bottom: 8 + bottomInset,
+      child: Center(
+        child: Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          elevation: 6,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 340),
+            child: SingleChildScrollView(
+              child: SizedBox(
+                width: 260,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            'Doodle Edit',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            onPressed: () =>
+                                _canvasBloc.add(CanvasDeleteElement(element.id)),
+                            icon: const Icon(Icons.delete, size: 18,
+                                color: Colors.red),
+                            splashRadius: 16,
+                            tooltip: 'Delete',
+                          ),
+                          IconButton(
+                            onPressed: () {
+                              setState(() {
+                                _isStrokeEditExpanded = false;
+                              });
+                            },
+                            icon: const Icon(Icons.expand_more, size: 18),
+                            splashRadius: 16,
+                            tooltip: 'Minimize',
+                          ),
+                        ],
+                      ),
+                      const Divider(height: 8),
+                      _buildSectionLabel('Width'),
+                      Slider(
+                        value: state.selectedStrokeWidth.clamp(1, 48),
+                        min: 1,
+                        max: 48,
+                        activeColor: Colors.blueAccent,
+                        onChanged: (v) => _canvasBloc.add(
+                          CanvasUpdateSelectedStrokeWidth(v),
+                        ),
+                      ),
+                      Text(
+                        '${state.selectedStrokeWidth.toStringAsFixed(0)} px',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 6),
+                      _buildSectionLabel('Opacity'),
+                      Slider(
+                        value: state.selectedStrokeOpacity.clamp(0, 1),
+                        min: 0,
+                        max: 1,
+                        activeColor: Colors.blueAccent,
+                        onChanged: (v) => _canvasBloc.add(
+                          CanvasUpdateSelectedStrokeOpacity(v),
+                        ),
+                      ),
+                      Text(
+                        '${(state.selectedStrokeOpacity * 100).toStringAsFixed(0)}%',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 6),
+                      _buildSectionLabel('Brush'),
+                      DropdownButton<String>(
+                        value: state.selectedStrokeBrushType,
+                        isDense: true,
+                        isExpanded: true,
+                        underline: const SizedBox.shrink(),
+                        onChanged: (v) {
+                          if (v != null) {
+                            _canvasBloc.add(
+                              CanvasUpdateSelectedStrokeBrushType(v),
+                            );
+                          }
+                        },
+                        items: const [
+                          DropdownMenuItem(value: 'solid', child: Text('Solid')),
+                          DropdownMenuItem(
+                            value: 'textured',
+                            child: Text('Textured'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'watercolor',
+                            child: Text('Watercolor'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      _buildSectionLabel('Color'),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: palette
+                            .map(
+                              (color) => InkWell(
+                                onTap: () => _canvasBloc.add(
+                                  CanvasUpdateSelectedStrokeColor(color.value),
+                                ),
+                                child: Container(
+                                  width: 26,
+                                  height: 26,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: color,
+                                    border: Border.all(color: Colors.black12),
+                                  ),
+                                  child: color.value ==
+                                          state.selectedStrokeColor
+                                      ? const Icon(Icons.check,
+                                          size: 14, color: Colors.white)
+                                      : null,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionLabel(String label) {
+    return Text(
+      label,
+      style: const TextStyle(
+        fontWeight: FontWeight.w600,
+        fontSize: 12,
+        color: Colors.black87,
+      ),
+    );
   }
 
   Widget _buildSelectedShapePanel(
@@ -1099,6 +1560,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         icon: const Icon(Icons.expand_more, size: 18),
                         splashRadius: 16,
                         tooltip: 'Minimize',
+                      ),
+                      IconButton(
+                        onPressed: () {
+                          _commitPendingShapeEdits();
+                          _canvasBloc.add(
+                            CanvasDeleteElement(shape.id),
+                          );
+                        },
+                        icon: const Icon(Icons.delete, size: 18),
+                        splashRadius: 16,
+                        tooltip: 'Delete',
                       ),
                       IconButton(
                         onPressed: () {
@@ -1258,30 +1730,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
       top: center.dy - half - 16,
       width: size + 32,
       height: size + 32,
-      child: Transform.rotate(
-        angle: rotation,
-        child: IgnorePointer(
-          ignoring: false,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Positioned.fill(
-                child: GestureDetector(
-                  onPanStart: (_) {
-                    _setShapeEditing(true);
-                    _shapeTransformDraft ??= _ShapeTransformDraft(
-                      shapeId: shape.id,
-                      center: shape.center,
-                      size: shape.size,
-                      rotation:
-                          (shape.data['rotation'] as num?)?.toDouble() ??
-                          state.selectedShapeRotation,
-                    );
-                  },
-                  onPanUpdate: (details) {
-                    final draft =
-                        _shapeTransformDraft ??
-                        _ShapeTransformDraft(
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Transform.rotate(
+            angle: rotation,
+            child: IgnorePointer(
+              ignoring: false,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned.fill(
+                    child: GestureDetector(
+                      onPanStart: (_) {
+                        _setShapeEditing(true);
+                        _shapeTransformDraft ??= _ShapeTransformDraft(
                           shapeId: shape.id,
                           center: shape.center,
                           size: shape.size,
@@ -1289,118 +1752,156 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               (shape.data['rotation'] as num?)?.toDouble() ??
                               state.selectedShapeRotation,
                         );
-                    final nextCenter = Offset(
-                      draft.center.dx + (details.delta.dx / _viewportScale),
-                      draft.center.dy + (details.delta.dy / _viewportScale),
-                    );
-                    setState(() {
-                      _shapeTransformDraft = draft.copyWith(center: nextCenter);
-                    });
-                    _canvasBloc.add(CanvasPreviewMoveSelectedShape(nextCenter));
-                  },
-                  onPanEnd: (_) {
-                    final draft = _shapeTransformDraft;
-                    if (draft != null && draft.shapeId == shape.id) {
-                      _moveSelectedShape(draft.center);
-                    }
-                    _shapeTransformDraft = null;
-                    _setShapeEditing(false);
-                  },
-                  child: Container(
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.blueAccent, width: 1.5),
-                      borderRadius: BorderRadius.circular(8),
+                      },
+                      onPanUpdate: (details) {
+                        final draft =
+                            _shapeTransformDraft ??
+                            _ShapeTransformDraft(
+                              shapeId: shape.id,
+                              center: shape.center,
+                              size: shape.size,
+                              rotation:
+                                  (shape.data['rotation'] as num?)?.toDouble() ??
+                                  state.selectedShapeRotation,
+                            );
+                        final nextCenter = Offset(
+                          draft.center.dx + (details.delta.dx / _viewportScale),
+                          draft.center.dy + (details.delta.dy / _viewportScale),
+                        );
+                        setState(() {
+                          _shapeTransformDraft = draft.copyWith(center: nextCenter);
+                        });
+                        _canvasBloc.add(CanvasPreviewMoveSelectedShape(nextCenter));
+                      },
+                      onPanEnd: (_) {
+                        final draft = _shapeTransformDraft;
+                        if (draft != null && draft.shapeId == shape.id) {
+                          _moveSelectedShape(draft.center);
+                        }
+                        _shapeTransformDraft = null;
+                        _setShapeEditing(false);
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.blueAccent, width: 1.5),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                  Positioned(
+                    top: -8,
+                    left: size / 2,
+                    child: GestureDetector(
+                      onPanStart: (_) {
+                        _setShapeEditing(true);
+                        _isRotatingShape = true;
+                        final baseRotation =
+                            (shape.data['rotation'] as num?)?.toDouble() ??
+                            state.selectedShapeRotation;
+                        _shapeTransformDraft = _ShapeTransformDraft(
+                          shapeId: shape.id,
+                          center: shape.center,
+                          size: shape.size,
+                          rotation: baseRotation,
+                        );
+                      },
+                      onPanUpdate: (details) {
+                        final draft = _shapeTransformDraft;
+                        if (draft == null || draft.shapeId != shape.id) return;
+                        final delta = details.delta.dx + details.delta.dy;
+                        setState(() {
+                          _shapeTransformDraft = draft.copyWith(
+                            rotation: draft.rotation + (delta / 140),
+                          );
+                        });
+                        _canvasBloc.add(
+                          CanvasPreviewRotateSelectedShape(
+                            draft.rotation + (delta / 140),
+                          ),
+                        );
+                      },
+                      onPanEnd: (_) {
+                        final draft = _shapeTransformDraft;
+                        if (draft != null && draft.shapeId == shape.id) {
+                          _rotateSelectedShape(draft.rotation);
+                        }
+                        _shapeTransformDraft = null;
+                        _isRotatingShape = false;
+                        _setShapeEditing(false);
+                      },
+                      child: _buildHandle(Icons.rotate_right),
+                    ),
+                  ),
+                  Positioned(
+                    top: size / 2,
+                    right: -8,
+                    child: GestureDetector(
+                      onPanStart: (_) {
+                        _setShapeEditing(true);
+                        _isResizingShape = true;
+                        _shapeTransformDraft = _ShapeTransformDraft(
+                          shapeId: shape.id,
+                          center: shape.center,
+                          size: shape.size,
+                          rotation:
+                              (shape.data['rotation'] as num?)?.toDouble() ??
+                              state.selectedShapeRotation,
+                        );
+                      },
+                      onPanUpdate: (details) {
+                        final draft = _shapeTransformDraft;
+                        if (draft == null || draft.shapeId != shape.id) return;
+                        final delta = details.delta.dx + details.delta.dy;
+                        final nextSize = (draft.size + delta / _viewportScale * 1.8)
+                            .clamp(24.0, 420.0)
+                            .toDouble();
+                        setState(() {
+                          _shapeTransformDraft = draft.copyWith(size: nextSize);
+                        });
+                        _canvasBloc.add(CanvasPreviewResizeSelectedShape(nextSize));
+                      },
+                      onPanEnd: (_) {
+                        final draft = _shapeTransformDraft;
+                        if (draft != null && draft.shapeId == shape.id) {
+                          _resizeSelectedShape(draft.size);
+                        }
+                        _shapeTransformDraft = null;
+                        _isResizingShape = false;
+                        _setShapeEditing(false);
+                      },
+                      child: _buildHandle(Icons.open_in_full),
+                    ),
+                  ),
+                ],
               ),
-              Positioned(
-                top: -8,
-                left: size / 2,
-                child: GestureDetector(
-                  onPanStart: (_) {
-                    _setShapeEditing(true);
-                    _isRotatingShape = true;
-                    final baseRotation =
-                        (shape.data['rotation'] as num?)?.toDouble() ??
-                        state.selectedShapeRotation;
-                    _shapeTransformDraft = _ShapeTransformDraft(
-                      shapeId: shape.id,
-                      center: shape.center,
-                      size: shape.size,
-                      rotation: baseRotation,
-                    );
-                  },
-                  onPanUpdate: (details) {
-                    final draft = _shapeTransformDraft;
-                    if (draft == null || draft.shapeId != shape.id) return;
-                    final delta = details.delta.dx + details.delta.dy;
-                    setState(() {
-                      _shapeTransformDraft = draft.copyWith(
-                        rotation: draft.rotation + (delta / 140),
-                      );
-                    });
-                    _canvasBloc.add(
-                      CanvasPreviewRotateSelectedShape(
-                        draft.rotation + (delta / 140),
-                      ),
-                    );
-                  },
-                  onPanEnd: (_) {
-                    final draft = _shapeTransformDraft;
-                    if (draft != null && draft.shapeId == shape.id) {
-                      _rotateSelectedShape(draft.rotation);
-                    }
-                    _shapeTransformDraft = null;
-                    _isRotatingShape = false;
-                    _setShapeEditing(false);
-                  },
-                  child: _buildHandle(Icons.rotate_right),
-                ),
-              ),
-              Positioned(
-                top: size / 2,
-                right: -8,
-                child: GestureDetector(
-                  onPanStart: (_) {
-                    _setShapeEditing(true);
-                    _isResizingShape = true;
-                    _shapeTransformDraft = _ShapeTransformDraft(
-                      shapeId: shape.id,
-                      center: shape.center,
-                      size: shape.size,
-                      rotation:
-                          (shape.data['rotation'] as num?)?.toDouble() ??
-                          state.selectedShapeRotation,
-                    );
-                  },
-                  onPanUpdate: (details) {
-                    final draft = _shapeTransformDraft;
-                    if (draft == null || draft.shapeId != shape.id) return;
-                    final delta = details.delta.dx + details.delta.dy;
-                    final nextSize = (draft.size + delta / _viewportScale * 1.8)
-                        .clamp(24.0, 420.0)
-                        .toDouble();
-                    setState(() {
-                      _shapeTransformDraft = draft.copyWith(size: nextSize);
-                    });
-                    _canvasBloc.add(CanvasPreviewResizeSelectedShape(nextSize));
-                  },
-                  onPanEnd: (_) {
-                    final draft = _shapeTransformDraft;
-                    if (draft != null && draft.shapeId == shape.id) {
-                      _resizeSelectedShape(draft.size);
-                    }
-                    _shapeTransformDraft = null;
-                    _isResizingShape = false;
-                    _setShapeEditing(false);
-                  },
-                  child: _buildHandle(Icons.open_in_full),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
+          Positioned(
+            top: -8,
+            right: -8,
+            child: GestureDetector(
+              onTap: () => _canvasBloc.add(CanvasDeleteElement(shape.id)),
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x22000000),
+                      blurRadius: 4,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: const Icon(Icons.delete, size: 14, color: Colors.white),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1451,6 +1952,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           brushOpacity: state.brushOpacity,
           brushType: state.brushType,
           eraserEraseEverything: state.eraserEraseEverything,
+          smoothDoodlesEnabled: _smoothDoodlesEnabled,
           onStrokeWidthChanged: (v) {
             _canvasBloc.add(CanvasUpdateStrokeWidth(v));
           },
@@ -1464,6 +1966,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
             _canvasBloc.add(CanvasUpdateBrushType(type));
           },
           onEraserEraseEverythingChanged: _setEraserScope,
+          onSmoothDoodlesChanged: (v) {
+            setState(() => _smoothDoodlesEnabled = v);
+          },
         ),
       ],
     );
@@ -1558,9 +2063,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
   List<Widget> _buildImageOverlays(CanvasState state) {
     final overlays = <Widget>[];
     for (final element in state.elements) {
-      if (element.type != 'image') continue;
-      final data = element.data as Map<String, dynamic>? ?? const {};
-      final imageBase64 = (data['imageBase64'] as String?) ?? '';
+      if (element is! ImageElement) continue;
+      final imageBase64 = element.imageBase64;
       if (imageBase64.isEmpty) continue;
 
       final cacheKey = '${imageBase64.length}:${imageBase64.hashCode}';
@@ -1580,10 +2084,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
         continue;
       }
 
-      final cx = (data['cx'] as num?)?.toDouble() ?? 0;
-      final cy = (data['cy'] as num?)?.toDouble() ?? 0;
-      final width = (data['width'] as num?)?.toDouble() ?? 220;
-      final height = (data['height'] as num?)?.toDouble() ?? 160;
+      final cx = element.center.dx;
+      final cy = element.center.dy;
+      final width = element.width;
+      final height = element.height;
 
       final draft = _imageDrafts[element.id];
       final effectiveCx = draft?.cx ?? cx;
@@ -1662,6 +2166,34 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       fit: BoxFit.cover,
                     ),
                   ),
+                  if (state.selectedShapeId == element.id)
+                    Positioned(
+                      top: -6,
+                      right: -6,
+                      child: GestureDetector(
+                        onTap: () =>
+                            _canvasBloc.add(CanvasDeleteElement(element.id)),
+                        child: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                            border:
+                                Border.all(color: Colors.white, width: 2),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x22000000),
+                                blurRadius: 4,
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(Icons.delete,
+                              size: 12, color: Colors.white),
+                        ),
+                      ),
+                    ),
                   Positioned(
                     right: -6,
                     bottom: -6,
@@ -1818,435 +2350,5 @@ class _ShapeTransformDraft {
       size: size ?? this.size,
       rotation: rotation ?? this.rotation,
     );
-  }
-}
-
-enum _ElementKind { stroke, shape, text }
-
-class _CanvasElement {
-  final String id;
-  final _ElementKind kind;
-  final List<Offset> points;
-  final Color color;
-  final double strokeWidth;
-  final double opacity;
-  final String brushType;
-  final CanvasShapeType? shapeType;
-  final Offset center;
-  final double size;
-  final bool isFilled;
-  final String text;
-  final Map<String, dynamic> data;
-
-  Rect? get bounds {
-    if (points.isEmpty) return null;
-    double minX = points.first.dx;
-    double minY = points.first.dy;
-    double maxX = points.first.dx;
-    double maxY = points.first.dy;
-    for (final p in points) {
-      if (p.dx < minX) minX = p.dx;
-      if (p.dy < minY) minY = p.dy;
-      if (p.dx > maxX) maxX = p.dx;
-      if (p.dy > maxY) maxY = p.dy;
-    }
-    return Rect.fromLTRB(minX, minY, maxX, maxY).inflate(strokeWidth + 8);
-  }
-
-  const _CanvasElement._({
-    required this.id,
-    required this.kind,
-    this.points = const [],
-    required this.color,
-    this.strokeWidth = 2,
-    this.opacity = 1,
-    this.brushType = 'solid',
-    this.shapeType,
-    this.center = Offset.zero,
-    this.size = 0,
-    this.isFilled = false,
-    this.text = '',
-    this.data = const {},
-  });
-
-  factory _CanvasElement.stroke({
-    required String id,
-    required List<Offset> points,
-    required Color color,
-    required double strokeWidth,
-    required double opacity,
-    required String brushType,
-    Map<String, dynamic> data = const {},
-  }) {
-    return _CanvasElement._(
-      id: id,
-      kind: _ElementKind.stroke,
-      points: points,
-      color: color,
-      strokeWidth: strokeWidth,
-      opacity: opacity,
-      brushType: brushType,
-      data: data,
-    );
-  }
-
-  factory _CanvasElement.shape({
-    required String id,
-    required CanvasShapeType shapeType,
-    required Offset center,
-    required double size,
-    required Color color,
-    required double strokeWidth,
-    required bool isFilled,
-    required Map<String, dynamic> data,
-  }) {
-    return _CanvasElement._(
-      id: id,
-      kind: _ElementKind.shape,
-      shapeType: shapeType,
-      center: center,
-      size: size,
-      color: color,
-      strokeWidth: strokeWidth,
-      isFilled: isFilled,
-      data: data,
-    );
-  }
-
-  factory _CanvasElement.text({
-    required String id,
-    required Offset center,
-    required String text,
-    required Color color,
-    Map<String, dynamic> data = const {},
-  }) {
-    return _CanvasElement._(
-      id: id,
-      kind: _ElementKind.text,
-      center: center,
-      text: text,
-      color: color,
-      data: data,
-    );
-  }
-
-  _CanvasElement copyWith({
-    Offset? center,
-    double? size,
-    Map<String, dynamic>? data,
-    bool? isFilled,
-  }) {
-    return _CanvasElement._(
-      id: id,
-      kind: kind,
-      points: points,
-      color: color,
-      strokeWidth: strokeWidth,
-      opacity: opacity,
-      brushType: brushType,
-      shapeType: shapeType,
-      center: center ?? this.center,
-      size: size ?? this.size,
-      isFilled: isFilled ?? this.isFilled,
-      text: text,
-      data: data ?? this.data,
-    );
-  }
-}
-
-class _CanvasPainter extends CustomPainter {
-  final List<_CanvasElement> elements;
-  final List<Offset> currentPoints;
-  final Color currentColor;
-  final double currentStrokeWidth;
-  final String currentBrushType;
-  final String? selectedShapeId;
-  final double viewportScale;
-  final Offset viewportOffset;
-  final bool showEraserPreview;
-
-  const _CanvasPainter({
-    required this.elements,
-    required this.currentPoints,
-    required this.currentColor,
-    required this.currentStrokeWidth,
-    required this.currentBrushType,
-    required this.selectedShapeId,
-    required this.viewportScale,
-    required this.viewportOffset,
-    required this.showEraserPreview,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.save();
-    canvas.translate(viewportOffset.dx, viewportOffset.dy);
-    canvas.scale(viewportScale);
-
-    for (final element in elements) {
-      switch (element.kind) {
-        case _ElementKind.stroke:
-          _paintStroke(
-            canvas,
-            element.points,
-            element.color,
-            element.strokeWidth,
-            opacity: element.opacity,
-            brushType: element.brushType,
-          );
-          break;
-        case _ElementKind.shape:
-          _paintShape(canvas, element);
-          break;
-        case _ElementKind.text:
-          _paintText(canvas, element);
-          break;
-      }
-    }
-
-    if (currentPoints.length > 1) {
-      if (currentBrushType != 'eraser') {
-        _paintStroke(
-          canvas,
-          currentPoints,
-          currentColor,
-          currentStrokeWidth,
-          opacity: 1,
-          brushType: currentBrushType,
-        );
-      } else if (showEraserPreview) {
-        _paintEraserPreview(canvas, currentPoints.last, currentStrokeWidth);
-      }
-    }
-
-    canvas.restore();
-  }
-
-  void _paintStroke(
-    Canvas canvas,
-    List<Offset> points,
-    Color color,
-    double width, {
-    required double opacity,
-    required String brushType,
-  }) {
-    final effectiveWidth = brushType == 'watercolor'
-        ? width * 1.25
-        : brushType == 'textured'
-        ? width * 0.95
-        : width;
-    final effectiveOpacity = brushType == 'watercolor'
-        ? opacity * 0.45
-        : brushType == 'textured'
-        ? opacity * 0.8
-        : opacity;
-    final paint = Paint()
-      ..color = color.withOpacity(effectiveOpacity.clamp(0, 1))
-      ..strokeWidth = effectiveWidth
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke
-      ..maskFilter = brushType == 'watercolor'
-          ? const MaskFilter.blur(BlurStyle.normal, 2.5)
-          : null;
-
-    for (int i = 0; i < points.length - 1; i++) {
-      canvas.drawLine(points[i], points[i + 1], paint);
-    }
-  }
-
-  void _paintShape(Canvas canvas, _CanvasElement element) {
-    final paint = Paint()
-      ..color = element.color
-      ..style = element.isFilled ? PaintingStyle.fill : PaintingStyle.stroke
-      ..strokeWidth = element.strokeWidth;
-
-    final highlightPaint = Paint()
-      ..color = Colors.blue.withOpacity(0.35)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-
-    final c = element.center;
-    final s = element.size;
-    final borderRadius =
-        (element.data['borderRadius'] as num?)?.toDouble() ?? 0.0;
-
-    canvas.save();
-    canvas.translate(c.dx, c.dy);
-    final rotation = (element.data['rotation'] as num?)?.toDouble() ?? 0.0;
-    canvas.rotate(rotation);
-    canvas.translate(-c.dx, -c.dy);
-
-    switch (element.shapeType!) {
-      case CanvasShapeType.square:
-        final rect = Rect.fromCenter(center: c, width: s, height: s);
-        if (borderRadius > 0) {
-          final clamped = borderRadius.clamp(0.0, s / 2);
-          canvas.drawRRect(
-            RRect.fromRectAndRadius(rect, Radius.circular(clamped)),
-            paint,
-          );
-        } else {
-          canvas.drawRect(rect, paint);
-        }
-        break;
-      case CanvasShapeType.rectangle:
-        final rect = Rect.fromCenter(
-          center: c,
-          width: s * 1.35,
-          height: s * 0.8,
-        );
-        if (borderRadius > 0) {
-          final clamped = borderRadius.clamp(
-            0.0,
-            math.min(rect.width, rect.height) / 2,
-          );
-          canvas.drawRRect(
-            RRect.fromRectAndRadius(rect, Radius.circular(clamped)),
-            paint,
-          );
-        } else {
-          canvas.drawRect(rect, paint);
-        }
-        break;
-      case CanvasShapeType.circle:
-        canvas.drawCircle(c, s / 2, paint);
-        break;
-      case CanvasShapeType.ellipse:
-        canvas.drawOval(
-          Rect.fromCenter(center: c, width: s * 1.3, height: s * 0.85),
-          paint,
-        );
-        break;
-      case CanvasShapeType.triangle:
-        final p = Path()
-          ..moveTo(c.dx, c.dy - s / 2)
-          ..lineTo(c.dx - s / 2, c.dy + s / 2)
-          ..lineTo(c.dx + s / 2, c.dy + s / 2)
-          ..close();
-        canvas.drawPath(p, paint);
-        break;
-      case CanvasShapeType.diamond:
-        final p = Path()
-          ..moveTo(c.dx, c.dy - s / 2)
-          ..lineTo(c.dx - s / 2, c.dy)
-          ..lineTo(c.dx, c.dy + s / 2)
-          ..lineTo(c.dx + s / 2, c.dy)
-          ..close();
-        canvas.drawPath(p, paint);
-        break;
-      case CanvasShapeType.star:
-        final p = Path();
-        for (int i = 0; i < 5; i++) {
-          final outerAngle = (math.pi / 2) + i * (2 * math.pi / 5);
-          final innerAngle = outerAngle + (math.pi / 5);
-          final outer = Offset(
-            c.dx + math.cos(outerAngle) * (s / 2),
-            c.dy - math.sin(outerAngle) * (s / 2),
-          );
-          final inner = Offset(
-            c.dx + math.cos(innerAngle) * (s / 4),
-            c.dy - math.sin(innerAngle) * (s / 4),
-          );
-          if (i == 0) {
-            p.moveTo(outer.dx, outer.dy);
-          } else {
-            p.lineTo(outer.dx, outer.dy);
-          }
-          p.lineTo(inner.dx, inner.dy);
-        }
-        p.close();
-        canvas.drawPath(p, paint);
-        break;
-      case CanvasShapeType.pentagon:
-        final p = Path();
-        for (int i = 0; i < 5; i++) {
-          final angle = (math.pi / 2) + i * (2 * math.pi / 5);
-          final point = Offset(
-            c.dx + math.cos(angle) * (s / 2),
-            c.dy - math.sin(angle) * (s / 2),
-          );
-          if (i == 0) {
-            p.moveTo(point.dx, point.dy);
-          } else {
-            p.lineTo(point.dx, point.dy);
-          }
-        }
-        p.close();
-        canvas.drawPath(p, paint);
-        break;
-      case CanvasShapeType.line:
-        canvas.drawLine(
-          Offset(c.dx - s / 2, c.dy),
-          Offset(c.dx + s / 2, c.dy),
-          paint,
-        );
-        break;
-      case CanvasShapeType.hexagon:
-        final p = Path();
-        for (int i = 0; i < 6; i++) {
-          final angle = (math.pi / 2) + i * (2 * math.pi / 6);
-          final point = Offset(
-            c.dx + math.cos(angle) * (s / 2),
-            c.dy - math.sin(angle) * (s / 2),
-          );
-          if (i == 0) {
-            p.moveTo(point.dx, point.dy);
-          } else {
-            p.lineTo(point.dx, point.dy);
-          }
-        }
-        p.close();
-        canvas.drawPath(p, paint);
-        break;
-      case CanvasShapeType.semicircle:
-        final rect = Rect.fromCenter(center: c, width: s, height: s);
-        canvas.drawArc(rect, math.pi, math.pi, true, paint);
-        break;
-    }
-
-    if (selectedShapeId == element.id) {
-      canvas.drawCircle(c, (s / 2) + 10, highlightPaint);
-    }
-
-    canvas.restore();
-  }
-
-  void _paintEraserPreview(Canvas canvas, Offset position, double radius) {
-    final previewPaint = Paint()
-      ..color = Colors.black.withOpacity(0.18)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawCircle(position, radius, previewPaint);
-  }
-
-  void _paintText(Canvas canvas, _CanvasElement element) {
-    final textSpan = TextSpan(
-      text: element.text,
-      style: TextStyle(
-        color: element.color,
-        fontSize: 16,
-        fontWeight: FontWeight.w600,
-      ),
-    );
-    final textPainter = TextPainter(
-      text: textSpan,
-      textDirection: TextDirection.ltr,
-      maxLines: 2,
-      ellipsis: '...',
-    )..layout(maxWidth: 220);
-
-    textPainter.paint(canvas, Offset(element.center.dx, element.center.dy));
-  }
-
-  @override
-  bool shouldRepaint(covariant _CanvasPainter oldDelegate) {
-    return oldDelegate.elements != elements ||
-        oldDelegate.currentPoints != currentPoints ||
-        oldDelegate.currentColor != currentColor ||
-        oldDelegate.currentStrokeWidth != currentStrokeWidth ||
-        oldDelegate.currentBrushType != currentBrushType ||
-        oldDelegate.selectedShapeId != selectedShapeId ||
-        oldDelegate.viewportScale != viewportScale ||
-        oldDelegate.viewportOffset != viewportOffset;
   }
 }

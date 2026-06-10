@@ -64,7 +64,8 @@ class CanvasAppendStroke extends CanvasEvent {
 
 /// End and save the current stroke
 class CanvasEndStroke extends CanvasEvent {
-  const CanvasEndStroke();
+  final List<Offset>? smoothedPoints;
+  const CanvasEndStroke({this.smoothedPoints});
 }
 
 /// Add a shape to the canvas
@@ -185,7 +186,7 @@ class CanvasUpdateEraserScope extends CanvasEvent {
   const CanvasUpdateEraserScope(this.eraseEverything);
 }
 
-/// Select a shape by element id
+/// Select an element by id (shape, stroke, text, image)
 class CanvasSelectShape extends CanvasEvent {
   final String? shapeId;
 
@@ -197,6 +198,36 @@ class CanvasMoveSelectedShape extends CanvasEvent {
   final Offset center;
 
   const CanvasMoveSelectedShape(this.center);
+}
+
+/// Translate all points of a selected stroke
+class CanvasMoveSelectedStroke extends CanvasEvent {
+  final Offset delta;
+  const CanvasMoveSelectedStroke(this.delta);
+}
+
+/// Update selected stroke color
+class CanvasUpdateSelectedStrokeColor extends CanvasEvent {
+  final int color;
+  const CanvasUpdateSelectedStrokeColor(this.color);
+}
+
+/// Update selected stroke width
+class CanvasUpdateSelectedStrokeWidth extends CanvasEvent {
+  final double strokeWidth;
+  const CanvasUpdateSelectedStrokeWidth(this.strokeWidth);
+}
+
+/// Update selected stroke opacity
+class CanvasUpdateSelectedStrokeOpacity extends CanvasEvent {
+  final double opacity;
+  const CanvasUpdateSelectedStrokeOpacity(this.opacity);
+}
+
+/// Update selected stroke brush type
+class CanvasUpdateSelectedStrokeBrushType extends CanvasEvent {
+  final String brushType;
+  const CanvasUpdateSelectedStrokeBrushType(this.brushType);
 }
 
 /// Publish an in-progress selected-shape move preview.

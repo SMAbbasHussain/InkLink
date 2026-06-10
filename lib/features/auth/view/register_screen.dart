@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../navigation/view/main_wrapper.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
@@ -38,13 +37,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // 2. Wrap with BlocListener for Navigation/Errors
       body: BlocListener<AuthBloc, AuthState>(
         listener: (context, state) {
-          if (state is Authenticated) {
-            Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(builder: (_) => const MainWrapper()),
-              (route) => false,
-            );
-          }
+          // AppView handles the authenticated → MainWrapper transition declaratively
           if (state is AuthError) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(

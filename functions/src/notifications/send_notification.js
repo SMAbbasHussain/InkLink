@@ -22,6 +22,7 @@ module.exports = async (request) => {
       type,
       action,
       targetId,
+      senderUid,
       senderName,
       senderPhotoUrl,
       groupingKey,
@@ -32,6 +33,11 @@ module.exports = async (request) => {
     validateString(title, 'title');
     validateString(body, 'body');
     validateString(type, 'type');
+
+    // Security: sender must be the authenticated user (prevent impersonation)
+    if (senderUid && senderUid !== auth.uid) {
+      throw new HttpsError('permission-denied', 'Sender UID must match authenticated user.');
+    }
 
     const result = await sendUserNotification({
       recipientUid,

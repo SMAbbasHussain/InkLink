@@ -4,8 +4,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/utils/helpers.dart';
 import '../../../domain/models/workspace.dart';
 import '../../friends/bloc/friends_bloc.dart';
-import '../../friends/bloc/friends_event.dart';
-import '../../friends/bloc/friends_state.dart';
 import '../../profile/view/profile_route.dart';
 import '../bloc/workspace_bloc.dart';
 
@@ -81,7 +79,7 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
     if (photoUrl.isNotEmpty) {
       return CircleAvatar(
         backgroundImage: NetworkImage(photoUrl),
-        onBackgroundImageError: (_, __) {},
+        onBackgroundImageError: (_, _) {},
         child: const SizedBox.shrink(),
       );
     }
@@ -101,7 +99,7 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
       return CircleAvatar(
         radius: 24,
         backgroundImage: NetworkImage(url),
-        onBackgroundImageError: (_, __) {},
+        onBackgroundImageError: (_, _) {},
       );
     }
 

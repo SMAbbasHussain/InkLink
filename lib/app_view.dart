@@ -9,7 +9,7 @@ import 'features/workspaces/bloc/workspace_bloc.dart';
 import 'features/notifications/bloc/notifications_bloc.dart';
 import 'features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'features/friends/bloc/friends_bloc.dart';
-import 'features/friends/bloc/friends_event.dart';
+import 'core/services/data_prefetch_service.dart';
 
 class AppView extends StatelessWidget {
   const AppView({super.key});
@@ -20,6 +20,18 @@ class AppView extends StatelessWidget {
       listenWhen: (previous, current) =>
           previous is! Authenticated && current is Authenticated,
       listener: (context, state) {
+        // Ensure we're at the root route so the declarative MainWrapper is visible.
+        Navigator.of(context, rootNavigator: true)
+            .popUntil((route) => route.isFirst);
+
+        // Phase 4E: Prefetch data on auth
+        final authState = state is Authenticated ? state : null;
+        if (authState != null) {
+          context.read<DataPrefetchService>().prefetchInitialData(
+            authState.uid,
+          );
+        }
+
         // Restart global syncs when authenticated (crucial after logout/login cycle)
         context.read<DashboardBloc>().add(LoadDashboardRequested());
         context.read<WorkspaceBloc>().add(LoadWorkspacesRequested());

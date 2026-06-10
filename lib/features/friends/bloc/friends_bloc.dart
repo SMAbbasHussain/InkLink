@@ -4,15 +4,24 @@ import '../../../domain/services/friends/friends_service.dart';
 import 'friends_event.dart';
 import 'friends_state.dart';
 
+export 'friends_event.dart';
+export 'friends_state.dart';
+
 class _FriendsStreamFailed extends FriendsEvent {
   final String error;
 
   _FriendsStreamFailed(this.error);
 }
 
+class _BlockedUsersUpdated extends FriendsEvent {
+  final List<Map<String, dynamic>> blockedUsers;
+  _BlockedUsersUpdated(this.blockedUsers);
+}
+
 class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
   final FriendsService friendsService;
   StreamSubscription? _friendsSubscription;
+  StreamSubscription? _blockedUsersSubscription;
   Set<String> _pendingOutgoingTargetUids = <String>{};
   Set<String> _sendingRequestTargetUids = <String>{};
   Set<String> _acceptingRequestIds = <String>{};
@@ -78,6 +87,9 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           .where((uid) => uid.isNotEmpty)
           .toSet();
 
+      final blockedUsers = state is FriendsLoaded
+          ? (state as FriendsLoaded).blockedUsers
+          : const <Map<String, dynamic>>[];
       emit(
         FriendsLoaded(
           friends: event.friends,
@@ -88,8 +100,36 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           decliningRequestIds: _decliningRequestIds,
           cancelingRequestIds: _cancelingRequestIds,
           isOffline: _isOffline,
+          blockedUsers: blockedUsers,
         ),
       );
+    });
+
+    on<LoadBlockedUsers>((event, emit) async {
+      await _blockedUsersSubscription?.cancel();
+      _blockedUsersSubscription = friendsService.watchBlockedUsers().listen(
+        (blocked) {
+          if (!isClosed) add(_BlockedUsersUpdated(blocked));
+        },
+        onError: (e) {
+          if (!isClosed) add(_BlockedUsersUpdated([]));
+        },
+      );
+    });
+
+    on<_BlockedUsersUpdated>((event, emit) {
+      if (state is FriendsLoaded) {
+        emit((state as FriendsLoaded).copyWith(
+          blockedUsers: event.blockedUsers,
+        ));
+      }
+    });
+
+    on<UnblockUserRequested>((event, emit) async {
+      try {
+        await friendsService.unblockUser(event.targetUid);
+      } catch (_) {}
+      add(LoadBlockedUsers());
     });
 
     on<FriendsConnectivityUpdated>((event, emit) {
@@ -342,6 +382,8 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
   Future<void> stopForLogout() async {
     await _friendsSubscription?.cancel();
     _friendsSubscription = null;
+    await _blockedUsersSubscription?.cancel();
+    _blockedUsersSubscription = null;
     _pendingOutgoingTargetUids = <String>{};
     _sendingRequestTargetUids = <String>{};
     _acceptingRequestIds = <String>{};

@@ -113,7 +113,7 @@ class SlidingTray extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (headerActions != null) headerActions!,
+                  ?headerActions,
                 ],
               ),
             ),

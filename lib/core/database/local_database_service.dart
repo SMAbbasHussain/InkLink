@@ -5,9 +5,9 @@ import 'collections/local_board.dart';
 import 'collections/local_blocked_user.dart';
 import 'collections/local_crdt_update.dart';
 import 'collections/local_friend_request.dart';
-import 'collections/local_friend_profile.dart';
 import 'collections/local_invitation.dart';
-import 'collections/local_non_friend_profile.dart';
+import 'collections/local_notification.dart';
+import 'collections/local_profile.dart';
 import 'collections/local_workspace.dart';
 import '../../domain/models/user_model.dart';
 
@@ -28,9 +28,9 @@ class LocalDatabaseService {
           LocalBlockedUserSchema,
           LocalCrdtUpdateSchema,
           LocalFriendRequestSchema,
-          LocalFriendProfileSchema,
           LocalInvitationSchema,
-          LocalNonFriendProfileSchema,
+          LocalProfileSchema,
+          LocalNotificationSchema,
           LocalWorkspaceSchema,
           LocalWorkspaceInviteSchema,
           UserModelSchema,
@@ -52,9 +52,9 @@ class LocalDatabaseService {
       await isar.localCanvasSyncStates.clear();
       await isar.localCrdtUpdates.clear();
       await isar.localFriendRequests.clear();
-      await isar.localFriendProfiles.clear();
+      await isar.localProfiles.clear();
       await isar.localInvitations.clear();
-      await isar.localNonFriendProfiles.clear();
+      await isar.localNotifications.clear();
       await isar.localWorkspaces.clear();
       await isar.localWorkspaceInvites.clear();
       await isar.userModels.clear();

@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/features/friends/view/widgets/friend_request_banner.dart';
 import 'package:inklink/features/friends/view/widgets/friend_presence_avatar.dart';
-import 'package:inklink/features/profile/view/profile_route.dart';
 import '../../../core/constants/app_colors.dart';
 import '../bloc/friends_bloc.dart';
-import '../bloc/friends_event.dart';
-import '../bloc/friends_state.dart';
+import '../../profile/view/profile_route.dart';
 
 class FriendsScreen extends StatefulWidget {
   const FriendsScreen({super.key});

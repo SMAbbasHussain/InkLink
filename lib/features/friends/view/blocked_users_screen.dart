@@ -3,20 +3,31 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../bloc/friends_bloc.dart';
 
-class BlockedUsersScreen extends StatelessWidget {
+class BlockedUsersScreen extends StatefulWidget {
   const BlockedUsersScreen({super.key});
+
+  @override
+  State<BlockedUsersScreen> createState() => _BlockedUsersScreenState();
+}
+
+class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
+  @override
+  void initState() {
+    super.initState();
+    context.read<FriendsBloc>().add(LoadBlockedUsers());
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Blocked Users'), elevation: 0),
-      body: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: context.read<FriendsBloc>().watchBlockedUsers(),
-        builder: (context, snapshot) {
-          final blockedUsers = snapshot.data ?? const <Map<String, dynamic>>[];
+      body: BlocBuilder<FriendsBloc, FriendsState>(
+        builder: (context, state) {
+          final blockedUsers = state is FriendsLoaded
+              ? state.blockedUsers
+              : const <Map<String, dynamic>>[];
 
-          if (snapshot.connectionState == ConnectionState.waiting &&
-              blockedUsers.isEmpty) {
+          if (state is FriendsInitial || state is FriendsLoading) {
             return const Center(child: CircularProgressIndicator());
           }
 
@@ -48,7 +59,7 @@ class BlockedUsersScreen extends StatelessWidget {
           return ListView.separated(
             padding: const EdgeInsets.all(16),
             itemCount: blockedUsers.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            separatorBuilder: (_, _) => const SizedBox(height: 10),
             itemBuilder: (context, index) {
               final user = blockedUsers[index];
               final blockedUid = user['blockedUid']?.toString() ?? '';
@@ -73,25 +84,10 @@ class BlockedUsersScreen extends StatelessWidget {
                   trailing: TextButton(
                     onPressed: blockedUid.isEmpty
                         ? null
-                        : () async {
-                            try {
-                              await context.read<FriendsBloc>().unblockUser(
-                                blockedUid,
-                              );
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('User unblocked'),
-                                  ),
-                                );
-                              }
-                            } catch (e) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(e.toString())),
-                                );
-                              }
-                            }
+                        : () {
+                            context
+                                .read<FriendsBloc>()
+                                .add(UnblockUserRequested(blockedUid));
                           },
                     child: const Text('Unblock'),
                   ),

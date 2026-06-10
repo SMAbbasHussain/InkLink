@@ -1,15 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/features/auth/view/login_screen.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
-import 'package:inklink/features/board_invitations/bloc/board_invitations_bloc.dart';
-import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
-import 'package:inklink/features/friends/bloc/friends_bloc.dart';
-import 'package:inklink/features/notifications/bloc/notifications_bloc.dart';
-import 'package:inklink/features/settings/bloc/settings_bloc.dart';
-import 'package:inklink/features/workspaces/bloc/workspace_bloc.dart';
+import '../../board_invitations/bloc/board_invitations_bloc.dart';
+import '../../dashboard/bloc/dashboard_bloc.dart';
+import '../../friends/bloc/friends_bloc.dart';
+import '../../notifications/bloc/notifications_bloc.dart';
+import '../../workspaces/bloc/workspace_bloc.dart';
+import '../bloc/settings_bloc.dart';
 import '../../theme/bloc/theme_bloc.dart';
 import '../../../core/constants/app_colors.dart';
 
@@ -27,16 +26,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     return MultiBlocListener(
       listeners: [
-        BlocListener<AuthBloc, AuthState>(
-          listener: (context, state) {
-            if (state is Unauthenticated) {
-              Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (context) => const LoginScreen()),
-                (route) => false,
-              );
-            }
-          },
-        ),
         BlocListener<SettingsBloc, SettingsState>(
           listenWhen: (previous, current) =>
               current.message != null && current.message != previous.message,

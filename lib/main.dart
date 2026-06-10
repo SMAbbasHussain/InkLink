@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:inklink/app_view.dart';
 import 'package:inklink/core/theme/app_theme.dart';
 import 'package:inklink/core/services/firestore_service.dart';
@@ -9,6 +8,8 @@ import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/services/cloud_functions_service.dart';
 import 'package:inklink/core/services/local_notification_service.dart';
 import 'package:inklink/core/services/messaging_service.dart';
+import 'package:inklink/core/services/data_prefetch_service.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:inklink/domain/repositories/auth/auth_repository.dart';
 import 'package:inklink/domain/repositories/auth/auth_repository_impl.dart';
 import 'package:inklink/domain/repositories/board/board_repository.dart';
@@ -33,6 +34,7 @@ import 'package:inklink/domain/repositories/workspace/workspace_repository_impl.
 import 'package:inklink/domain/repositories/theme/theme_repository_impl.dart';
 import 'package:inklink/domain/services/auth/auth_session_service.dart';
 import 'package:inklink/domain/services/board/board_service.dart';
+import 'package:inklink/domain/services/canvas/canvas_service.dart';
 import 'package:inklink/domain/services/friends/friends_service.dart';
 import 'package:inklink/domain/services/invitation/invitation_service.dart';
 import 'package:inklink/domain/services/notification/notification_service.dart';
@@ -41,6 +43,7 @@ import 'package:inklink/domain/services/profile/profile_service.dart';
 import 'package:inklink/domain/services/settings/settings_service.dart';
 import 'package:inklink/domain/services/theme/theme_service.dart';
 import 'package:inklink/domain/services/workspace/workspace_service.dart';
+import 'package:inklink/core/utils/notification_preferences.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
@@ -52,13 +55,19 @@ import 'package:inklink/features/notifications/bloc/notifications_bloc.dart';
 import 'package:inklink/features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'package:inklink/firebase_options.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
+  final sharedPreferences = await SharedPreferences.getInstance();
   await _ensureFirebaseInitialized();
+  final rtdb = FirebaseDatabase.instanceFor(
+    app: Firebase.app(),
+    databaseURL: dotenv.env['FIREBASE_RTDB_URL']!,
+  );
   final messagingService = MessagingServiceImpl();
   await LocalNotificationService.initialize(navigatorKey: appNavigatorKey);
   messagingService.onMessage.listen(
@@ -96,15 +105,11 @@ void main() async {
           create: (context) => FirebaseAuthRepository(
             authService: context.read<AuthService>(),
             firestoreService: context.read<FirestoreService>(),
+            database: rtdb,
           ),
         ),
         RepositoryProvider<PresenceRepository>(
-          create: (context) => FirebasePresenceRepository(
-            database: FirebaseDatabase.instanceFor(
-              app: Firebase.app(),
-              databaseURL: dotenv.env['FIREBASE_RTDB_URL'],
-            ),
-          ),
+          create: (context) => FirebasePresenceRepository(database: rtdb),
         ),
         RepositoryProvider<FriendsRepository>(
           create: (context) => FriendsRepositoryImpl(
@@ -129,7 +134,6 @@ void main() async {
         ),
         RepositoryProvider<CanvasSyncRepository>(
           create: (context) => FirestoreCanvasSyncRepository(
-            firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
             localDatabaseService: context.read<LocalDatabaseService>(),
           ),
@@ -137,12 +141,14 @@ void main() async {
         RepositoryProvider<SettingsRepository>(
           create: (context) => SettingsRepositoryImpl(
             localDatabaseService: context.read<LocalDatabaseService>(),
+            sharedPreferences: sharedPreferences,
           ),
         ),
         RepositoryProvider<NotificationRepository>(
           create: (context) => NotificationRepositoryImpl(
             firestoreService: context.read<FirestoreService>(),
             authService: context.read<AuthService>(),
+            localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
         RepositoryProvider<InvitationRepository>(
@@ -206,6 +212,12 @@ void main() async {
             cloudFunctionsService: context.read<CloudFunctionsService>(),
           ),
         ),
+        RepositoryProvider<CanvasService>(
+          create: (context) => CanvasServiceImpl(
+            boardRepository: context.read<BoardRepository>(),
+            syncRepository: context.read<CanvasSyncRepository>(),
+          ),
+        ),
         RepositoryProvider<WorkspaceService>(
           create: (context) => WorkspaceServiceImpl(
             repository: context.read<WorkspaceRepository>(),
@@ -218,6 +230,13 @@ void main() async {
             authService: context.read<AuthService>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
             friendsRepository: context.read<FriendsRepository>(),
+          ),
+        ),
+        RepositoryProvider<DataPrefetchService>(
+          create: (context) => DataPrefetchService(
+            boardRepository: context.read<BoardRepository>(),
+            friendsRepository: context.read<FriendsRepository>(),
+            invitationRepository: context.read<InvitationRepository>(),
           ),
         ),
       ],
@@ -255,6 +274,7 @@ void main() async {
           BlocProvider(
             create: (context) => NotificationsBloc(
               notificationService: context.read<NotificationService>(),
+              notificationPreferences: NotificationPreferences(prefs: sharedPreferences),
             )..add(const NotificationsLoadRequested()),
           ),
           BlocProvider(

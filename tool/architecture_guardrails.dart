@@ -22,6 +22,9 @@ void main() {
     _checkRepositoryLayerBoundaries(relativePath, source, violations);
     _checkRepositoryUsageInViews(relativePath, source, violations);
     _checkScreenLayerBoundaries(relativePath, source, violations);
+    _checkRouteLayerBoundaries(relativePath, source, violations);
+    _checkCrossFeatureImports(relativePath, source, violations);
+    _checkScreenDirectBlocCalls(relativePath, source, violations);
   }
 
   if (violations.isEmpty) {
@@ -228,6 +231,79 @@ void _checkScreenLayerBoundaries(
       );
       break;
     }
+  }
+}
+
+void _checkRouteLayerBoundaries(
+  String path,
+  String source,
+  List<String> violations,
+) {
+  final isRouteFile = path.startsWith('lib/features/') && path.endsWith('_route.dart');
+  if (!isRouteFile) return;
+
+  final forbiddenRepoPattern = RegExp(
+    r"import\s+'package:inklink/domain/repositories/",
+  );
+  if (forbiddenRepoPattern.hasMatch(source)) {
+    violations.add(
+      '$path imports repositories directly. Route files should use domain services, not repositories.',
+    );
+  }
+
+  final forbiddenContextRepoRead = RegExp(
+    r"context\.read<[^>]*Repository[^>]*>",
+  );
+  if (forbiddenContextRepoRead.hasMatch(source)) {
+    violations.add(
+      '$path reads repositories via context. Route files should read domain services, not repositories.',
+    );
+  }
+}
+
+void _checkCrossFeatureImports(
+  String path,
+  String source,
+  List<String> violations,
+) {
+  if (!path.startsWith('lib/features/')) return;
+  final featureMatch = RegExp(r'^lib/features/([^/]+)/').firstMatch(path);
+  if (featureMatch == null) return;
+  final currentFeature = featureMatch.group(1)!;
+
+  final crossFeaturePattern = RegExp(
+    r"import\s+'package:inklink/features/([^/]+)/",
+  );
+  for (final match in crossFeaturePattern.allMatches(source)) {
+    final importedFeature = match.group(1)!;
+    if (importedFeature != currentFeature &&
+        importedFeature != 'auth' &&
+        importedFeature != 'navigation') {
+      violations.add(
+        '$path imports features/$importedFeature/. Cross-feature imports are discouraged. Extract shared logic to core/ or domain/ layers.',
+      );
+    }
+  }
+}
+
+void _checkScreenDirectBlocCalls(
+  String path,
+  String source,
+  List<String> violations,
+) {
+  final isScreenFile =
+      path.startsWith('lib/features/') && path.endsWith('_screen.dart');
+  if (!isScreenFile) return;
+
+  final directBlocCallPattern = RegExp(
+    r"context\.read<[^>]*Bloc[^>]*>\(\)\.(?!add\()",
+  );
+  for (final match in directBlocCallPattern.allMatches(source)) {
+    final token =
+        match.group(0) ?? 'context.read<...Bloc>().<method>()';
+    violations.add(
+      '$path calls BLoC method directly: $token. Screens should only dispatch events via .add().',
+    );
   }
 }
 

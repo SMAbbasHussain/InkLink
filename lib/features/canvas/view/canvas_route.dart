@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../domain/repositories/board/board_repository.dart';
-import '../../../domain/repositories/canvas/canvas_sync_repository.dart';
-import '../../../domain/repositories/settings/settings_repository.dart';
 import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
+import '../../../domain/services/settings/settings_service.dart';
 import '../bloc/canvas_bloc.dart';
 import 'canvas_screen.dart';
 
@@ -45,9 +43,9 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
   }
 
   Future<({String quality, bool compressionEnabled})> _loadSettings() async {
-    final settingsRepository = context.read<SettingsRepository>();
-    final quality = await settingsRepository.getBoardPreviewQuality();
-    final compressionEnabled = await settingsRepository
+    final settingsService = context.read<SettingsService>();
+    final quality = await settingsService.getBoardPreviewQuality();
+    final compressionEnabled = await settingsService
         .getBoardPreviewCompressionEnabled();
     return (quality: quality, compressionEnabled: compressionEnabled);
   }
@@ -60,10 +58,7 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
         final data = snapshot.data;
         return BlocProvider(
           create: (_) => CanvasBloc(
-            canvasService: CanvasServiceImpl(
-              boardRepository: context.read<BoardRepository>(),
-              syncRepository: context.read<CanvasSyncRepository>(),
-            ),
+            canvasService: context.read<CanvasService>(),
             boardService: context.read<BoardService>(),
             boardId: widget.boardId,
           )..add(CanvasInitializeCrdt(widget.boardId)),

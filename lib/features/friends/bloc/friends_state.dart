@@ -16,6 +16,7 @@ class FriendsLoaded extends FriendsState {
   final Set<String> decliningRequestIds;
   final Set<String> cancelingRequestIds;
   final bool isOffline;
+  final List<Map<String, dynamic>> blockedUsers;
 
   FriendsLoaded({
     required this.friends,
@@ -26,6 +27,7 @@ class FriendsLoaded extends FriendsState {
     this.decliningRequestIds = const <String>{},
     this.cancelingRequestIds = const <String>{},
     this.isOffline = false,
+    this.blockedUsers = const [],
   });
 
   FriendsLoaded copyWith({
@@ -37,6 +39,7 @@ class FriendsLoaded extends FriendsState {
     Set<String>? decliningRequestIds,
     Set<String>? cancelingRequestIds,
     bool? isOffline,
+    List<Map<String, dynamic>>? blockedUsers,
   }) {
     return FriendsLoaded(
       friends: friends ?? this.friends,
@@ -48,6 +51,7 @@ class FriendsLoaded extends FriendsState {
       decliningRequestIds: decliningRequestIds ?? this.decliningRequestIds,
       cancelingRequestIds: cancelingRequestIds ?? this.cancelingRequestIds,
       isOffline: isOffline ?? this.isOffline,
+      blockedUsers: blockedUsers ?? this.blockedUsers,
     );
   }
 }

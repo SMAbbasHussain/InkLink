@@ -6,8 +6,6 @@ import 'package:inklink/features/profile/view/widgets/edit_profile_sheet.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../friends/bloc/friends_bloc.dart';
-import '../../friends/bloc/friends_event.dart';
-import '../../friends/bloc/friends_state.dart';
 import '../../friends/view/blocked_users_screen.dart';
 import '../../friends/view/friend_requests_screen.dart';
 

@@ -172,6 +172,10 @@ module.exports = async (request) => {
 
     const results = [];
 
+    // Phase 2A: Use batch writes for efficient bulk operations
+    const batch = firestore.batch();
+    const notificationPromises = [];
+
     for (const recipientUid of uniqueInvitees) {
       validateUID(recipientUid, 'recipientUid');
 
@@ -179,7 +183,9 @@ module.exports = async (request) => {
         .collection(FirestorePaths.BOARD_INVITES)
         .doc(`${boardId}_${recipientUid}`);
 
-      await inviteRef.set(
+      // Phase 1A: Add denormalized snapshot fields
+      batch.set(
+        inviteRef,
         {
           boardId,
           boardTitle,
@@ -187,6 +193,8 @@ module.exports = async (request) => {
           [FirestorePaths.TO_UID]: recipientUid,
           [FirestorePaths.SENDER_NAME]: senderData.displayName || 'InkLink User',
           [FirestorePaths.SENDER_PIC]: senderData.photoURL || null,
+          [FirestorePaths.SENDER_DISPLAY_NAME_SNAPSHOT]: senderData.displayName || 'InkLink User',
+          [FirestorePaths.SENDER_PHOTO_URL_SNAPSHOT]: senderData.photoURL || null,
           [FirestorePaths.STATUS]: 'pending',
           [FirestorePaths.TARGET_ROLE]: resolvedTargetRole,
           [FirestorePaths.INVITER_ROLE_SNAPSHOT]: senderRole,
@@ -197,27 +205,38 @@ module.exports = async (request) => {
         { merge: true },
       );
 
-      const notificationResult = await sendUserNotification({
-        recipientUid,
-        title: `${senderData.displayName || 'Someone'} invited you to a board`,
-        body: `Invitation to join \"${boardTitle}\"`,
-        type: 'board_invite',
-        action: 'open_invites',
-        targetId: inviteRef.id,
-        senderUid,
-        senderName: senderData.displayName || 'InkLink User',
-        senderPhotoUrl: senderData.photoURL || null,
-        groupingKey: `board_invite:${senderUid}:${recipientUid}`,
-        extraData: {
-          boardId,
-          boardTitle,
-          inviteId: inviteRef.id,
-          targetRole: resolvedTargetRole,
-        },
-      });
-
-      results.push({ recipientUid, ...notificationResult });
+      // Collect notification promises to execute after batch commit
+      notificationPromises.push(
+        sendUserNotification({
+          recipientUid,
+          title: `${senderData.displayName || 'Someone'} invited you to a board`,
+          body: `Invitation to join \"${boardTitle}\"`,
+          type: 'board_invite',
+          action: 'open_invites',
+          targetId: inviteRef.id,
+          senderUid,
+          senderName: senderData.displayName || 'InkLink User',
+          senderPhotoUrl: senderData.photoURL || null,
+          groupingKey: `board_invite:${senderUid}:${recipientUid}`,
+          extraData: {
+            boardId,
+            boardTitle,
+            inviteId: inviteRef.id,
+            targetRole: resolvedTargetRole,
+          },
+        }).then((notificationResult) => ({
+          recipientUid,
+          ...notificationResult,
+        })),
+      );
     }
+
+    // Commit all invites in single batch write
+    await batch.commit();
+
+    // Await all notifications after batch commit
+    const notificationResults = await Promise.all(notificationPromises);
+    results.push(...notificationResults);
 
     return {
       success: true,

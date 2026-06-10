@@ -29,6 +29,7 @@ abstract class CanvasService {
     required String elementId,
     required Uint8List payload,
   });
+  void setBoardSingleUserStatus(bool isSingleUser);
   Future<void> markCrdtUpdateDeleted(String updateId, bool isDeleted);
   Future<LocalCrdtUpdate?> getElementCrdtUpdate({
     required String boardId,
@@ -57,6 +58,11 @@ class CanvasServiceImpl implements CanvasService {
 
   @override
   String? get currentClientId => _syncRepository.currentUserId;
+
+  @override
+  void setBoardSingleUserStatus(bool isSingleUser) {
+    _syncRepository.setBoardSingleUserStatus(isSingleUser);
+  }
 
   @override
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes) {
@@ -108,9 +114,13 @@ class CanvasServiceImpl implements CanvasService {
   }
 
   @override
-  Future<void> stopCrdtRemoteSync(String boardId) {
+  Future<void> stopCrdtRemoteSync(String boardId) async {
     final sub = _remoteSubs.remove(boardId);
     return () async {
+      try {
+        // Persist the cursor before tearing down so the next open can resume.
+        await _syncRepository.persistCursorForBoard(boardId);
+      } catch (_) {}
       try {
         await sub?.cancel();
       } finally {
@@ -218,10 +228,13 @@ class CanvasServiceImpl implements CanvasService {
     final latestLocalUpdateAt = useFirestoreFirst
         ? null
         : await _syncRepository.getLatestLocalCrdtUpdateAt(boardId);
+    final lastSeenCursor = await _syncRepository.getLastSeenCursor(boardId);
+
     final remoteUpdates = await _syncRepository.fetchRemoteCrdtUpdates(
       boardId,
       since: latestLocalUpdateAt,
-      preferSocket: !useFirestoreFirst,
+      lastSeenCursor: lastSeenCursor,
+      preferSocket: true,
     );
     if (remoteUpdates.isNotEmpty) {
       for (final update in remoteUpdates) {
@@ -239,6 +252,8 @@ class CanvasServiceImpl implements CanvasService {
             for (final update in updates) {
               await _syncRepository.saveLocalCrdtUpdate(update);
             }
+            // Persist cursor so the next open resumes from the latest update.
+            await _syncRepository.persistCursorForBoard(boardId);
             await _syncPendingLocalUpdates(boardId, userId);
           },
           onError: (error, stackTrace) {

@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
+const { addBoardMember } = require('../utils/redis');
 
 module.exports = async (request) => {
   const uid = request.auth?.uid;
@@ -18,7 +19,7 @@ module.exports = async (request) => {
 
     const firestore = admin.firestore();
 
-    return await firestore.runTransaction(async (transaction) => {
+    const result = await firestore.runTransaction(async (transaction) => {
       const inviteRef = firestore.collection(FirestorePaths.WORKSPACE_INVITES).doc(inviteId.trim());
       const inviteDoc = await transaction.get(inviteRef);
 
@@ -149,28 +150,48 @@ module.exports = async (request) => {
 
         transaction.update(target.boardRef, {
           members: admin.firestore.FieldValue.arrayUnion(uid),
+          [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(1),
           [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
         });
-
+        const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
         transaction.set(
-          firestore.collection(FirestorePaths.USERS).doc(uid),
-          boardOwnerId === uid
-            ? {
-                [FirestorePaths.OWNED_BOARDS]: admin.firestore.FieldValue.arrayUnion(target.boardId),
-                [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-              }
-            : {
-                [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayUnion(target.boardId),
-                [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-              },
+          userRef,
+          {
+            [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(1),
+            [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+
+        // Also add per-user board index doc for new schema
+        transaction.set(
+          userRef.collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION).doc(target.boardId),
+          {
+            boardId: target.boardId,
+            relation: boardOwnerId === uid ? 'owned' : 'joined',
+            addedAt: admin.firestore.FieldValue.serverTimestamp(),
+            [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+          },
           { merge: true },
         );
       }
 
       transaction.delete(inviteRef);
 
-      return { success: true, workspaceId };
+      return {
+        success: true,
+        workspaceId,
+        boardIds: boardMembershipTargets.map((t) => t.boardId),
+      };
     });
+
+    if (result.success && result.boardIds) {
+      for (const boardId of result.boardIds) {
+        await addBoardMember(boardId, uid);
+      }
+    }
+
+    return result;
   } catch (error) {
     if (error instanceof HttpsError) throw error;
     logger.error('acceptWorkspaceInvite failed', error);

@@ -5,8 +5,7 @@ import 'package:isar_community/isar.dart';
 import '../../../core/services/firestore_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/database/local_database_service.dart';
-import '../../../core/database/collections/local_friend_profile.dart';
-import '../../../core/database/collections/local_non_friend_profile.dart';
+import '../../../core/database/collections/local_profile.dart';
 import '../../models/user_model.dart';
 import 'profile_repository.dart';
 
@@ -41,9 +40,22 @@ class ProfileRepositoryImpl implements ProfileRepository {
   Future<Map<String, dynamic>?> getUserById(String uid) async {
     final cached = await _getCachedUserMap(uid);
     if (cached != null) {
-      // Return cached data immediately for fast page load, but revalidate
-      // in background to catch profile edits made on other devices
-      _revalidateUserFromFirestore(uid, cached.bucket);
+      // Return cached data immediately for fast page load.
+      // Revalidate in background only if cached value is stale.
+      if (cached.bucket != _ProfileBucket.self) {
+        final cachedAtRaw = cached.data['cachedAt'];
+        if (cachedAtRaw is DateTime) {
+          final age = DateTime.now().difference(cachedAtRaw);
+          // TTL: 5 minutes
+          if (age > const Duration(minutes: 5)) {
+            _revalidateUserFromFirestore(uid, cached.bucket);
+          }
+        } else {
+          // If no cachedAt, conservatively revalidate
+          _revalidateUserFromFirestore(uid, cached.bucket);
+        }
+      }
+
       return cached.data;
     }
 
@@ -123,34 +135,30 @@ class ProfileRepositoryImpl implements ProfileRepository {
     final isar = await _localDatabaseService.database;
     final timestamp = DateTime.now();
     final existingUserModel = await isar.userModels.getByUid(uid);
-    final existingFriendProfile = await isar.localFriendProfiles.getByUid(uid);
-    final existingNonFriendProfile = await isar.localNonFriendProfiles.getByUid(
-      uid,
-    );
+    final existingProfile = await isar.localProfiles.getByUid(uid);
 
     await isar.writeTxn(() async {
       await _upsertUserModel(isar, uid, data, existingModel: existingUserModel);
 
       if (isSelf) {
-        await isar.localFriendProfiles.deleteByUid(uid);
-        await isar.localNonFriendProfiles.deleteByUid(uid);
+        await isar.localProfiles.deleteByUid(uid);
         return;
       }
 
       if (isFriend) {
         final model =
-            existingFriendProfile ??
-            LocalFriendProfile(uid: uid, displayName: 'User');
+            existingProfile ??
+            LocalProfile(uid: uid, displayName: 'User', friendshipStatus: FriendshipStatus.friend);
         _applyProfileFields(model, uid, data, source, timestamp);
-        await isar.localFriendProfiles.putByUid(model);
-        await isar.localNonFriendProfiles.deleteByUid(uid);
+        model.friendshipStatus = FriendshipStatus.friend;
+        await isar.localProfiles.putByUid(model);
       } else {
         final model =
-            existingNonFriendProfile ??
-            LocalNonFriendProfile(uid: uid, displayName: 'User');
+            existingProfile ??
+            LocalProfile(uid: uid, displayName: 'User', friendshipStatus: FriendshipStatus.nonFriend);
         _applyProfileFields(model, uid, data, source, timestamp);
-        await isar.localNonFriendProfiles.putByUid(model);
-        await isar.localFriendProfiles.deleteByUid(uid);
+        model.friendshipStatus = FriendshipStatus.nonFriend;
+        await isar.localProfiles.putByUid(model);
       }
     });
   }
@@ -165,29 +173,17 @@ class ProfileRepositoryImpl implements ProfileRepository {
   Future<_CachedProfileHit?> _getCachedUserMap(String uid) async {
     final isar = await _localDatabaseService.database;
 
-    final results = await Future.wait([
-      isar.localFriendProfiles.getByUid(uid),
-      isar.localNonFriendProfiles.getByUid(uid),
-      isar.userModels.getByUid(uid),
-    ]);
-
-    final friendProfile = results[0] as LocalFriendProfile?;
-    if (friendProfile != null) {
+    final profile = await isar.localProfiles.getByUid(uid);
+    if (profile != null) {
       return _CachedProfileHit(
-        _friendProfileToMap(friendProfile),
-        _ProfileBucket.friend,
+        _profileToMap(profile),
+        profile.friendshipStatus == FriendshipStatus.friend
+            ? _ProfileBucket.friend
+            : _ProfileBucket.nonFriend,
       );
     }
 
-    final nonFriendProfile = results[1] as LocalNonFriendProfile?;
-    if (nonFriendProfile != null) {
-      return _CachedProfileHit(
-        _nonFriendProfileToMap(nonFriendProfile),
-        _ProfileBucket.nonFriend,
-      );
-    }
-
-    final user = results[2] as UserModel?;
+    final user = await isar.userModels.getByUid(uid);
     if (user == null) return null;
 
     return _CachedProfileHit(_userModelToMap(user), _ProfileBucket.self);
@@ -240,8 +236,6 @@ class ProfileRepositoryImpl implements ProfileRepository {
     model.photoURL = (data['photoURL'] as String?) ?? model.photoURL;
     model.friendCount = _toInt(data['friendCount']);
     model.boardCount = _toInt(data['boardCount']);
-    model.isOnline = data['isOnline'] as bool? ?? model.isOnline;
-    model.lastActive = _toDateTime(data['lastActive']) ?? model.lastActive;
 
     final createdAtRaw = data['createdAt'];
     if (createdAtRaw != null) {
@@ -266,26 +260,10 @@ class ProfileRepositoryImpl implements ProfileRepository {
       'boardCount': user.boardCount,
       'createdAt': user.createdAt,
       'updatedAt': user.updatedAt,
-      'isOnline': user.isOnline,
-      'lastActive': user.lastActive,
     };
   }
 
-  Map<String, dynamic> _friendProfileToMap(LocalFriendProfile profile) {
-    return {
-      'displayName': profile.displayName,
-      'bio': profile.bio,
-      'email': profile.email,
-      'photoURL': profile.photoURL,
-      'friendCount': profile.friendCount,
-      'boardCount': profile.boardCount,
-      'cachedAt': profile.cachedAt,
-      'lastSeenAt': profile.lastSeenAt,
-      'lastSource': profile.lastSource,
-    };
-  }
-
-  Map<String, dynamic> _nonFriendProfileToMap(LocalNonFriendProfile profile) {
+  Map<String, dynamic> _profileToMap(LocalProfile profile) {
     return {
       'displayName': profile.displayName,
       'bio': profile.bio,
@@ -350,8 +328,8 @@ class ProfileRepositoryImpl implements ProfileRepository {
 
   Future<bool> _isFriendInCachedList(String targetUid) async {
     final isar = await _localDatabaseService.database;
-    final profile = await isar.localFriendProfiles.getByUid(targetUid);
-    return profile != null;
+    final profile = await isar.localProfiles.getByUid(targetUid);
+    return profile?.friendshipStatus == FriendshipStatus.friend;
   }
 
   int _toInt(dynamic value) {

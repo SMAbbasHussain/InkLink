@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
+const { removeBoardMember } = require('../utils/redis');
 
 module.exports = async (request) => {
   const uid = request.auth?.uid;
@@ -32,7 +33,7 @@ module.exports = async (request) => {
       throw new HttpsError('failed-precondition', 'Workspace owner cannot leave. Delete workspace or transfer ownership first.');
     }
 
-    return await firestore.runTransaction(async (transaction) => {
+    const result = await firestore.runTransaction(async (transaction) => {
       // Get all workspace boards
       const boardsSnapshot = await workspaceRef
         .collection(FirestorePaths.WORKSPACE_BOARDS_SUBCOLLECTION)
@@ -104,13 +105,15 @@ module.exports = async (request) => {
         transaction.set(
           firestore.collection(FirestorePaths.USERS).doc(uid),
           {
-            [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove(
-              boardId,
-            ),
-            [FirestorePaths.OWNED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId),
             [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },
+        );
+        // Also remove per-user board index doc
+        transaction.delete(
+          firestore.collection(FirestorePaths.USERS).doc(uid)
+            .collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION)
+            .doc(boardId),
         );
       });
 
@@ -123,6 +126,18 @@ module.exports = async (request) => {
         },
       };
     });
+
+    if (result.success) {
+      const allRemoved = [
+        ...boardsToRemoveFrom,
+        ...importedBoardsToRemoveFrom,
+      ];
+      for (const boardId of allRemoved) {
+        await removeBoardMember(boardId, uid);
+      }
+    }
+
+    return result;
   } catch (error) {
     if (error instanceof HttpsError) throw error;
     logger.error('leaveWorkspace failed', error);

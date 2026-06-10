@@ -1,3 +1,5 @@
+import 'package:firebase_auth/firebase_auth.dart';
+
 abstract class AuthEvent {}
 
 class LoginRequested extends AuthEvent {
@@ -18,3 +20,10 @@ class AuthCheckRequested extends AuthEvent {}
 class GoogleSignInRequested extends AuthEvent {}
 
 class LogoutRequested extends AuthEvent {}
+
+class AuthenticatedUserAvailable extends AuthEvent {
+  final User user;
+  AuthenticatedUserAvailable(this.user);
+}
+
+class SignedOut extends AuthEvent {}

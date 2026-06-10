@@ -43,46 +43,50 @@ module.exports = async (request) => {
       throw new HttpsError('unauthenticated', 'User must be logged in.');
     }
 
-    if (typeof boardId !== 'string' || boardId.trim().isEmpty) {
+    if (typeof boardId !== 'string' || boardId.trim().length === 0) {
       throw new HttpsError('invalid-argument', 'boardId is required.');
     }
 
     const firestore = admin.firestore();
     const boardRef = firestore.collection(FirestorePaths.BOARDS).doc(boardId.trim());
-    const boardDoc = await boardRef.get();
 
-    if (!boardDoc.exists) {
-      throw new HttpsError('not-found', 'Board not found.');
-    }
+    await firestore.runTransaction(async (transaction) => {
+      const boardDoc = await transaction.get(boardRef);
 
-    const boardData = boardDoc.data() || {};
-    if (boardData.ownerId !== uid) {
-      throw new HttpsError('permission-denied', 'Only the board owner can update board settings.');
-    }
+      if (!boardDoc.exists) {
+        throw new HttpsError('not-found', 'Board not found.');
+      }
 
-    const visibility = normalizeVisibility(request.data?.visibility);
-    const privateJoinPolicy = normalizePrivateJoinPolicy(request.data?.privateJoinPolicy);
-    const whoCanInvite = normalizeWhoCanInvite(request.data?.whoCanInvite);
-    const defaultLinkJoinRole = normalizeDefaultLinkJoinRole(
-      request.data?.defaultLinkJoinRole,
-    );
+      const boardData = boardDoc.data() || {};
+      if (boardData.ownerId !== uid) {
+        throw new HttpsError('permission-denied', 'Only the board owner can update board settings.');
+      }
 
-    const joinViaCodeEnabled =
-      visibility === VISIBILITY_PUBLIC || privateJoinPolicy === POLICY_LINK_CAN_JOIN;
+      const visibility = normalizeVisibility(request.data?.visibility);
+      const privateJoinPolicy = normalizePrivateJoinPolicy(request.data?.privateJoinPolicy);
+      const whoCanInvite = normalizeWhoCanInvite(request.data?.whoCanInvite);
+      const defaultLinkJoinRole = normalizeDefaultLinkJoinRole(
+        request.data?.defaultLinkJoinRole,
+      );
 
-    await boardRef.set(
-      {
-        [FirestorePaths.VISIBILITY]: visibility,
-        [FirestorePaths.PRIVATE_JOIN_POLICY]: privateJoinPolicy,
-        [FirestorePaths.JOIN_VIA_CODE_ENABLED]: joinViaCodeEnabled,
-        [FirestorePaths.INVITE_POLICY]: {
-          [FirestorePaths.WHO_CAN_INVITE]: whoCanInvite,
-          [FirestorePaths.DEFAULT_LINK_JOIN_ROLE]: defaultLinkJoinRole,
+      const joinViaCodeEnabled =
+        visibility === VISIBILITY_PUBLIC || privateJoinPolicy === POLICY_LINK_CAN_JOIN;
+
+      transaction.set(
+        boardRef,
+        {
+          [FirestorePaths.VISIBILITY]: visibility,
+          [FirestorePaths.PRIVATE_JOIN_POLICY]: privateJoinPolicy,
+          [FirestorePaths.JOIN_VIA_CODE_ENABLED]: joinViaCodeEnabled,
+          [FirestorePaths.INVITE_POLICY]: {
+            [FirestorePaths.WHO_CAN_INVITE]: whoCanInvite,
+            [FirestorePaths.DEFAULT_LINK_JOIN_ROLE]: defaultLinkJoinRole,
+          },
+          [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
         },
-        [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+        { merge: true },
+      );
+    });
 
     return {
       success: true,

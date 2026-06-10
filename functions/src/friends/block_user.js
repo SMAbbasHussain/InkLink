@@ -85,13 +85,11 @@ module.exports = async (request) => {
         if (blockerUserDoc.exists) {
           transaction.update(blockerUserRef, {
             [FirestorePaths.FRIEND_COUNT]: Math.max(0, blockerCount - 1),
-            [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
           });
         }
         if (targetUserDoc.exists) {
           transaction.update(targetUserRef, {
             [FirestorePaths.FRIEND_COUNT]: Math.max(0, targetCount - 1),
-            [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
           });
         }
       }

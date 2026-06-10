@@ -19,4 +19,11 @@ abstract class AuthRepository {
     required List<String> searchKeywords,
     required bool isNewUser,
   });
+  /// Re-enable Firestore & RTDB so that sign-up / sign-in profile upserts
+  /// succeed even when a previous session called [signOut] which disables the
+  /// network.
+  Future<void> enableNetwork();
+  /// Disable Firestore & RTDB to stop listeners and prevent permission-denied
+  /// errors after the auth token is invalidated during sign-out.
+  Future<void> disableNetwork();
 }

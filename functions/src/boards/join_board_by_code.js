@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
+const { addBoardMember } = require('../utils/redis');
 
 const VISIBILITY_PUBLIC = 'public';
 const VISIBILITY_PRIVATE = 'private';
@@ -40,7 +41,7 @@ module.exports = async (request) => {
     const boardRef = firestore.collection(FirestorePaths.BOARDS).doc(joinCode);
     const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
 
-    return await firestore.runTransaction(async (transaction) => {
+    const result = await firestore.runTransaction(async (transaction) => {
           const boardDoc = await transaction.get(boardRef);
           if (!boardDoc.exists) {
             throw new HttpsError('not-found', 'Board not found. Check the join code and try again.');
@@ -65,21 +66,17 @@ module.exports = async (request) => {
           const activeMember = memberDoc.exists && memberData.status === 'active';
 
           if (ownerId === uid || activeMember || members.includes(uid)) {
-            const userBoardUpdate = ownerId === uid
-              ? {
-                  joinedBoards: admin.firestore.FieldValue.arrayRemove(joinCode),
-                  ownedBoards: admin.firestore.FieldValue.arrayUnion(joinCode),
-                  lastActive: admin.firestore.FieldValue.serverTimestamp(),
-                }
-              : {
-                  joinedBoards: admin.firestore.FieldValue.arrayUnion(joinCode),
-                  ownedBoards: admin.firestore.FieldValue.arrayRemove(joinCode),
-                  lastActive: admin.firestore.FieldValue.serverTimestamp(),
-                };
-    
+            // Already a member; just ensure per-user board index doc exists
+
+            // Also ensure per-user board index doc exists/updated
             transaction.set(
-              userRef,
-              userBoardUpdate,
+              userRef.collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION).doc(joinCode),
+              {
+                boardId: joinCode,
+                relation: ownerId === uid ? 'owned' : 'joined',
+                addedAt: admin.firestore.FieldValue.serverTimestamp(),
+                [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+              },
               { merge: true },
             );
 
@@ -117,6 +114,7 @@ module.exports = async (request) => {
     
           transaction.update(boardRef, {
             members: admin.firestore.FieldValue.arrayUnion(uid),
+            [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(1),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
 
@@ -131,9 +129,19 @@ module.exports = async (request) => {
           transaction.set(
             userRef,
             {
-              joinedBoards: admin.firestore.FieldValue.arrayUnion(joinCode),
-              ownedBoards: admin.firestore.FieldValue.arrayRemove(joinCode),
-              lastActive: admin.firestore.FieldValue.serverTimestamp(),
+              [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(1),
+            },
+            { merge: true },
+          );
+
+          // Also add per-user board index doc for new schema
+          transaction.set(
+            userRef.collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION).doc(joinCode),
+            {
+              boardId: joinCode,
+              relation: 'joined',
+              addedAt: admin.firestore.FieldValue.serverTimestamp(),
+              [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
             },
             { merge: true },
           );
@@ -144,6 +152,12 @@ module.exports = async (request) => {
             role: resolvedRole,
           };
         });
+
+    if (result.success && !result.alreadyMember) {
+      await addBoardMember(joinCode, uid);
+    }
+
+    return result;
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error;

@@ -8,11 +8,13 @@ class BrushTray extends StatefulWidget {
   final double brushOpacity;
   final String brushType;
   final bool eraserEraseEverything;
+  final bool smoothDoodlesEnabled;
   final ValueChanged<double> onStrokeWidthChanged;
   final ValueChanged<Color> onColorSelected;
   final ValueChanged<double> onOpacityChanged;
   final ValueChanged<String> onBrushTypeChanged;
   final ValueChanged<bool> onEraserEraseEverythingChanged;
+  final ValueChanged<bool>? onSmoothDoodlesChanged;
 
   const BrushTray({
     super.key,
@@ -22,11 +24,13 @@ class BrushTray extends StatefulWidget {
     required this.brushOpacity,
     required this.brushType,
     required this.eraserEraseEverything,
+    this.smoothDoodlesEnabled = false,
     required this.onStrokeWidthChanged,
     required this.onColorSelected,
     required this.onOpacityChanged,
     required this.onBrushTypeChanged,
     required this.onEraserEraseEverythingChanged,
+    this.onSmoothDoodlesChanged,
   });
 
   @override
@@ -130,7 +134,7 @@ class _BrushTrayState extends State<BrushTray> {
       isOpen: widget.isOpen,
       direction: TrayDirection.bottom,
       title: 'Brush & Color',
-      height: 420,
+      height: 460,
       child: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -157,6 +161,11 @@ class _BrushTrayState extends State<BrushTray> {
               /// Brush Type Selector
               _buildBrushTypeSelector(brushTypes),
               const SizedBox(height: 16),
+
+              if (widget.brushType != 'eraser') ...[
+                _buildSmoothToggle(),
+                const SizedBox(height: 16),
+              ],
 
               /// Color Palette (Horizontal Scroll)
               _buildColorPalette(colors),
@@ -343,6 +352,30 @@ class _BrushTrayState extends State<BrushTray> {
           subtitle: const Text(
             'Off = erase brush strokes only',
             style: TextStyle(fontSize: 11),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSmoothToggle() {
+    return Row(
+      children: [
+        const Icon(Icons.auto_fix_high, size: 18, color: Colors.grey),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Smooth Doodles',
+                style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+              ),
+              Switch.adaptive(
+                value: widget.smoothDoodlesEnabled,
+                onChanged: widget.onSmoothDoodlesChanged,
+              ),
+            ],
           ),
         ),
       ],

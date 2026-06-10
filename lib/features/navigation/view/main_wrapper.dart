@@ -2,11 +2,9 @@ import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:inklink/domain/services/invitation/invitation_service.dart';
 import 'package:inklink/domain/services/presence/presence_service.dart';
 import 'package:inklink/domain/services/settings/settings_service.dart';
 import '../../../core/constants/app_colors.dart';
-import '../../board_invitations/bloc/board_invitations_bloc.dart';
 import '../../friends/view/friends_screen.dart';
 import '../../settings/bloc/settings_bloc.dart';
 import '../../settings/view/settings_screen.dart';
@@ -84,12 +82,7 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final List<Widget> screens = [
-      BlocProvider(
-        create: (context) => BoardInvitationsBloc(
-          invitationService: context.read<InvitationService>(),
-        )..add(const BoardInvitationsLoadRequested()),
-        child: const HomeScreen(),
-      ),
+      const HomeScreen(),
       const FriendsScreen(),
       const WorkspacesScreen(),
       BlocProvider(

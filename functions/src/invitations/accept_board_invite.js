@@ -3,6 +3,7 @@ const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
 const { updateUserNotificationStatus } = require('../utils/notification_sender');
+const { addBoardMember } = require('../utils/redis');
 
 const ROLE_OWNER = 'owner';
 const ROLE_EDITOR = 'editor';
@@ -90,12 +91,24 @@ module.exports = async (request) => {
 
       transaction.update(boardRef, {
         members: admin.firestore.FieldValue.arrayUnion(uid),
+        [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(1),
         [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
       });
       transaction.set(userRef, {
-        [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayUnion(boardId),
-        [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
+        [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(1),
       }, { merge: true });
+
+      // Also add per-user board index doc
+      transaction.set(
+        userRef.collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION).doc(boardId),
+        {
+          boardId,
+          relation: 'joined',
+          addedAt: admin.firestore.FieldValue.serverTimestamp(),
+          [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
 
       // Keep board_invites as a pending-only collection.
       // Once accepted, remove the invite document.
@@ -117,6 +130,10 @@ module.exports = async (request) => {
       title: 'Board invite accepted',
       body: 'You accepted this board invite.',
     });
+
+    if (result.success) {
+      await addBoardMember(result.boardId, uid);
+    }
 
     return result;
 

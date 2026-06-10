@@ -23,13 +23,10 @@ class FirestorePaths {
   static const String displayName = 'displayName';
   static const String photoURL = 'photoURL';
   static const String bio = 'bio';
-  static const String isOnline = 'isOnline';
   static const String createdAt = 'createdAt';
-  static const String lastActive = 'lastActive';
   static const String searchKeywords = 'searchKeywords';
-  static const String ownedBoards = 'ownedBoards';
-  static const String joinedBoards = 'joinedBoards';
   static const String boardCount = 'boardCount';
+  static const String friendCount = 'friendCount';
   static const String workspaceIds = 'workspaceIds';
 
   // Friend request fields
@@ -39,6 +36,13 @@ class FirestorePaths {
   static const String senderPic = 'senderPic';
   static const String timestamp = 'timestamp';
   static const String status = 'status';
+
+  // Denormalized snapshot fields (for optimization)
+  static const String senderDisplayNameSnapshot = 'senderDisplayNameSnapshot';
+  static const String senderPhotoURLSnapshot = 'senderPhotoURLSnapshot';
+  static const String recipientDisplayNameSnapshot =
+      'recipientDisplayNameSnapshot';
+  static const String recipientPhotoURLSnapshot = 'recipientPhotoURLSnapshot';
 
   // Board fields
   static const String visibility = 'visibility';
@@ -54,12 +58,12 @@ class FirestorePaths {
   static const String whoCanInvite = 'whoCanInvite';
   static const String defaultLinkJoinRole = 'defaultLinkJoinRole';
   static const String targetRole = 'targetRole';
+  static const String memberCount = 'memberCount';
 
   // Workspace fields
   static const String workspaceId = 'workspaceId';
   static const String name = 'name';
   static const String description = 'description';
-  static const String memberCount = 'memberCount';
 
   // Workspace board fields
   static const String boardSource =

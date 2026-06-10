@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
+const { deleteBoardMembers } = require('../utils/redis');
 
 function toNonNegativeInt(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -52,9 +53,6 @@ module.exports = async (request) => {
 
       transaction.set(ownerRef, {
         [FirestorePaths.BOARD_COUNT]: Math.max(0, ownerCount - 1),
-        [FirestorePaths.OWNED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
-        [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
-        [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
 
       for (const memberUid of members) {
@@ -62,14 +60,21 @@ module.exports = async (request) => {
           continue;
         }
 
-        transaction.set(
-          firestore.collection(FirestorePaths.USERS).doc(memberUid.trim()),
-          {
-            [FirestorePaths.JOINED_BOARDS]: admin.firestore.FieldValue.arrayRemove(boardId.trim()),
-            [FirestorePaths.LAST_ACTIVE]: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true },
-        );
+        if (memberUid.trim() !== uid) {
+          transaction.set(
+            firestore.collection(FirestorePaths.USERS).doc(memberUid.trim()),
+            {
+              [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(-1),
+            },
+            { merge: true },
+          );
+          // Also remove user's board index doc
+          transaction.delete(
+            firestore.collection(FirestorePaths.USERS).doc(memberUid.trim())
+              .collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION)
+              .doc(boardId.trim()),
+          );
+        }
       }
 
       return {
@@ -78,6 +83,10 @@ module.exports = async (request) => {
         removedMembers: members.length,
       };
     });
+
+    if (result.success) {
+      await deleteBoardMembers(boardId.trim());
+    }
 
     logger.info('Board deleted successfully', {
       uid,

@@ -1,7 +1,11 @@
+import 'dart:async';
+import 'dart:developer' as developer;
+
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/messaging_service.dart';
+import '../../../core/services/stream_registry.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/utils/helpers.dart';
 import '../../repositories/auth/auth_repository.dart';
@@ -15,6 +19,7 @@ abstract class AuthSessionService {
   Future<User?> signInWithGoogle();
   Future<void> onAuthenticated(User user);
   Future<void> signOut();
+  User? get currentUser;
 }
 
 class AuthSessionServiceImpl implements AuthSessionService {
@@ -26,6 +31,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
   final CanvasSyncRepository _canvasSyncRepository;
   bool _tokenRefreshBound = false;
   String? _lastSyncedToken;
+  StreamSubscription<String>? _tokenRefreshSub;
 
   AuthSessionServiceImpl({
     required AuthRepository authRepository,
@@ -45,12 +51,16 @@ class AuthSessionServiceImpl implements AuthSessionService {
   Stream<User?> get user => _authRepository.user;
 
   @override
+  User? get currentUser => _authService.getCurrentUser();
+
+  @override
   Future<User?> signIn(String email, String password) {
     return _authRepository.signIn(email, password);
   }
 
   @override
   Future<User?> signUp(String name, String email, String password) async {
+    await _authRepository.enableNetwork();
     final user = await _authRepository.signUp(name, email, password);
     if (user == null) return null;
 
@@ -61,6 +71,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
 
   @override
   Future<User?> signInWithGoogle() async {
+    await _authRepository.enableNetwork();
     final user = await _authRepository.signInWithGoogle();
     if (user == null) return null;
 
@@ -70,12 +81,19 @@ class AuthSessionServiceImpl implements AuthSessionService {
 
   @override
   Future<void> onAuthenticated(User user) async {
+    developer.log('onAuthenticated: uid=${user.uid}', name: 'AuthSessionService');
+    // Restore Firestore and RTDB connectivity (was disabled during sign-out).
+    await _authRepository.enableNetwork();
+    developer.log('enableNetwork done', name: 'AuthSessionService');
     await _presenceService.setUserOnline();
+    developer.log('setUserOnline done', name: 'AuthSessionService');
     await _syncFcmToken();
+    developer.log('syncFcmToken done', name: 'AuthSessionService');
   }
 
   @override
   Future<void> signOut() async {
+    developer.log('signOut: start', name: 'AuthSessionService');
     final current = _authService.getCurrentUser();
     if (current != null) {
       await _presenceService.setUserOffline();
@@ -103,6 +121,11 @@ class AuthSessionServiceImpl implements AuthSessionService {
       }
     }
 
+    // Cancel FCM token refresh listener to prevent leaks.
+    await _tokenRefreshSub?.cancel();
+    _tokenRefreshSub = null;
+    _tokenRefreshBound = false;
+
     // Explicitly inform server of logout so it can clear server-side queues,
     // then disconnect locally. Do not fail sign-out if logout handshake fails.
     try {
@@ -110,9 +133,19 @@ class AuthSessionServiceImpl implements AuthSessionService {
     } catch (_) {}
     await _canvasSyncRepository.disconnectSocket();
 
+    // Clear cached shared stream references.
+    StreamRegistry.instance.clearAll();
+
+    // Disable Firestore network and take RTDB offline.
+    await _authRepository.disableNetwork();
+    developer.log('disableNetwork done', name: 'AuthSessionService');
+
+    developer.log('signOut: calling _authRepository.signOut()', name: 'AuthSessionService');
     await _authRepository.signOut();
+    developer.log('signOut: FirebaseAuth.signOut done', name: 'AuthSessionService');
     await _localDatabaseService.clearLocalCache();
     _lastSyncedToken = null;
+    developer.log('signOut: complete', name: 'AuthSessionService');
   }
 
   Future<void> _syncFcmToken() async {
@@ -138,7 +171,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
 
     if (_tokenRefreshBound) return;
     _tokenRefreshBound = true;
-    _messagingService.onTokenRefresh.listen((newToken) async {
+    _tokenRefreshSub = _messagingService.onTokenRefresh.listen((newToken) async {
       final user = _authService.getCurrentUser();
       if (user == null || newToken.isEmpty || _lastSyncedToken == newToken) {
         return;
