@@ -1,8 +1,6 @@
 import 'dart:async';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_database/firebase_database.dart';
 
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/messaging_service.dart';
@@ -30,7 +28,6 @@ class AuthSessionServiceImpl implements AuthSessionService {
   final LocalDatabaseService _localDatabaseService;
   final PresenceService _presenceService;
   final CanvasSyncRepository _canvasSyncRepository;
-  final FirebaseDatabase _database;
   bool _tokenRefreshBound = false;
   String? _lastSyncedToken;
   StreamSubscription<String>? _tokenRefreshSub;
@@ -42,32 +39,18 @@ class AuthSessionServiceImpl implements AuthSessionService {
     required LocalDatabaseService localDatabaseService,
     required PresenceService presenceService,
     required CanvasSyncRepository canvasSyncRepository,
-    required FirebaseDatabase database,
   }) : _authRepository = authRepository,
        _authService = authService,
        _messagingService = messagingService,
        _localDatabaseService = localDatabaseService,
        _presenceService = presenceService,
-       _canvasSyncRepository = canvasSyncRepository,
-       _database = database;
+       _canvasSyncRepository = canvasSyncRepository;
 
   @override
   Stream<User?> get user => _authRepository.user;
 
   @override
   User? get currentUser => _authService.getCurrentUser();
-
-  /// Re-enable Firestore & RTDB so that sign-up / sign-in profile upserts
-  /// succeed even when the previous session called [signOut] which disables
-  /// the network.
-  Future<void> _ensureNetworkOnline() async {
-    try {
-      await FirebaseFirestore.instance.enableNetwork();
-    } catch (_) {}
-    try {
-      await _database.goOnline();
-    } catch (_) {}
-  }
 
   @override
   Future<User?> signIn(String email, String password) {
@@ -76,7 +59,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
 
   @override
   Future<User?> signUp(String name, String email, String password) async {
-    await _ensureNetworkOnline();
+    await _authRepository.enableNetwork();
     final user = await _authRepository.signUp(name, email, password);
     if (user == null) return null;
 
@@ -87,7 +70,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
 
   @override
   Future<User?> signInWithGoogle() async {
-    await _ensureNetworkOnline();
+    await _authRepository.enableNetwork();
     final user = await _authRepository.signInWithGoogle();
     if (user == null) return null;
 
@@ -99,18 +82,8 @@ class AuthSessionServiceImpl implements AuthSessionService {
   Future<void> onAuthenticated(User user) async {
     print('[AUTH_SVC] onAuthenticated: uid=${user.uid}');
     // Restore Firestore and RTDB connectivity (was disabled during sign-out).
-    try {
-      await FirebaseFirestore.instance.enableNetwork();
-      print('[AUTH_SVC] enableNetwork done');
-    } catch (e) {
-      print('[AUTH_SVC] enableNetwork error=$e');
-    }
-    try {
-      await _database.goOnline();
-      print('[AUTH_SVC] goOnline done');
-    } catch (e) {
-      print('[AUTH_SVC] goOnline error=$e');
-    }
+    await _authRepository.enableNetwork();
+    print('[AUTH_SVC] enableNetwork done');
     await _presenceService.setUserOnline();
     print('[AUTH_SVC] setUserOnline done');
     await _syncFcmToken();
@@ -162,21 +135,9 @@ class AuthSessionServiceImpl implements AuthSessionService {
     // Clear cached shared stream references.
     StreamRegistry.instance.clearAll();
 
-    // Disable Firestore network and take RTDB offline — this immediately
-    // stops all native listeners so they won't try to re-authenticate (and
-    // fail with permission-denied) when the auth token is invalidated below.
-    try {
-      await FirebaseFirestore.instance.disableNetwork();
-      print('[AUTH_SVC] disableNetwork done');
-    } catch (e) {
-      print('[AUTH_SVC] disableNetwork error=$e');
-    }
-    try {
-      await _database.goOffline();
-      print('[AUTH_SVC] goOffline done');
-    } catch (e) {
-      print('[AUTH_SVC] goOffline error=$e');
-    }
+    // Disable Firestore network and take RTDB offline.
+    await _authRepository.disableNetwork();
+    print('[AUTH_SVC] disableNetwork done');
 
     print('[AUTH_SVC] signOut: calling _authRepository.signOut()');
     await _authRepository.signOut();

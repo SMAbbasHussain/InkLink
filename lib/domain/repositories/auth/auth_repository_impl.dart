@@ -2,6 +2,7 @@ import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -12,14 +13,17 @@ import '../../../core/services/firestore_service.dart';
 class FirebaseAuthRepository implements AuthRepository {
   final AuthService _authService;
   final FirestoreService _firestoreService;
+  final FirebaseDatabase _database;
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
   bool _googleInitialized = false;
 
   FirebaseAuthRepository({
     required AuthService authService,
     required FirestoreService firestoreService,
+    required FirebaseDatabase database,
   }) : _authService = authService,
-       _firestoreService = firestoreService;
+       _firestoreService = firestoreService,
+       _database = database;
 
   Future<void> _ensureGoogleInitialized() async {
     if (_googleInitialized) return;
@@ -27,6 +31,22 @@ class FirebaseAuthRepository implements AuthRepository {
     await _googleSignIn.initialize(
       serverClientId: dotenv.env['GOOGLE_WEB_CLIENT_ID'],
     );
+  }
+
+  @override
+  Future<void> enableNetwork() async {
+    await _firestoreService.enableNetwork();
+    try {
+      await _database.goOnline();
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> disableNetwork() async {
+    await _firestoreService.disableNetwork();
+    try {
+      await _database.goOffline();
+    } catch (_) {}
   }
 
   @override

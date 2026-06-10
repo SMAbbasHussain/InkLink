@@ -12,6 +12,13 @@ abstract class FirestoreService {
 
   /// Get a callable Cloud Function by name
   HttpsCallable getHttpsCallable(String name);
+
+  /// Re-enable Firestore network after sign-out.
+  Future<void> enableNetwork();
+
+  /// Disable Firestore network to prevent permission-denied errors after
+  /// the auth token is invalidated.
+  Future<void> disableNetwork();
 }
 
 /// Production implementation using Firebase
@@ -40,5 +47,19 @@ class FirestoreServiceImpl implements FirestoreService {
   @override
   HttpsCallable getHttpsCallable(String name) {
     return _functions.httpsCallable(name);
+  }
+
+  @override
+  Future<void> enableNetwork() async {
+    try {
+      await _firestore.enableNetwork();
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> disableNetwork() async {
+    try {
+      await _firestore.disableNetwork();
+    } catch (_) {}
   }
 }

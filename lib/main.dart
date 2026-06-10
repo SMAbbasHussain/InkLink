@@ -105,6 +105,7 @@ void main() async {
           create: (context) => FirebaseAuthRepository(
             authService: context.read<AuthService>(),
             firestoreService: context.read<FirestoreService>(),
+            database: rtdb,
           ),
         ),
         RepositoryProvider<PresenceRepository>(
@@ -179,7 +180,6 @@ void main() async {
             localDatabaseService: context.read<LocalDatabaseService>(),
             presenceService: context.read<PresenceService>(),
             canvasSyncRepository: context.read<CanvasSyncRepository>(),
-            database: rtdb,
           ),
         ),
         RepositoryProvider<FriendsService>(
