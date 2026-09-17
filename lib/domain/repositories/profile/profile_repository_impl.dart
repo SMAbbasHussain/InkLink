@@ -6,7 +6,7 @@ import '../../../core/services/firestore_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/database/collections/local_profile.dart';
-import '../../models/user_model.dart';
+import '../../../core/database/collections/user_model.dart';
 import 'profile_repository.dart';
 
 enum _ProfileBucket { self, friend, nonFriend }

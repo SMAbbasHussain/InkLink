@@ -2,7 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
-const { deleteBoardMembers } = require('../utils/redis');
+const { deleteBoardState, publishBoardEvent } = require('../utils/redis');
 
 function toNonNegativeInt(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -55,6 +55,11 @@ module.exports = async (request) => {
         [FirestorePaths.BOARD_COUNT]: Math.max(0, ownerCount - 1),
       }, { merge: true });
 
+      // Remove owner's board index doc
+      transaction.delete(
+        ownerRef.collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION).doc(boardId.trim())
+      );
+
       for (const memberUid of members) {
         if (typeof memberUid !== 'string' || memberUid.trim().length === 0) {
           continue;
@@ -85,7 +90,16 @@ module.exports = async (request) => {
     });
 
     if (result.success) {
-      await deleteBoardMembers(boardId.trim());
+      try {
+        await firestore.recursiveDelete(boardRef);
+      } catch (e) {
+        logger.warn('Recursive delete of subcollections failed, cleaning up manually', e);
+      }
+      await deleteBoardState(boardId.trim());
+      await publishBoardEvent({
+        type: 'board_deleted',
+        boardId: boardId.trim(),
+      });
     }
 
     logger.info('Board deleted successfully', {

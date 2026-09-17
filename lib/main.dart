@@ -61,13 +61,23 @@ final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: ".env");
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (e) {
+    debugPrint("Warning: Failed to load .env file: $e");
+  }
   final sharedPreferences = await SharedPreferences.getInstance();
   await _ensureFirebaseInitialized();
-  final rtdb = FirebaseDatabase.instanceFor(
-    app: Firebase.app(),
-    databaseURL: dotenv.env['FIREBASE_RTDB_URL']!,
-  );
+  final rtdbUrl = dotenv.env['FIREBASE_RTDB_URL'];
+  final FirebaseDatabase rtdb;
+  if (rtdbUrl != null && rtdbUrl.isNotEmpty) {
+    rtdb = FirebaseDatabase.instanceFor(
+      app: Firebase.app(),
+      databaseURL: rtdbUrl,
+    );
+  } else {
+    rtdb = FirebaseDatabase.instanceFor(app: Firebase.app());
+  }
   final messagingService = MessagingServiceImpl();
   await LocalNotificationService.initialize(navigatorKey: appNavigatorKey);
   messagingService.onMessage.listen(

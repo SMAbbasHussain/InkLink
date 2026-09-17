@@ -48,22 +48,27 @@ async function removeBoardMember(boardId, uid) {
   } catch (_) {}
 }
 
-async function deleteBoardMembers(boardId) {
+async function publishBoardEvent(event) {
   try {
     const client = getRedisClient();
     if (!client) return;
-    await client.del(`board_members:${boardId}`);
+    await client.publish('board_events', JSON.stringify(event));
   } catch (_) {}
 }
 
-async function addBoardMembers(boardId, uids) {
-  if (uids.length === 0) return;
+async function deleteBoardState(boardId) {
   try {
     const client = getRedisClient();
     if (!client) return;
-    const key = `board_members:${boardId}`;
-    await client.sadd(key, ...uids);
-    await client.expire(key, 604800);
+    await client.del(
+      `board_members:${boardId}`,
+      `board:${boardId}:version`,
+      `board_updates:${boardId}`,
+      `board:dedup:${boardId}`,
+      `board:lastActivity:${boardId}`,
+      `board:lastSnapshotCursor:${boardId}`,
+      `board:lastSnapshotVersion:${boardId}`
+    );
   } catch (_) {}
 }
 
@@ -72,4 +77,6 @@ module.exports = {
   removeBoardMember,
   deleteBoardMembers,
   addBoardMembers,
+  publishBoardEvent,
+  deleteBoardState,
 };

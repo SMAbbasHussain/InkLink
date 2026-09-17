@@ -9,7 +9,7 @@ import '../../../core/database/collections/local_profile.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
-import '../../models/user_model.dart';
+import '../../../core/database/collections/user_model.dart';
 import 'invitation_repository.dart';
 
 class InvitationRepositoryImpl implements InvitationRepository {

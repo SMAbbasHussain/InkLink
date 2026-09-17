@@ -133,6 +133,96 @@ try {
 
 const db = admin.firestore?.() || null;
 
+// ============================================================
+// REDIS SUBSCRIBER — Real-time Room Eviction
+// ============================================================
+const redisSub = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
+redisSub.on('connect', () => {
+  redisSub.subscribe('board_events', (err) => {
+    if (!err) console.log('✓ Subscribed to board_events channel');
+  });
+});
+
+redisSub.on('message', async (channel, message) => {
+  if (channel === 'board_events') {
+    try {
+      const data = JSON.parse(message);
+      if (data.type === 'member_removed' && data.boardId && data.uid) {
+        const sockets = await io.in(`board_room:${data.boardId}`).fetchSockets();
+        for (const s of sockets) {
+          if (s.data.uid === data.uid) {
+            s.leave(`board_room:${data.boardId}`);
+            s.emit('board_access_revoked', { boardId: data.boardId, reason: 'removed' });
+            console.log(`[board_events] Evicted user ${data.uid} from board_room:${data.boardId}`);
+          }
+        }
+      } else if (data.type === 'board_deleted' && data.boardId) {
+        io.to(`board_room:${data.boardId}`).emit('board_access_revoked', { boardId: data.boardId, reason: 'deleted' });
+        io.socketsLeave(`board_room:${data.boardId}`);
+        console.log(`[board_events] Evicted all users from deleted board_room:${data.boardId}`);
+      }
+    } catch (e) {
+      console.warn('[board_events] Failed to process event:', e.message);
+    }
+  }
+});
+
+// ============================================================
+// BOARD AUTHORIZATION HELPER
+// ============================================================
+async function canUserAccessBoard(boardId, uid, requireEdit = false) {
+  if (!uid) return false;
+  if (!db && !redisAvailable) return true;
+
+  try {
+    if (redisAvailable) {
+      const isMember = await redis.sismember(`board_members:${boardId}`, uid);
+      if (isMember && !requireEdit) {
+        return true;
+      }
+    }
+
+    if (db) {
+      const boardDoc = await db.collection('boards').doc(boardId).get();
+      if (!boardDoc.exists) return false;
+      const data = boardDoc.data() || {};
+
+      if (data.ownerId === uid) {
+        if (redisAvailable) {
+          await redis.sadd(`board_members:${boardId}`, uid);
+          await redis.expire(`board_members:${boardId}`, 604800);
+        }
+        return true;
+      }
+
+      const members = Array.isArray(data.members) ? data.members : [];
+      if (!members.includes(uid)) {
+        return false;
+      }
+
+      if (requireEdit) {
+        const memberDoc = await db.collection('boards').doc(boardId)
+          .collection('members').doc(uid).get();
+        if (memberDoc.exists) {
+          const role = memberDoc.data()?.role;
+          if (role === 'viewer') return false;
+        }
+      }
+
+      if (redisAvailable) {
+        await redis.sadd(`board_members:${boardId}`, uid);
+        await redis.expire(`board_members:${boardId}`, 604800);
+      }
+      return true;
+    }
+  } catch (err) {
+    console.warn(`[canUserAccessBoard] Error verifying access for ${uid} on ${boardId}:`, err.message);
+    return false;
+  }
+
+  return true;
+}
+
 function logWsEvent(title, lines) {
   console.log('');
   console.log('==================================================');
@@ -391,14 +481,24 @@ io.on('connection', (socket) => {
   // ----------------------------------------------------------
   // watch_board
   // ----------------------------------------------------------
-  socket.on('watch_board', (boardId) => {
+  socket.on('watch_board', async (boardId, callback) => {
     if (!isValidBoardId(boardId)) {
       console.warn(`[watch_board] Invalid boardId from ${uid}`);
+      if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
       return;
     }
+
+    const hasAccess = await canUserAccessBoard(boardId, uid, false);
+    if (!hasAccess) {
+      console.warn(`[watch_board] Forbidden: User ${uid} cannot access board ${boardId}`);
+      if (typeof callback === 'function') callback({ status: 'error', message: 'forbidden' });
+      return;
+    }
+
     socket.join(`board_room:${boardId}`);
     socket.data.currentBoardId = boardId;
     console.log(`[watch_board] User ${uid} joined board ${boardId} (socket: ${socket.id})`);
+    if (typeof callback === 'function') callback({ status: 'success', boardId });
   });
 
   // ----------------------------------------------------------
@@ -426,6 +526,13 @@ io.on('connection', (socket) => {
     if (!isValidBoardId(boardId) || !isValidUpdate(update)) {
       console.warn(`[crdt_update] Invalid payload from ${uid}`);
       if (typeof ack === 'function') ack({ status: 'error', message: 'invalid_payload' });
+      return;
+    }
+
+    const canEdit = await canUserAccessBoard(boardId, uid, true);
+    if (!canEdit) {
+      console.warn(`[crdt_update] Forbidden: User ${uid} cannot edit board ${boardId}`);
+      if (typeof ack === 'function') ack({ status: 'error', message: 'forbidden' });
       return;
     }
 
@@ -595,6 +702,13 @@ io.on('connection', (socket) => {
     if (!isValidBoardId(boardId)) {
       console.warn(`[sync_offline] Invalid boardId from ${uid}`);
       if (typeof callback === 'function') callback({ status: 'error', boardId, error: 'invalid_board_id' });
+      return;
+    }
+
+    const hasAccess = await canUserAccessBoard(boardId, uid, false);
+    if (!hasAccess) {
+      console.warn(`[sync_offline] Forbidden: User ${uid} cannot access board ${boardId}`);
+      if (typeof callback === 'function') callback({ status: 'error', boardId, error: 'forbidden' });
       return;
     }
 

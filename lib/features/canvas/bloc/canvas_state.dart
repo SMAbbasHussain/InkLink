@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../../domain/models/board.dart';
 import '../models/canvas_element.dart';
+import '../models/canvas_tool_mode.dart';
+import '../view/trays/canvas_shape_type.dart';
 
 /// State for CanvasBloc
 class CanvasState {
@@ -28,6 +30,11 @@ class CanvasState {
   final double selectedStrokeWidth;
   final double selectedStrokeOpacity;
   final String selectedStrokeBrushType;
+  final CanvasToolMode currentToolMode;
+  final CanvasShapeType? pendingShapeType;
+  final bool isDrawingShape;
+  final Offset? shapeDrawStart;
+  final Offset? shapeDrawCurrent;
 
   const CanvasState({
     this.boardTitle,
@@ -53,6 +60,11 @@ class CanvasState {
     this.selectedStrokeWidth = 5,
     this.selectedStrokeOpacity = 1.0,
     this.selectedStrokeBrushType = 'solid',
+    this.currentToolMode = CanvasToolMode.doodle,
+    this.pendingShapeType,
+    this.isDrawingShape = false,
+    this.shapeDrawStart,
+    this.shapeDrawCurrent,
   });
 
   static const Object _unset = Object();
@@ -81,6 +93,11 @@ class CanvasState {
     double? selectedStrokeWidth,
     double? selectedStrokeOpacity,
     String? selectedStrokeBrushType,
+    CanvasToolMode? currentToolMode,
+    Object? pendingShapeType = _unset,
+    bool? isDrawingShape,
+    Object? shapeDrawStart = _unset,
+    Object? shapeDrawCurrent = _unset,
   }) {
     return CanvasState(
       boardTitle: boardTitle == _unset
@@ -120,6 +137,17 @@ class CanvasState {
           selectedStrokeOpacity ?? this.selectedStrokeOpacity,
       selectedStrokeBrushType:
           selectedStrokeBrushType ?? this.selectedStrokeBrushType,
+      currentToolMode: currentToolMode ?? this.currentToolMode,
+      pendingShapeType: pendingShapeType == _unset
+          ? this.pendingShapeType
+          : pendingShapeType as CanvasShapeType?,
+      isDrawingShape: isDrawingShape ?? this.isDrawingShape,
+      shapeDrawStart: shapeDrawStart == _unset
+          ? this.shapeDrawStart
+          : shapeDrawStart as Offset?,
+      shapeDrawCurrent: shapeDrawCurrent == _unset
+          ? this.shapeDrawCurrent
+          : shapeDrawCurrent as Offset?,
     );
   }
 
@@ -160,7 +188,12 @@ class CanvasState {
           selectedStrokeColor == other.selectedStrokeColor &&
           selectedStrokeWidth == other.selectedStrokeWidth &&
           selectedStrokeOpacity == other.selectedStrokeOpacity &&
-          selectedStrokeBrushType == other.selectedStrokeBrushType;
+          selectedStrokeBrushType == other.selectedStrokeBrushType &&
+          currentToolMode == other.currentToolMode &&
+          pendingShapeType == other.pendingShapeType &&
+          isDrawingShape == other.isDrawingShape &&
+          shapeDrawStart == other.shapeDrawStart &&
+          shapeDrawCurrent == other.shapeDrawCurrent;
 
   @override
   int get hashCode =>
@@ -186,7 +219,12 @@ class CanvasState {
       selectedStrokeColor.hashCode ^
       selectedStrokeWidth.hashCode ^
       selectedStrokeOpacity.hashCode ^
-      selectedStrokeBrushType.hashCode;
+      selectedStrokeBrushType.hashCode ^
+      currentToolMode.hashCode ^
+      pendingShapeType.hashCode ^
+      isDrawingShape.hashCode ^
+      shapeDrawStart.hashCode ^
+      shapeDrawCurrent.hashCode;
 }
 
 class CanvasInitial extends CanvasState {

@@ -15,6 +15,7 @@ import '../../../core/utils/tray_tips_preferences.dart';
 import '../../dashboard/bloc/dashboard_bloc.dart';
 import '../../dashboard/view/board_settings_route.dart';
 import '../bloc/canvas_bloc.dart';
+import '../models/canvas_tool_mode.dart';
 import 'media_editor_screen.dart';
 import 'trays/ai_tray.dart';
 import 'trays/brush_tray.dart';
@@ -300,11 +301,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
     setState(() => _isEditingShape = editing);
   }
 
-  void _addShape(CanvasShapeType shapeType) {
+  void _selectShapeForDrawing(CanvasShapeType shapeType) {
     setState(() {
-      _isShapeEditTrayExpanded = true;
+      _isShapeEditTrayExpanded = false;
     });
-    _canvasBloc.add(CanvasAddShape(shapeType, _canvasBloc.randomShapeCenter()));
+    _canvasBloc.add(CanvasSetToolMode(CanvasToolMode.shape, shapeType: shapeType));
   }
 
   void _addAiTextElement() {
@@ -799,6 +800,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               final worldPoint = _toWorld(
                                 details.localFocalPoint,
                               );
+
+                              // Handle shape drawing mode
+                              if (state.currentToolMode == CanvasToolMode.shape &&
+                                  state.pendingShapeType != null) {
+                                _canvasBloc.add(CanvasStartShapeDraw(worldPoint));
+                                return;
+                              }
+
                               final hitShapeId = _hitTestShape(
                                 mappedElements,
                                 worldPoint,
@@ -856,6 +865,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 return;
                               }
 
+                              // Handle shape drawing update
+                              if (state.isDrawingShape) {
+                                final worldPoint = _toWorld(
+                                  details.localFocalPoint,
+                                );
+                                _canvasBloc.add(CanvasUpdateShapeDraw(worldPoint));
+                                return;
+                              }
+
                               final worldPoint = _toWorld(
                                 details.localFocalPoint,
                               );
@@ -907,6 +925,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             onScaleEnd: (_) {
                               if (_isTransformingCanvas) {
                                 _isTransformingCanvas = false;
+                                return;
+                              }
+
+                              // End shape drawing
+                              if (state.isDrawingShape) {
+                                _canvasBloc.add(const CanvasEndShapeDraw());
                                 return;
                               }
 
@@ -986,6 +1010,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               }
                             },
                             onTap: () {
+                              // If in shape draw mode, tap switches back to doodle
+                              if (state.currentToolMode == CanvasToolMode.shape) {
+                                _canvasBloc.add(const CanvasCancelShapeDraw());
+                                return;
+                              }
                               if (state.activeTray != null) {
                                 _canvasBloc.add(
                                   CanvasToggleTray(state.activeTray!),
@@ -1007,6 +1036,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   selectedShapeId: state.selectedShapeId,
                                   viewportScale: _viewportScale,
                                   viewportOffset: _viewportOffset,
+                                  isDrawingShape: state.isDrawingShape,
+                                  shapeDrawStart: state.shapeDrawStart,
+                                  shapeDrawCurrent: state.shapeDrawCurrent,
+                                  pendingShapeType: state.pendingShapeType,
                                 ),
                               ),
                             ),
@@ -1021,6 +1054,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               mappedElements,
                             ),
                           _buildEdgeTriggers(),
+
+                          _buildToolModeIndicator(state),
 
                           if (state.showTrayTips)
                             TrayTipsOverlay(
@@ -1072,11 +1107,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 text: e.text,
                 color: e.color,
               ),
-            ImageElement e => _CanvasElement.text(
+            ImageElement e => _CanvasElement.image(
                 id: e.id,
                 center: e.center,
-                text: '',
-                color: Colors.black,
+                width: e.width,
+                height: e.height,
+                imageBase64: e.imageBase64,
+                data: e.toMap(),
               ),
           };
         })
@@ -1135,13 +1172,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
         .toList(growable: false);
   }
 
-  /// Minimum distance from [point] to the line segment [a]–[b].
-  static double _pointToSegmentDistance(Offset point, Offset a, Offset b) {
+  double _pointToSegmentDistance(Offset point, Offset a, Offset b) {
     final ab = b - a;
+    final lengthSquared = ab.dx * ab.dx + ab.dy * ab.dy;
+    if (lengthSquared == 0) return (point - a).distance;
     final ap = point - a;
-    final lenSq = ab.dx * ab.dx + ab.dy * ab.dy;
-    if (lenSq == 0) return (point - a).distance;
-    final t = (ap.dx * ab.dx + ap.dy * ab.dy) / lenSq;
+    final t = (ap.dx * ab.dx + ap.dy * ab.dy) / lengthSquared;
     final clamped = t.clamp(0.0, 1.0);
     final closest = Offset(a.dx + clamped * ab.dx, a.dy + clamped * ab.dy);
     return (point - closest).distance;
@@ -1177,7 +1213,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
         final distance = (position - element.center).distance;
         final sizeHit = element.kind == _ElementKind.shape
             ? element.size
-            : 100.0;
+            : element.kind == _ElementKind.image
+                ? math.max(element.width, element.height)
+                : 100.0;
         if (distance <= (sizeHit / 2) + 14) {
           return element.id;
         }
@@ -1944,7 +1982,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
           onRedo: _redo,
           onClearAll: _clearAll,
         ),
-        ShapesTray(isOpen: state.activeTray == 'shapes', onAddShape: _addShape),
+        ShapesTray(
+          isOpen: state.activeTray == 'shapes',
+          onSelectShapeForDrawing: _selectShapeForDrawing,
+        ),
         BrushTray(
           isOpen: state.activeTray == 'brushes',
           strokeWidth: state.strokeWidth,
@@ -1968,6 +2009,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
           onEraserEraseEverythingChanged: _setEraserScope,
           onSmoothDoodlesChanged: (v) {
             setState(() => _smoothDoodlesEnabled = v);
+          },
+          onToolModeChanged: (mode) {
+            _canvasBloc.add(CanvasSetToolMode(mode));
           },
         ),
       ],
@@ -2057,6 +2101,67 @@ class _CanvasScreenState extends State<CanvasScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildToolModeIndicator(CanvasState state) {
+    if (state.currentToolMode == CanvasToolMode.doodle) {
+      return const SizedBox.shrink();
+    }
+
+    final (IconData icon, String label) = switch (state.currentToolMode) {
+      CanvasToolMode.shape => (
+        Icons.category_outlined,
+        state.pendingShapeType != null
+            ? 'Shape: ${state.pendingShapeType!.name}'
+            : 'Shape',
+      ),
+      CanvasToolMode.eraser => (Icons.auto_fix_high_outlined, 'Eraser'),
+      CanvasToolMode.text => (Icons.text_fields, 'Text'),
+      CanvasToolMode.arrow => (Icons.arrow_forward_outlined, 'Arrow'),
+      CanvasToolMode.image => (Icons.image_outlined, 'Image'),
+      CanvasToolMode.highlight => (Icons.highlight_outlined, 'Highlight'),
+      CanvasToolMode.doodle => (Icons.brush, 'Doodle'),
+    };
+
+    return Positioned(
+      left: 48,
+      bottom: 48,
+      child: GestureDetector(
+        onTap: () => _canvasBloc.add(
+          const CanvasSetToolMode(CanvasToolMode.doodle),
+        ),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.black87,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: const [
+              BoxShadow(color: Color(0x22000000), blurRadius: 4, offset: Offset(0, 2)),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: Colors.white70),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Text(
+                'Tap to exit',
+                style: TextStyle(color: Colors.white38, fontSize: 10),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

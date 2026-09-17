@@ -10,7 +10,7 @@ import '../../../core/database/collections/local_profile.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
 import '../../../core/services/stream_registry.dart';
-import '../../models/user_model.dart';
+import '../../../core/database/collections/user_model.dart';
 import 'friends_repository.dart';
 
 class FriendsRepositoryImpl implements FriendsRepository {

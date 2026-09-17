@@ -9,7 +9,7 @@ import 'collections/local_invitation.dart';
 import 'collections/local_notification.dart';
 import 'collections/local_profile.dart';
 import 'collections/local_workspace.dart';
-import '../../domain/models/user_model.dart';
+import 'collections/user_model.dart';
 
 class LocalDatabaseService {
   late Future<Isar> db;

@@ -12,7 +12,7 @@ import '../../../core/services/firestore_service.dart';
 import '../../../core/services/stream_registry.dart';
 import '../../../core/utils/firestore_batch_fetcher.dart';
 import '../../models/board.dart';
-import '../../models/user_model.dart';
+import '../../../core/database/collections/user_model.dart';
 import '../../models/workspace.dart';
 import 'workspace_repository.dart';
 

@@ -18,30 +18,41 @@ class AppView extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocConsumer<AuthBloc, AuthState>(
       listenWhen: (previous, current) =>
-          previous is! Authenticated && current is Authenticated,
-      listener: (context, state) {
-        // Ensure we're at the root route so the declarative MainWrapper is visible.
-        Navigator.of(context, rootNavigator: true)
-            .popUntil((route) => route.isFirst);
+          (previous is! Authenticated && current is Authenticated) ||
+          (previous is Authenticated && current is! Authenticated),
+      listener: (context, state) async {
+        if (state is Authenticated) {
+          // Ensure we're at the root route so the declarative MainWrapper is visible.
+          Navigator.of(context, rootNavigator: true)
+              .popUntil((route) => route.isFirst);
 
-        // Phase 4E: Prefetch data on auth
-        final authState = state is Authenticated ? state : null;
-        if (authState != null) {
-          context.read<DataPrefetchService>().prefetchInitialData(
-            authState.uid,
+          // Phase 4E: Prefetch data on auth
+          context.read<DataPrefetchService>().prefetchInitialData(state.uid);
+
+          // Restart global syncs when authenticated (crucial after logout/login cycle)
+          context.read<DashboardBloc>().add(LoadDashboardRequested());
+          context.read<WorkspaceBloc>().add(LoadWorkspacesRequested());
+          context.read<NotificationsBloc>().add(
+            const NotificationsLoadRequested(),
           );
-        }
+          context.read<BoardInvitationsBloc>().add(
+            const BoardInvitationsLoadRequested(),
+          );
+          context.read<FriendsBloc>().add(LoadFriendsInfo());
+        } else if (state is Unauthenticated) {
+          // Centrally tear down all global sync stream subscriptions on logout
+          final friendsBloc = context.read<FriendsBloc>();
+          final workspaceBloc = context.read<WorkspaceBloc>();
+          final dashboardBloc = context.read<DashboardBloc>();
+          final notificationsBloc = context.read<NotificationsBloc>();
+          final boardInvitationsBloc = context.read<BoardInvitationsBloc>();
 
-        // Restart global syncs when authenticated (crucial after logout/login cycle)
-        context.read<DashboardBloc>().add(LoadDashboardRequested());
-        context.read<WorkspaceBloc>().add(LoadWorkspacesRequested());
-        context.read<NotificationsBloc>().add(
-          const NotificationsLoadRequested(),
-        );
-        context.read<BoardInvitationsBloc>().add(
-          const BoardInvitationsLoadRequested(),
-        );
-        context.read<FriendsBloc>().add(LoadFriendsInfo());
+          await friendsBloc.stopForLogout();
+          await workspaceBloc.stopForLogout();
+          await dashboardBloc.stopForLogout();
+          await notificationsBloc.stopForLogout();
+          await boardInvitationsBloc.stopForLogout();
+        }
       },
       builder: (context, state) {
         if (state is Authenticated) {
