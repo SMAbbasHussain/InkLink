@@ -48,6 +48,24 @@ async function removeBoardMember(boardId, uid) {
   } catch (_) {}
 }
 
+async function addBoardMembers(boardId, uids) {
+  try {
+    const client = getRedisClient();
+    if (!client || !Array.isArray(uids) || uids.length === 0) return;
+    const key = `board_members:${boardId}`;
+    await client.sadd(key, ...uids);
+    await client.expire(key, 604800);
+  } catch (_) {}
+}
+
+async function deleteBoardMembers(boardId) {
+  try {
+    const client = getRedisClient();
+    if (!client) return;
+    await client.del(`board_members:${boardId}`);
+  } catch (_) {}
+}
+
 async function publishBoardEvent(event) {
   try {
     const client = getRedisClient();

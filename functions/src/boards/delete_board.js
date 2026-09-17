@@ -90,16 +90,17 @@ module.exports = async (request) => {
     });
 
     if (result.success) {
-      try {
-        await firestore.recursiveDelete(boardRef);
-      } catch (e) {
-        logger.warn('Recursive delete of subcollections failed, cleaning up manually', e);
-      }
       await deleteBoardState(boardId.trim());
       await publishBoardEvent({
         type: 'board_deleted',
         boardId: boardId.trim(),
       });
+      try {
+        await firestore.recursiveDelete(boardRef);
+      } catch (e) {
+        logger.error('Recursive delete of board subcollections failed', e);
+        throw e;
+      }
     }
 
     logger.info('Board deleted successfully', {

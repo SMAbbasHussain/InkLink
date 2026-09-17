@@ -9,7 +9,6 @@ import 'collections/local_invitation.dart';
 import 'collections/local_notification.dart';
 import 'collections/local_profile.dart';
 import 'collections/local_workspace.dart';
-import 'collections/user_model.dart';
 
 class LocalDatabaseService {
   late Future<Isar> db;
@@ -33,7 +32,6 @@ class LocalDatabaseService {
           LocalNotificationSchema,
           LocalWorkspaceSchema,
           LocalWorkspaceInviteSchema,
-          UserModelSchema,
         ],
         directory: dir.path,
         inspector: true,
@@ -57,7 +55,6 @@ class LocalDatabaseService {
       await isar.localNotifications.clear();
       await isar.localWorkspaces.clear();
       await isar.localWorkspaceInvites.clear();
-      await isar.userModels.clear();
     });
   }
 }

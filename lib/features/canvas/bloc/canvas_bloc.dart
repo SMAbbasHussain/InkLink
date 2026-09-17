@@ -1077,6 +1077,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasStartShapeDraw event,
     Emitter<CanvasState> emit,
   ) {
+    if (!_ensureCanEdit(emit)) return;
     if (state.currentToolMode != CanvasToolMode.shape) return;
     if (state.pendingShapeType == null) return;
     emit(state.copyWith(
@@ -1090,6 +1091,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasUpdateShapeDraw event,
     Emitter<CanvasState> emit,
   ) {
+    if (!_ensureCanEdit(emit)) {
+      if (state.isDrawingShape) {
+        _onCancelShapeDraw(CanvasCancelShapeDraw(), emit);
+      }
+      return;
+    }
     if (!state.isDrawingShape) return;
     emit(state.copyWith(shapeDrawCurrent: event.point));
   }
@@ -1098,6 +1105,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasEndShapeDraw event,
     Emitter<CanvasState> emit,
   ) async {
+    if (!_ensureCanEdit(emit)) {
+      if (state.isDrawingShape) {
+        _onCancelShapeDraw(CanvasCancelShapeDraw(), emit);
+      }
+      return;
+    }
     if (!state.isDrawingShape) return;
     final start = state.shapeDrawStart;
     final current = state.shapeDrawCurrent;
@@ -1115,7 +1128,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       (start.dx + current.dx) / 2,
       (start.dy + current.dy) / 2,
     );
-    final size = math.max(dx, dy);
+    final double size;
+    switch (shapeType) {
+      case CanvasShapeType.rectangle:
+        size = math.min(dx / 1.35, dy / 0.8);
+        break;
+      case CanvasShapeType.ellipse:
+        size = math.min(dx / 1.3, dy / 0.85);
+        break;
+      default:
+        size = math.min(dx, dy);
+        break;
+    }
 
     // Use the existing shape creation logic
     final shapeId = _uuid.v4();

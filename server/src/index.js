@@ -136,11 +136,23 @@ const db = admin.firestore?.() || null;
 // ============================================================
 // REDIS SUBSCRIBER — Real-time Room Eviction
 // ============================================================
-const redisSub = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
-redisSub.on('connect', () => {
+const redisSub = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379', {
+  enableReadyCheck: false,
+  maxRetriesPerRequest: null,
+});
+
+redisSub.on('ready', () => {
   redisSub.subscribe('board_events', (err) => {
-    if (!err) console.log('✓ Subscribed to board_events channel');
+    if (err) {
+      console.warn('[board_events] Failed to subscribe:', err.message);
+    } else {
+      console.log('✓ Subscribed to board_events channel');
+    }
   });
+});
+
+redisSub.on('error', (error) => {
+  console.warn('⚠ Redis subscriber error:', error.message);
 });
 
 redisSub.on('message', async (channel, message) => {
@@ -171,8 +183,7 @@ redisSub.on('message', async (channel, message) => {
 // BOARD AUTHORIZATION HELPER
 // ============================================================
 async function canUserAccessBoard(boardId, uid, requireEdit = false) {
-  if (!uid) return false;
-  if (!db && !redisAvailable) return true;
+  if (!uid || !boardId) return false;
 
   try {
     if (redisAvailable) {
@@ -220,7 +231,8 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
     return false;
   }
 
-  return true;
+  // Fail closed whenever membership cannot be positively verified
+  return false;
 }
 
 function logWsEvent(title, lines) {

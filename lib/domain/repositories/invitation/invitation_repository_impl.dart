@@ -9,7 +9,6 @@ import '../../../core/database/collections/local_profile.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
-import '../../../core/database/collections/user_model.dart';
 import 'invitation_repository.dart';
 
 class InvitationRepositoryImpl implements InvitationRepository {
@@ -68,6 +67,10 @@ class InvitationRepositoryImpl implements InvitationRepository {
                 await _cacheInviteProfiles(invites);
               } catch (_) {}
             }, onError: (error) {
+              if (error is FirebaseException &&
+                  error.code == 'permission-denied') {
+                return;
+              }
               developer.log(
                 'Failed to watch board invites',
                 name: 'InvitationRepository',
@@ -201,13 +204,8 @@ class InvitationRepositoryImpl implements InvitationRepository {
       return;
     }
 
-    final existingUserModels = await isar.userModels.getAllByUid(fromUids);
     final existingProfiles = await isar.localProfiles.getAllByUid(fromUids);
 
-    final userModelMap = <String, UserModel?>{
-      for (var i = 0; i < fromUids.length; i++)
-        fromUids[i]: existingUserModels[i],
-    };
     final profileMap = <String, LocalProfile?>{
       for (var i = 0; i < fromUids.length; i++)
         fromUids[i]: existingProfiles[i],
@@ -224,8 +222,6 @@ class InvitationRepositoryImpl implements InvitationRepository {
           'displayName': invite['senderName']?.toString() ?? 'InkLink User',
           'photoURL': invite['senderPic']?.toString(),
         };
-
-        await _upsertUserModelAsync(isar, fromUid, userData, userModelMap[fromUid]);
 
         final existingProfile = profileMap[fromUid];
         final model = existingProfile ??
@@ -292,57 +288,6 @@ class InvitationRepositoryImpl implements InvitationRepository {
       return bTs.compareTo(aTs);
     });
     return invites;
-  }
-
-  Future<void> _upsertUserModelAsync(
-    Isar isar,
-    String uid,
-    Map<String, dynamic> userData,
-    UserModel? existing,
-  ) async {
-    final model =
-        existing ??
-        UserModel(
-          uid: uid,
-          displayName: userData['displayName']?.toString() ?? 'InkLink User',
-          email: userData['email']?.toString() ?? '',
-          createdAt: DateTime.now(),
-        );
-
-    final displayName = userData['displayName']?.toString();
-    if (displayName != null && displayName.isNotEmpty) {
-      model.displayName = displayName;
-    }
-
-    final email = userData['email']?.toString();
-    if (email != null && email.isNotEmpty) {
-      model.email = email;
-    }
-
-    final bio = userData['bio']?.toString();
-    if (bio != null) {
-      model.bio = bio.isEmpty ? null : bio;
-    }
-
-    final photoUrl = userData['photoURL']?.toString();
-    if (photoUrl != null) {
-      model.photoURL = photoUrl.isEmpty ? null : photoUrl;
-    }
-
-    model.friendCount = _toInt(userData['friendCount']);
-    model.boardCount = _toInt(userData['boardCount']);
-
-    final createdAt = _toDateTime(userData['createdAt']);
-    if (createdAt != null) {
-      model.createdAt = createdAt;
-    }
-
-    final updatedAt = _toDateTime(userData['updatedAt']);
-    if (updatedAt != null) {
-      model.updatedAt = updatedAt;
-    }
-
-    await isar.userModels.putByUid(model);
   }
 
   void _populateProfileModel(

@@ -11,8 +11,51 @@ import 'features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'features/friends/bloc/friends_bloc.dart';
 import 'core/services/data_prefetch_service.dart';
 
-class AppView extends StatelessWidget {
+import 'domain/services/auth/auth_session_service.dart';
+
+class AppView extends StatefulWidget {
   const AppView({super.key});
+
+  @override
+  State<AppView> createState() => _AppViewState();
+}
+
+class _AppViewState extends State<AppView> {
+  AuthSessionService? _authSessionService;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final service = context.read<AuthSessionService>();
+    if (_authSessionService != service) {
+      _authSessionService?.unregisterPreSignOutCallback(_stopBlocsForLogout);
+      _authSessionService = service;
+      _authSessionService?.registerPreSignOutCallback(_stopBlocsForLogout);
+    }
+  }
+
+  @override
+  void dispose() {
+    _authSessionService?.unregisterPreSignOutCallback(_stopBlocsForLogout);
+    super.dispose();
+  }
+
+  Future<void> _stopBlocsForLogout() async {
+    if (!mounted) return;
+    final friendsBloc = context.read<FriendsBloc>();
+    final workspaceBloc = context.read<WorkspaceBloc>();
+    final dashboardBloc = context.read<DashboardBloc>();
+    final notificationsBloc = context.read<NotificationsBloc>();
+    final boardInvitationsBloc = context.read<BoardInvitationsBloc>();
+
+    await Future.wait([
+      friendsBloc.stopForLogout(),
+      workspaceBloc.stopForLogout(),
+      dashboardBloc.stopForLogout(),
+      notificationsBloc.stopForLogout(),
+      boardInvitationsBloc.stopForLogout(),
+    ]);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -40,18 +83,8 @@ class AppView extends StatelessWidget {
           );
           context.read<FriendsBloc>().add(LoadFriendsInfo());
         } else if (state is Unauthenticated) {
-          // Centrally tear down all global sync stream subscriptions on logout
-          final friendsBloc = context.read<FriendsBloc>();
-          final workspaceBloc = context.read<WorkspaceBloc>();
-          final dashboardBloc = context.read<DashboardBloc>();
-          final notificationsBloc = context.read<NotificationsBloc>();
-          final boardInvitationsBloc = context.read<BoardInvitationsBloc>();
-
-          await friendsBloc.stopForLogout();
-          await workspaceBloc.stopForLogout();
-          await dashboardBloc.stopForLogout();
-          await notificationsBloc.stopForLogout();
-          await boardInvitationsBloc.stopForLogout();
+          // Extra safety in case logout happened outside standard authSessionService.signOut
+          await _stopBlocsForLogout();
         }
       },
       builder: (context, state) {
