@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../widgets/sliding_tray.dart';
+import '../../models/canvas_tool_mode.dart';
 
 class BrushTray extends StatefulWidget {
   final bool isOpen;
@@ -13,6 +14,7 @@ class BrushTray extends StatefulWidget {
   final ValueChanged<Color> onColorSelected;
   final ValueChanged<double> onOpacityChanged;
   final ValueChanged<String> onBrushTypeChanged;
+  final ValueChanged<CanvasToolMode>? onToolModeChanged;
   final ValueChanged<bool> onEraserEraseEverythingChanged;
   final ValueChanged<bool>? onSmoothDoodlesChanged;
 
@@ -29,6 +31,7 @@ class BrushTray extends StatefulWidget {
     required this.onColorSelected,
     required this.onOpacityChanged,
     required this.onBrushTypeChanged,
+    this.onToolModeChanged,
     required this.onEraserEraseEverythingChanged,
     this.onSmoothDoodlesChanged,
   });
@@ -319,7 +322,17 @@ class _BrushTrayState extends State<BrushTray> {
                       ),
                       selected: widget.brushType == type,
                       onSelected: (selected) {
-                        if (selected) widget.onBrushTypeChanged(type);
+                        if (selected) {
+                          widget.onBrushTypeChanged(type);
+                          switch (type) {
+                            case 'eraser':
+                              widget.onToolModeChanged?.call(CanvasToolMode.eraser);
+                            case 'highlight':
+                              widget.onToolModeChanged?.call(CanvasToolMode.highlight);
+                            default:
+                              widget.onToolModeChanged?.call(CanvasToolMode.doodle);
+                          }
+                        }
                       },
                     ),
                   ),

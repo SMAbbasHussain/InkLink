@@ -1,33 +1,58 @@
 const path = require('path');
 
 let redisClient = null;
-let redisAvailable = false;
 
 function getRedisClient() {
   if (redisClient) return redisClient;
 
+  // 1. Prefer @upstash/redis REST client if REST credentials are provided
+  // (Optimal for serverless environments: zero connection overhead, stateless HTTP)
+  const restUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const restToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (restUrl && restToken) {
+    try {
+      const { Redis: UpstashRedis } = require('@upstash/redis');
+      redisClient = new UpstashRedis({
+        url: restUrl,
+        token: restToken,
+      });
+      return redisClient;
+    } catch (err) {
+      console.warn('Failed to initialize @upstash/redis client:', err.message);
+    }
+  }
+
+  // 2. Fallback to ioredis if REDIS_URL is provided (local dev / Docker / TCP)
   const url = process.env.REDIS_URL;
   if (!url) {
     try {
       require('dotenv').config({ path: path.join(__dirname, '../../../server/.env') });
     } catch (_) {}
-    const url2 = process.env.REDIS_URL;
-    if (!url2) return null;
-    return _createClient(url2);
+    const fallbackUrl = process.env.REDIS_URL;
+    if (!fallbackUrl) return null;
+    return _createIoRedisClient(fallbackUrl);
   }
 
-  return _createClient(url);
+  return _createIoRedisClient(url);
 }
 
-function _createClient(url) {
-  const Redis = require('ioredis');
-  redisClient = new Redis(url);
-  redisClient.on('connect', () => { redisAvailable = true; });
-  redisClient.on('error', (e) => {
-    redisAvailable = false;
-    console.warn('Redis unavailable:', e.message);
-  });
-  return redisClient;
+function _createIoRedisClient(url) {
+  try {
+    const IORedis = require('ioredis');
+    redisClient = new IORedis(url, {
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 5000,
+    });
+    redisClient.on('error', (e) => {
+      console.warn('Redis unavailable:', e.message);
+    });
+    return redisClient;
+  } catch (err) {
+    console.warn('Failed to create ioredis client:', err.message);
+    return null;
+  }
 }
 
 async function addBoardMember(boardId, uid) {
@@ -35,9 +60,13 @@ async function addBoardMember(boardId, uid) {
     const client = getRedisClient();
     if (!client) return;
     const key = `board_members:${boardId}`;
-    await client.sadd(key, uid);
-    await client.expire(key, 604800);
-  } catch (_) {}
+    const p = client.pipeline();
+    p.sadd(key, uid);
+    p.expire(key, 604800);
+    await p.exec();
+  } catch (e) {
+    console.warn(`[redis] addBoardMember failed for board ${boardId}:`, e.message);
+  }
 }
 
 async function removeBoardMember(boardId, uid) {
@@ -45,7 +74,23 @@ async function removeBoardMember(boardId, uid) {
     const client = getRedisClient();
     if (!client) return;
     await client.srem(`board_members:${boardId}`, uid);
-  } catch (_) {}
+  } catch (e) {
+    console.warn(`[redis] removeBoardMember failed for board ${boardId}:`, e.message);
+  }
+}
+
+async function addBoardMembers(boardId, uids) {
+  try {
+    const client = getRedisClient();
+    if (!client || !Array.isArray(uids) || uids.length === 0) return;
+    const key = `board_members:${boardId}`;
+    const p = client.pipeline();
+    p.sadd(key, ...uids);
+    p.expire(key, 604800);
+    await p.exec();
+  } catch (e) {
+    console.warn(`[redis] addBoardMembers failed for board ${boardId}:`, e.message);
+  }
 }
 
 async function deleteBoardMembers(boardId) {
@@ -53,18 +98,37 @@ async function deleteBoardMembers(boardId) {
     const client = getRedisClient();
     if (!client) return;
     await client.del(`board_members:${boardId}`);
-  } catch (_) {}
+  } catch (e) {
+    console.warn(`[redis] deleteBoardMembers failed for board ${boardId}:`, e.message);
+  }
 }
 
-async function addBoardMembers(boardId, uids) {
-  if (uids.length === 0) return;
+async function publishBoardEvent(event) {
   try {
     const client = getRedisClient();
     if (!client) return;
-    const key = `board_members:${boardId}`;
-    await client.sadd(key, ...uids);
-    await client.expire(key, 604800);
-  } catch (_) {}
+    await client.publish('board_events', JSON.stringify(event));
+  } catch (e) {
+    console.warn('[redis] publishBoardEvent failed:', e.message);
+  }
+}
+
+async function deleteBoardState(boardId) {
+  try {
+    const client = getRedisClient();
+    if (!client) return;
+    await client.del(
+      `board_members:${boardId}`,
+      `board:${boardId}:version`,
+      `board_updates:${boardId}`,
+      `board:dedup:${boardId}`,
+      `board:lastActivity:${boardId}`,
+      `board:lastSnapshotCursor:${boardId}`,
+      `board:lastSnapshotVersion:${boardId}`
+    );
+  } catch (e) {
+    console.warn(`[redis] deleteBoardState failed for board ${boardId}:`, e.message);
+  }
 }
 
 module.exports = {
@@ -72,4 +136,6 @@ module.exports = {
   removeBoardMember,
   deleteBoardMembers,
   addBoardMembers,
+  publishBoardEvent,
+  deleteBoardState,
 };

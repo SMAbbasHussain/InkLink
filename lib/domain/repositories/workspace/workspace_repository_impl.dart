@@ -12,7 +12,7 @@ import '../../../core/services/firestore_service.dart';
 import '../../../core/services/stream_registry.dart';
 import '../../../core/utils/firestore_batch_fetcher.dart';
 import '../../models/board.dart';
-import '../../models/user_model.dart';
+import '../../../core/database/collections/local_profile.dart';
 import '../../models/workspace.dart';
 import 'workspace_repository.dart';
 
@@ -321,7 +321,7 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
             trackMissingIds: false,
           );
           final userDataByUid = userFetchResult.docsById;
-          final cachedUsers = await isar.userModels.getAllByUid(uids);
+          final cachedUsers = await isar.localProfiles.getAllByUid(uids);
           final cachedUserByUid = {
             for (var index = 0; index < uids.length; index++)
               uids[index]: cachedUsers[index],

@@ -11,37 +11,81 @@ import 'features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'features/friends/bloc/friends_bloc.dart';
 import 'core/services/data_prefetch_service.dart';
 
-class AppView extends StatelessWidget {
+import 'domain/services/auth/auth_session_service.dart';
+
+class AppView extends StatefulWidget {
   const AppView({super.key});
+
+  @override
+  State<AppView> createState() => _AppViewState();
+}
+
+class _AppViewState extends State<AppView> {
+  AuthSessionService? _authSessionService;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final service = context.read<AuthSessionService>();
+    if (_authSessionService != service) {
+      _authSessionService?.unregisterPreSignOutCallback(_stopBlocsForLogout);
+      _authSessionService = service;
+      _authSessionService?.registerPreSignOutCallback(_stopBlocsForLogout);
+    }
+  }
+
+  @override
+  void dispose() {
+    _authSessionService?.unregisterPreSignOutCallback(_stopBlocsForLogout);
+    super.dispose();
+  }
+
+  Future<void> _stopBlocsForLogout() async {
+    if (!mounted) return;
+    final friendsBloc = context.read<FriendsBloc>();
+    final workspaceBloc = context.read<WorkspaceBloc>();
+    final dashboardBloc = context.read<DashboardBloc>();
+    final notificationsBloc = context.read<NotificationsBloc>();
+    final boardInvitationsBloc = context.read<BoardInvitationsBloc>();
+
+    await Future.wait([
+      friendsBloc.stopForLogout(),
+      workspaceBloc.stopForLogout(),
+      dashboardBloc.stopForLogout(),
+      notificationsBloc.stopForLogout(),
+      boardInvitationsBloc.stopForLogout(),
+    ]);
+  }
 
   @override
   Widget build(BuildContext context) {
     return BlocConsumer<AuthBloc, AuthState>(
       listenWhen: (previous, current) =>
-          previous is! Authenticated && current is Authenticated,
-      listener: (context, state) {
-        // Ensure we're at the root route so the declarative MainWrapper is visible.
-        Navigator.of(context, rootNavigator: true)
-            .popUntil((route) => route.isFirst);
+          (previous is! Authenticated && current is Authenticated) ||
+          (previous is Authenticated && current is! Authenticated),
+      listener: (context, state) async {
+        if (state is Authenticated) {
+          // Ensure we're at the root route so the declarative MainWrapper is visible.
+          Navigator.of(context, rootNavigator: true)
+              .popUntil((route) => route.isFirst);
 
-        // Phase 4E: Prefetch data on auth
-        final authState = state is Authenticated ? state : null;
-        if (authState != null) {
-          context.read<DataPrefetchService>().prefetchInitialData(
-            authState.uid,
+          // Phase 4E: Prefetch data on auth
+          context.read<DataPrefetchService>().prefetchInitialData(state.uid);
+
+          // Restart global syncs when authenticated (crucial after logout/login cycle)
+          context.read<DashboardBloc>().add(LoadDashboardRequested());
+          context.read<WorkspaceBloc>().add(LoadWorkspacesRequested());
+          context.read<NotificationsBloc>().add(
+            const NotificationsLoadRequested(),
           );
+          context.read<BoardInvitationsBloc>().add(
+            const BoardInvitationsLoadRequested(),
+          );
+          context.read<FriendsBloc>().add(LoadFriendsInfo());
+        } else if (state is Unauthenticated) {
+          // Extra safety in case logout happened outside standard authSessionService.signOut
+          await _stopBlocsForLogout();
         }
-
-        // Restart global syncs when authenticated (crucial after logout/login cycle)
-        context.read<DashboardBloc>().add(LoadDashboardRequested());
-        context.read<WorkspaceBloc>().add(LoadWorkspacesRequested());
-        context.read<NotificationsBloc>().add(
-          const NotificationsLoadRequested(),
-        );
-        context.read<BoardInvitationsBloc>().add(
-          const BoardInvitationsLoadRequested(),
-        );
-        context.read<FriendsBloc>().add(LoadFriendsInfo());
       },
       builder: (context, state) {
         if (state is Authenticated) {

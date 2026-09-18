@@ -13,6 +13,7 @@ import '../../../domain/models/board.dart';
 import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
 import '../models/canvas_element.dart';
+import '../models/canvas_tool_mode.dart';
 import '../view/trays/canvas_shape_type.dart';
 import 'canvas_state.dart';
 
@@ -108,6 +109,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasSaveBoardPreviewRequested>(_onSaveBoardPreviewRequested);
     on<CanvasBoardMembersUpdated>(_onBoardMembersUpdated);
     on<CanvasMemberSearchQueryChanged>(_onMemberSearchQueryChanged);
+    on<CanvasSetToolMode>(_onSetToolMode);
+    on<CanvasStartShapeDraw>(_onStartShapeDraw);
+    on<CanvasUpdateShapeDraw>(_onUpdateShapeDraw);
+    on<CanvasEndShapeDraw>(_onEndShapeDraw);
+    on<CanvasCancelShapeDraw>(_onCancelShapeDraw);
   }
 
   bool get _canSync => _canvasService != null && _boardId.isNotEmpty;
@@ -1047,6 +1053,139 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     emit(state.copyWith(eraserEraseEverything: event.eraseEverything));
+  }
+
+  // ──────────────────────────────────────────────
+  // Tool mode & shape draw
+  // ──────────────────────────────────────────────
+
+  void _onSetToolMode(
+    CanvasSetToolMode event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(
+      currentToolMode: event.mode,
+      pendingShapeType: event.shapeType,
+      isDrawingShape: false,
+      shapeDrawStart: null,
+      shapeDrawCurrent: null,
+      activeTray: null,
+    ));
+  }
+
+  void _onStartShapeDraw(
+    CanvasStartShapeDraw event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (!_ensureCanEdit(emit)) return;
+    if (state.currentToolMode != CanvasToolMode.shape) return;
+    if (state.pendingShapeType == null) return;
+    emit(state.copyWith(
+      isDrawingShape: true,
+      shapeDrawStart: event.point,
+      shapeDrawCurrent: event.point,
+    ));
+  }
+
+  void _onUpdateShapeDraw(
+    CanvasUpdateShapeDraw event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (!_ensureCanEdit(emit)) {
+      if (state.isDrawingShape) {
+        _onCancelShapeDraw(CanvasCancelShapeDraw(), emit);
+      }
+      return;
+    }
+    if (!state.isDrawingShape) return;
+    emit(state.copyWith(shapeDrawCurrent: event.point));
+  }
+
+  Future<void> _onEndShapeDraw(
+    CanvasEndShapeDraw event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) {
+      if (state.isDrawingShape) {
+        _onCancelShapeDraw(CanvasCancelShapeDraw(), emit);
+      }
+      return;
+    }
+    if (!state.isDrawingShape) return;
+    final start = state.shapeDrawStart;
+    final current = state.shapeDrawCurrent;
+    final shapeType = state.pendingShapeType;
+    if (start == null || current == null || shapeType == null) return;
+
+    final dx = (current.dx - start.dx).abs();
+    final dy = (current.dy - start.dy).abs();
+    if (dx < 10 && dy < 10) {
+      _onCancelShapeDraw(CanvasCancelShapeDraw(), emit);
+      return;
+    }
+
+    final center = Offset(
+      (start.dx + current.dx) / 2,
+      (start.dy + current.dy) / 2,
+    );
+    final double size;
+    switch (shapeType) {
+      case CanvasShapeType.rectangle:
+        size = math.min(dx / 1.35, dy / 0.8);
+        break;
+      case CanvasShapeType.ellipse:
+        size = math.min(dx / 1.3, dy / 0.85);
+        break;
+      default:
+        size = math.min(dx, dy);
+        break;
+    }
+
+    // Use the existing shape creation logic
+    final shapeId = _uuid.v4();
+    final shape = ShapeElement(
+      id: shapeId,
+      z: _nextZIndex(),
+      shapeType: shapeType,
+      center: center,
+      size: size,
+      color: state.selectedColor,
+      strokeWidth: 3.0,
+      isFilled: false,
+    );
+    final nextElements = List<CanvasElement>.from(state.elements)..add(shape);
+    emit(state.copyWith(
+      elements: nextElements,
+      activeTray: null,
+      selectedShapeId: shapeId,
+      selectedShapeIsFilled: false,
+      selectedShapeBorderRadius: 0.0,
+      isDrawingShape: false,
+      shapeDrawStart: null,
+      shapeDrawCurrent: null,
+      currentToolMode: CanvasToolMode.doodle,
+      pendingShapeType: null,
+    ));
+    await _saveCrdtOperation(
+      action: 'create',
+      type: _elementType(shape),
+      objectId: shapeId,
+      data: shape.toMap(),
+      emit: emit,
+    );
+  }
+
+  void _onCancelShapeDraw(
+    CanvasCancelShapeDraw event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(
+      currentToolMode: CanvasToolMode.doodle,
+      pendingShapeType: null,
+      isDrawingShape: false,
+      shapeDrawStart: null,
+      shapeDrawCurrent: null,
+    ));
   }
 
   // ──────────────────────────────────────────────

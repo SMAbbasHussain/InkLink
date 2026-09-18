@@ -10,7 +10,6 @@ import '../../../core/database/collections/local_profile.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
 import '../../../core/services/stream_registry.dart';
-import '../../models/user_model.dart';
 import 'friends_repository.dart';
 
 class FriendsRepositoryImpl implements FriendsRepository {
@@ -221,7 +220,10 @@ class FriendsRepositoryImpl implements FriendsRepository {
                 source: 'friend_request',
                 forceNonFriend: true,
               );
-            }, onError: controller.addError);
+            }, onError: (e) {
+              if (e is FirebaseException && e.code == 'permission-denied') return;
+              if (!controller.isClosed) controller.addError(e);
+            });
       }();
     };
 
@@ -292,7 +294,10 @@ class FriendsRepositoryImpl implements FriendsRepository {
                 uid: uid,
                 isIncoming: false,
               );
-            }, onError: controller.addError);
+            }, onError: (e) {
+              if (e is FirebaseException && e.code == 'permission-denied') return;
+              if (!controller.isClosed) controller.addError(e);
+            });
       }();
     };
 
@@ -355,9 +360,6 @@ class FriendsRepositoryImpl implements FriendsRepository {
               final cachedProfiles = await isar.localProfiles.getAllByUid(
                 friendUids,
               );
-              final cachedModels = await isar.userModels.getAllByUid(
-                friendUids,
-              );
 
               final usersFromCache = <Map<String, dynamic>>[];
               final missingUids = <String>[];
@@ -365,7 +367,6 @@ class FriendsRepositoryImpl implements FriendsRepository {
               for (var i = 0; i < friendUids.length; i++) {
                 final uid = friendUids[i];
                 final profile = cachedProfiles[i];
-                final model = cachedModels[i];
 
                 if (profile != null) {
                   usersFromCache.add({
@@ -376,16 +377,6 @@ class FriendsRepositoryImpl implements FriendsRepository {
                     'friendCount': profile.friendCount,
                     'boardCount': profile.boardCount,
                     'cachedAt': profile.cachedAt,
-                  });
-                } else if (model != null) {
-                  usersFromCache.add({
-                    'uid': uid,
-                    'displayName': model.displayName,
-                    'email': model.email,
-                    'photoURL': model.photoURL,
-                    'friendCount': model.friendCount,
-                    'boardCount': model.boardCount,
-                    'cachedAt': model.createdAt,
                   });
                 } else {
                   missingUids.add(uid);
@@ -402,7 +393,10 @@ class FriendsRepositoryImpl implements FriendsRepository {
               combined.addAll(fetched);
 
               await _cacheFriendProfiles(combined);
-            }, onError: controller.addError);
+            }, onError: (e) {
+              if (e is FirebaseException && e.code == 'permission-denied') return;
+              if (!controller.isClosed) controller.addError(e);
+            });
       }();
     };
 
@@ -690,14 +684,10 @@ class FriendsRepositoryImpl implements FriendsRepository {
       return;
     }
 
-    final existingUserModels = await isar.userModels.getAllByUid(uids);
     final existingProfiles = await isar.localProfiles.getAllByUid(
       uids,
     );
 
-    final userModelMap = <String, UserModel?>{
-      for (var i = 0; i < uids.length; i++) uids[i]: existingUserModels[i],
-    };
     final profilesMap = <String, LocalProfile?>{
       for (var i = 0; i < uids.length; i++) uids[i]: existingProfiles[i],
     };
@@ -710,8 +700,6 @@ class FriendsRepositoryImpl implements FriendsRepository {
         if (uid == _currentUid) continue;
 
         seenUids.add(uid);
-
-        await _upsertUserModelSync(isar, uid, userData, userModelMap[uid]);
 
         final shouldUseFriendBucket = forceFriend
             ? true
@@ -755,57 +743,6 @@ class FriendsRepositoryImpl implements FriendsRepository {
         }
       }
     });
-  }
-
-  Future<void> _upsertUserModelSync(
-    Isar isar,
-    String uid,
-    Map<String, dynamic> userData,
-    UserModel? existing,
-  ) async {
-    final model =
-        existing ??
-        UserModel(
-          uid: uid,
-          displayName: userData['displayName']?.toString() ?? 'User',
-          email: userData['email']?.toString() ?? '',
-          createdAt: DateTime.now(),
-        );
-
-    final displayName = userData['displayName']?.toString();
-    if (displayName != null && displayName.isNotEmpty) {
-      model.displayName = displayName;
-    }
-
-    final email = userData['email']?.toString();
-    if (email != null && email.isNotEmpty) {
-      model.email = email;
-    }
-
-    final bio = userData['bio']?.toString();
-    if (bio != null) {
-      model.bio = bio.isEmpty ? null : bio;
-    }
-
-    final photoUrl = userData['photoURL']?.toString();
-    if (photoUrl != null) {
-      model.photoURL = photoUrl.isEmpty ? null : photoUrl;
-    }
-
-    model.friendCount = _toInt(userData['friendCount']);
-    model.boardCount = _toInt(userData['boardCount']);
-
-    final createdAt = _toDateTime(userData['createdAt']);
-    if (createdAt != null) {
-      model.createdAt = createdAt;
-    }
-
-    final updatedAt = _toDateTime(userData['updatedAt']);
-    if (updatedAt != null) {
-      model.updatedAt = updatedAt;
-    }
-
-    await isar.userModels.putByUid(model);
   }
 
   void _populateFriendProfile(
@@ -900,18 +837,14 @@ class FriendsRepositoryImpl implements FriendsRepository {
     if (uids.isEmpty) return <String, String>{};
 
     final profiles = await isar.localProfiles.getAllByUid(uids);
-    final models = await isar.userModels.getAllByUid(uids);
 
     final result = <String, String>{};
     for (var index = 0; index < uids.length; index++) {
       final uid = uids[index];
       final profile = profiles[index];
-      final model = models[index];
 
       result[uid] = profile?.displayName.isNotEmpty == true
           ? profile!.displayName
-          : model?.displayName.isNotEmpty == true
-          ? model!.displayName
           : 'User';
     }
 
@@ -925,18 +858,14 @@ class FriendsRepositoryImpl implements FriendsRepository {
     if (uids.isEmpty) return <String, String?>{};
 
     final profiles = await isar.localProfiles.getAllByUid(uids);
-    final models = await isar.userModels.getAllByUid(uids);
 
     final result = <String, String?>{};
     for (var index = 0; index < uids.length; index++) {
       final uid = uids[index];
       final profile = profiles[index];
-      final model = models[index];
 
       result[uid] = profile?.photoURL?.isNotEmpty == true
           ? profile!.photoURL
-          : model?.photoURL?.isNotEmpty == true
-          ? model!.photoURL
           : null;
     }
 
@@ -945,18 +874,13 @@ class FriendsRepositoryImpl implements FriendsRepository {
 
   Future<(String, String?)> _resolveProfileInfo(Isar isar, String uid) async {
     final profile = await isar.localProfiles.getByUid(uid);
-    final model = await isar.userModels.getByUid(uid);
 
     final name = profile?.displayName.isNotEmpty == true
         ? profile!.displayName
-        : model?.displayName.isNotEmpty == true
-        ? model!.displayName
         : 'User';
 
     final photo = profile?.photoURL?.isNotEmpty == true
         ? profile!.photoURL
-        : model?.photoURL?.isNotEmpty == true
-        ? model!.photoURL
         : null;
 
     return (name, photo);

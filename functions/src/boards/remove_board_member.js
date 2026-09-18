@@ -2,7 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
-const { removeBoardMember } = require('../utils/redis');
+const { removeBoardMember, publishBoardEvent } = require('../utils/redis');
 
 module.exports = async (request) => {
   const uid = request.auth?.uid;
@@ -76,6 +76,11 @@ module.exports = async (request) => {
 
     if (result.success) {
       await removeBoardMember(boardId.trim(), targetUid.trim());
+      await publishBoardEvent({
+        type: 'member_removed',
+        boardId: boardId.trim(),
+        uid: targetUid.trim(),
+      });
     }
 
     return result;
