@@ -114,6 +114,7 @@ class _MembersTrayState extends State<MembersTray> {
                     hintText: 'Search members...',
                     leadingIcon: LucideIcons.search,
                     suffixIcon: IconButton(
+                      tooltip: 'Close search',
                       icon: Icon(LucideIcons.x, size: 18, color: tokens.inkMuted),
                       onPressed: _exitSearchMode,
                     ),

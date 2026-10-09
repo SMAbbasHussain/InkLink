@@ -466,6 +466,7 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                     suffixIcon: _inviteSearchController.text.isEmpty
                         ? null
                         : IconButton(
+                            tooltip: 'Clear search',
                             icon: Icon(LucideIcons.x, size: 18, color: tokens.inkMuted),
                             onPressed: () {
                               setState(() {

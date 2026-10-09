@@ -251,6 +251,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
       onChanged: (value) => setState(() {}),
       suffixIcon: _searchController.text.isNotEmpty
           ? IconButton(
+              tooltip: 'Clear search',
               icon: Icon(LucideIcons.x, size: 18, color: context.ink.inkMuted),
               onPressed: () => setState(() => _searchController.clear()),
             )
@@ -302,6 +303,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                   hintText: "example@email.com",
                   leadingIcon: LucideIcons.mail,
                   suffixIcon: IconButton(
+                    tooltip: 'Search',
                     icon: Icon(LucideIcons.search, color: tokens.inkMuted),
                     onPressed: () {
                       if (_globalSearchController.text.isNotEmpty) {

@@ -189,6 +189,7 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
                         Text('Add boards', style: InkType.title(tokens.ink)),
                         const Spacer(),
                         IconButton(
+                          tooltip: 'Close',
                           onPressed: () => Navigator.pop(context),
                           icon: Icon(LucideIcons.x, color: tokens.inkMuted),
                         ),

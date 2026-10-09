@@ -38,6 +38,7 @@ class ProfileScreen extends StatelessWidget {
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
+          tooltip: 'Back',
           icon: Icon(LucideIcons.chevronLeft, color: tokens.ink),
           onPressed: () => Navigator.pop(context),
         ),
