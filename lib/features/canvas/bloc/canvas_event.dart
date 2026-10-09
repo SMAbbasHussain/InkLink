@@ -179,6 +179,38 @@ class CanvasUpdateBrushType extends CanvasEvent {
   const CanvasUpdateBrushType(this.brushType);
 }
 
+/// Set the current tool mode (doodle, shape, eraser, text, etc.)
+class CanvasSetToolMode extends CanvasEvent {
+  final CanvasToolMode mode;
+  final CanvasShapeType? shapeType;
+
+  const CanvasSetToolMode(this.mode, {this.shapeType});
+}
+
+/// Start drawing a shape on the canvas
+class CanvasStartShapeDraw extends CanvasEvent {
+  final Offset point;
+
+  const CanvasStartShapeDraw(this.point);
+}
+
+/// Update the current shape draw preview
+class CanvasUpdateShapeDraw extends CanvasEvent {
+  final Offset point;
+
+  const CanvasUpdateShapeDraw(this.point);
+}
+
+/// Finish drawing a shape and create it
+class CanvasEndShapeDraw extends CanvasEvent {
+  const CanvasEndShapeDraw();
+}
+
+/// Cancel shape drawing (Escape or tap)
+class CanvasCancelShapeDraw extends CanvasEvent {
+  const CanvasCancelShapeDraw();
+}
+
 /// Update eraser target mode
 class CanvasUpdateEraserScope extends CanvasEvent {
   final bool eraseEverything;

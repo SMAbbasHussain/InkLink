@@ -3,11 +3,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
-import '../../board_invitations/bloc/board_invitations_bloc.dart';
-import '../../dashboard/bloc/dashboard_bloc.dart';
-import '../../friends/bloc/friends_bloc.dart';
-import '../../notifications/bloc/notifications_bloc.dart';
-import '../../workspaces/bloc/workspace_bloc.dart';
 import '../bloc/settings_bloc.dart';
 import '../../theme/bloc/theme_bloc.dart';
 import '../../../core/constants/app_colors.dart';
@@ -195,23 +190,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: const Text("Cancel"),
           ),
           TextButton(
-            onPressed: () async {
+            onPressed: () {
               Navigator.pop(innerContext);
-
-              final friendsBloc = context.read<FriendsBloc>();
-              final workspaceBloc = context.read<WorkspaceBloc>();
-              final dashboardBloc = context.read<DashboardBloc>();
-              final notificationsBloc = context.read<NotificationsBloc>();
-              final boardInvitationsBloc = context.read<BoardInvitationsBloc>();
-              final authBloc = context.read<AuthBloc>();
-
-              await friendsBloc.stopForLogout();
-              await workspaceBloc.stopForLogout();
-              await dashboardBloc.stopForLogout();
-              await notificationsBloc.stopForLogout();
-              await boardInvitationsBloc.stopForLogout();
-
-              authBloc.add(LogoutRequested());
+              context.read<AuthBloc>().add(LogoutRequested());
             },
             child: const Text("Logout", style: TextStyle(color: Colors.red)),
           ),

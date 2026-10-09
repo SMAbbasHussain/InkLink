@@ -1,50 +1,31 @@
-import 'package:isar_community/isar.dart';
+DateTime _parseDate(dynamic value) {
+  if (value == null) return DateTime.now();
+  if (value is DateTime) return value;
+  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
+  if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+  try {
+    return (value as dynamic).toDate() as DateTime? ?? DateTime.now();
+  } catch (_) {
+    return DateTime.now();
+  }
+}
 
-part 'user_model.g.dart';
-
-/// Isar model for caching Firebase user data locally
-/// This model stores user profile information in the local database
-/// to provide offline access and reduce Firestore read costs
-@collection
+/// Pure domain entity representing a user profile.
+/// Free of database framework dependencies (Isar/Firestore).
 class UserModel {
-  Id? id; // Isar internal ID
+  final String uid;
+  final String displayName;
+  final String email;
+  final String? bio;
+  final String? photoURL;
+  final int friendCount;
+  final int boardCount;
+  final DateTime createdAt;
+  final DateTime? updatedAt;
+  final bool? isOnline;
+  final DateTime? lastActive;
 
-  /// Firebase UID (unique identifier)
-  @Index(unique: true, replace: true)
-  late String uid;
-
-  /// User's display name
-  late String displayName;
-
-  /// User's email address
-  late String email;
-
-  /// User's bio/about section
-  String? bio;
-
-  /// URL to user's profile photo stored in Cloudflare R2
-  String? photoURL;
-
-  /// Cached count of friends.
-  int friendCount = 0;
-
-  /// Cached count of owned boards.
-  int boardCount = 0;
-
-  /// Timestamp when the user was created
-  late DateTime createdAt;
-
-  /// Timestamp when the user profile was last updated
-  DateTime? updatedAt;
-
-  /// Whether the user is currently online
-  bool? isOnline;
-
-  /// Timestamp of user's last activity
-  DateTime? lastActive;
-
-  UserModel({
-    this.id,
+  const UserModel({
     required this.uid,
     required this.displayName,
     required this.email,
@@ -58,24 +39,25 @@ class UserModel {
     this.lastActive,
   });
 
-  /// Convert from Firestore user data (Map) to UserModel
   factory UserModel.fromFirestore(Map<String, dynamic> data, String uid) {
     return UserModel(
       uid: uid,
-      displayName: data['displayName'] ?? 'User',
-      email: data['email'] ?? '',
-      bio: data['bio'],
-      photoURL: data['photoURL'],
+      displayName: (data['displayName'] ?? 'User').toString(),
+      email: (data['email'] ?? '').toString(),
+      bio: data['bio']?.toString(),
+      photoURL: data['photoURL']?.toString(),
       friendCount: (data['friendCount'] as num?)?.toInt() ?? 0,
       boardCount: (data['boardCount'] as num?)?.toInt() ?? 0,
-      createdAt: (data['createdAt'] as dynamic)?.toDate() ?? DateTime.now(),
-      updatedAt: (data['updatedAt'] as dynamic)?.toDate(),
+      createdAt: _parseDate(data['createdAt']),
+      updatedAt: data['updatedAt'] != null ? _parseDate(data['updatedAt']) : null,
       isOnline: data['isOnline'] as bool?,
-      lastActive: (data['lastActive'] as dynamic)?.toDate(),
+      lastActive: data['lastActive'] != null ? _parseDate(data['lastActive']) : null,
     );
   }
 
-  /// Convert UserModel to Map for Firestore updates
+  factory UserModel.fromMap(Map<String, dynamic> data, String uid) =>
+      UserModel.fromFirestore(data, uid);
+
   Map<String, dynamic> toFirestore() {
     return {
       'displayName': displayName,
@@ -89,4 +71,46 @@ class UserModel {
       'lastActive': lastActive,
     };
   }
+
+  Map<String, dynamic> toMap() => toFirestore();
+
+  /// Backwards-compatible map-like access for legacy UI widgets.
+  dynamic operator [](String key) {
+    switch (key) {
+      case 'uid':
+        return uid;
+      case 'displayName':
+        return displayName;
+      case 'email':
+        return email;
+      case 'bio':
+        return bio;
+      case 'photoURL':
+        return photoURL;
+      case 'friendCount':
+        return friendCount;
+      case 'boardCount':
+        return boardCount;
+      case 'createdAt':
+        return createdAt;
+      case 'updatedAt':
+        return updatedAt;
+      case 'isOnline':
+        return isOnline;
+      case 'lastActive':
+        return lastActive;
+      default:
+        return null;
+    }
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UserModel &&
+          runtimeType == other.runtimeType &&
+          uid == other.uid;
+
+  @override
+  int get hashCode => uid.hashCode;
 }

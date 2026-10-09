@@ -1,4 +1,14 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+DateTime _parseDate(dynamic value) {
+  if (value == null) return DateTime.now();
+  if (value is DateTime) return value;
+  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
+  if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+  try {
+    return (value as dynamic).toDate() as DateTime? ?? DateTime.now();
+  } catch (_) {
+    return DateTime.now();
+  }
+}
 
 class Board {
   static const String visibilityPublic = 'public';
@@ -62,8 +72,8 @@ class Board {
       defaultLinkJoinRole:
           (invitePolicy?['defaultLinkJoinRole'] as String?) ?? roleViewer,
       currentUserRole: (map['currentUserRole'] as String?) ?? roleViewer,
-      createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      createdAt: _parseDate(map['createdAt']),
+      updatedAt: _parseDate(map['updatedAt']),
     );
   }
 
@@ -81,8 +91,8 @@ class Board {
         'defaultLinkJoinRole': defaultLinkJoinRole,
       },
       'currentUserRole': currentUserRole,
-      'createdAt': Timestamp.fromDate(createdAt),
-      'updatedAt': Timestamp.fromDate(updatedAt),
+      'createdAt': createdAt,
+      'updatedAt': updatedAt,
     };
 
     if (visibility == visibilityPrivate) {

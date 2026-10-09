@@ -6,9 +6,9 @@ import 'canvas_shape_type.dart';
 
 class ShapesTray extends StatelessWidget {
   final bool isOpen;
-  final ValueChanged<CanvasShapeType> onAddShape;
+  final ValueChanged<CanvasShapeType> onSelectShapeForDrawing;
 
-  const ShapesTray({super.key, required this.isOpen, required this.onAddShape});
+  const ShapesTray({super.key, required this.isOpen, required this.onSelectShapeForDrawing});
 
   @override
   Widget build(BuildContext context) {
@@ -82,7 +82,7 @@ class ShapesTray extends StatelessWidget {
         itemBuilder: (context, i) {
           final item = items[i];
           return InkWell(
-            onTap: () => onAddShape(item.type),
+            onTap: () => onSelectShapeForDrawing(item.type),
             borderRadius: BorderRadius.circular(10),
             child: Container(
               decoration: BoxDecoration(

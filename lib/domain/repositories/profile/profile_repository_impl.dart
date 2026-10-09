@@ -1,12 +1,9 @@
 import 'dart:async';
 
-import 'package:isar_community/isar.dart';
-
 import '../../../core/services/firestore_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/database/collections/local_profile.dart';
-import '../../models/user_model.dart';
 import 'profile_repository.dart';
 
 enum _ProfileBucket { self, friend, nonFriend }
@@ -63,7 +60,16 @@ class ProfileRepositoryImpl implements ProfileRepository {
     final data = doc.data();
     if (data == null) return null;
 
-    await _upsertCachedUser(uid, data);
+    final currentUid = _authService.getCurrentUserId();
+    final isSelf = currentUid == uid;
+    final isFriend = !isSelf && await _isFriendInCachedList(uid);
+    await cacheUserProfile(
+      uid,
+      data,
+      isFriend: isFriend,
+      isSelf: isSelf,
+      source: 'fetch_miss',
+    );
     return data;
   }
 
@@ -134,32 +140,20 @@ class ProfileRepositoryImpl implements ProfileRepository {
   }) async {
     final isar = await _localDatabaseService.database;
     final timestamp = DateTime.now();
-    final existingUserModel = await isar.userModels.getByUid(uid);
     final existingProfile = await isar.localProfiles.getByUid(uid);
 
     await isar.writeTxn(() async {
-      await _upsertUserModel(isar, uid, data, existingModel: existingUserModel);
-
-      if (isSelf) {
-        await isar.localProfiles.deleteByUid(uid);
-        return;
-      }
-
-      if (isFriend) {
-        final model =
-            existingProfile ??
-            LocalProfile(uid: uid, displayName: 'User', friendshipStatus: FriendshipStatus.friend);
-        _applyProfileFields(model, uid, data, source, timestamp);
-        model.friendshipStatus = FriendshipStatus.friend;
-        await isar.localProfiles.putByUid(model);
-      } else {
-        final model =
-            existingProfile ??
-            LocalProfile(uid: uid, displayName: 'User', friendshipStatus: FriendshipStatus.nonFriend);
-        _applyProfileFields(model, uid, data, source, timestamp);
-        model.friendshipStatus = FriendshipStatus.nonFriend;
-        await isar.localProfiles.putByUid(model);
-      }
+      final status = isSelf
+          ? FriendshipStatus.self
+          : isFriend
+              ? FriendshipStatus.friend
+              : FriendshipStatus.nonFriend;
+      final model =
+          existingProfile ??
+          LocalProfile(uid: uid, displayName: 'User', friendshipStatus: status);
+      _applyProfileFields(model, uid, data, source, timestamp);
+      model.friendshipStatus = status;
+      await isar.localProfiles.putByUid(model);
     });
   }
 
@@ -167,7 +161,13 @@ class ProfileRepositoryImpl implements ProfileRepository {
   Future<void> updateUserFields(String uid, Map<String, dynamic> data) async {
     await _firestoreService.collection('users').doc(uid).update(data);
 
-    await _upsertCachedUser(uid, data);
+    await cacheUserProfile(
+      uid,
+      data,
+      isFriend: false,
+      isSelf: true,
+      source: 'update',
+    );
   }
 
   Future<_CachedProfileHit?> _getCachedUserMap(String uid) async {
@@ -177,24 +177,15 @@ class ProfileRepositoryImpl implements ProfileRepository {
     if (profile != null) {
       return _CachedProfileHit(
         _profileToMap(profile),
-        profile.friendshipStatus == FriendshipStatus.friend
-            ? _ProfileBucket.friend
-            : _ProfileBucket.nonFriend,
+        profile.friendshipStatus == FriendshipStatus.self
+            ? _ProfileBucket.self
+            : profile.friendshipStatus == FriendshipStatus.friend
+                ? _ProfileBucket.friend
+                : _ProfileBucket.nonFriend,
       );
     }
 
-    final user = await isar.userModels.getByUid(uid);
-    if (user == null) return null;
-
-    return _CachedProfileHit(_userModelToMap(user), _ProfileBucket.self);
-  }
-
-  Future<void> _upsertCachedUser(String uid, Map<String, dynamic> data) async {
-    final isar = await _localDatabaseService.database;
-    final existingUserModel = await isar.userModels.getByUid(uid);
-    await isar.writeTxn(() async {
-      await _upsertUserModel(isar, uid, data, existingModel: existingUserModel);
-    });
+    return null;
   }
 
   Future<void> _cacheLiveProfileSnapshot(
@@ -212,55 +203,6 @@ class ProfileRepositoryImpl implements ProfileRepository {
       isSelf: isSelf,
       source: 'profile_live',
     );
-  }
-
-  Future<void> _upsertUserModel(
-    Isar isar,
-    String uid,
-    Map<String, dynamic> data, {
-    UserModel? existingModel,
-  }) async {
-    final model =
-        existingModel ??
-        UserModel(
-          uid: uid,
-          displayName: (data['displayName'] as String?) ?? 'User',
-          email: (data['email'] as String?) ?? '',
-          createdAt: DateTime.now(),
-        );
-
-    model.uid = uid;
-    model.displayName = (data['displayName'] as String?) ?? model.displayName;
-    model.email = (data['email'] as String?) ?? model.email;
-    model.bio = (data['bio'] as String?) ?? model.bio;
-    model.photoURL = (data['photoURL'] as String?) ?? model.photoURL;
-    model.friendCount = _toInt(data['friendCount']);
-    model.boardCount = _toInt(data['boardCount']);
-
-    final createdAtRaw = data['createdAt'];
-    if (createdAtRaw != null) {
-      model.createdAt = _toDateTime(createdAtRaw) ?? model.createdAt;
-    }
-
-    final updatedAtRaw = data['updatedAt'];
-    if (updatedAtRaw != null) {
-      model.updatedAt = _toDateTime(updatedAtRaw);
-    }
-
-    await isar.userModels.putByUid(model);
-  }
-
-  Map<String, dynamic> _userModelToMap(UserModel user) {
-    return {
-      'displayName': user.displayName,
-      'bio': user.bio,
-      'email': user.email,
-      'photoURL': user.photoURL,
-      'friendCount': user.friendCount,
-      'boardCount': user.boardCount,
-      'createdAt': user.createdAt,
-      'updatedAt': user.updatedAt,
-    };
   }
 
   Map<String, dynamic> _profileToMap(LocalProfile profile) {
@@ -312,18 +254,6 @@ class ProfileRepositoryImpl implements ProfileRepository {
     model.lastSource = source;
     model.lastSeenAt = timestamp;
     model.cachedAt = timestamp;
-  }
-
-  DateTime? _toDateTime(dynamic value) {
-    if (value is DateTime) return value;
-    if (value != null) {
-      try {
-        return value.toDate() as DateTime;
-      } catch (_) {
-        return null;
-      }
-    }
-    return null;
   }
 
   Future<bool> _isFriendInCachedList(String targetUid) async {

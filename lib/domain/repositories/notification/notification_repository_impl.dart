@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/database/collections/local_notification.dart';
 import 'package:isar_community/isar.dart';
@@ -33,6 +35,16 @@ class NotificationRepositoryImpl implements NotificationRepository {
         .orderBy('timestamp', descending: true)
         .limit(100) // Limit to recent 100 to reduce read size
         .snapshots()
+        .handleError((error) {
+          if (error is FirebaseException &&
+              error.code == 'permission-denied') {
+            return;
+          }
+          developer.log(
+            'Notification stream error: $error',
+            name: 'NotificationRepo',
+          );
+        })
         .map((snapshot) {
           // Sync to local cache on each update
           _syncNotificationsToLocal(uid, snapshot.docs);

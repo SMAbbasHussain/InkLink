@@ -20,6 +20,8 @@ abstract class AuthSessionService {
   Future<void> onAuthenticated(User user);
   Future<void> signOut();
   User? get currentUser;
+  void registerPreSignOutCallback(Future<void> Function() callback);
+  void unregisterPreSignOutCallback(Future<void> Function() callback);
 }
 
 class AuthSessionServiceImpl implements AuthSessionService {
@@ -29,6 +31,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
   final LocalDatabaseService _localDatabaseService;
   final PresenceService _presenceService;
   final CanvasSyncRepository _canvasSyncRepository;
+  final List<Future<void> Function()> _preSignOutCallbacks = [];
   bool _tokenRefreshBound = false;
   String? _lastSyncedToken;
   StreamSubscription<String>? _tokenRefreshSub;
@@ -92,8 +95,36 @@ class AuthSessionServiceImpl implements AuthSessionService {
   }
 
   @override
+  void registerPreSignOutCallback(Future<void> Function() callback) {
+    if (!_preSignOutCallbacks.contains(callback)) {
+      _preSignOutCallbacks.add(callback);
+    }
+  }
+
+  @override
+  void unregisterPreSignOutCallback(Future<void> Function() callback) {
+    _preSignOutCallbacks.remove(callback);
+  }
+
+  @override
   Future<void> signOut() async {
     developer.log('signOut: start', name: 'AuthSessionService');
+
+    // Tear down all registered stream listeners/blocs BEFORE signing out
+    // of Firebase Auth, while the auth token is still valid.
+    for (final callback in List.of(_preSignOutCallbacks)) {
+      try {
+        await callback();
+      } catch (e, st) {
+        developer.log(
+          'Error running pre-signout callback: $e',
+          name: 'AuthSessionService',
+          error: e,
+          stackTrace: st,
+        );
+      }
+    }
+
     final current = _authService.getCurrentUser();
     if (current != null) {
       await _presenceService.setUserOffline();

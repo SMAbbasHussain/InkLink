@@ -179,11 +179,14 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     LoadDashboardRequested event,
     Emitter<DashboardState> emit,
   ) async {
-    // Emit loading state immediately
+    final currentState = state;
+    final existingOwned = currentState is DashboardLoaded ? currentState.ownedBoards : const <Board>[];
+    final existingJoined = currentState is DashboardLoaded ? currentState.joinedBoards : const <Board>[];
+
     emit(
       DashboardLoaded(
-        ownedBoards: const [],
-        joinedBoards: const [],
+        ownedBoards: existingOwned,
+        joinedBoards: existingJoined,
         currentUserProfile: _latestCurrentUserProfile,
       ),
     );

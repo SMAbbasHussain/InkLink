@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/domain/models/board.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
+import 'package:inklink/features/canvas/models/canvas_tool_mode.dart';
 import 'package:inklink/features/canvas/view/trays/canvas_shape_type.dart';
 
 /// Editor role must be active for mutation events. The default
@@ -412,6 +413,62 @@ void main() {
       act: (b) => b.add(const CanvasStartStroke(Offset(0, 0))),
       verify: (b) {
         expect(b.state.currentStroke, isEmpty);
+      },
+    );
+
+    blocTest<CanvasBloc, CanvasState>(
+      'viewers cannot start shape drawing',
+      build: CanvasBloc.new,
+      act: (b) {
+        b.add(const CanvasSetToolMode(
+          CanvasToolMode.shape,
+          shapeType: CanvasShapeType.rectangle,
+        ));
+        b.add(const CanvasStartShapeDraw(Offset(10, 10)));
+      },
+      verify: (b) {
+        expect(b.state.isDrawingShape, isFalse);
+        expect(b.state.shapeDrawStart, isNull);
+        expect(
+          b.state.error,
+          contains('viewer'),
+          reason: 'expected viewer warning in state.error',
+        );
+      },
+    );
+
+    blocTest<CanvasBloc, CanvasState>(
+      'viewers cannot end shape drawing to commit shapes',
+      build: CanvasBloc.new,
+      act: (b) {
+        b.add(const CanvasEndShapeDraw());
+      },
+      verify: (b) {
+        expect(b.state.elements, isEmpty);
+        expect(
+          b.state.error,
+          contains('viewer'),
+          reason: 'expected viewer warning in state.error',
+        );
+      },
+    );
+
+    blocTest<CanvasBloc, CanvasState>(
+      'editors can draw and commit shapes',
+      build: CanvasBloc.new,
+      act: (b) {
+        _grantEditor(b);
+        b.add(const CanvasSetToolMode(
+          CanvasToolMode.shape,
+          shapeType: CanvasShapeType.rectangle,
+        ));
+        b.add(const CanvasStartShapeDraw(Offset(10, 10)));
+        b.add(const CanvasUpdateShapeDraw(Offset(60, 60)));
+        b.add(const CanvasEndShapeDraw());
+      },
+      verify: (b) {
+        expect(b.state.elements, hasLength(1));
+        expect(b.state.isDrawingShape, isFalse);
       },
     );
 

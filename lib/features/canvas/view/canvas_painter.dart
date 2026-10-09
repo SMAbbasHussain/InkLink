@@ -1,6 +1,6 @@
 part of 'canvas_screen.dart';
 
-enum _ElementKind { stroke, shape, text }
+enum _ElementKind { stroke, shape, text, image }
 
 class _CanvasElement {
   final String id;
@@ -13,11 +13,18 @@ class _CanvasElement {
   final CanvasShapeType? shapeType;
   final Offset center;
   final double size;
+  final double width;
+  final double height;
+  final String imageBase64;
   final bool isFilled;
   final String text;
   final Map<String, dynamic> data;
 
   Rect? get bounds {
+    if (kind == _ElementKind.image) {
+      return Rect.fromCenter(center: center, width: width, height: height)
+          .inflate(8);
+    }
     if (points.isEmpty) return null;
     double minX = points.first.dx;
     double minY = points.first.dy;
@@ -43,6 +50,9 @@ class _CanvasElement {
     this.shapeType,
     this.center = Offset.zero,
     this.size = 0,
+    this.width = 100,
+    this.height = 100,
+    this.imageBase64 = '',
     this.isFilled = false,
     this.text = '',
     this.data = const {},
@@ -109,10 +119,32 @@ class _CanvasElement {
     );
   }
 
+  factory _CanvasElement.image({
+    required String id,
+    required Offset center,
+    required double width,
+    required double height,
+    required String imageBase64,
+    Map<String, dynamic> data = const {},
+  }) {
+    return _CanvasElement._(
+      id: id,
+      kind: _ElementKind.image,
+      center: center,
+      width: width,
+      height: height,
+      imageBase64: imageBase64,
+      color: Colors.transparent,
+      data: data,
+    );
+  }
+
   _CanvasElement copyWith({
     List<Offset>? points,
     Offset? center,
     double? size,
+    double? width,
+    double? height,
     Map<String, dynamic>? data,
     bool? isFilled,
   }) {
@@ -127,6 +159,9 @@ class _CanvasElement {
       shapeType: shapeType,
       center: center ?? this.center,
       size: size ?? this.size,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      imageBase64: imageBase64,
       isFilled: isFilled ?? this.isFilled,
       text: text,
       data: data ?? this.data,
@@ -144,6 +179,10 @@ class _CanvasPainter extends CustomPainter {
   final double viewportScale;
   final Offset viewportOffset;
   final bool showEraserPreview;
+  final bool isDrawingShape;
+  final Offset? shapeDrawStart;
+  final Offset? shapeDrawCurrent;
+  final CanvasShapeType? pendingShapeType;
 
   const _CanvasPainter({
     required this.elements,
@@ -155,6 +194,10 @@ class _CanvasPainter extends CustomPainter {
     required this.viewportScale,
     required this.viewportOffset,
     required this.showEraserPreview,
+    this.isDrawingShape = false,
+    this.shapeDrawStart,
+    this.shapeDrawCurrent,
+    this.pendingShapeType,
   });
 
   @override
@@ -184,6 +227,9 @@ class _CanvasPainter extends CustomPainter {
         case _ElementKind.text:
           _paintText(canvas, element);
           break;
+        case _ElementKind.image:
+          _paintImage(canvas, element);
+          break;
       }
     }
 
@@ -200,6 +246,11 @@ class _CanvasPainter extends CustomPainter {
       } else if (showEraserPreview) {
         _paintEraserPreview(canvas, currentPoints.last, currentStrokeWidth);
       }
+    }
+
+    // Draw shape creation preview
+    if (isDrawingShape && shapeDrawStart != null && shapeDrawCurrent != null) {
+      _paintShapeDrawPreview(canvas, shapeDrawStart!, shapeDrawCurrent!);
     }
 
     canvas.restore();
@@ -415,6 +466,31 @@ class _CanvasPainter extends CustomPainter {
     canvas.drawCircle(position, radius, previewPaint);
   }
 
+  void _paintShapeDrawPreview(Canvas canvas, Offset start, Offset current) {
+    final rect = Rect.fromPoints(start, current);
+    final dashPaint = Paint()
+      ..color = Colors.blueAccent.withOpacity(0.6)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawRect(rect, dashPaint);
+
+    // Draw size label near the center
+    final size = math.max((current.dx - start.dx).abs(), (current.dy - start.dy).abs());
+    final sizeText = TextSpan(
+      text: size.toStringAsFixed(0),
+      style: const TextStyle(
+        color: Colors.blueAccent,
+        fontSize: 11,
+        fontWeight: FontWeight.w500,
+      ),
+    );
+    final tp = TextPainter(
+      text: sizeText,
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset(rect.center.dx - tp.width / 2, rect.bottom + 4));
+  }
+
   void _paintText(Canvas canvas, _CanvasElement element) {
     final textSpan = TextSpan(
       text: element.text,
@@ -434,6 +510,50 @@ class _CanvasPainter extends CustomPainter {
     textPainter.paint(canvas, Offset(element.center.dx, element.center.dy));
   }
 
+  void _paintImage(Canvas canvas, _CanvasElement element) {
+    final rect = Rect.fromCenter(
+      center: element.center,
+      width: element.width,
+      height: element.height,
+    );
+    final fillPaint = Paint()
+      ..color = Colors.grey.withOpacity(0.18)
+      ..style = PaintingStyle.fill;
+    final borderPaint = Paint()
+      ..color = Colors.grey.withOpacity(0.5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(8)),
+      fillPaint,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(8)),
+      borderPaint,
+    );
+
+    final textSpan = TextSpan(
+      text: '[Image: ${element.width.toInt()}x${element.height.toInt()}]',
+      style: const TextStyle(
+        color: Colors.white70,
+        fontSize: 12,
+        fontWeight: FontWeight.w500,
+      ),
+    );
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+    )..layout();
+    textPainter.paint(
+      canvas,
+      Offset(
+        rect.center.dx - textPainter.width / 2,
+        rect.center.dy - textPainter.height / 2,
+      ),
+    );
+  }
+
   @override
   bool shouldRepaint(covariant _CanvasPainter oldDelegate) {
     return oldDelegate.elements != elements ||
@@ -443,6 +563,9 @@ class _CanvasPainter extends CustomPainter {
         oldDelegate.currentBrushType != currentBrushType ||
         oldDelegate.selectedShapeId != selectedShapeId ||
         oldDelegate.viewportScale != viewportScale ||
-        oldDelegate.viewportOffset != viewportOffset;
+        oldDelegate.viewportOffset != viewportOffset ||
+        oldDelegate.isDrawingShape != isDrawingShape ||
+        oldDelegate.shapeDrawStart != shapeDrawStart ||
+        oldDelegate.shapeDrawCurrent != shapeDrawCurrent;
   }
 }

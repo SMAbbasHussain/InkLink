@@ -1,4 +1,14 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+DateTime _parseDate(dynamic value) {
+  if (value == null) return DateTime.now();
+  if (value is DateTime) return value;
+  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
+  if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+  try {
+    return (value as dynamic).toDate() as DateTime? ?? DateTime.now();
+  } catch (_) {
+    return DateTime.now();
+  }
+}
 
 /// Represents a board linked to a workspace with workspace-specific metadata.
 class WorkspaceBoard {
@@ -26,10 +36,10 @@ class WorkspaceBoard {
       boardId: (map['boardId'] ?? map['id'] ?? '') as String,
       source: (map['boardSource'] ?? 'imported') as String,
       addedBy: (map['addedBy'] ?? '') as String,
-      addedAt: (map['addedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      addedAt: _parseDate(map['addedAt']),
       visibilityInWorkspace:
           (map['visibilityInWorkspace'] ?? 'private') as String,
-      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      updatedAt: _parseDate(map['updatedAt']),
     );
   }
 
@@ -37,9 +47,9 @@ class WorkspaceBoard {
     'boardId': boardId,
     'boardSource': source,
     'addedBy': addedBy,
-    'addedAt': Timestamp.fromDate(addedAt),
+    'addedAt': addedAt,
     'visibilityInWorkspace': visibilityInWorkspace,
-    'updatedAt': Timestamp.fromDate(updatedAt),
+    'updatedAt': updatedAt,
   };
 
   bool get isWorkspaceNative => source == sourceWorkspaceNative;
