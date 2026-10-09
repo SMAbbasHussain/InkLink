@@ -8,10 +8,15 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../../../core/constants/app_colors.dart';
 import '../../../domain/models/board.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/glass_panel.dart';
+import '../../../ui/widgets/ink_avatar.dart';
 import '../../dashboard/bloc/dashboard_bloc.dart';
 import '../../dashboard/view/board_settings_route.dart';
 import '../bloc/canvas_bloc.dart';
@@ -84,6 +89,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Offset? _lastTapWorldPoint;
 
   static const double _viewportComparisonEpsilon = 0.01;
+
+  InkTokens get _tokens => context.ink;
 
   @override
   void initState() {
@@ -708,68 +715,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
               },
               child: Scaffold(
                 backgroundColor: isDark
-                    ? AppColors.bgDark
-                    : const Color(0xFFF5F5F5),
+                    ? const Color(0xFF121418)
+                    : _tokens.surfaceDesk,
                 resizeToAvoidBottomInset: false,
-                appBar: AppBar(
-                  title: GestureDetector(
-                    onTap: () => _openSettings(state.boardTitle ?? 'Board'),
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  centerTitle: true,
-                  elevation: 0,
-                  backgroundColor: Colors.transparent,
-                  actions: [
-                    IconButton(
-                      icon: const Icon(Icons.center_focus_strong),
-                      tooltip: 'Reset View',
-                      onPressed: _toggleResetView,
-                    ),
-                    PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert),
-                      onSelected: (value) {
-                        if (value == 'settings') {
-                          _openSettings(state.boardTitle ?? 'Board');
-                        } else if (value == 'copy') {
-                          Clipboard.setData(
-                            ClipboardData(text: widget.boardId),
-                          );
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Join Code copied to clipboard!'),
-                            ),
-                          );
-                        } else if (value == 'exit') {
-                          _exitCanvas();
-                        }
-                      },
-                      itemBuilder: (context) => [
-                        const PopupMenuItem(
-                          value: 'settings',
-                          child: Text('Board Settings'),
-                        ),
-                        const PopupMenuItem(
-                          value: 'copy',
-                          child: Text('Copy Join Code'),
-                        ),
-                        const PopupMenuDivider(),
-                        const PopupMenuItem(
-                          value: 'exit',
-                          child: Text(
-                            'Exit Canvas',
-                            style: TextStyle(color: Colors.red),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
                 body: LayoutBuilder(
                   builder: (context, constraints) {
                     _lastCanvasSize = Size(
@@ -1021,6 +969,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               mappedElements,
                             ),
                           _buildEdgeTriggers(),
+                          _buildTopPills(state, title),
 
                           if (state.showTrayTips)
                             TrayTipsOverlay(
@@ -1280,45 +1229,31 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   Widget _buildStrokeEditBanner() {
     final bottomInset = MediaQuery.of(context).padding.bottom;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Positioned(
       left: 0,
       right: 0,
-      bottom: bottomInset,
-      child: Container(
-        color: isDark ? AppColors.bgDark : AppColors.bgLight,
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Center(
-          child: ElevatedButton.icon(
-            onPressed: () {
+      bottom: 12 + bottomInset,
+      child: Center(
+        child: Material(
+          color: const Color(0xD91F2229),
+          borderRadius: BorderRadius.circular(InkRadii.glassBar),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(InkRadii.glassBar),
+            onTap: () {
               setState(() {
                 _isStrokeEditExpanded = true;
               });
             },
-            icon: Icon(
-              Icons.brush,
-              size: 18,
-              color: isDark
-                  ? AppColors.textPrimaryDark
-                  : AppColors.textPrimaryLight,
-            ),
-            label: Text(
-              'Edit Doodle',
-              style: TextStyle(
-                color: isDark
-                    ? AppColors.textPrimaryDark
-                    : AppColors.textPrimaryLight,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.penLine, size: 18, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Edit Doodle', style: TextStyle(color: Colors.white)),
+                ],
               ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: isDark
-                  ? AppColors.surfaceDark
-                  : AppColors.surfaceLight,
-              foregroundColor: isDark
-                  ? AppColors.textPrimaryDark
-                  : AppColors.textPrimaryLight,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              elevation: 0,
             ),
           ),
         ),
@@ -1658,41 +1593,28 @@ class _CanvasScreenState extends State<CanvasScreen> {
     return Positioned(
       left: 0,
       right: 0,
-      bottom: bottomInset,
-      child: Container(
-        color: isDark ? AppColors.bgDark : AppColors.bgLight,
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Center(
-          child: ElevatedButton.icon(
-            onPressed: () {
+      bottom: 12 + bottomInset,
+      child: Center(
+        child: Material(
+          color: const Color(0xD91F2229),
+          borderRadius: BorderRadius.circular(InkRadii.glassBar),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(InkRadii.glassBar),
+            onTap: () {
               setState(() {
                 _isShapeEditTrayExpanded = true;
               });
             },
-            icon: Icon(
-              Icons.tune,
-              size: 18,
-              color: isDark
-                  ? AppColors.textPrimaryDark
-                  : AppColors.textPrimaryLight,
-            ),
-            label: Text(
-              'Edit Shape',
-              style: TextStyle(
-                color: isDark
-                    ? AppColors.textPrimaryDark
-                    : AppColors.textPrimaryLight,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.slidersHorizontal, size: 18, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Edit Shape', style: TextStyle(color: Colors.white)),
+                ],
               ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: isDark
-                  ? AppColors.surfaceDark
-                  : AppColors.surfaceLight,
-              foregroundColor: isDark
-                  ? AppColors.textPrimaryDark
-                  : AppColors.textPrimaryLight,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              elevation: 0,
             ),
           ),
         ),
@@ -1971,6 +1893,157 @@ class _CanvasScreenState extends State<CanvasScreen> {
           },
         ),
       ],
+    );
+  }
+
+  Widget _buildTopPills(CanvasState state, String title) {
+    final tokens = _tokens;
+    final topInset = MediaQuery.of(context).padding.top + 8;
+
+    return Positioned(
+      top: topInset,
+      left: 12,
+      right: 12,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: GlassPanel(
+              radius: InkRadii.glassBar,
+              child: SizedBox(
+                height: 48,
+                child: Row(
+                  children: [
+                    IconButton(
+                      tooltip: 'Exit canvas',
+                      icon: Icon(LucideIcons.chevronLeft, color: tokens.ink),
+                      onPressed: _exitCanvas,
+                    ),
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _openSettings(state.boardTitle ?? 'Board'),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                                style: InkType.title(tokens.ink),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              LucideIcons.chevronDown,
+                              size: 16,
+                              color: tokens.inkMuted,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GlassPanel(
+            radius: InkRadii.glassBar,
+            child: SizedBox(
+              height: 48,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (state.boardMembers.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    _buildMemberAvatarStack(state.boardMembers),
+                    const SizedBox(width: 4),
+                  ],
+                  IconButton(
+                    tooltip: 'Reset View',
+                    icon: Icon(LucideIcons.scan, color: tokens.ink, size: 18),
+                    onPressed: _toggleResetView,
+                  ),
+                  PopupMenuButton<String>(
+                    icon: Icon(LucideIcons.ellipsis, color: tokens.ink, size: 18),
+                    onSelected: (value) {
+                      if (value == 'settings') {
+                        _openSettings(state.boardTitle ?? 'Board');
+                      } else if (value == 'copy') {
+                        Clipboard.setData(
+                          ClipboardData(text: widget.boardId),
+                        );
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Join Code copied to clipboard!'),
+                          ),
+                        );
+                      } else if (value == 'exit') {
+                        _exitCanvas();
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: 'settings',
+                        child: _menuRow(LucideIcons.slidersHorizontal, 'Board Settings', tokens.ink),
+                      ),
+                      PopupMenuItem(
+                        value: 'copy',
+                        child: _menuRow(LucideIcons.copy, 'Copy Join Code', tokens.ink),
+                      ),
+                      const PopupMenuDivider(),
+                      PopupMenuItem(
+                        value: 'exit',
+                        child: _menuRow(LucideIcons.logOut, 'Exit Canvas', tokens.danger),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 4),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _menuRow(IconData icon, String label, Color color) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 10),
+        Text(label, style: TextStyle(color: color)),
+      ],
+    );
+  }
+
+  Widget _buildMemberAvatarStack(List<BoardMember> members) {
+    final shown = members.take(3).toList();
+    return SizedBox(
+      width: 24 + (shown.length - 1) * 16,
+      height: 32,
+      child: Stack(
+        children: [
+          for (var i = 0; i < shown.length; i++)
+            Positioned(
+              left: i * 16,
+              child: InkAvatar(
+                imageUrl: shown[i].photoUrl,
+                initials: shown[i].label.isNotEmpty
+                    ? shown[i].label.substring(0, 1).toUpperCase()
+                    : '?',
+                id: shown[i].uid,
+                size: 28,
+              ),
+            ),
+        ],
+      ),
     );
   }
 
