@@ -1,7 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../domain/models/board.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/ink_avatar.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_chip.dart';
+import '../../../ui/widgets/ink_dialog.dart';
+import '../../../ui/widgets/ink_initials.dart';
+import '../../../ui/widgets/ink_segmented.dart';
+import '../../../ui/widgets/ink_text_field.dart';
+import '../../../ui/widgets/paper_card.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
 import '../bloc/board_settings_bloc.dart';
@@ -107,52 +119,41 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
     );
   }
 
-  void _confirmDelete(BuildContext context, String boardId) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete Board'),
-        content: const Text(
+  Future<void> _confirmDelete(BuildContext context, String boardId) async {
+    final confirmed = await showInkConfirmDialog(
+      context,
+      title: 'Delete Board',
+      message:
           'Are you sure you want to completely delete this board? This action cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            onPressed: () {
-              Navigator.pop(ctx);
-              context.read<DashboardBloc>().add(
-                DashboardDeleteBoardRequested(boardId),
-              );
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            },
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+      confirmLabel: 'Delete',
     );
+    if (!confirmed || !context.mounted) return;
+    context.read<DashboardBloc>().add(DashboardDeleteBoardRequested(boardId));
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   void _updateNameDialog(BuildContext context, Board board) {
     final controller = TextEditingController(text: board.title);
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Rename Board'),
-        content: TextField(
+      builder: (ctx) => InkDialog(
+        title: 'Rename Board',
+        content: InkTextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(hintText: 'New board name'),
+          hintText: 'New board name',
         ),
         actions: [
-          TextButton(
+          InkButton.secondary(
+            label: 'Cancel',
+            expand: false,
+            compact: true,
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
           ),
-          TextButton(
+          InkButton.primary(
+            label: 'Save',
+            expand: false,
+            compact: true,
             onPressed: () {
               Navigator.pop(ctx);
               final nextName = controller.text.trim();
@@ -162,7 +163,6 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                 );
               }
             },
-            child: const Text('Save'),
           ),
         ],
       ),
@@ -171,13 +171,18 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
     final currentUserId = context.select<AuthBloc, String?>((bloc) {
       final state = bloc.state;
       return state is Authenticated ? state.uid : null;
     });
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Board Settings')),
+      backgroundColor: tokens.paper,
+      appBar: AppBar(
+        backgroundColor: tokens.paper,
+        title: Text('Board Settings', style: InkType.title(tokens.ink)),
+      ),
       body: BlocConsumer<BoardSettingsBloc, BoardSettingsState>(
         listener: (context, state) {
           if (state.errorMessage != null && !state.isOperationLoading) {
@@ -189,7 +194,7 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
         builder: (context, state) {
           if (state.status == BoardSettingsStatus.loading ||
               state.board == null) {
-            return const Center(child: CircularProgressIndicator());
+            return Center(child: CircularProgressIndicator(color: tokens.accent));
           }
 
           final board = state.board!;
@@ -213,333 +218,251 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
           _initFormFields(board);
 
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(InkSpacing.s16),
             children: [
-              if (state.isOperationLoading) const LinearProgressIndicator(),
-              const Text(
-                'General',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey,
-                ),
-              ),
-              const SizedBox(height: 8),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Board Name'),
-                subtitle: Text(board.title),
-                trailing: isOwner
-                    ? IconButton(
-                        icon: const Icon(Icons.edit),
-                        onPressed: () => _updateNameDialog(context, board),
-                      )
-                    : null,
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Join Code'),
-                subtitle: Text(board.id),
-                trailing: IconButton(
-                  icon: const Icon(Icons.copy),
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: board.id));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Join code copied!')),
-                    );
-                  },
-                ),
-              ),
-              const Divider(height: 32),
-              if (isOwner) ...[
-                const Text(
-                  'Permissions & Visibility',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Visibility',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 8),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment<String>(
-                      value: Board.visibilityPrivate,
-                      label: Text('Private'),
-                    ),
-                    ButtonSegment<String>(
-                      value: Board.visibilityPublic,
-                      label: Text('Public'),
-                    ),
-                  ],
-                  selected: <String>{_visibility},
-                  onSelectionChanged: (selection) {
-                    setState(() {
-                      _visibility = selection.first;
-                    });
-                  },
-                ),
-                const SizedBox(height: 16),
-                if (_visibility == Board.visibilityPrivate) ...[
-                  const Text(
-                    'Private board join policy',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    value: _privateJoinPolicy,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: Board.policyOwnerOnlyInvite,
-                        child: Text('Only owner can invite'),
-                      ),
-                      DropdownMenuItem(
-                        value: Board.policyLinkCanJoin,
-                        child: Text('Anyone with join code can join'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() {
-                          _privateJoinPolicy = value;
-                        });
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                const Text(
-                  'Who can send invites',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: _whoCanInvite,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: Board.inviteOwnerOnly,
-                      child: Text('Owner only'),
-                    ),
-                    DropdownMenuItem(
-                      value: Board.inviteOwnerEditor,
-                      child: Text('Owner + Editors'),
-                    ),
-                    DropdownMenuItem(
-                      value: Board.inviteAllMembers,
-                      child: Text('All members'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() {
-                        _whoCanInvite = value;
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Default role for link/code join',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: _defaultLinkJoinRole,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: Board.roleViewer,
-                      child: Text('Viewer'),
-                    ),
-                    DropdownMenuItem(
-                      value: Board.roleEditor,
-                      child: Text('Editor'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() {
-                        _defaultLinkJoinRole = value;
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(height: 16),
-                OutlinedButton(
-                  onPressed: () => _saveSettings(context, board),
-                  child: const Text('Save Form Settings'),
-                ),
-                const SizedBox(height: 16),
-              ],
-              const Divider(height: 32),
-              if (canInvite) ...[
-                const Text(
-                  'Invite Members',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _inviteController,
-                  maxLines: 1,
-                  decoration: const InputDecoration(
-                    labelText: 'Emails (comma, space, or newline separated)',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  onChanged: (_) => setState(() {}),
-                ),
-                if (inviteEntries.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ...validInviteEmails.map(
-                        (email) => Chip(
-                          label: Text(email),
-                          avatar: const Icon(Icons.check, size: 16),
-                        ),
-                      ),
-                      ...invalidInviteEntries.map(
-                        (entry) => Chip(
-                          label: Text(entry),
-                          avatar: const Icon(Icons.error_outline, size: 16),
-                          backgroundColor: Colors.red.withOpacity(0.12),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${validInviteEmails.length} valid, ${invalidInviteEntries.length} invalid',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-                const SizedBox(height: 8),
-                Row(
+              if (state.isOperationLoading)
+                LinearProgressIndicator(color: tokens.accent),
+              _sectionLabel(tokens, 'General'),
+              const SizedBox(height: InkSpacing.s8),
+              PaperCard(
+                padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s12),
+                child: Column(
                   children: [
-                    const Text('Invite as:'),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        value: _inviteTargetRole,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                        ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: Board.roleViewer,
-                            child: Text('Viewer'),
-                          ),
-                          DropdownMenuItem(
-                            value: Board.roleEditor,
-                            child: Text('Editor'),
-                          ),
-                        ],
-                        onChanged: (value) {
-                          if (value != null) {
-                            setState(() {
-                              _inviteTargetRole = value;
-                            });
-                          }
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text('Board Name', style: InkType.bodyStrong(tokens.ink)),
+                      subtitle: Text(board.title, style: InkType.body(tokens.inkSecondary)),
+                      trailing: isOwner
+                          ? IconButton(
+                              tooltip: 'Rename board',
+                              icon: Icon(LucideIcons.pen, color: tokens.inkMuted),
+                              onPressed: () => _updateNameDialog(context, board),
+                            )
+                          : null,
+                    ),
+                    Divider(height: 1, color: tokens.glassStroke),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text('Join Code', style: InkType.bodyStrong(tokens.ink)),
+                      subtitle: Text(board.id, style: InkType.body(tokens.inkSecondary)),
+                      trailing: IconButton(
+                        tooltip: 'Copy join code',
+                        icon: Icon(LucideIcons.copy, color: tokens.inkMuted),
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: board.id));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Join code copied!')),
+                          );
                         },
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton.icon(
-                    onPressed: canSendInvites
-                        ? () => _sendInvites(context, validInviteEmails)
-                        : null,
-                    icon: const Icon(Icons.send),
-                    label: const Text('Send Invites'),
-                  ),
-                ),
-                if (state.infoMessage != null ||
-                    state.unresolvedInviteEmails.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      color: state.unresolvedInviteEmails.isEmpty
-                          ? Colors.green.withOpacity(0.12)
-                          : Colors.orange.withOpacity(0.15),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (state.infoMessage != null)
-                          Text(
-                            state.infoMessage!,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: InkSpacing.s20),
+              if (isOwner) ...[
+                _sectionLabel(tokens, 'Permissions & Visibility'),
+                const SizedBox(height: InkSpacing.s8),
+                PaperCard(
+                  padding: const EdgeInsets.all(InkSpacing.s16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Visibility', style: InkType.title(tokens.ink)),
+                      const SizedBox(height: InkSpacing.s12),
+                      InkSegmented(
+                        labels: const ['Private', 'Public'],
+                        selectedIndex: _visibility == Board.visibilityPrivate ? 0 : 1,
+                        onChanged: (i) {
+                          setState(() {
+                            _visibility = i == 0
+                                ? Board.visibilityPrivate
+                                : Board.visibilityPublic;
+                          });
+                        },
+                      ),
+                      if (_visibility == Board.visibilityPrivate) ...[
+                        const SizedBox(height: InkSpacing.s16),
+                        Text('Private board join policy', style: InkType.title(tokens.ink)),
+                        const SizedBox(height: InkSpacing.s12),
+                        _dropdown<String>(
+                          value: _privateJoinPolicy,
+                          items: const [
+                            DropdownMenuItem(
+                              value: Board.policyOwnerOnlyInvite,
+                              child: Text('Only owner can invite'),
+                            ),
+                            DropdownMenuItem(
+                              value: Board.policyLinkCanJoin,
+                              child: Text('Anyone with join code can join'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() => _privateJoinPolicy = value);
+                            }
+                          },
+                        ),
+                      ],
+                      const SizedBox(height: InkSpacing.s16),
+                      Text('Who can send invites', style: InkType.title(tokens.ink)),
+                      const SizedBox(height: InkSpacing.s12),
+                      _dropdown<String>(
+                        value: _whoCanInvite,
+                        items: const [
+                          DropdownMenuItem(
+                            value: Board.inviteOwnerOnly,
+                            child: Text('Owner only'),
                           ),
-                        if (state.unresolvedInviteEmails.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Unresolved emails',
-                            style: TextStyle(fontWeight: FontWeight.bold),
+                          DropdownMenuItem(
+                            value: Board.inviteOwnerEditor,
+                            child: Text('Owner + Editors'),
                           ),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: state.unresolvedInviteEmails
-                                .map(
-                                  (email) => Chip(
-                                    label: Text(email),
-                                    avatar: const Icon(
-                                      Icons.warning_amber_rounded,
-                                      size: 16,
-                                    ),
-                                  ),
-                                )
-                                .toList(),
+                          DropdownMenuItem(
+                            value: Board.inviteAllMembers,
+                            child: Text('All members'),
                           ),
                         ],
-                      ],
-                    ),
+                        onChanged: (value) {
+                          if (value != null) setState(() => _whoCanInvite = value);
+                        },
+                      ),
+                      const SizedBox(height: InkSpacing.s16),
+                      Text('Default role for link/code join', style: InkType.title(tokens.ink)),
+                      const SizedBox(height: InkSpacing.s12),
+                      _dropdown<String>(
+                        value: _defaultLinkJoinRole,
+                        items: const [
+                          DropdownMenuItem(value: Board.roleViewer, child: Text('Viewer')),
+                          DropdownMenuItem(value: Board.roleEditor, child: Text('Editor')),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) setState(() => _defaultLinkJoinRole = value);
+                        },
+                      ),
+                      const SizedBox(height: InkSpacing.s20),
+                      InkButton.secondary(
+                        label: 'Save Form Settings',
+                        onPressed: () => _saveSettings(context, board),
+                      ),
+                    ],
                   ),
-                ],
-                const Divider(height: 32),
-              ],
-              const Text(
-                'Members',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey,
                 ),
-              ),
-              const SizedBox(height: 4),
+                const SizedBox(height: InkSpacing.s20),
+              ],
+              if (canInvite) ...[
+                _sectionLabel(tokens, 'Invite Members'),
+                const SizedBox(height: InkSpacing.s8),
+                PaperCard(
+                  padding: const EdgeInsets.all(InkSpacing.s16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      InkTextField(
+                        controller: _inviteController,
+                        hintText: 'Emails (comma, space, or newline separated)',
+                        leadingIcon: LucideIcons.mail,
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      if (inviteEntries.isNotEmpty) ...[
+                        const SizedBox(height: InkSpacing.s12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            ...validInviteEmails.map(
+                              (email) => _inviteEmailChip(
+                                tokens,
+                                email,
+                                valid: true,
+                              ),
+                            ),
+                            ...invalidInviteEntries.map(
+                              (entry) => _inviteEmailChip(
+                                tokens,
+                                entry,
+                                valid: false,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: InkSpacing.s8),
+                        Text(
+                          '${validInviteEmails.length} valid, ${invalidInviteEntries.length} invalid',
+                          style: InkType.caption(tokens.inkMuted),
+                        ),
+                      ],
+                      const SizedBox(height: InkSpacing.s16),
+                      Row(
+                        children: [
+                          Text('Invite as:', style: InkType.body(tokens.inkSecondary)),
+                          const SizedBox(width: InkSpacing.s12),
+                          Expanded(
+                            child: _dropdown<String>(
+                              value: _inviteTargetRole,
+                              items: const [
+                                DropdownMenuItem(value: Board.roleViewer, child: Text('Viewer')),
+                                DropdownMenuItem(value: Board.roleEditor, child: Text('Editor')),
+                              ],
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setState(() => _inviteTargetRole = value);
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: InkSpacing.s16),
+                      InkButton.primary(
+                        label: 'Send Invites',
+                        icon: const Icon(LucideIcons.send),
+                        expand: false,
+                        onPressed: canSendInvites
+                            ? () => _sendInvites(context, validInviteEmails)
+                            : null,
+                      ),
+                      if (state.infoMessage != null ||
+                          state.unresolvedInviteEmails.isNotEmpty) ...[
+                        const SizedBox(height: InkSpacing.s12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(InkSpacing.s12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            color: state.unresolvedInviteEmails.isEmpty
+                                ? tokens.success.withValues(alpha: 0.12)
+                                : tokens.pending.withValues(alpha: 0.15),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (state.infoMessage != null)
+                                Text(state.infoMessage!, style: InkType.bodyStrong(tokens.ink)),
+                              if (state.unresolvedInviteEmails.isNotEmpty) ...[
+                                const SizedBox(height: InkSpacing.s8),
+                                Text('Unresolved emails', style: InkType.bodyStrong(tokens.ink)),
+                                const SizedBox(height: InkSpacing.s8 - 2),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: state.unresolvedInviteEmails
+                                      .map((email) => InkChip(label: email))
+                                      .toList(),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: InkSpacing.s20),
+              ],
               Row(
                 children: [
-                  const Spacer(),
+                  Expanded(child: _sectionLabel(tokens, 'Members')),
                   IconButton(
                     tooltip: 'Search members',
                     onPressed: () {
@@ -554,73 +477,79 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                       }
                     },
                     icon: Icon(
-                      _showMembersSearch ? Icons.search_off : Icons.search,
+                      _showMembersSearch ? LucideIcons.x : LucideIcons.search,
+                      color: tokens.inkMuted,
+                      size: 18,
                     ),
                   ),
                 ],
               ),
               if (_showMembersSearch) ...[
-                TextField(
+                InkTextField(
                   controller: _searchController,
-                  decoration: const InputDecoration(
-                    labelText: 'Search members',
-                    prefixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
+                  hintText: 'Search members',
+                  leadingIcon: LucideIcons.search,
                   onChanged: (value) {
                     context.read<BoardSettingsBloc>().add(
                       BoardSettingsSearchChanged(value),
                     );
                   },
                 ),
+                const SizedBox(height: InkSpacing.s12),
               ],
-              const SizedBox(height: 16),
-              _buildRoleSection(
-                context,
-                state.filteredMembers,
-                'Owner',
-                const ['owner'],
-                isOwner,
-                currentUserId,
-              ),
-              _buildRoleSection(
-                context,
-                state.filteredMembers,
-                'Editors',
-                const ['editor'],
-                isOwner,
-                currentUserId,
-              ),
-              _buildRoleSection(
-                context,
-                state.filteredMembers,
-                'Viewers',
-                const ['viewer'],
-                isOwner,
-                currentUserId,
+              PaperCard(
+                padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s12),
+                child: Column(
+                  children: [
+                    _buildRoleSection(
+                      context,
+                      tokens,
+                      state.filteredMembers,
+                      'Owner',
+                      const ['owner'],
+                      isOwner,
+                      currentUserId,
+                    ),
+                    _buildRoleSection(
+                      context,
+                      tokens,
+                      state.filteredMembers,
+                      'Editors',
+                      const ['editor'],
+                      isOwner,
+                      currentUserId,
+                    ),
+                    _buildRoleSection(
+                      context,
+                      tokens,
+                      state.filteredMembers,
+                      'Viewers',
+                      const ['viewer'],
+                      isOwner,
+                      currentUserId,
+                    ),
+                  ],
+                ),
               ),
               if (isOwner) ...[
-                const Divider(height: 32),
-                const Text(
-                  'Danger Zone',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.red,
+                const SizedBox(height: InkSpacing.s24),
+                _sectionLabel(tokens, 'Danger Zone', color: tokens.danger),
+                const SizedBox(height: InkSpacing.s8),
+                Container(
+                  padding: const EdgeInsets.all(InkSpacing.s16),
+                  decoration: BoxDecoration(
+                    color: tokens.paper,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: tokens.danger.withValues(alpha: 0.3)),
+                    boxShadow: tokens.paperShadow,
                   ),
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                  onPressed: () => _confirmDelete(context, board.id),
-                  child: const Text(
-                    'Delete Board',
-                    style: TextStyle(color: Colors.white),
+                  child: InkButton.danger(
+                    label: 'Delete Board',
+                    onPressed: () => _confirmDelete(context, board.id),
                   ),
                 ),
               ],
-              const SizedBox(height: 48),
+              const SizedBox(height: InkSpacing.s32),
             ],
           );
         },
@@ -628,8 +557,46 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
     );
   }
 
+  Widget _sectionLabel(InkTokens tokens, String text, {Color? color}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: InkSpacing.s4),
+      child: Text(text, style: InkType.label(color ?? tokens.inkMuted)),
+    );
+  }
+
+  Widget _dropdown<T>({
+    required T value,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?> onChanged,
+  }) {
+    return DropdownButtonFormField<T>(
+      value: value,
+      icon: const Icon(LucideIcons.chevronDown, size: 18),
+      items: items,
+      onChanged: onChanged,
+    );
+  }
+
+  Widget _inviteEmailChip(InkTokens tokens, String text, {required bool valid}) {
+    final color = valid ? tokens.accentText : tokens.danger;
+    final bg = valid ? tokens.accentSoft : tokens.danger.withValues(alpha: 0.12);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(InkRadii.chip)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(valid ? LucideIcons.check : LucideIcons.triangleAlert, size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(text, style: InkType.label(color)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildRoleSection(
     BuildContext context,
+    InkTokens tokens,
     List<BoardMember> members,
     String title,
     List<String> activeRoles,
@@ -645,28 +612,42 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Text(
-            title,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-          ),
+          padding: const EdgeInsets.symmetric(vertical: InkSpacing.s8),
+          child: Text(title, style: InkType.label(tokens.inkMuted)),
         ),
         ...filtered.map((member) {
           final isMe = member.uid == currentUserId;
           final canAdminMember = isOwner && !activeRoles.contains('owner');
 
-          return ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: CircleAvatar(
-              backgroundImage: member.photoUrl != null
-                  ? NetworkImage(member.photoUrl!)
-                  : null,
-              child: member.photoUrl == null ? const Icon(Icons.person) : null,
-            ),
-            title: Text('${member.label}${isMe ? ' (You)' : ''}'),
-            subtitle: Text(member.email ?? 'No email'),
-            trailing: canAdminMember
-                ? PopupMenuButton<String>(
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: InkSpacing.s4),
+            child: Row(
+              children: [
+                InkAvatar(
+                  imageUrl: member.photoUrl,
+                  initials: inkInitialsFor(member.label),
+                  id: member.uid,
+                  size: 36,
+                ),
+                const SizedBox(width: InkSpacing.s12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${member.label}${isMe ? ' (You)' : ''}',
+                        style: InkType.bodyStrong(tokens.ink),
+                      ),
+                      Text(
+                        member.email ?? 'No email',
+                        style: InkType.caption(tokens.inkMuted),
+                      ),
+                    ],
+                  ),
+                ),
+                if (canAdminMember)
+                  PopupMenuButton<String>(
+                    icon: Icon(LucideIcons.ellipsis, size: 18, color: tokens.inkMuted),
                     onSelected: (value) {
                       if (value == 'remove') {
                         _confirmRemoveMember(context, member);
@@ -692,48 +673,32 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                           child: Text('Make Viewer'),
                         ),
                       const PopupMenuDivider(),
-                      const PopupMenuItem(
+                      PopupMenuItem(
                         value: 'remove',
                         child: Text(
                           'Remove from Board',
-                          style: TextStyle(color: Colors.red),
+                          style: TextStyle(color: tokens.danger),
                         ),
                       ),
                     ],
-                  )
-                : null,
+                  ),
+              ],
+            ),
           );
         }),
-        const SizedBox(height: 16),
+        const SizedBox(height: InkSpacing.s12),
       ],
     );
   }
 
-  void _confirmRemoveMember(BuildContext context, BoardMember member) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Remove Member'),
-        content: Text(
-          'Are you sure you want to remove ${member.label} from this board?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            onPressed: () {
-              Navigator.pop(ctx);
-              context.read<BoardSettingsBloc>().add(
-                BoardSettingsMemberRemoved(member.uid),
-              );
-            },
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
+  Future<void> _confirmRemoveMember(BuildContext context, BoardMember member) async {
+    final confirmed = await showInkConfirmDialog(
+      context,
+      title: 'Remove Member',
+      message: 'Are you sure you want to remove ${member.label} from this board?',
+      confirmLabel: 'Remove',
     );
+    if (!confirmed || !context.mounted) return;
+    context.read<BoardSettingsBloc>().add(BoardSettingsMemberRemoved(member.uid));
   }
 }

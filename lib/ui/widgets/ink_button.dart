@@ -4,7 +4,7 @@ import '../theme/ink_theme.dart';
 import '../theme/ink_tokens.dart';
 import '../theme/ink_type.dart';
 
-enum InkButtonVariant { primary, hero, secondary, danger }
+enum InkButtonVariant { primary, hero, secondary, danger, dangerSolid }
 
 /// The four button variants used across the redesign. All are 48 high
 /// (unless [compact]) with radius 14.
@@ -62,6 +62,17 @@ class InkButton extends StatelessWidget {
     this.compact = false,
   }) : variant = InkButtonVariant.danger;
 
+  /// Solid danger fill, used for destructive confirmations (e.g. "Delete"
+  /// inside a confirm dialog) rather than the transparent `.danger` variant.
+  const InkButton.dangerConfirm({
+    super.key,
+    required this.label,
+    required this.onPressed,
+    this.icon,
+    this.expand = true,
+    this.compact = false,
+  }) : variant = InkButtonVariant.dangerSolid;
+
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
@@ -91,6 +102,10 @@ class InkButton extends StatelessWidget {
         bg = Colors.transparent;
         fg = tokens.danger;
         border = Border.all(color: tokens.danger.withValues(alpha: 0.4));
+        break;
+      case InkButtonVariant.dangerSolid:
+        bg = tokens.danger;
+        fg = Colors.white;
         break;
     }
 

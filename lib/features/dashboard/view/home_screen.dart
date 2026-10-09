@@ -22,6 +22,7 @@ import '../../../ui/widgets/command_bar.dart';
 import '../../../ui/widgets/desk_background.dart';
 import '../../../ui/widgets/empty_state.dart';
 import '../../../ui/widgets/glass_panel.dart';
+import '../../../ui/widgets/ink_dialog.dart';
 import '../../../ui/widgets/ink_avatar.dart';
 import '../../../ui/widgets/ink_initials.dart';
 import '../../../ui/widgets/ink_segmented.dart';
@@ -71,7 +72,7 @@ class _HomeScreenState extends State<HomeScreen>
     final controller = TextEditingController();
     showDialog(
       context: context,
-      builder: (dialogContext) => _DeskDialog(
+      builder: (dialogContext) => InkDialog(
         title: 'Join Board',
         actions: [
           TextButton(
@@ -91,15 +92,12 @@ class _HomeScreenState extends State<HomeScreen>
             child: const Text('Join'),
           ),
         ],
-        child: Padding(
-          padding: const EdgeInsets.only(top: InkSpacing.s8),
-          child: TextField(
-            controller: controller,
-            decoration: const InputDecoration(
-              hintText: "Enter the Join Code (Board ID)",
-            ),
-            autofocus: true,
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: "Enter the Join Code (Board ID)",
           ),
+          autofocus: true,
         ),
       ),
     );
@@ -520,32 +518,3 @@ class _SegmentedHeaderDelegate extends SliverPersistentHeaderDelegate {
   }
 }
 
-class _DeskDialog extends StatelessWidget {
-  final String title;
-  final Widget child;
-  final List<Widget> actions;
-
-  const _DeskDialog({required this.title, required this.child, required this.actions});
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = context.ink;
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      child: GlassPanel(
-        radius: InkRadii.dialog,
-        padding: const EdgeInsets.all(InkSpacing.s20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: InkType.title(tokens.ink)),
-            child,
-            const SizedBox(height: InkSpacing.s12),
-            Row(mainAxisAlignment: MainAxisAlignment.end, children: actions),
-          ],
-        ),
-      ),
-    );
-  }
-}
