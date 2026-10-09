@@ -2,9 +2,18 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../../../core/constants/app_colors.dart';
 import '../../../domain/models/board.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/empty_state.dart';
+import '../../../ui/widgets/glass_panel.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_dialog.dart';
+import '../../../ui/widgets/ink_text_field.dart';
+import '../../../ui/widgets/paper_card.dart';
 import '../../canvas/view/canvas_route.dart';
 import '../bloc/workspace_bloc.dart';
 import 'workspace_settings_screen.dart';
@@ -38,11 +47,13 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
+
     return BlocBuilder<WorkspaceBloc, WorkspaceState>(
       builder: (context, state) {
         if (state is! WorkspaceLoaded) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+          return Scaffold(
+            body: Center(child: CircularProgressIndicator(color: tokens.accent)),
           );
         }
 
@@ -71,11 +82,11 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
                   ),
                 );
               },
-              child: Text(workspace?.name ?? 'Workspace'),
+              child: Text(workspace?.name ?? 'Workspace', style: InkType.title(tokens.ink)),
             ),
             actions: [
               IconButton(
-                icon: const Icon(Icons.settings_outlined),
+                icon: Icon(LucideIcons.slidersHorizontal, color: tokens.ink),
                 tooltip: 'Workspace settings',
                 onPressed: () {
                   Navigator.push(
@@ -91,25 +102,19 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
             ],
           ),
           floatingActionButton: isOwner
-              ? FloatingActionButton.extended(
-                  onPressed: () => _showAddBoardsSheet(context, boards),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add boards'),
-                )
+              ? _WorkspaceFab(onPressed: () => _showAddBoardsSheet(context, boards))
               : null,
           body: boards.isEmpty
-              ? Center(
-                  child: Text(
-                    'No boards in this workspace yet.',
-                    style: Theme.of(context).textTheme.bodyLarge,
-                  ),
+              ? const EmptyState(
+                  icon: LucideIcons.layoutGrid,
+                  text: 'No boards in this workspace yet.',
                 )
               : GridView.builder(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(InkSpacing.s16),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
                     crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
+                    mainAxisSpacing: 24,
                     childAspectRatio: 0.85,
                   ),
                   itemCount: boards.length,
@@ -143,150 +148,155 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
   Future<void> _showAddBoardsSheet(BuildContext context, List<Board> existing) {
     final existingIds = existing.map((board) => board.id).toSet();
     _selectedBoardIds.removeWhere(existingIds.contains);
+    final tokens = context.ink;
 
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         final searchController = TextEditingController();
 
         return StatefulBuilder(
           builder: (context, setSheetState) {
             return Padding(
-              padding: EdgeInsets.only(
-                left: 16,
-                right: 16,
-                top: 16,
-                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+              padding: EdgeInsets.fromLTRB(
+                InkSpacing.s16,
+                InkSpacing.s8,
+                InkSpacing.s16,
+                MediaQuery.of(context).viewInsets.bottom + InkSpacing.s24,
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        'Add boards',
-                        style: Theme.of(context).textTheme.titleLarge,
+              child: GlassPanel(
+                radius: InkRadii.bottomSheet,
+                padding: const EdgeInsets.all(InkSpacing.s20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: InkSpacing.s16),
+                        decoration: BoxDecoration(
+                          color: tokens.inkMuted.withValues(alpha: 0.4),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
-                      const Spacer(),
-                      IconButton(
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Create new board option
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.add),
-                    label: const Text('Create new board in workspace'),
-                    onPressed: () {
-                      _showCreateBoardDialog(context);
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  Divider(color: Theme.of(context).dividerColor, height: 1),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Or add existing boards:',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: searchController,
-                    decoration: const InputDecoration(
-                      hintText: 'Search boards',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.search),
                     ),
-                    onChanged: (_) => setSheetState(() {}),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.45,
-                    child: StreamBuilder<List<Board>>(
-                      stream: widget.ownedBoardsStream,
-                      builder: (context, ownedSnapshot) {
-                        return StreamBuilder<List<Board>>(
-                          stream: widget.joinedBoardsStream,
-                          builder: (context, joinedSnapshot) {
-                            final ownedBoards =
-                                ownedSnapshot.data ?? const <Board>[];
-                            final joinedBoards =
-                                joinedSnapshot.data ?? const <Board>[];
-                            final allBoards = [...ownedBoards, ...joinedBoards];
-                            final filteredBoards = allBoards
-                                .where(
-                                  (board) =>
-                                      !existingIds.contains(board.id) &&
-                                      board.title.toLowerCase().contains(
-                                        searchController.text.toLowerCase(),
-                                      ),
-                                )
-                                .toList();
-
-                            if (filteredBoards.isEmpty) {
-                              return const Center(
-                                child: Text('No boards available to add.'),
-                              );
-                            }
-
-                            return ListView.separated(
-                              itemCount: filteredBoards.length,
-                              separatorBuilder: (_, _) =>
-                                  const SizedBox(height: 8),
-                              itemBuilder: (context, index) {
-                                final board = filteredBoards[index];
-                                final isSelected = _selectedBoardIds.contains(
-                                  board.id,
-                                );
-
-                                return CheckboxListTile(
-                                  value: isSelected,
-                                  onChanged: (value) {
-                                    setSheetState(() {
-                                      if (value == true) {
-                                        _selectedBoardIds.add(board.id);
-                                      } else {
-                                        _selectedBoardIds.remove(board.id);
-                                      }
-                                    });
-                                  },
-                                  title: Text(board.title),
-                                  secondary:
-                                      board.previewPath != null &&
-                                          board.previewPath!.isNotEmpty &&
-                                          File(board.previewPath!).existsSync()
-                                      ? ClipRRect(
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                          child: Image.file(
-                                            File(board.previewPath!),
-                                            width: 44,
-                                            height: 44,
-                                            fit: BoxFit.cover,
-                                          ),
-                                        )
-                                      : const Icon(Icons.dashboard_outlined),
-                                );
-                              },
-                            );
-                          },
-                        );
+                    Row(
+                      children: [
+                        Text('Add boards', style: InkType.title(tokens.ink)),
+                        const Spacer(),
+                        IconButton(
+                          onPressed: () => Navigator.pop(context),
+                          icon: Icon(LucideIcons.x, color: tokens.inkMuted),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: InkSpacing.s16),
+                    InkButton.secondary(
+                      label: 'Create new board in workspace',
+                      icon: const Icon(LucideIcons.plus),
+                      onPressed: () {
+                        _showCreateBoardDialog(context);
                       },
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
+                    const SizedBox(height: InkSpacing.s16),
+                    Divider(color: tokens.glassStroke, height: 1),
+                    const SizedBox(height: InkSpacing.s16),
+                    Text('Or add existing boards:', style: InkType.body(tokens.inkSecondary)),
+                    const SizedBox(height: InkSpacing.s12),
+                    InkTextField(
+                      controller: searchController,
+                      hintText: 'Search boards',
+                      leadingIcon: LucideIcons.search,
+                      onChanged: (_) => setSheetState(() {}),
+                    ),
+                    const SizedBox(height: InkSpacing.s12),
+                    SizedBox(
+                      height: MediaQuery.of(context).size.height * 0.4,
+                      child: StreamBuilder<List<Board>>(
+                        stream: widget.ownedBoardsStream,
+                        builder: (context, ownedSnapshot) {
+                          return StreamBuilder<List<Board>>(
+                            stream: widget.joinedBoardsStream,
+                            builder: (context, joinedSnapshot) {
+                              final ownedBoards =
+                                  ownedSnapshot.data ?? const <Board>[];
+                              final joinedBoards =
+                                  joinedSnapshot.data ?? const <Board>[];
+                              final allBoards = [...ownedBoards, ...joinedBoards];
+                              final filteredBoards = allBoards
+                                  .where(
+                                    (board) =>
+                                        !existingIds.contains(board.id) &&
+                                        board.title.toLowerCase().contains(
+                                          searchController.text.toLowerCase(),
+                                        ),
+                                  )
+                                  .toList();
+
+                              if (filteredBoards.isEmpty) {
+                                return Center(
+                                  child: Text(
+                                    'No boards available to add.',
+                                    style: InkType.body(tokens.inkMuted),
+                                  ),
+                                );
+                              }
+
+                              return ListView.separated(
+                                itemCount: filteredBoards.length,
+                                separatorBuilder: (_, _) =>
+                                    const SizedBox(height: 8),
+                                itemBuilder: (context, index) {
+                                  final board = filteredBoards[index];
+                                  final isSelected = _selectedBoardIds.contains(
+                                    board.id,
+                                  );
+
+                                  return CheckboxListTile(
+                                    value: isSelected,
+                                    onChanged: (value) {
+                                      setSheetState(() {
+                                        if (value == true) {
+                                          _selectedBoardIds.add(board.id);
+                                        } else {
+                                          _selectedBoardIds.remove(board.id);
+                                        }
+                                      });
+                                    },
+                                    title: Text(board.title, style: InkType.body(tokens.ink)),
+                                    secondary:
+                                        board.previewPath != null &&
+                                            board.previewPath!.isNotEmpty &&
+                                            File(board.previewPath!).existsSync()
+                                        ? ClipRRect(
+                                            borderRadius: BorderRadius.circular(8),
+                                            child: Image.file(
+                                              File(board.previewPath!),
+                                              width: 44,
+                                              height: 44,
+                                              fit: BoxFit.cover,
+                                            ),
+                                          )
+                                        : Icon(LucideIcons.layoutGrid, color: tokens.inkMuted),
+                                  );
+                                },
+                              );
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: InkSpacing.s12),
+                    InkButton.primary(
+                      label: 'Add selected boards',
                       onPressed: _selectedBoardIds.isEmpty
                           ? null
                           : () {
-                              for (final boardId
-                                  in _selectedBoardIds.toList()) {
+                              for (final boardId in _selectedBoardIds.toList()) {
                                 context.read<WorkspaceBloc>().add(
                                   AddBoardToWorkspaceRequested(
                                     workspaceId: widget.workspaceId,
@@ -297,10 +307,9 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
                               _selectedBoardIds.clear();
                               Navigator.pop(context);
                             },
-                      child: const Text('Add selected boards'),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             );
           },
@@ -315,37 +324,31 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
 
     showDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Create New Board'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: titleController,
-                decoration: const InputDecoration(
-                  labelText: 'Board title',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: descriptionController,
-                decoration: const InputDecoration(
-                  labelText: 'Description (optional)',
-                  border: OutlineInputBorder(),
-                ),
-                maxLines: 3,
-              ),
-            ],
-          ),
+      builder: (dialogContext) => InkDialog(
+        title: 'Create New Board',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            InkTextField(controller: titleController, labelText: 'Board title'),
+            const SizedBox(height: InkSpacing.s12),
+            InkTextField(
+              controller: descriptionController,
+              labelText: 'Description (optional)',
+              maxLines: 3,
+            ),
+          ],
         ),
         actions: [
-          TextButton(
+          InkButton.secondary(
+            label: 'Cancel',
+            expand: false,
+            compact: true,
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
           ),
-          FilledButton(
+          InkButton.primary(
+            label: 'Create',
+            expand: false,
+            compact: true,
             onPressed: () {
               final title = titleController.text.trim();
               if (title.isEmpty) {
@@ -365,9 +368,39 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
               Navigator.pop(context);
               Navigator.pop(context); // Close the bottom sheet
             },
-            child: const Text('Create'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _WorkspaceFab extends StatelessWidget {
+  final VoidCallback onPressed;
+
+  const _WorkspaceFab({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return Tooltip(
+      message: 'Add boards',
+      child: Material(
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            gradient: tokens.accentGradient,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: tokens.glassShadow,
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: onPressed,
+            child: const Icon(LucideIcons.plus, color: Colors.white),
+          ),
+        ),
       ),
     );
   }
@@ -388,65 +421,39 @@ class _WorkspaceBoardCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = context.ink;
 
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: isDark ? AppColors.surfaceDark : Colors.white,
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(
-            color: isDark ? Colors.white10 : Colors.grey.shade200,
-          ),
-        ),
+      child: PaperCard(
+        tiltId: board.id,
+        showTape: true,
+        clipBehavior: Clip.antiAlias,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: Container(
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.white10 : Colors.grey.shade100,
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(15),
-                  ),
-                ),
-                child:
-                    board.previewPath != null &&
+                color: tokens.field,
+                child: board.previewPath != null &&
                         board.previewPath!.isNotEmpty &&
                         File(board.previewPath!).existsSync()
-                    ? ClipRRect(
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(15),
-                        ),
-                        child: Image.file(
-                          File(board.previewPath!),
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          gaplessPlayback: true,
-                          errorBuilder: (_, _, _) => Center(
-                            child: Icon(
-                              Icons.draw_rounded,
-                              size: 36,
-                              color: isDark ? Colors.white54 : Colors.black26,
-                            ),
-                          ),
+                    ? Image.file(
+                        File(board.previewPath!),
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        gaplessPlayback: true,
+                        errorBuilder: (_, _, _) => Center(
+                          child: Icon(LucideIcons.penLine, size: 36, color: tokens.inkMuted),
                         ),
                       )
                     : Center(
-                        child: Icon(
-                          Icons.draw_rounded,
-                          size: 36,
-                          color: isDark ? Colors.white54 : Colors.black26,
-                        ),
+                        child: Icon(LucideIcons.penLine, size: 36, color: tokens.inkMuted),
                       ),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12.0,
-                vertical: 8.0,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
               child: Row(
                 children: [
                   Expanded(
@@ -455,37 +462,35 @@ class _WorkspaceBoardCard extends StatelessWidget {
                       children: [
                         Text(
                           board.title,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                          style: InkType.cardTitle(tokens.ink),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 4),
                         Text(
                           'Edited ${_timeAgo(board.updatedAt)}',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: isDark
-                                ? AppColors.textSecondaryDark
-                                : AppColors.textSecondaryLight,
-                          ),
+                          style: InkType.caption(tokens.inkMuted),
                         ),
                       ],
                     ),
                   ),
                   if (isOwner && onRemoveFromWorkspace != null)
                     PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert, size: 20),
+                      icon: Icon(LucideIcons.ellipsis, size: 20, color: tokens.inkMuted),
                       onSelected: (value) {
                         if (value == 'remove') {
                           onRemoveFromWorkspace?.call();
                         }
                       },
-                      itemBuilder: (context) => const [
+                      itemBuilder: (context) => [
                         PopupMenuItem(
                           value: 'remove',
-                          child: Text(
-                            'Remove from workspace',
-                            style: TextStyle(color: Colors.red),
+                          child: Row(
+                            children: [
+                              Icon(LucideIcons.folderMinus, size: 18, color: tokens.danger),
+                              const SizedBox(width: 10),
+                              Text('Remove from workspace', style: TextStyle(color: tokens.danger)),
+                            ],
                           ),
                         ),
                       ],

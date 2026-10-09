@@ -9,17 +9,20 @@ import 'sticky_note.dart';
 class EmptyState extends StatelessWidget {
   final IconData icon;
   final String text;
+  final String? subtitle;
   final Color color;
 
   const EmptyState({
     super.key,
     required this.icon,
     required this.text,
+    this.subtitle,
     this.color = InkColors.stickyButter,
   });
 
   @override
   Widget build(BuildContext context) {
+    final ink = InkColors.stickyInkFor(color);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(InkSpacing.s32),
@@ -29,13 +32,21 @@ class EmptyState extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 28, color: InkColors.stickyInkFor(color)),
+              Icon(icon, size: 28, color: ink),
               const SizedBox(height: InkSpacing.s12),
               Text(
                 text,
                 textAlign: TextAlign.center,
-                style: InkType.body(InkColors.stickyInkFor(color)),
+                style: InkType.bodyStrong(ink),
               ),
+              if (subtitle != null) ...[
+                const SizedBox(height: InkSpacing.s4),
+                Text(
+                  subtitle!,
+                  textAlign: TextAlign.center,
+                  style: InkType.caption(ink),
+                ),
+              ],
             ],
           ),
         ),
