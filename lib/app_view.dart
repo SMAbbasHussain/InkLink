@@ -111,7 +111,7 @@ class _AppViewState extends State<AppView> {
                   child: Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
-                      gradient: tokens.accentGradient,
+                      color: tokens.accent,
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(

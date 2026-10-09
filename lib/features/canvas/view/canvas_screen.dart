@@ -998,6 +998,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   shapeDrawStart: state.shapeDrawStart,
                                   shapeDrawCurrent: state.shapeDrawCurrent,
                                   pendingShapeType: state.pendingShapeType,
+                                  accentColor: _tokens.accent,
                                 ),
                               ),
                             ),
@@ -1332,7 +1333,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
       bottom: 8 + bottomInset,
       child: Center(
         child: Material(
-          color: Colors.white,
+          color: _tokens.paper,
           borderRadius: BorderRadius.circular(12),
           elevation: 6,
           child: ConstrainedBox(
@@ -1389,7 +1390,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       ),
                       Text(
                         '${state.selectedStrokeWidth.toStringAsFixed(0)} px',
-                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                        style: TextStyle(fontSize: 11, color: _tokens.inkMuted),
                       ),
                       const SizedBox(height: 6),
                       _buildSectionLabel('Opacity'),
@@ -1404,7 +1405,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       ),
                       Text(
                         '${(state.selectedStrokeOpacity * 100).toStringAsFixed(0)}%',
-                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                        style: TextStyle(fontSize: 11, color: _tokens.inkMuted),
                       ),
                       const SizedBox(height: 6),
                       _buildSectionLabel('Brush'),
@@ -1476,10 +1477,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Widget _buildSectionLabel(String label) {
     return Text(
       label,
-      style: const TextStyle(
+      style: TextStyle(
         fontWeight: FontWeight.w600,
         fontSize: 12,
-        color: Colors.black87,
+        color: _tokens.ink,
       ),
     );
   }
@@ -1515,7 +1516,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
       bottom: 18 + bottomInset + 12,
       child: Center(
         child: Material(
-          color: Colors.white,
+          color: _tokens.paper,
           borderRadius: BorderRadius.circular(12),
           elevation: 6,
           child: SizedBox(

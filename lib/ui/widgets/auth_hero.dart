@@ -30,10 +30,10 @@ class AuthHero extends StatelessWidget {
           top: 70,
           child: CollaboratorCursor(name: 'Alex', color: tokens.accent),
         ),
-        const Positioned(
+        Positioned(
           right: 36,
           top: 40,
-          child: CollaboratorCursor(name: 'Sam', color: Color(0xFF16A34A)),
+          child: CollaboratorCursor(name: 'Sam', color: tokens.success),
         ),
       ],
     );

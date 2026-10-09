@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:inklink/app_view.dart';
 import 'package:inklink/ui/theme/ink_theme.dart';
+import 'package:inklink/ui/theme/ink_tokens.dart';
+import 'package:inklink/ui/theme/ink_type.dart';
 import 'package:inklink/core/services/firestore_service.dart';
 import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/services/cloud_functions_service.dart';
@@ -350,29 +353,35 @@ class InitializationErrorApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, color: Colors.red, size: 60),
-                const SizedBox(height: 16),
-                const Text(
-                  "Failed to initialize app",
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+      theme: InkTheme.light(),
+      home: Builder(
+        builder: (context) {
+          final tokens = context.ink;
+          return Scaffold(
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(LucideIcons.circleAlert, color: tokens.danger, size: 60),
+                    const SizedBox(height: InkSpacing.s16),
+                    Text(
+                      "Failed to initialize app",
+                      style: InkType.title(tokens.ink),
+                    ),
+                    const SizedBox(height: InkSpacing.s8),
+                    Text(
+                      error,
+                      textAlign: TextAlign.center,
+                      style: InkType.body(tokens.inkMuted),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  error,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.grey),
-                ),
-              ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../theme/ink_colors.dart';
 import '../theme/ink_theme.dart';
 import '../theme/ink_type.dart';
 
@@ -57,7 +58,7 @@ class InkAvatar extends StatelessWidget {
             fontFamily: InkType.geistFamily,
             fontWeight: FontWeight.w600,
             fontSize: size * 0.38,
-            color: const Color(0xFF0B0B0F),
+            color: InkColors.stickyInkDefault,
           ),
         ),
       );

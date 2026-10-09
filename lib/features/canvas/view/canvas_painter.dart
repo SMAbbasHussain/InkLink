@@ -183,6 +183,7 @@ class _CanvasPainter extends CustomPainter {
   final Offset? shapeDrawStart;
   final Offset? shapeDrawCurrent;
   final CanvasShapeType? pendingShapeType;
+  final Color accentColor;
 
   const _CanvasPainter({
     required this.elements,
@@ -198,6 +199,7 @@ class _CanvasPainter extends CustomPainter {
     this.shapeDrawStart,
     this.shapeDrawCurrent,
     this.pendingShapeType,
+    required this.accentColor,
   });
 
   @override
@@ -292,7 +294,7 @@ class _CanvasPainter extends CustomPainter {
     final points = element.points;
     if (points.length < 2) return;
     final paint = Paint()
-      ..color = Colors.blue.withOpacity(0.5)
+      ..color = accentColor.withValues(alpha: 0.5)
       ..strokeWidth = element.strokeWidth + 3
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
@@ -308,7 +310,7 @@ class _CanvasPainter extends CustomPainter {
       ..strokeWidth = element.strokeWidth;
 
     final highlightPaint = Paint()
-      ..color = Colors.blue.withOpacity(0.35)
+      ..color = accentColor.withValues(alpha: 0.35)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
 
@@ -469,7 +471,7 @@ class _CanvasPainter extends CustomPainter {
   void _paintShapeDrawPreview(Canvas canvas, Offset start, Offset current) {
     final rect = Rect.fromPoints(start, current);
     final dashPaint = Paint()
-      ..color = Colors.blueAccent.withOpacity(0.6)
+      ..color = accentColor.withValues(alpha: 0.6)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     canvas.drawRect(rect, dashPaint);
@@ -478,8 +480,8 @@ class _CanvasPainter extends CustomPainter {
     final size = math.max((current.dx - start.dx).abs(), (current.dy - start.dy).abs());
     final sizeText = TextSpan(
       text: size.toStringAsFixed(0),
-      style: const TextStyle(
-        color: Colors.blueAccent,
+      style: TextStyle(
+        color: accentColor,
         fontSize: 11,
         fontWeight: FontWeight.w500,
       ),

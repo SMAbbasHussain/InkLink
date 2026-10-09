@@ -316,7 +316,7 @@ class _HomeScreenState extends State<HomeScreen>
               width: 28,
               height: 28,
               decoration: BoxDecoration(
-                gradient: tokens.accentGradient,
+                color: tokens.accent,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Icon(LucideIcons.penLine, size: 16, color: Colors.white),

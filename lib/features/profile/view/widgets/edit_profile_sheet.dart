@@ -233,7 +233,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
                 padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: tokens.accentGradient,
+                  color: tokens.accent,
                 ),
                 child: CircleAvatar(
                   radius: 60,
@@ -259,7 +259,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      gradient: tokens.accentGradient,
+                      color: tokens.accent,
                     ),
                     child: const Icon(
                       LucideIcons.camera,
