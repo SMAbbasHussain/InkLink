@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../../../core/constants/app_colors.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/empty_state.dart';
+import '../../../ui/widgets/ink_avatar.dart';
+import '../../../ui/widgets/ink_initials.dart';
+import '../../../ui/widgets/paper_card.dart';
 import '../../canvas/view/canvas_route.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../../friends/view/friend_requests_screen.dart';
@@ -19,10 +26,19 @@ class NotificationsScreen extends StatelessWidget {
       listener: (context, state) {
         if (state is! BoardInvitationsLoaded) return;
         if (state.message != null) {
+          final tokens = context.ink;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(state.message!),
-              backgroundColor: state.isError ? Colors.red : null,
+              content: state.isError
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(LucideIcons.ban, size: 16, color: tokens.danger),
+                        const SizedBox(width: InkSpacing.s8),
+                        Flexible(child: Text(state.message!)),
+                      ],
+                    )
+                  : Text(state.message!),
             ),
           );
         }
@@ -40,25 +56,31 @@ class NotificationsScreen extends StatelessWidget {
       },
       child: BlocBuilder<NotificationsBloc, NotificationsState>(
         builder: (context, state) {
+          final tokens = context.ink;
+
           if (state is NotificationsInitial) {
             context.read<NotificationsBloc>().add(
               const NotificationsLoadRequested(),
             );
-            return const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
+            return Scaffold(
+              body: Center(child: CircularProgressIndicator(color: tokens.accent)),
             );
           }
 
           if (state is NotificationsLoading) {
-            return const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
+            return Scaffold(
+              body: Center(child: CircularProgressIndicator(color: tokens.accent)),
             );
           }
 
           if (state is NotificationsError) {
             return Scaffold(
-              appBar: AppBar(title: const Text('Notifications')),
-              body: Center(child: Text(state.message)),
+              backgroundColor: tokens.paper,
+              appBar: AppBar(
+                backgroundColor: tokens.paper,
+                title: Text('Notifications', style: InkType.title(tokens.ink)),
+              ),
+              body: Center(child: Text(state.message, style: InkType.body(tokens.inkMuted))),
             );
           }
 
@@ -66,48 +88,43 @@ class NotificationsScreen extends StatelessWidget {
             return const Scaffold(body: SizedBox.shrink());
           }
 
-          final isDark = Theme.of(context).brightness == Brightness.dark;
           final unreadCount = state.notifications
               .where((item) => item['isRead'] != true)
               .length;
 
           return Scaffold(
-            backgroundColor: isDark ? AppColors.bgDark : AppColors.bgLight,
+            backgroundColor: tokens.paper,
             appBar: AppBar(
-              title: const Text('Notifications'),
+              backgroundColor: tokens.paper,
+              title: Text('Notifications', style: InkType.title(tokens.ink)),
               actions: [
                 if (unreadCount > 0)
-                  TextButton.icon(
+                  TextButton(
                     onPressed: () async {
                       await context
                           .read<NotificationsBloc>()
                           .markAllNotificationsRead();
                     },
-                    icon: const Icon(Icons.done_all_rounded, size: 18),
-                    label: const Text('Mark all read'),
+                    child: Text(
+                      'Mark all read',
+                      style: InkType.bodyStrong(tokens.accentText),
+                    ),
                   ),
-                const SizedBox(width: 8),
+                const SizedBox(width: InkSpacing.s8),
               ],
             ),
             body: state.notifications.isEmpty
-                ? Center(
-                    child: Text(
-                      'No notifications yet.',
-                      style: TextStyle(
-                        color: isDark
-                            ? AppColors.textSecondaryDark
-                            : AppColors.textSecondaryLight,
-                        fontSize: 15,
-                      ),
-                    ),
+                ? const EmptyState(
+                    icon: LucideIcons.bell,
+                    text: 'No notifications yet.',
                   )
                 : ListView.separated(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
+                      horizontal: InkSpacing.s16,
+                      vertical: InkSpacing.s12,
                     ),
                     itemCount: state.notifications.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 10),
+                    separatorBuilder: (_, _) => const SizedBox(height: InkSpacing.s12 - 2),
                     itemBuilder: (context, index) {
                       final item = state.notifications[index];
                       final senderName =
@@ -124,29 +141,11 @@ class NotificationsScreen extends StatelessWidget {
                               type == 'friend_request') &&
                           status == 'pending';
 
-                      final primaryLine = body;
-
                       final timestamp = _readTimestamp(item);
                       final timeLabel = _formatTimeLabel(timestamp);
-                      final statusColor = _statusColor(context, status);
-                      final iconData = _iconForType(type);
-                      final cardColor = isDark
-                          ? AppColors.surfaceDark
-                          : AppColors.surfaceLight;
-                      final cardBorder = unread
-                          ? AppColors.primary.withOpacity(isDark ? 0.35 : 0.22)
-                          : (isDark
-                                ? Colors.white.withOpacity(0.08)
-                                : Colors.black.withOpacity(0.06));
-                      final textPrimary = isDark
-                          ? AppColors.textPrimaryDark
-                          : AppColors.textPrimaryLight;
-                      final textSecondary = isDark
-                          ? AppColors.textSecondaryDark
-                          : AppColors.textSecondaryLight;
 
                       return InkWell(
-                        borderRadius: BorderRadius.circular(18),
+                        borderRadius: BorderRadius.circular(6),
                         onTap: () {
                           if (notificationId.isNotEmpty) {
                             context
@@ -217,263 +216,200 @@ class NotificationsScreen extends StatelessWidget {
                             );
                           }
                         },
-                        child: Ink(
-                          decoration: BoxDecoration(
-                            color: cardColor,
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: cardBorder),
-                            boxShadow: [
-                              if (!isDark)
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.03),
-                                  blurRadius: 12,
-                                  offset: const Offset(0, 6),
+                        child: PaperCard(
+                          padding: const EdgeInsets.all(InkSpacing.s16 - 2),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (unread) ...[
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  margin: const EdgeInsets.only(top: 6, right: InkSpacing.s8),
+                                  decoration: BoxDecoration(
+                                    color: tokens.accent,
+                                    shape: BoxShape.circle,
+                                  ),
                                 ),
-                            ],
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
+                              ] else
+                                const SizedBox(width: 6 + InkSpacing.s8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    CircleAvatar(
-                                      radius: 20,
-                                      backgroundColor: AppColors.primary
-                                          .withOpacity(isDark ? 0.3 : 0.15),
-                                      backgroundImage:
-                                          senderPic != null &&
-                                              senderPic.isNotEmpty
-                                          ? NetworkImage(senderPic)
-                                          : null,
-                                      child:
-                                          senderPic == null || senderPic.isEmpty
-                                          ? Text(
-                                              senderName.isEmpty
-                                                  ? 'I'
-                                                  : senderName[0].toUpperCase(),
-                                            )
-                                          : null,
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            senderName,
-                                            style: TextStyle(
-                                              fontWeight: unread
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w600,
-                                              fontSize: 15,
-                                              color: textPrimary,
-                                            ),
+                                    Row(
+                                      children: [
+                                        InkAvatar(
+                                          imageUrl: senderPic,
+                                          initials: inkInitialsFor(senderName),
+                                          id: item['fromUid']?.toString() ?? senderName,
+                                          size: 40,
+                                        ),
+                                        const SizedBox(width: InkSpacing.s12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(senderName, style: InkType.bodyStrong(tokens.ink)),
+                                              Text(timeLabel, style: InkType.caption(tokens.inkMuted)),
+                                            ],
                                           ),
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            timeLabel,
-                                            style: TextStyle(
-                                              color: textSecondary,
-                                              fontSize: 12,
-                                            ),
+                                        ),
+                                        Container(
+                                          width: 30,
+                                          height: 30,
+                                          decoration: BoxDecoration(
+                                            color: (unread ? tokens.pending : tokens.accent)
+                                                .withValues(alpha: 0.12),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Icon(
+                                            unread ? LucideIcons.mailWarning : _iconForType(type),
+                                            size: 16,
+                                            color: unread ? tokens.pending : tokens.accent,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: InkSpacing.s12),
+                                    Text(title, style: InkType.bodyStrong(tokens.ink)),
+                                    const SizedBox(height: InkSpacing.s4),
+                                    Text(
+                                      body,
+                                      style: InkType.body(tokens.inkSecondary).copyWith(height: 1.35),
+                                    ),
+                                    const SizedBox(height: InkSpacing.s12),
+                                    Row(
+                                      children: [
+                                        _statusPill(tokens, status),
+                                        const Spacer(),
+                                        if (isActionablePending &&
+                                            type == 'board_invite') ...[
+                                          _actionButton(
+                                            icon: LucideIcons.check,
+                                            color: tokens.success,
+                                            onTap: () {
+                                              final inviteId =
+                                                  item['extraData']?['inviteId']
+                                                      ?.toString() ??
+                                                  item['targetId']?.toString() ??
+                                                  item['id']?.toString() ??
+                                                  '';
+                                              final boardId =
+                                                  item['extraData']?['boardId']
+                                                      ?.toString() ??
+                                                  item['targetId']?.toString() ??
+                                                  '';
+                                              if (inviteId.isEmpty ||
+                                                  boardId.isEmpty) {
+                                                return;
+                                              }
+                                              context
+                                                  .read<NotificationsBloc>()
+                                                  .markNotificationRead(
+                                                    notificationId,
+                                                  );
+                                              context
+                                                  .read<BoardInvitationsBloc>()
+                                                  .add(
+                                                    BoardInvitationAcceptRequested(
+                                                      inviteId,
+                                                      boardId: boardId,
+                                                    ),
+                                                  );
+                                            },
+                                          ),
+                                          const SizedBox(width: InkSpacing.s8),
+                                          _actionButton(
+                                            icon: LucideIcons.x,
+                                            color: tokens.danger,
+                                            onTap: () {
+                                              final inviteId =
+                                                  item['extraData']?['inviteId']
+                                                      ?.toString() ??
+                                                  item['targetId']?.toString() ??
+                                                  item['id']?.toString() ??
+                                                  '';
+                                              if (inviteId.isEmpty) {
+                                                return;
+                                              }
+                                              context
+                                                  .read<NotificationsBloc>()
+                                                  .markNotificationRead(
+                                                    notificationId,
+                                                  );
+                                              context
+                                                  .read<BoardInvitationsBloc>()
+                                                  .add(
+                                                    BoardInvitationDeclineRequested(
+                                                      inviteId,
+                                                    ),
+                                                  );
+                                            },
+                                          ),
+                                        ] else if (isActionablePending &&
+                                            type == 'friend_request') ...[
+                                          _actionButton(
+                                            icon: LucideIcons.check,
+                                            color: tokens.success,
+                                            onTap: () {
+                                              final requestId =
+                                                  item['extraData']?['requestId']
+                                                      ?.toString() ??
+                                                  item['targetId']?.toString() ??
+                                                  item['id']?.toString() ??
+                                                  '';
+                                              final senderUid =
+                                                  item['fromUid']?.toString() ?? '';
+                                              if (requestId.isEmpty) {
+                                                return;
+                                              }
+                                              context
+                                                  .read<NotificationsBloc>()
+                                                  .markNotificationRead(
+                                                    notificationId,
+                                                  );
+                                              context.read<FriendsBloc>().add(
+                                                AcceptFriendRequestRequested(
+                                                  requestId,
+                                                  senderUid,
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                          const SizedBox(width: InkSpacing.s8),
+                                          _actionButton(
+                                            icon: LucideIcons.x,
+                                            color: tokens.danger,
+                                            onTap: () {
+                                              final requestId =
+                                                  item['extraData']?['requestId']
+                                                      ?.toString() ??
+                                                  item['targetId']?.toString() ??
+                                                  item['id']?.toString() ??
+                                                  '';
+                                              if (requestId.isEmpty) {
+                                                return;
+                                              }
+                                              context
+                                                  .read<NotificationsBloc>()
+                                                  .markNotificationRead(
+                                                    notificationId,
+                                                  );
+                                              context.read<FriendsBloc>().add(
+                                                DeclineFriendRequestRequested(
+                                                  requestId,
+                                                ),
+                                              );
+                                            },
                                           ),
                                         ],
-                                      ),
-                                    ),
-                                    Container(
-                                      width: 30,
-                                      height: 30,
-                                      decoration: BoxDecoration(
-                                        color:
-                                            (unread
-                                                    ? Colors.orange
-                                                    : AppColors.primary)
-                                                .withOpacity(
-                                                  isDark ? 0.25 : 0.12,
-                                                ),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: Icon(
-                                        unread
-                                            ? Icons.mark_email_unread_rounded
-                                            : iconData,
-                                        size: 16,
-                                        color: unread
-                                            ? Colors.orange
-                                            : AppColors.primary,
-                                      ),
+                                      ],
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  title,
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w700,
-                                    color: textPrimary,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  primaryLine,
-                                  style: TextStyle(
-                                    height: 1.35,
-                                    color: textSecondary,
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 5,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: statusColor.withOpacity(0.12),
-                                        borderRadius: BorderRadius.circular(
-                                          999,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        status.toUpperCase(),
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
-                                          color: statusColor,
-                                        ),
-                                      ),
-                                    ),
-                                    const Spacer(),
-                                    if (isActionablePending &&
-                                        type == 'board_invite') ...[
-                                      _actionButton(
-                                        icon: Icons.check_circle,
-                                        color: Colors.green,
-                                        onTap: () {
-                                          final inviteId =
-                                              item['extraData']?['inviteId']
-                                                  ?.toString() ??
-                                              item['targetId']?.toString() ??
-                                              item['id']?.toString() ??
-                                              '';
-                                          final boardId =
-                                              item['extraData']?['boardId']
-                                                  ?.toString() ??
-                                              item['targetId']?.toString() ??
-                                              '';
-                                          if (inviteId.isEmpty ||
-                                              boardId.isEmpty) {
-                                            return;
-                                          }
-                                          context
-                                              .read<NotificationsBloc>()
-                                              .markNotificationRead(
-                                                notificationId,
-                                              );
-                                          context
-                                              .read<BoardInvitationsBloc>()
-                                              .add(
-                                                BoardInvitationAcceptRequested(
-                                                  inviteId,
-                                                  boardId: boardId,
-                                                ),
-                                              );
-                                        },
-                                      ),
-                                      const SizedBox(width: 8),
-                                      _actionButton(
-                                        icon: Icons.cancel,
-                                        color: Colors.red,
-                                        onTap: () {
-                                          final inviteId =
-                                              item['extraData']?['inviteId']
-                                                  ?.toString() ??
-                                              item['targetId']?.toString() ??
-                                              item['id']?.toString() ??
-                                              '';
-                                          if (inviteId.isEmpty) {
-                                            return;
-                                          }
-                                          context
-                                              .read<NotificationsBloc>()
-                                              .markNotificationRead(
-                                                notificationId,
-                                              );
-                                          context
-                                              .read<BoardInvitationsBloc>()
-                                              .add(
-                                                BoardInvitationDeclineRequested(
-                                                  inviteId,
-                                                ),
-                                              );
-                                        },
-                                      ),
-                                    ] else if (isActionablePending &&
-                                        type == 'friend_request') ...[
-                                      _actionButton(
-                                        icon: Icons.check_circle,
-                                        color: Colors.green,
-                                        onTap: () {
-                                          final requestId =
-                                              item['extraData']?['requestId']
-                                                  ?.toString() ??
-                                              item['targetId']?.toString() ??
-                                              item['id']?.toString() ??
-                                              '';
-                                          final senderUid =
-                                              item['fromUid']?.toString() ?? '';
-                                          if (requestId.isEmpty) {
-                                            return;
-                                          }
-                                          context
-                                              .read<NotificationsBloc>()
-                                              .markNotificationRead(
-                                                notificationId,
-                                              );
-                                          context.read<FriendsBloc>().add(
-                                            AcceptFriendRequestRequested(
-                                              requestId,
-                                              senderUid,
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(width: 8),
-                                      _actionButton(
-                                        icon: Icons.cancel,
-                                        color: Colors.red,
-                                        onTap: () {
-                                          final requestId =
-                                              item['extraData']?['requestId']
-                                                  ?.toString() ??
-                                              item['targetId']?.toString() ??
-                                              item['id']?.toString() ??
-                                              '';
-                                          if (requestId.isEmpty) {
-                                            return;
-                                          }
-                                          context
-                                              .read<NotificationsBloc>()
-                                              .markNotificationRead(
-                                                notificationId,
-                                              );
-                                          context.read<FriendsBloc>().add(
-                                            DeclineFriendRequestRequested(
-                                              requestId,
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
                         ),
                       );
@@ -547,26 +483,50 @@ class NotificationsScreen extends StatelessWidget {
     switch (type) {
       case 'friend_request':
       case 'friend_request_accepted':
-        return Icons.people_alt_rounded;
+        return LucideIcons.users;
       case 'board_invite':
-        return Icons.draw_rounded;
+        return LucideIcons.penLine;
       default:
-        return Icons.notifications_rounded;
+        return LucideIcons.bell;
     }
   }
 
-  Color _statusColor(BuildContext context, String status) {
+  Widget _statusPill(InkTokens tokens, String status) {
+    final Color color;
     switch (status) {
       case 'accepted':
-        return Colors.green;
+        color = tokens.success;
+        break;
       case 'declined':
       case 'expired':
-        return Colors.red;
+        color = tokens.danger;
+        break;
       case 'pending':
-        return Colors.orange;
+        color = tokens.pending;
+        break;
       default:
-        return Theme.of(context).colorScheme.primary;
+        color = tokens.accent;
     }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s8 + 2, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(status.toUpperCase(), style: InkType.caption(color).copyWith(fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
   }
 
   Widget _actionButton({
@@ -581,7 +541,7 @@ class NotificationsScreen extends StatelessWidget {
         width: 34,
         height: 34,
         decoration: BoxDecoration(
-          color: color.withOpacity(0.14),
+          color: color.withValues(alpha: 0.14),
           shape: BoxShape.circle,
         ),
         child: Icon(icon, size: 18, color: color),

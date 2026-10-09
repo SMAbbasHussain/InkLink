@@ -1,11 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/ink_avatar.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_dialog.dart';
+import '../../../ui/widgets/ink_initials.dart';
+import '../../../ui/widgets/paper_card.dart';
 import '../bloc/settings_bloc.dart';
 import '../../theme/bloc/theme_bloc.dart';
-import '../../../core/constants/app_colors.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -17,7 +25,8 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = context.ink;
+    final isDark = tokens.isDark;
 
     return MultiBlocListener(
       listeners: [
@@ -30,8 +39,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(message),
-                backgroundColor: state.isError ? Colors.red : null,
+                content: state.isError
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(LucideIcons.ban, size: 16, color: tokens.danger),
+                          const SizedBox(width: InkSpacing.s8),
+                          Flexible(child: Text(message)),
+                        ],
+                      )
+                    : Text(message),
               ),
             );
             context.read<SettingsBloc>().add(const SettingsConsumeMessage());
@@ -45,102 +62,146 @@ class _SettingsScreenState extends State<SettingsScreen> {
           return BlocBuilder<SettingsBloc, SettingsState>(
             builder: (context, settingsState) {
               return Scaffold(
-                appBar: AppBar(title: const Text('Settings')),
+                backgroundColor: tokens.surfaceDesk,
+                appBar: AppBar(title: Text('Settings', style: InkType.headline(tokens.ink))),
                 body: ListView(
+                  padding: const EdgeInsets.fromLTRB(
+                    InkSpacing.s16,
+                    InkSpacing.s8,
+                    InkSpacing.s16,
+                    InkSpacing.s32,
+                  ),
                   children: [
-                    const SizedBox(height: 20),
-                    _buildProfileHeader(authUser),
-                    const SizedBox(height: 30),
-                    _buildSectionHeader('Appearance'),
-                    SwitchListTile(
-                      title: const Text('Dark Mode'),
-                      secondary: const Icon(Icons.dark_mode),
-                      value: isDark,
-                      onChanged: (_) =>
-                          context.read<ThemeBloc>().add(ToggleTheme()),
+                    _buildProfileHeader(tokens, authUser),
+                    const SizedBox(height: InkSpacing.s24),
+                    _buildSectionHeader(tokens, 'Appearance'),
+                    PaperCard(
+                      padding: EdgeInsets.zero,
+                      child: _row(
+                        tokens,
+                        icon: LucideIcons.moon,
+                        title: 'Dark Mode',
+                        trailing: Switch(
+                          value: isDark,
+                          onChanged: (_) =>
+                              context.read<ThemeBloc>().add(ToggleTheme()),
+                        ),
+                      ),
                     ),
-                    _buildSectionHeader('Canvas'),
-                    SwitchListTile(
-                      title: const Text('Show Tray Tips Overlay'),
-                      subtitle: const Text(
-                        'Show tray position helper when creating or joining a board',
-                      ),
-                      secondary: const Icon(Icons.lightbulb_outline),
-                      value: settingsState.showTrayTips,
-                      onChanged: settingsState.isLoadingTrayTips
-                          ? null
-                          : (value) {
-                              context.read<SettingsBloc>().add(
-                                SettingsTrayTipsToggled(value),
-                              );
-                            },
-                    ),
-                    ListTile(
-                      leading: const Icon(
-                        Icons.photo_size_select_large_outlined,
-                      ),
-                      title: const Text('Board Preview Quality'),
-                      subtitle: const Text(
-                        'Used when saving board thumbnail after leaving canvas',
-                      ),
-                      trailing: DropdownButton<String>(
-                        value: settingsState.boardPreviewQuality,
-                        onChanged: (value) {
-                          if (value == null) return;
-                          context.read<SettingsBloc>().add(
-                            SettingsBoardPreviewQualityChanged(value),
-                          );
-                        },
-                        items: const [
-                          DropdownMenuItem(value: 'low', child: Text('Low')),
-                          DropdownMenuItem(
-                            value: 'medium',
-                            child: Text('Medium'),
+                    _buildSectionHeader(tokens, 'Canvas'),
+                    PaperCard(
+                      padding: EdgeInsets.zero,
+                      child: Column(
+                        children: [
+                          _row(
+                            tokens,
+                            icon: LucideIcons.lightbulb,
+                            title: 'Show Tray Tips Overlay',
+                            subtitle:
+                                'Show tray position helper when creating or joining a board',
+                            trailing: Switch(
+                              value: settingsState.showTrayTips,
+                              onChanged: settingsState.isLoadingTrayTips
+                                  ? null
+                                  : (value) {
+                                      context.read<SettingsBloc>().add(
+                                        SettingsTrayTipsToggled(value),
+                                      );
+                                    },
+                            ),
                           ),
-                          DropdownMenuItem(value: 'high', child: Text('High')),
+                          Divider(height: 1, color: tokens.glassStroke),
+                          _row(
+                            tokens,
+                            icon: LucideIcons.image,
+                            title: 'Board Preview Quality',
+                            subtitle: 'Used when saving board thumbnail after leaving canvas',
+                            trailing: DropdownButton<String>(
+                              value: settingsState.boardPreviewQuality,
+                              underline: const SizedBox.shrink(),
+                              icon: Icon(LucideIcons.chevronDown, size: 18, color: tokens.inkMuted),
+                              onChanged: (value) {
+                                if (value == null) return;
+                                context.read<SettingsBloc>().add(
+                                  SettingsBoardPreviewQualityChanged(value),
+                                );
+                              },
+                              items: const [
+                                DropdownMenuItem(value: 'low', child: Text('Low')),
+                                DropdownMenuItem(value: 'medium', child: Text('Medium')),
+                                DropdownMenuItem(value: 'high', child: Text('High')),
+                              ],
+                            ),
+                          ),
+                          Divider(height: 1, color: tokens.glassStroke),
+                          _row(
+                            tokens,
+                            icon: LucideIcons.minimize2,
+                            title: 'Compress Board Preview',
+                            subtitle: 'Recommended ON. Defaults to medium compressed previews.',
+                            trailing: Switch(
+                              value: settingsState.boardPreviewCompressionEnabled,
+                              onChanged: (value) {
+                                context.read<SettingsBloc>().add(
+                                  SettingsBoardPreviewCompressionToggled(value),
+                                );
+                              },
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                    SwitchListTile(
-                      title: const Text('Compress Board Preview'),
-                      subtitle: const Text(
-                        'Recommended ON. Defaults to medium compressed previews.',
-                      ),
-                      secondary: const Icon(Icons.compress_outlined),
-                      value: settingsState.boardPreviewCompressionEnabled,
-                      onChanged: (value) {
-                        context.read<SettingsBloc>().add(
-                          SettingsBoardPreviewCompressionToggled(value),
-                        );
-                      },
-                    ),
-                    _buildSectionHeader('Storage'),
-                    ListTile(
-                      leading: const Icon(Icons.cloud_download),
-                      title: const Text('Offline Database (Isar Community)'),
-                      subtitle: const Text(
-                        'Tap clear to remove local cached boards',
-                      ),
-                      trailing: TextButton(
-                        onPressed: () {
-                          context.read<SettingsBloc>().add(
-                            const SettingsClearCacheRequested(),
-                          );
-                        },
-                        child: const Text('Clear Cache'),
-                      ),
-                    ),
-                    _buildSectionHeader('Account'),
-                    ListTile(
-                      leading: const Icon(Icons.logout, color: Colors.red),
-                      title: const Text(
-                        'Logout',
-                        style: TextStyle(
-                          color: Colors.red,
-                          fontWeight: FontWeight.bold,
+                    _buildSectionHeader(tokens, 'Storage'),
+                    PaperCard(
+                      padding: EdgeInsets.zero,
+                      child: _row(
+                        tokens,
+                        icon: LucideIcons.database,
+                        title: 'Offline Database (Isar Community)',
+                        subtitle: 'Tap clear to remove local cached boards',
+                        trailing: InkButton.secondary(
+                          label: 'Clear Cache',
+                          compact: true,
+                          expand: false,
+                          onPressed: () {
+                            context.read<SettingsBloc>().add(
+                              const SettingsClearCacheRequested(),
+                            );
+                          },
                         ),
                       ),
-                      onTap: () => _showLogoutDialog(context),
+                    ),
+                    _buildSectionHeader(tokens, 'Account'),
+                    PaperCard(
+                      padding: EdgeInsets.zero,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(6),
+                        onTap: () => _showLogoutDialog(context),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: InkSpacing.s16,
+                            vertical: InkSpacing.s12,
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 34,
+                                height: 34,
+                                decoration: BoxDecoration(
+                                  color: tokens.danger.withValues(alpha: 0.08),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(LucideIcons.logOut, size: 18, color: tokens.danger),
+                              ),
+                              const SizedBox(width: InkSpacing.s12),
+                              Text(
+                                'Logout',
+                                style: InkType.bodyStrong(tokens.danger),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -152,66 +213,110 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildProfileHeader(Authenticated? user) {
-    return Column(
-      children: [
-        CircleAvatar(
-          radius: 50,
-          backgroundColor: AppColors.primary.withOpacity(0.1),
-          backgroundImage: user?.photoUrl != null
-              ? NetworkImage(user!.photoUrl!)
-              : null,
-          child: user?.photoUrl == null
-              ? const Icon(Icons.person, size: 50, color: AppColors.primary)
-              : null,
-        ),
-        const SizedBox(height: 12),
-        Text(
-          user?.userName ?? 'InkLink Creator',
-          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-        ),
-        Text(
-          user?.email ?? '',
-          style: const TextStyle(color: Colors.grey, fontSize: 14),
-        ),
-      ],
+  Widget _row(
+    InkTokens tokens, {
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    Widget? trailing,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s16, vertical: InkSpacing.s12),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: tokens.field,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 18, color: tokens.ink),
+          ),
+          const SizedBox(width: InkSpacing.s12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: InkType.body(tokens.ink)),
+                if (subtitle != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(subtitle, style: InkType.caption(tokens.inkMuted)),
+                  ),
+              ],
+            ),
+          ),
+          if (trailing != null) ...[const SizedBox(width: InkSpacing.s12), trailing],
+        ],
+      ),
     );
   }
 
-  void _showLogoutDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (innerContext) => AlertDialog(
-        title: const Text("Logout"),
-        content: const Text("Are you sure you want to sign out of InkLink?"),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(innerContext),
-            child: const Text("Cancel"),
+  Widget _buildProfileHeader(InkTokens tokens, Authenticated? user) {
+    return PaperCard(
+      padding: const EdgeInsets.all(InkSpacing.s16),
+      child: Row(
+        children: [
+          InkAvatar(
+            imageUrl: user?.photoUrl,
+            initials: inkInitialsFor(user?.userName),
+            id: user?.uid ?? '',
+            size: 56,
+            ring: true,
           ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(innerContext);
-              context.read<AuthBloc>().add(LogoutRequested());
-            },
-            child: const Text("Logout", style: TextStyle(color: Colors.red)),
+          const SizedBox(width: InkSpacing.s16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  user?.userName ?? 'InkLink Creator',
+                  style: InkType.title(tokens.ink),
+                ),
+                Text(user?.email ?? '', style: InkType.caption(tokens.inkMuted)),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSectionHeader(String title) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
-      child: Text(
-        title.toUpperCase(),
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-          color: Colors.grey,
+  void _showLogoutDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (innerContext) => InkDialog(
+        title: "Logout",
+        content: Text(
+          "Are you sure you want to sign out of InkLink?",
+          style: InkType.body(innerContext.ink.inkSecondary),
         ),
+        actions: [
+          InkButton.secondary(
+            label: "Cancel",
+            expand: false,
+            compact: true,
+            onPressed: () => Navigator.pop(innerContext),
+          ),
+          InkButton.dangerConfirm(
+            label: "Logout",
+            expand: false,
+            compact: true,
+            onPressed: () {
+              Navigator.pop(innerContext);
+              context.read<AuthBloc>().add(LogoutRequested());
+            },
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildSectionHeader(InkTokens tokens, String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 20, 4, 8),
+      child: Text(title.toUpperCase(), style: InkType.label(tokens.inkMuted)),
     );
   }
 }
