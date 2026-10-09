@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'ui/theme/ink_theme.dart';
+import 'ui/widgets/desk_background.dart';
 import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/bloc/auth_state.dart';
 import 'features/auth/view/login_screen.dart';
@@ -55,23 +58,28 @@ class AppView extends StatelessWidget {
           return const LoginScreen();
         }
         // While checking session or loading
-        return Scaffold(
-          body: Center(
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF6A11CB), Color(0xFF2575FC)],
+        return Builder(
+          builder: (context) {
+            final tokens = context.ink;
+            return Scaffold(
+              body: DeskBackground(
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      gradient: tokens.accentGradient,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      LucideIcons.penLine,
+                      size: 80,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
-                shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.edit_note_rounded,
-                size: 80,
-                color: Colors.white,
-              ),
-            ),
-          ),
+            );
+          },
         );
       },
     );

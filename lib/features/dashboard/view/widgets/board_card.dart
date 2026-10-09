@@ -2,9 +2,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:inklink/core/constants/app_colors.dart';
 import 'package:inklink/domain/models/board.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../canvas/view/canvas_route.dart';
+import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_type.dart';
+import '../../../../ui/widgets/desk_background.dart';
+import '../../../../ui/widgets/paper_card.dart';
 
 class BoardCard extends StatelessWidget {
   final Board board;
@@ -22,56 +26,47 @@ class BoardCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = context.ink;
 
     return GestureDetector(
       onTap: () {
         Navigator.push(context, buildCanvasRoute(context, boardId: board.id));
       },
-      child: Container(
-        decoration: BoxDecoration(
-          color: isDark ? AppColors.surfaceDark : Colors.white,
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(
-            color: isDark ? Colors.white10 : Colors.grey.shade200,
-          ),
-        ),
+      child: PaperCard(
+        tiltId: board.id,
+        showTape: true,
+        clipBehavior: Clip.antiAlias,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.white10 : Colors.grey.shade100,
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(15),
-                  ),
-                ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(3),
                 child:
                     board.previewPath != null && board.previewPath!.isNotEmpty
-                    ? ClipRRect(
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(15),
-                        ),
+                    ? DeskBackground(
                         child: Image.file(
                           File(board.previewPath!),
                           fit: BoxFit.cover,
                           width: double.infinity,
+                          height: double.infinity,
                           gaplessPlayback: true,
                           errorBuilder: (_, _, _) => Center(
                             child: Icon(
-                              Icons.draw_rounded,
+                              LucideIcons.penLine,
                               size: 36,
-                              color: isDark ? Colors.white54 : Colors.black26,
+                              color: tokens.inkMuted,
                             ),
                           ),
                         ),
                       )
-                    : Center(
-                        child: Icon(
-                          Icons.draw_rounded,
-                          size: 36,
-                          color: isDark ? Colors.white54 : Colors.black26,
+                    : DeskBackground(
+                        child: Center(
+                          child: Icon(
+                            LucideIcons.penLine,
+                            size: 36,
+                            color: tokens.inkMuted,
+                          ),
                         ),
                       ),
               ),
@@ -89,25 +84,20 @@ class BoardCard extends StatelessWidget {
                       children: [
                         Text(
                           board.title,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                          style: InkType.cardTitle(tokens.ink),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 4),
                         Text(
                           "Edited ${_timeAgo(board.updatedAt)}",
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: isDark
-                                ? AppColors.textSecondaryDark
-                                : AppColors.textSecondaryLight,
-                          ),
+                          style: InkType.caption(tokens.inkMuted),
                         ),
                       ],
                     ),
                   ),
                   PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert, size: 20),
+                    icon: Icon(LucideIcons.ellipsis, size: 20, color: tokens.inkMuted),
                     onSelected: (value) {
                       if (value == 'copy') {
                         Clipboard.setData(ClipboardData(text: board.id));
@@ -125,21 +115,18 @@ class BoardCard extends StatelessWidget {
                       }
                     },
                     itemBuilder: (context) => [
-                      const PopupMenuItem(
+                      PopupMenuItem(
                         value: 'settings',
-                        child: Text('Settings'),
+                        child: _menuRow(LucideIcons.slidersHorizontal, 'Settings', tokens.ink),
                       ),
-                      const PopupMenuItem(
+                      PopupMenuItem(
                         value: 'copy',
-                        child: Text('Copy Join Code'),
+                        child: _menuRow(LucideIcons.copy, 'Copy Join Code', tokens.ink),
                       ),
                       if (isOwner)
-                        const PopupMenuItem(
+                        PopupMenuItem(
                           value: 'delete',
-                          child: Text(
-                            'Delete',
-                            style: TextStyle(color: Colors.red),
-                          ),
+                          child: _menuRow(LucideIcons.trash2, 'Delete', tokens.danger),
                         ),
                     ],
                   ),
@@ -149,6 +136,16 @@ class BoardCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _menuRow(IconData icon, String label, Color color) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 10),
+        Text(label, style: TextStyle(color: color)),
+      ],
     );
   }
 

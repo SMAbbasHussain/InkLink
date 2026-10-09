@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
 import '../../canvas/view/canvas_route.dart';
@@ -13,8 +14,18 @@ import '../../dashboard/bloc/dashboard_bloc.dart';
 import '../../dashboard/view/create_board_route.dart';
 import '../../dashboard/view/board_settings_route.dart';
 import '../../dashboard/view/widgets/board_card.dart';
-import '../../dashboard/view/widgets/quick_action_button.dart';
-import '../../../core/constants/app_colors.dart';
+import '../../../ui/theme/ink_colors.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/command_bar.dart';
+import '../../../ui/widgets/desk_background.dart';
+import '../../../ui/widgets/empty_state.dart';
+import '../../../ui/widgets/glass_panel.dart';
+import '../../../ui/widgets/ink_avatar.dart';
+import '../../../ui/widgets/ink_initials.dart';
+import '../../../ui/widgets/ink_segmented.dart';
+import '../../../ui/widgets/sticky_note.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -36,6 +47,10 @@ class _HomeScreenState extends State<HomeScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    // Keeps the InkSegmented selector in sync when the TabBarView is swiped.
+    _tabController.addListener(() {
+      if (!_tabController.indexIsChanging) setState(() {});
+    });
     context.read<BoardInvitationsBloc>().add(
       const BoardInvitationsLoadRequested(),
     );
@@ -56,15 +71,8 @@ class _HomeScreenState extends State<HomeScreen>
     final controller = TextEditingController();
     showDialog(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Join Board'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            hintText: "Enter the Join Code (Board ID)",
-          ),
-          autofocus: true,
-        ),
+      builder: (dialogContext) => _DeskDialog(
+        title: 'Join Board',
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
@@ -83,6 +91,16 @@ class _HomeScreenState extends State<HomeScreen>
             child: const Text('Join'),
           ),
         ],
+        child: Padding(
+          padding: const EdgeInsets.only(top: InkSpacing.s8),
+          child: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              hintText: "Enter the Join Code (Board ID)",
+            ),
+            autofocus: true,
+          ),
+        ),
       ),
     );
   }
@@ -102,7 +120,8 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context); // Required by AutomaticKeepAliveClientMixin
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = context.ink;
+    final isDark = tokens.isDark;
     final authState = context.watch<AuthBloc>().state;
     final authUser = authState is Authenticated ? authState : null;
     _syncProfileWatch(authUser?.uid);
@@ -135,8 +154,14 @@ class _HomeScreenState extends State<HomeScreen>
             if (state.actionError != null) {
               scaffoldMessenger.showSnackBar(
                 SnackBar(
-                  content: Text(state.actionError!),
-                  backgroundColor: Colors.red,
+                  content: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(LucideIcons.ban, size: 16, color: tokens.danger),
+                      const SizedBox(width: InkSpacing.s8),
+                      Flexible(child: Text(state.actionError!)),
+                    ],
+                  ),
                 ),
               );
               dashboardBloc.add(DashboardConsumeEffects());
@@ -145,10 +170,7 @@ class _HomeScreenState extends State<HomeScreen>
 
             if (state.actionInfo != null) {
               scaffoldMessenger.showSnackBar(
-                SnackBar(
-                  content: Text(state.actionInfo!),
-                  backgroundColor: Colors.orange,
-                ),
+                SnackBar(content: Text(state.actionInfo!)),
               );
             }
 
@@ -193,202 +215,82 @@ class _HomeScreenState extends State<HomeScreen>
               : null;
 
           return Scaffold(
-            appBar: AppBar(
-              title: const Text(
-                "InkLink",
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 26),
-              ),
-              actions: [
-                IconButton(
-                  icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
-                  onPressed: () => context.read<ThemeBloc>().add(ToggleTheme()),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(right: 4.0),
-                  child: BlocBuilder<NotificationsBloc, NotificationsState>(
-                    builder: (context, state) {
-                      final hasUnread =
-                          state is NotificationsLoaded &&
-                          state.notifications.any(
-                            (item) => item['isRead'] != true,
-                          );
-
-                      return IconButton(
-                        icon: Badge(
-                          isLabelVisible: hasUnread,
-                          smallSize: 8,
-                          backgroundColor: Colors.redAccent,
-                          child: const Icon(Icons.notifications_none),
-                        ),
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            buildNotificationsRoute(context),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(right: 16.0),
-                  child: InkWell(
-                    onTap: () {
-                      if (authUser != null) {
-                        Navigator.push(
-                          context,
-                          buildProfileRoute(context, userId: authUser.uid),
-                        );
-                      }
-                    },
-                    customBorder: const CircleBorder(),
-                    child: authUser != null
-                        ? CircleAvatar(
-                            radius: 18,
-                            backgroundColor: AppColors.primary.withOpacity(0.2),
-                            backgroundImage:
-                                (photoURL != null && photoURL.isNotEmpty)
-                                ? NetworkImage(photoURL)
-                                : null,
-                            child: (photoURL == null || photoURL.isEmpty)
-                                ? const Icon(
-                                    Icons.person,
-                                    size: 20,
-                                    color: AppColors.primary,
-                                  )
-                                : null,
-                          )
-                        : CircleAvatar(
-                            radius: 18,
-                            backgroundColor: AppColors.primary.withOpacity(0.2),
-                            child: const Icon(
-                              Icons.person,
-                              size: 20,
-                              color: AppColors.primary,
-                            ),
-                          ),
-                  ),
-                ),
-              ],
-            ),
-            body: NestedScrollView(
-              headerSliverBuilder: (context, innerBoxIsScrolled) => [
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          "Ready to bring your ideas to life?",
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        BlocBuilder<
-                          BoardInvitationsBloc,
-                          BoardInvitationsState
-                        >(
-                          builder: (context, inviteState) {
-                            final count = inviteState is BoardInvitationsLoaded
-                                ? inviteState.invites.length
-                                : 0;
-                            if (count == 0) {
-                              return const SizedBox.shrink();
-                            }
-
-                            return InkWell(
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => BlocProvider.value(
-                                      value: context
-                                          .read<BoardInvitationsBloc>(),
-                                      child: const BoardInvitesScreen(),
-                                    ),
-                                  ),
-                                );
-                              },
-                              borderRadius: BorderRadius.circular(12),
-                              child: Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppColors.actionOrange.withOpacity(
-                                    0.12,
-                                  ),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: AppColors.actionOrange.withOpacity(
-                                      0.5,
-                                    ),
-                                  ),
-                                ),
-                                child: Text(
-                                  '$count pending board invite${count > 1 ? 's' : ''} - tap to review',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 24),
-                        _buildSearchBar(isDark),
-                        const SizedBox(height: 30),
-                        Row(
-                          children: [
-                            QuickActionButton(
-                              title: "New Board",
-                              icon: Icons.add,
-                              color: AppColors.actionBlue,
-                              onTap: _showCreateBoardDialog,
-                            ),
-                            const SizedBox(width: 16),
-                            QuickActionButton(
-                              title: "Join Board",
-                              icon: Icons.group_add,
-                              color: AppColors.actionOrange,
-                              onTap: _showJoinDialog,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                      ],
-                    ),
-                  ),
-                ),
-                SliverPersistentHeader(
-                  pinned: true,
-                  delegate: _SliverAppBarDelegate(
-                    TabBar(
-                      controller: _tabController,
-                      indicatorColor: AppColors.primary,
-                      labelColor: AppColors.primary,
-                      unselectedLabelColor: Colors.grey,
-                      tabs: const [
-                        Tab(text: "My Boards"),
-                        Tab(text: "Joined Boards"),
-                      ],
-                    ),
-                    isDark
-                        ? AppColors.bgDark
-                        : Theme.of(context).scaffoldBackgroundColor,
-                  ),
-                ),
-              ],
-              body: TabBarView(
-                controller: _tabController,
+            body: DeskBackground(
+              child: Stack(
                 children: [
-                  _buildBoardGrid(state, isOwner: true),
-                  _buildBoardGrid(state, isOwner: false),
+                  Positioned.fill(
+                    child: NestedScrollView(
+                      headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                        SliverToBoxAdapter(
+                          child: SafeArea(
+                            bottom: false,
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                InkSpacing.s16,
+                                InkSpacing.s12,
+                                InkSpacing.s16,
+                                0,
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildHeader(context, tokens, isDark, authUser, photoURL),
+                                  const SizedBox(height: InkSpacing.s24),
+                                  _buildGreetingRow(context),
+                                  const SizedBox(height: InkSpacing.s24),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        SliverPersistentHeader(
+                          pinned: true,
+                          delegate: _SegmentedHeaderDelegate(
+                            backgroundColor: tokens.surfaceDesk,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: InkSpacing.s16,
+                                vertical: InkSpacing.s12,
+                              ),
+                              child: InkSegmented(
+                                labels: const ['My Boards', 'Joined Boards'],
+                                selectedIndex: _tabController.index,
+                                onChanged: (i) => _tabController.animateTo(i),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                      body: TabBarView(
+                        controller: _tabController,
+                        children: [
+                          _buildBoardGrid(state, isOwner: true),
+                          _buildBoardGrid(state, isOwner: false),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 12,
+                    right: 12,
+                    bottom: 98,
+                    child: CommandBar(
+                      hintText: "Ask AI to generate a template...",
+                      trailing: [
+                        CommandBarAction(
+                          icon: LucideIcons.logIn,
+                          tooltip: 'Join Board',
+                          onPressed: _showJoinDialog,
+                        ),
+                        CommandBarAction(
+                          icon: LucideIcons.plus,
+                          tooltip: 'New Board',
+                          gradient: tokens.accentGradient,
+                          onPressed: _showCreateBoardDialog,
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -398,29 +300,177 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  Widget _buildHeader(
+    BuildContext context,
+    InkTokens tokens,
+    bool isDark,
+    Authenticated? authUser,
+    String? photoURL,
+  ) {
+    return GlassPanel(
+      radius: 20,
+      padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s16),
+      child: SizedBox(
+        height: 54,
+        child: Row(
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                gradient: tokens.accentGradient,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(LucideIcons.penLine, size: 16, color: Colors.white),
+            ),
+            const SizedBox(width: InkSpacing.s8),
+            Text('InkLink', style: InkType.title(tokens.ink).copyWith(fontSize: 18)),
+            const Spacer(),
+            IconButton(
+              tooltip: isDark ? 'Switch to light mode' : 'Switch to dark mode',
+              icon: Icon(isDark ? LucideIcons.sun : LucideIcons.moon, color: tokens.ink),
+              onPressed: () => context.read<ThemeBloc>().add(ToggleTheme()),
+            ),
+            BlocBuilder<NotificationsBloc, NotificationsState>(
+              builder: (context, state) {
+                final hasUnread =
+                    state is NotificationsLoaded &&
+                    state.notifications.any((item) => item['isRead'] != true);
+
+                return IconButton(
+                  tooltip: 'Notifications',
+                  icon: Badge(
+                    isLabelVisible: hasUnread,
+                    smallSize: 8,
+                    backgroundColor: tokens.accent,
+                    child: Icon(LucideIcons.bell, color: tokens.ink),
+                  ),
+                  onPressed: () {
+                    Navigator.push(context, buildNotificationsRoute(context));
+                  },
+                );
+              },
+            ),
+            const SizedBox(width: InkSpacing.s8),
+            InkWell(
+              onTap: () {
+                if (authUser != null) {
+                  Navigator.push(
+                    context,
+                    buildProfileRoute(context, userId: authUser.uid),
+                  );
+                }
+              },
+              customBorder: const CircleBorder(),
+              child: InkAvatar(
+                imageUrl: photoURL,
+                initials: inkInitialsFor(authUser?.userName),
+                id: authUser?.uid ?? '',
+                size: 36,
+                ring: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGreetingRow(BuildContext context) {
+    final tokens = context.ink;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 220,
+          child: Text(
+            "Ready to bring your ideas to life?",
+            style: InkType.display(tokens.ink),
+          ),
+        ),
+        const Spacer(),
+        BlocBuilder<BoardInvitationsBloc, BoardInvitationsState>(
+          builder: (context, inviteState) {
+            final count = inviteState is BoardInvitationsLoaded
+                ? inviteState.invites.length
+                : 0;
+            if (count == 0) return const SizedBox.shrink();
+
+            return Transform.rotate(
+              angle: 5 * 3.1415926535 / 180,
+              child: SizedBox(
+                width: 140,
+                child: StickyNote(
+                  color: InkColors.stickyButter,
+                  showTape: true,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => BlocProvider.value(
+                          value: context.read<BoardInvitationsBloc>(),
+                          child: const BoardInvitesScreen(),
+                        ),
+                      ),
+                    );
+                  },
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '$count pending board invite${count > 1 ? 's' : ''} - tap to review',
+                        style: InkType.body(InkColors.stickyInkFor(InkColors.stickyButter)),
+                      ),
+                      const SizedBox(height: InkSpacing.s8),
+                      Row(
+                        children: [
+                          Text(
+                            'Review',
+                            style: InkType.bodyStrong(InkColors.stickyInkFor(InkColors.stickyButter)),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(
+                            LucideIcons.chevronRight,
+                            size: 14,
+                            color: InkColors.stickyInkFor(InkColors.stickyButter),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
   Widget _buildBoardGrid(DashboardState state, {required bool isOwner}) {
     if (state is DashboardInitial) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(
+        child: CircularProgressIndicator(color: context.ink.accent),
+      );
     }
 
     if (state is DashboardLoaded) {
       final boards = isOwner ? state.ownedBoards : state.joinedBoards;
 
       if (boards.isEmpty) {
-        return Center(
-          child: Text(
-            isOwner ? "No boards created yet." : "No boards joined yet.",
-            style: const TextStyle(color: Colors.grey),
-          ),
+        return EmptyState(
+          icon: LucideIcons.layoutGrid,
+          text: isOwner ? "No boards created yet." : "No boards joined yet.",
         );
       }
 
       return GridView.builder(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.fromLTRB(16, 24, 16, 160),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
           crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
+          mainAxisSpacing: 24,
           childAspectRatio: 0.85,
         ),
         itemCount: boards.length,
@@ -446,58 +496,56 @@ class _HomeScreenState extends State<HomeScreen>
     }
     return const SizedBox.shrink();
   }
-
-  Widget _buildSearchBar(bool isDark) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.surfaceDark : Colors.white,
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      child: const TextField(
-        decoration: InputDecoration(
-          hintText: "Ask AI to generate a template...",
-          prefixIcon: Icon(Icons.search, color: Colors.grey),
-          suffixIcon: Icon(Icons.auto_awesome, color: AppColors.accent),
-          border: InputBorder.none,
-          contentPadding: EdgeInsets.symmetric(vertical: 12),
-        ),
-      ),
-    );
-  }
 }
 
-class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
-  _SliverAppBarDelegate(this._tabBar, this.backgroundColor);
+class _SegmentedHeaderDelegate extends SliverPersistentHeaderDelegate {
+  _SegmentedHeaderDelegate({required this.child, required this.backgroundColor});
 
-  final TabBar _tabBar;
+  final Widget child;
   final Color backgroundColor;
 
   @override
-  double get minExtent => _tabBar.preferredSize.height;
+  double get minExtent => 68;
   @override
-  double get maxExtent => _tabBar.preferredSize.height;
+  double get maxExtent => 68;
 
   @override
-  Widget build(
-    BuildContext context,
-    double shrinkOffset,
-    bool overlapsContent,
-  ) {
-    return Container(color: backgroundColor, child: _tabBar);
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return Container(color: backgroundColor, child: child);
   }
 
   @override
-  bool shouldRebuild(covariant SliverPersistentHeaderDelegate oldDelegate) {
-    if (oldDelegate is _SliverAppBarDelegate) {
-      return oldDelegate.backgroundColor != backgroundColor;
-    }
-    return false;
+  bool shouldRebuild(covariant _SegmentedHeaderDelegate oldDelegate) {
+    return oldDelegate.backgroundColor != backgroundColor || oldDelegate.child != child;
+  }
+}
+
+class _DeskDialog extends StatelessWidget {
+  final String title;
+  final Widget child;
+  final List<Widget> actions;
+
+  const _DeskDialog({required this.title, required this.child, required this.actions});
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: GlassPanel(
+        radius: InkRadii.dialog,
+        padding: const EdgeInsets.all(InkSpacing.s20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: InkType.title(tokens.ink)),
+            child,
+            const SizedBox(height: InkSpacing.s12),
+            Row(mainAxisAlignment: MainAxisAlignment.end, children: actions),
+          ],
+        ),
+      ),
+    );
   }
 }
