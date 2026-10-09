@@ -1,5 +1,13 @@
 import 'package:flutter/material.dart';
-import '../../../../core/constants/app_colors.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+
+import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_tokens.dart';
+import '../../../../ui/theme/ink_type.dart';
+import '../../../../ui/widgets/ink_avatar.dart';
+import '../../../../ui/widgets/ink_button.dart';
+import '../../../../ui/widgets/ink_initials.dart';
+import '../../../../ui/widgets/paper_card.dart';
 
 class RequestCard extends StatelessWidget {
   final Map<String, dynamic> request;
@@ -19,131 +27,79 @@ class RequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = context.ink;
+    final senderName = request['senderName'] ?? "Collaborator";
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: isDark ? Colors.white.withOpacity(0.05) : Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: isDark ? Colors.white.withOpacity(0.1) : Colors.grey.shade200,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
-            blurRadius: 15,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          ListTile(
-            contentPadding: const EdgeInsets.all(16),
-            leading: Stack(
-              children: [
-                CircleAvatar(
-                  radius: 28,
-                  backgroundImage: request['senderPic'] != null
-                      ? NetworkImage(request['senderPic'])
-                      : null,
-                  backgroundColor: AppColors.primary.withOpacity(0.2),
-                  child: request['senderPic'] == null
-                      ? const Icon(Icons.person, color: AppColors.primary)
-                      : null,
-                ),
-                // Online indicator mock
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      color: Colors.green,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: isDark ? AppColors.surfaceDark : Colors.white,
-                        width: 2,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            title: Text(
-              request['senderName'] ?? "Collaborator",
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-            ),
-            subtitle: const Text("Sent you a friend request"),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _actionButton(
-                    label: isAccepting ? "Accepting..." : "Accept",
-                    icon: Icons.check,
-                    color: Colors.green,
-                    onTap: isAccepting || isDeclining ? null : onAccept,
-                    isLoading: isAccepting,
-                    isDark: isDark,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _actionButton(
-                    label: isDeclining ? "Declining..." : "Decline",
-                    icon: Icons.close,
-                    color: Colors.redAccent,
-                    onTap: isAccepting || isDeclining ? null : onDecline,
-                    isLoading: isDeclining,
-                    isDark: isDark,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _actionButton({
-    required String label,
-    required IconData icon,
-    required Color color,
-    required VoidCallback? onTap,
-    required bool isLoading,
-    required bool isDark,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(15),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: color.withOpacity(0.3)),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: InkSpacing.s16),
+      child: PaperCard(
+        padding: const EdgeInsets.all(InkSpacing.s16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (isLoading)
-              SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2, color: color),
-              )
-            else
-              Icon(icon, color: color, size: 18),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: TextStyle(color: color, fontWeight: FontWeight.bold),
+            Row(
+              children: [
+                InkAvatar(
+                  imageUrl: request['senderPic'],
+                  initials: inkInitialsFor(senderName),
+                  id: request['fromUid']?.toString() ?? '',
+                  size: 52,
+                  online: true,
+                ),
+                const SizedBox(width: InkSpacing.s16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(senderName, style: InkType.title(tokens.ink)),
+                      Text(
+                        "Sent you a friend request",
+                        style: InkType.caption(tokens.inkMuted),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: InkSpacing.s16),
+            Row(
+              children: [
+                Expanded(
+                  child: InkButton.primary(
+                    label: isAccepting ? "Accepting..." : "Accept",
+                    compact: true,
+                    icon: isAccepting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(LucideIcons.check),
+                    onPressed: isAccepting || isDeclining ? null : onAccept,
+                  ),
+                ),
+                const SizedBox(width: InkSpacing.s12),
+                Expanded(
+                  child: InkButton.secondary(
+                    label: isDeclining ? "Declining..." : "Decline",
+                    compact: true,
+                    icon: isDeclining
+                        ? SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: tokens.ink,
+                            ),
+                          )
+                        : const Icon(LucideIcons.x),
+                    onPressed: isAccepting || isDeclining ? null : onDecline,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

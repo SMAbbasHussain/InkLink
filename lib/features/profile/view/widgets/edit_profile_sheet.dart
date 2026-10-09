@@ -5,7 +5,12 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:image/image.dart' as img;
-import '../../../../core/constants/app_colors.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_tokens.dart';
+import '../../../../ui/theme/ink_type.dart';
+import '../../../../ui/widgets/glass_panel.dart';
+import '../../../../ui/widgets/ink_button.dart';
 import '../../bloc/profile_bloc.dart';
 import './profile_edit_field.dart';
 
@@ -119,7 +124,9 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => const Center(child: CircularProgressIndicator()),
+        builder: (context) => Center(
+          child: CircularProgressIndicator(color: context.ink.accent),
+        ),
       );
 
       try {
@@ -152,37 +159,58 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
 
   /// Show photo source selection dialog
   void _showPhotoSourceDialog(BuildContext context) {
+    final tokens = context.ink;
     showModalBottomSheet(
       context: context,
-      builder: (context) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('Take a Photo'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickImage(ImageSource.camera);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.image),
-              title: const Text('Choose from Gallery'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickImage(ImageSource.gallery);
-              },
-            ),
-          ],
+      backgroundColor: Colors.transparent,
+      builder: (context) => Padding(
+        padding: const EdgeInsets.fromLTRB(
+          InkSpacing.s16,
+          InkSpacing.s8,
+          InkSpacing.s16,
+          InkSpacing.s24,
+        ),
+        child: GlassPanel(
+          radius: InkRadii.bottomSheet,
+          padding: const EdgeInsets.symmetric(vertical: InkSpacing.s8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.symmetric(vertical: InkSpacing.s8),
+                decoration: BoxDecoration(
+                  color: tokens.inkMuted.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              ListTile(
+                leading: Icon(LucideIcons.camera, color: tokens.ink),
+                title: Text('Take a Photo', style: InkType.body(tokens.ink)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: Icon(LucideIcons.image, color: tokens.ink),
+                title: Text('Choose from Gallery', style: InkType.body(tokens.ink)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.gallery);
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   /// Build circular avatar with camera overlay
-  Widget _buildAvatarPicker(BuildContext context, bool isDark) {
+  Widget _buildAvatarPicker(BuildContext context) {
+    final tokens = context.ink;
     return BlocBuilder<ProfileBloc, ProfileState>(
       builder: (context, state) {
         final isLoading = state is ProfilePhotoUploading;
@@ -203,17 +231,13 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
             children: [
               Container(
                 padding: const EdgeInsets.all(4),
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [Color(0xFF6A11CB), Color(0xFF2575FC)],
-                  ),
+                  gradient: tokens.accentGradient,
                 ),
                 child: CircleAvatar(
                   radius: 60,
-                  backgroundColor: isDark
-                      ? AppColors.surfaceDark
-                      : Colors.grey.shade200,
+                  backgroundColor: tokens.field,
                   backgroundImage: hasPendingLocalImage
                       ? FileImage(_pendingImageFile!)
                       : (photoURL != null && photoURL.toString().isNotEmpty)
@@ -222,7 +246,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
                   child:
                       (!hasPendingLocalImage &&
                           (photoURL == null || photoURL.toString().isEmpty))
-                      ? const Icon(Icons.person, size: 60)
+                      ? Icon(LucideIcons.user, size: 60, color: tokens.inkMuted)
                       : null,
                 ),
               ),
@@ -233,14 +257,12 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
                   right: 0,
                   child: Container(
                     padding: const EdgeInsets.all(8),
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [Color(0xFF6A11CB), Color(0xFF2575FC)],
-                      ),
+                      gradient: tokens.accentGradient,
                     ),
                     child: const Icon(
-                      Icons.camera_alt,
+                      LucideIcons.camera,
                       color: Colors.white,
                       size: 20,
                     ),
@@ -248,9 +270,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
                 ),
               // Loading indicator
               if (isLoading)
-                const CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF6A11CB)),
-                ),
+                CircularProgressIndicator(color: tokens.accent),
             ],
           ),
         );
@@ -260,7 +280,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = context.ink;
 
     return BlocListener<ProfileBloc, ProfileState>(
       listener: (context, state) {
@@ -270,60 +290,58 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
           ).showSnackBar(SnackBar(content: Text(state.message)));
         }
       },
-      child: Container(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-          left: 24,
-          right: 24,
-          top: 20,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          InkSpacing.s16,
+          InkSpacing.s8,
+          InkSpacing.s16,
+          InkSpacing.s24,
         ),
-        decoration: BoxDecoration(
-          color: isDark ? AppColors.surfaceDark : Colors.white,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Handle bar
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(10),
+        child: GlassPanel(
+          radius: InkRadii.bottomSheet,
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + InkSpacing.s20,
+            left: InkSpacing.s24,
+            right: InkSpacing.s24,
+            top: InkSpacing.s20,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: tokens.inkMuted.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                "Edit Profile",
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 30),
+                const SizedBox(height: InkSpacing.s24),
+                Text("Edit Profile", style: InkType.headline(tokens.ink).copyWith(fontSize: 22)),
+                const SizedBox(height: InkSpacing.s24 + 6),
 
-              // Photo picker avatar
-              Center(child: _buildAvatarPicker(context, isDark)),
-              const SizedBox(height: 30),
+                Center(child: _buildAvatarPicker(context)),
+                const SizedBox(height: InkSpacing.s24 + 6),
 
-              ProfileEditField(
-                label: "Display Name",
-                controller: _nameController,
-                icon: Icons.person_outline,
-                isDark: isDark,
-              ),
-              const SizedBox(height: 20),
-              ProfileEditField(
-                label: "Bio",
-                controller: _bioController,
-                icon: Icons.info_outline,
-                isDark: isDark,
-                maxLines: 3,
-              ),
-              const SizedBox(height: 32),
+                ProfileEditField(
+                  label: "Display Name",
+                  controller: _nameController,
+                  icon: LucideIcons.user,
+                ),
+                const SizedBox(height: InkSpacing.s20),
+                ProfileEditField(
+                  label: "Bio",
+                  controller: _bioController,
+                  icon: LucideIcons.info,
+                  maxLines: 3,
+                ),
+                const SizedBox(height: InkSpacing.s32),
 
-              _buildSaveButton(context),
-              const SizedBox(height: 20),
-            ],
+                _buildSaveButton(context),
+                const SizedBox(height: InkSpacing.s20),
+              ],
+            ),
           ),
         ),
       ),
@@ -331,8 +349,9 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
   }
 
   Widget _buildSaveButton(BuildContext context) {
-    return InkWell(
-      onTap: () {
+    return InkButton.primary(
+      label: 'Save Changes',
+      onPressed: () {
         context.read<ProfileBloc>().add(
           SaveProfileChangesRequested(
             name: _nameController.text.trim(),
@@ -344,33 +363,6 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
 
         Navigator.pop(context);
       },
-      child: Container(
-        width: double.infinity,
-        height: 58,
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF6A11CB), Color(0xFF2575FC)],
-          ),
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: const Center(
-          child: Text(
-            "Save Changes",
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

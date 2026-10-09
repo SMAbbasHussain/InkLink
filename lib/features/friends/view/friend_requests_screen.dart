@@ -1,41 +1,85 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/empty_state.dart';
+import '../../../ui/widgets/glass_panel.dart';
+import '../../../ui/widgets/ink_avatar.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_dialog.dart';
+import '../../../ui/widgets/ink_initials.dart';
+import '../../../ui/widgets/ink_segmented.dart';
+import '../../../ui/widgets/paper_card.dart';
 import '../../profile/view/profile_route.dart';
 import '../bloc/friends_bloc.dart';
 import './widgets/request_card.dart';
 
-class FriendRequestsScreen extends StatelessWidget {
+class FriendRequestsScreen extends StatefulWidget {
   const FriendRequestsScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Pending Requests'),
-          elevation: 0,
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Incoming'),
-              Tab(text: 'Outgoing'),
-            ],
-          ),
-        ),
-        body: BlocBuilder<FriendsBloc, FriendsState>(
-          builder: (context, state) {
-            if (state is! FriendsLoaded) {
-              return const SizedBox.shrink();
-            }
+  State<FriendRequestsScreen> createState() => _FriendRequestsScreenState();
+}
 
-            return TabBarView(
-              children: [
-                _buildIncomingTab(context, state),
-                _buildOutgoingTab(context, state),
-              ],
-            );
-          },
-        ),
+class _FriendRequestsScreenState extends State<FriendRequestsScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      if (!_tabController.indexIsChanging) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+
+    return Scaffold(
+      backgroundColor: tokens.paper,
+      appBar: AppBar(
+        backgroundColor: tokens.paper,
+        title: Text('Pending Requests', style: InkType.title(tokens.ink)),
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(InkSpacing.s16),
+            child: InkSegmented(
+              labels: const ['Incoming', 'Outgoing'],
+              selectedIndex: _tabController.index,
+              onChanged: (i) => _tabController.animateTo(i),
+            ),
+          ),
+          Expanded(
+            child: BlocBuilder<FriendsBloc, FriendsState>(
+              builder: (context, state) {
+                if (state is! FriendsLoaded) {
+                  return const SizedBox.shrink();
+                }
+
+                return TabBarView(
+                  controller: _tabController,
+                  children: [
+                    _buildIncomingTab(context, state),
+                    _buildOutgoingTab(context, state),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -43,17 +87,17 @@ class FriendRequestsScreen extends StatelessWidget {
   Widget _buildIncomingTab(BuildContext context, FriendsLoaded state) {
     final incoming = state.incomingRequests;
     if (incoming.isEmpty) {
-      return _buildEmptyState(
-        icon: Icons.mark_email_read_outlined,
-        title: 'All caught up!',
+      return const EmptyState(
+        icon: LucideIcons.mailCheck,
+        text: 'All caught up!',
         subtitle: 'No incoming requests.',
       );
     }
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(InkSpacing.s16),
       children: [
-        if (state.isOffline) _buildOfflineBanner(),
+        if (state.isOffline) _buildOfflineBanner(context),
         ...incoming.map((req) {
           final requestId = req['id']?.toString() ?? '';
           return GestureDetector(
@@ -81,17 +125,17 @@ class FriendRequestsScreen extends StatelessWidget {
   Widget _buildOutgoingTab(BuildContext context, FriendsLoaded state) {
     final outgoing = state.outgoingRequests;
     if (outgoing.isEmpty) {
-      return _buildEmptyState(
-        icon: Icons.schedule,
-        title: 'Nothing pending',
+      return const EmptyState(
+        icon: LucideIcons.clock,
+        text: 'Nothing pending',
         subtitle: 'No outgoing requests.',
       );
     }
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(InkSpacing.s16),
       children: [
-        if (state.isOffline) _buildOfflineBanner(),
+        if (state.isOffline) _buildOfflineBanner(context),
         ...outgoing.map((req) {
           return _buildOutgoingRequestCard(context, req, state);
         }),
@@ -104,6 +148,7 @@ class FriendRequestsScreen extends StatelessWidget {
     Map<String, dynamic> request,
     FriendsLoaded state,
   ) {
+    final tokens = context.ink;
     final toUid = request['toUid']?.toString() ?? '';
     final recipientName = request['recipientName']?.toString();
     final recipientPic = request['recipientPic']?.toString();
@@ -115,111 +160,96 @@ class FriendRequestsScreen extends StatelessWidget {
         ? recipientName!
         : (toUid.isNotEmpty ? toUid : 'Unknown user');
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        onTap: toUid.isEmpty
-            ? null
-            : () => Navigator.push(
-                context,
-                buildProfileRoute(context, userId: toUid),
-              ),
-        leading: CircleAvatar(
-          radius: 24,
-          backgroundColor: Colors.blueGrey.withOpacity(0.12),
-          backgroundImage: recipientPic != null && recipientPic.isNotEmpty
-              ? NetworkImage(recipientPic)
-              : null,
-          child: recipientPic == null || recipientPic.isEmpty
-              ? const Icon(Icons.person, color: Colors.blueGrey)
-              : null,
-        ),
-        title: Text(displayName),
-        subtitle: const Text('Request pending'),
-        trailing: IconButton(
-          tooltip: 'Cancel request',
-          icon: isCanceling
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.cancel_outlined),
-          onPressed: toUid.isEmpty || isCanceling
+    return Padding(
+      padding: const EdgeInsets.only(bottom: InkSpacing.s12),
+      child: PaperCard(
+        padding: const EdgeInsets.all(InkSpacing.s12),
+        child: InkWell(
+          onTap: toUid.isEmpty
               ? null
-              : () async {
-                  final shouldCancel = await showDialog<bool>(
-                    context: context,
-                    builder: (dialogContext) => AlertDialog(
-                      title: const Text('Cancel request?'),
-                      content: Text('Cancel the request to $displayName?'),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(dialogContext, false),
-                          child: const Text('Keep'),
-                        ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(dialogContext, true),
-                          child: const Text('Cancel request'),
-                        ),
-                      ],
-                    ),
-                  );
+              : () => Navigator.push(
+                  context,
+                  buildProfileRoute(context, userId: toUid),
+                ),
+          child: Row(
+            children: [
+              InkAvatar(
+                imageUrl: recipientPic,
+                initials: inkInitialsFor(displayName),
+                id: toUid,
+                size: 48,
+              ),
+              const SizedBox(width: InkSpacing.s12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(displayName, style: InkType.bodyStrong(tokens.ink)),
+                    Text('Request pending', style: InkType.caption(tokens.inkMuted)),
+                  ],
+                ),
+              ),
+              InkButton.secondary(
+                label: 'Cancel',
+                compact: true,
+                expand: false,
+                icon: isCanceling
+                    ? SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: tokens.ink),
+                      )
+                    : null,
+                onPressed: toUid.isEmpty || isCanceling
+                    ? null
+                    : () async {
+                        final shouldCancel = await showInkConfirmDialog(
+                          context,
+                          title: 'Cancel request?',
+                          message: 'Cancel the request to $displayName?',
+                          confirmLabel: 'Cancel request',
+                          cancelLabel: 'Keep',
+                        );
 
-                  if (!context.mounted) return;
-                  if (shouldCancel != true) return;
+                        if (!context.mounted) return;
+                        if (!shouldCancel) return;
 
-                  context.read<FriendsBloc>().add(
-                    CancelFriendRequestRequested(
-                      request['requestId']?.toString() ??
-                          request['id']?.toString() ??
-                          '',
-                      toUid,
-                    ),
-                  );
-                },
+                        context.read<FriendsBloc>().add(
+                          CancelFriendRequestRequested(
+                            request['requestId']?.toString() ??
+                                request['id']?.toString() ??
+                                '',
+                            toUid,
+                          ),
+                        );
+                      },
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildOfflineBanner() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.amber.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.amber.withOpacity(0.45)),
-      ),
-      child: const Text(
-        'Offline mode: pending requests are from local cache.',
-        style: TextStyle(fontWeight: FontWeight.w600),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 80, color: Colors.grey.withOpacity(0.3)),
-          const SizedBox(height: 16),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey,
+  Widget _buildOfflineBanner(BuildContext context) {
+    final tokens = context.ink;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: InkSpacing.s12),
+      child: GlassPanel(
+        radius: InkRadii.glassBar,
+        padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s16, vertical: InkSpacing.s12),
+        child: Row(
+          children: [
+            Icon(LucideIcons.wifiOff, size: 16, color: tokens.pending),
+            const SizedBox(width: InkSpacing.s8),
+            Expanded(
+              child: Text(
+                'Offline mode: pending requests are from local cache.',
+                style: InkType.bodyStrong(tokens.pending),
+              ),
             ),
-          ),
-          Text(subtitle, style: const TextStyle(color: Colors.grey)),
-        ],
+          ],
+        ),
       ),
     );
   }

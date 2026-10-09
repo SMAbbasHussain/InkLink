@@ -1,10 +1,21 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:inklink/features/profile/bloc/profile_bloc.dart';
 import 'package:inklink/features/profile/view/widgets/edit_profile_sheet.dart';
 
-import '../../../core/constants/app_colors.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/desk_background.dart';
+import '../../../ui/widgets/ink_avatar.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_dialog.dart';
+import '../../../ui/widgets/ink_initials.dart';
+import '../../../ui/widgets/ink_text_field.dart';
+import '../../../ui/widgets/paper_card.dart';
+import '../../../ui/widgets/status_chip.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../../friends/view/blocked_users_screen.dart';
 import '../../friends/view/friend_requests_screen.dart';
@@ -20,17 +31,14 @@ class ProfileScreen extends StatelessWidget {
       return const Scaffold(body: Center(child: Text('Invalid User ID')));
     }
 
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = context.ink;
 
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(
-            Icons.arrow_back,
-            color: isDark ? Colors.white : Colors.black,
-          ),
+          icon: Icon(LucideIcons.chevronLeft, color: tokens.ink),
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
@@ -38,10 +46,7 @@ class ProfileScreen extends StatelessWidget {
             builder: (context, state) {
               if (state is ProfileLoaded && state.isSelf) {
                 return PopupMenuButton<String>(
-                  icon: Icon(
-                    Icons.more_vert,
-                    color: isDark ? Colors.white : Colors.black,
-                  ),
+                  icon: Icon(LucideIcons.ellipsis, color: tokens.ink),
                   onSelected: (value) {
                     if (value == 'edit') {
                       showModalBottomSheet(
@@ -75,26 +80,17 @@ class ProfileScreen extends StatelessWidget {
                       );
                     }
                   },
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(value: 'edit', child: Text('Edit profile')),
-                    PopupMenuItem(
-                      value: 'requests',
-                      child: Text('View friend requests'),
-                    ),
-                    PopupMenuItem(
-                      value: 'blocked',
-                      child: Text('View blocked users'),
-                    ),
+                  itemBuilder: (context) => [
+                    _menuItem('edit', LucideIcons.pen, 'Edit profile', tokens.ink),
+                    _menuItem('requests', LucideIcons.userPlus, 'View friend requests', tokens.ink),
+                    _menuItem('blocked', LucideIcons.ban, 'View blocked users', tokens.ink),
                   ],
                 );
               }
 
               if (state is ProfileLoaded && !state.isSelf) {
                 return PopupMenuButton<String>(
-                  icon: Icon(
-                    Icons.more_vert,
-                    color: isDark ? Colors.white : Colors.black,
-                  ),
+                  icon: Icon(LucideIcons.ellipsis, color: tokens.ink),
                   onSelected: (value) async {
                     if (value == 'unfriend') {
                       await _confirmUnfriendUser(context);
@@ -108,24 +104,12 @@ class ProfileScreen extends StatelessWidget {
                   },
                   itemBuilder: (context) => [
                     if (state.isFriend)
-                      const PopupMenuItem(
-                        value: 'unfriend',
-                        child: Text('Remove friend'),
-                      ),
+                      _menuItem('unfriend', LucideIcons.userX, 'Remove friend', tokens.danger),
                     if (!state.isBlocked)
-                      const PopupMenuItem(
-                        value: 'block',
-                        child: Text('Block user'),
-                      ),
+                      _menuItem('block', LucideIcons.ban, 'Block user', tokens.danger),
                     if (state.isBlocked)
-                      const PopupMenuItem(
-                        value: 'unblock',
-                        child: Text('Unblock user'),
-                      ),
-                    const PopupMenuItem(
-                      value: 'report',
-                      child: Text('Report user'),
-                    ),
+                      _menuItem('unblock', LucideIcons.ban, 'Unblock user', tokens.ink),
+                    _menuItem('report', LucideIcons.triangleAlert, 'Report user', tokens.danger),
                   ],
                 );
               }
@@ -147,43 +131,46 @@ class ProfileScreen extends StatelessWidget {
         child: BlocBuilder<ProfileBloc, ProfileState>(
           builder: (context, state) {
             if (state is ProfileLoading) {
-              return const Center(child: CircularProgressIndicator());
+              return Center(child: CircularProgressIndicator(color: tokens.accent));
             }
 
             if (state is ProfileError) {
-              return Center(child: Text(state.message));
+              return Center(child: Text(state.message, style: InkType.body(tokens.inkMuted)));
             }
 
             if (state is ProfilePhotoUploading) {
               final user = state.userData;
-              return Column(
-                children: [
-                  _buildHeader(user, isDark),
-                  const SizedBox(height: 24),
-                  _buildBioSection(user, isDark),
-                  const Spacer(),
-                  const SizedBox(height: 40),
-                ],
+              return SingleChildScrollView(
+                child: Column(
+                  children: [
+                    _buildHeader(context, user),
+                    const SizedBox(height: InkSpacing.s24),
+                    _buildBioSection(context, user),
+                    const SizedBox(height: InkSpacing.s32),
+                  ],
+                ),
               );
             }
 
             if (state is ProfileLoaded) {
               final user = state.userData;
-              return Column(
-                children: [
-                  _buildHeader(user, isDark),
-                  const SizedBox(height: 12),
-                  _buildProfileStats(state, isDark),
-                  const SizedBox(height: 12),
-                  _buildJoinDate(_asDateTime(user['createdAt']), isDark),
-                  if (state.isBlocked) const SizedBox(height: 12),
-                  if (state.isBlocked) _buildBlockedBanner(isDark),
-                  const SizedBox(height: 12),
-                  _buildBioSection(user, isDark),
-                  const Spacer(),
-                  _buildActionButtons(context, state, isDark),
-                  const SizedBox(height: 40),
-                ],
+              return SingleChildScrollView(
+                child: Column(
+                  children: [
+                    _buildHeader(context, user),
+                    const SizedBox(height: InkSpacing.s12),
+                    _buildProfileStats(context, state),
+                    const SizedBox(height: InkSpacing.s12),
+                    _buildJoinDate(context, _asDateTime(user['createdAt']), state.isSelf),
+                    if (state.isBlocked) const SizedBox(height: InkSpacing.s12),
+                    if (state.isBlocked) _buildBlockedBanner(context),
+                    const SizedBox(height: InkSpacing.s12),
+                    _buildBioSection(context, user),
+                    const SizedBox(height: InkSpacing.s32),
+                    _buildActionButtons(context, state),
+                    const SizedBox(height: InkSpacing.s32 + 8),
+                  ],
+                ),
               );
             }
 
@@ -194,54 +181,55 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(Map<String, dynamic> user, bool isDark) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 100, 24, 40),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: isDark
-              ? [const Color(0xFF1A1A2E), Colors.black]
-              : [AppColors.primary.withOpacity(0.1), Colors.white],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
-      ),
-      child: Column(
+  PopupMenuItem<String> _menuItem(String value, IconData icon, String label, Color color) {
+    return PopupMenuItem(
+      value: value,
+      child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(4),
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [Color(0xFF6A11CB), Color(0xFF2575FC)],
-              ),
-            ),
-            child: CircleAvatar(
-              radius: 60,
-              backgroundColor: isDark
-                  ? AppColors.surfaceDark
-                  : Colors.grey.shade200,
-              backgroundImage:
-                  (user['photoURL'] != null &&
-                      user['photoURL'].toString().isNotEmpty)
-                  ? NetworkImage(user['photoURL'])
-                  : null,
-              child:
-                  (user['photoURL'] == null ||
-                      user['photoURL'].toString().isEmpty)
-                  ? const Icon(Icons.person, size: 60)
-                  : null,
-            ),
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: InkSpacing.s12 - 2),
+          Text(label, style: TextStyle(color: color)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader(BuildContext context, Map<String, dynamic> user) {
+    final tokens = context.ink;
+    final name = (user['displayName'] ?? 'User').toString();
+    final photoUrl = user['photoURL']?.toString();
+
+    return SizedBox(
+      height: 180 + 48,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          SizedBox(
+            height: 180,
+            width: double.infinity,
+            child: const DeskBackground(),
           ),
-          const SizedBox(height: 16),
-          Text(
-            user['displayName'] ?? 'User',
-            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-          ),
-          Text(
-            user['email'] ?? '',
-            style: TextStyle(color: Colors.grey.shade500, fontSize: 16),
+          Positioned(
+            top: 180 - 48,
+            left: 0,
+            right: 0,
+            child: Column(
+              children: [
+                InkAvatar(
+                  imageUrl: photoUrl,
+                  initials: inkInitialsFor(name),
+                  id: userId,
+                  size: 96,
+                  ring: true,
+                ),
+                const SizedBox(height: InkSpacing.s12),
+                Text(name, style: InkType.headline(tokens.ink)),
+                Text(
+                  user['email'] ?? '',
+                  style: InkType.body(tokens.inkSecondary),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -292,20 +280,25 @@ class ProfileScreen extends StatelessWidget {
     }
   }
 
-  Widget _buildProfileStats(ProfileLoaded state, bool isDark) {
+  Widget _buildProfileStats(BuildContext context, ProfileLoaded state) {
     if (state.isSelf) return const SizedBox.shrink();
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s16),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _buildStatItem(state.boardCount.toString(), 'Boards', isDark),
-          _buildStatItem(state.friendCount.toString(), 'Friends', isDark),
-          _buildStatItem(
-            state.isOnline ? '🟢 Online' : _formatLastActive(state.lastActive),
-            'Status',
-            isDark,
+          Expanded(child: _buildStatItem(context, state.boardCount.toString(), 'Boards')),
+          const SizedBox(width: InkSpacing.s12),
+          Expanded(child: _buildStatItem(context, state.friendCount.toString(), 'Friends')),
+          const SizedBox(width: InkSpacing.s12),
+          Expanded(
+            child: _buildStatItem(
+              context,
+              null,
+              'Status',
+              statusOnline: state.isOnline,
+              statusText: state.isOnline ? 'Online' : _formatLastActive(state.lastActive),
+            ),
           ),
         ],
       ),
@@ -313,90 +306,80 @@ class ProfileScreen extends StatelessWidget {
   }
 
   Widget _buildStatItem(
-    String value,
-    String label,
-    bool isDark, {
-    double height = 52,
+    BuildContext context,
+    String? value,
+    String label, {
+    bool? statusOnline,
+    String? statusText,
   }) {
-    return Expanded(
-      child: Container(
-        height: height,
-        margin: const EdgeInsets.symmetric(horizontal: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(
-          color: isDark ? AppColors.surfaceDark : Colors.grey.shade50,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isDark ? Colors.white10 : Colors.grey.shade200,
-          ),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Expanded(
-              child: Center(
-                child: Text(
-                  value,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
+    final tokens = context.ink;
+    return PaperCard(
+      padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s8, vertical: InkSpacing.s12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (value != null)
+            Text(value, style: InkType.title(tokens.ink), textAlign: TextAlign.center)
+          else
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (statusOnline == true) ...[
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(color: tokens.success, shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                Flexible(
+                  child: Text(
+                    statusText ?? '',
+                    style: InkType.label(tokens.ink),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ),
+              ],
             ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 10, color: Colors.grey[600]),
-            ),
-          ],
-        ),
+          const SizedBox(height: InkSpacing.s4),
+          Text(label, style: InkType.caption(tokens.inkMuted)),
+        ],
       ),
     );
   }
 
-  Widget _buildJoinDate(DateTime? createdAt, bool isDark) {
+  Widget _buildJoinDate(BuildContext context, DateTime? createdAt, bool isSelf) {
     if (createdAt == null) return const SizedBox.shrink();
+    final tokens = context.ink;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Text(
-        '⏰ ${_formatJoinDate(createdAt)}',
-        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+      padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s24),
+      child: Row(
+        mainAxisAlignment: isSelf ? MainAxisAlignment.center : MainAxisAlignment.start,
+        children: [
+          Icon(LucideIcons.calendar, size: 14, color: tokens.inkMuted),
+          const SizedBox(width: 6),
+          Text(_formatJoinDate(createdAt), style: InkType.caption(tokens.inkMuted)),
+        ],
       ),
     );
   }
 
-  Widget _buildBioSection(Map<String, dynamic> user, bool isDark) {
+  Widget _buildBioSection(BuildContext context, Map<String, dynamic> user) {
+    final tokens = context.ink;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: isDark ? AppColors.surfaceDark : Colors.grey.shade50,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isDark ? Colors.white10 : Colors.grey.shade200,
-          ),
-        ),
+      padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s24),
+      child: PaperCard(
+        padding: const EdgeInsets.all(InkSpacing.s20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Bio',
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey),
-            ),
-            const SizedBox(height: 8),
+            Text('Bio', style: InkType.label(tokens.inkMuted)),
+            const SizedBox(height: InkSpacing.s8),
             Text(
               user['bio'] ??
                   'No bio yet. This creator is busy bringing ideas to life!',
-              style: const TextStyle(fontSize: 16, height: 1.5),
+              style: InkType.body(tokens.ink).copyWith(height: 1.5),
             ),
           ],
         ),
@@ -404,27 +387,26 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBlockedBanner(bool isDark) {
+  Widget _buildBlockedBanner(BuildContext context) {
+    final tokens = context.ink;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s24),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s16, vertical: InkSpacing.s8 + 2),
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF3F2A2A) : const Color(0xFFFFF1F1),
+          color: tokens.danger.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isDark ? const Color(0xFFB77979) : const Color(0xFFEFA6A6),
-          ),
+          border: Border.all(color: tokens.danger.withValues(alpha: 0.4)),
         ),
-        child: const Row(
+        child: Row(
           children: [
-            Icon(Icons.block, size: 16, color: Color(0xFFD64545)),
-            SizedBox(width: 8),
+            Icon(LucideIcons.ban, size: 16, color: tokens.danger),
+            const SizedBox(width: InkSpacing.s8),
             Expanded(
               child: Text(
                 'You blocked this user. Unblock from the menu to collaborate again.',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                style: InkType.caption(tokens.danger).copyWith(fontWeight: FontWeight.w600),
               ),
             ),
           ],
@@ -433,15 +415,12 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildActionButtons(
-    BuildContext context,
-    ProfileLoaded state,
-    bool isDark,
-  ) {
+  Widget _buildActionButtons(BuildContext context, ProfileLoaded state) {
     if (state.isSelf) return const SizedBox.shrink();
+    final tokens = context.ink;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s24),
       child: BlocBuilder<FriendsBloc, FriendsState>(
         builder: (context, friendsState) {
           final loaded = friendsState is FriendsLoaded ? friendsState : null;
@@ -494,7 +473,18 @@ class ProfileScreen extends StatelessWidget {
             return Row(
               children: [
                 Expanded(
-                  child: FilledButton.icon(
+                  child: InkButton.primary(
+                    label: isAccepting ? 'Accepting...' : 'Accept request',
+                    icon: isAccepting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(LucideIcons.check),
                     onPressed: (isAccepting || isDeclining)
                         ? null
                         : () {
@@ -505,82 +495,79 @@ class ProfileScreen extends StatelessWidget {
                               ),
                             );
                           },
-                    icon: isAccepting
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.check),
-                    label: Text(
-                      isAccepting ? 'Accepting...' : 'Accept request',
-                    ),
                   ),
                 ),
-                const SizedBox(width: 10),
-                OutlinedButton.icon(
-                  onPressed: (isAccepting || isDeclining)
-                      ? null
-                      : () {
-                          context.read<FriendsBloc>().add(
-                            DeclineFriendRequestRequested(incomingRequestId),
-                          );
-                        },
-                  icon: isDeclining
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.close),
-                  label: const Text('Decline'),
+                const SizedBox(width: InkSpacing.s8 + 2),
+                Expanded(
+                  child: InkButton.secondary(
+                    label: 'Decline',
+                    icon: isDeclining
+                        ? SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: tokens.ink),
+                          )
+                        : const Icon(LucideIcons.x),
+                    onPressed: (isAccepting || isDeclining)
+                        ? null
+                        : () {
+                            context.read<FriendsBloc>().add(
+                              DeclineFriendRequestRequested(incomingRequestId),
+                            );
+                          },
+                  ),
                 ),
               ],
             );
           }
 
           if (!effectiveIsFriend && outgoingForProfile != null) {
-            return SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: isCanceling
-                    ? null
-                    : () {
-                        context.read<FriendsBloc>().add(
-                          CancelFriendRequestRequested(
-                            outgoingRequestId,
-                            userId,
-                          ),
-                        );
-                      },
-                icon: isCanceling
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.schedule),
-                label: Text(isCanceling ? 'Canceling...' : 'Request pending'),
-              ),
+            return Row(
+              children: [
+                Expanded(
+                  child: InkButton.secondary(
+                    label: isCanceling ? 'Canceling...' : 'Request pending',
+                    onPressed: isCanceling
+                        ? null
+                        : () {
+                            context.read<FriendsBloc>().add(
+                              CancelFriendRequestRequested(
+                                outgoingRequestId,
+                                userId,
+                              ),
+                            );
+                          },
+                  ),
+                ),
+                const SizedBox(width: InkSpacing.s8 + 2),
+                const StatusChip(status: InkStatus.pending),
+              ],
             );
           }
 
-          return InkWell(
-            onTap: () {
-              if (state.isBlocked) {
+          if (state.isBlocked) {
+            return InkButton.secondary(
+              label: 'Blocked',
+              onPressed: () {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text(
-                      'User is blocked. Use the top menu to unblock.',
-                    ),
+                    content: Text('User is blocked. Use the top menu to unblock.'),
                   ),
                 );
-                return;
-              }
+              },
+            );
+          }
 
+          return InkButton.primary(
+            label: isSending ? 'Sending...' : (effectiveIsFriend ? 'Message' : 'Collaborate'),
+            icon: isSending
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : Icon(effectiveIsFriend ? LucideIcons.messageCircle : LucideIcons.userPlus),
+            onPressed: () {
               if (effectiveIsFriend) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Messaging is coming soon.')),
@@ -596,66 +583,6 @@ class ProfileScreen extends StatelessWidget {
                 SendFriendRequestRequested(userId),
               );
             },
-            borderRadius: BorderRadius.circular(18),
-            child: Container(
-              width: double.infinity,
-              height: 58,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: state.isBlocked
-                      ? [const Color(0xFF6B7280), const Color(0xFF374151)]
-                      : effectiveIsFriend
-                      ? [const Color(0xFFD64545), const Color(0xFF8E2DE2)]
-                      : [const Color(0xFFFF5F6D), const Color(0xFFFFC371)],
-                ),
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 10,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (isSending)
-                    const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  else
-                    Icon(
-                      state.isBlocked
-                          ? Icons.block
-                          : effectiveIsFriend
-                          ? Icons.chat_rounded
-                          : Icons.person_add_alt_1,
-                      color: Colors.white,
-                    ),
-                  const SizedBox(width: 12),
-                  Text(
-                    state.isBlocked
-                        ? 'Blocked'
-                        : effectiveIsFriend
-                        ? 'Message'
-                        : isSending
-                        ? 'Sending...'
-                        : 'Collaborate',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
           );
         },
       ),
@@ -667,27 +594,14 @@ class ProfileScreen extends StatelessWidget {
     final profileBloc = context.read<ProfileBloc>();
     final messenger = ScaffoldMessenger.maybeOf(context);
 
-    final shouldBlock = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Block user?'),
-        content: const Text(
-          'They will be removed from your friends and requests.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Block'),
-          ),
-        ],
-      ),
+    final shouldBlock = await showInkConfirmDialog(
+      context,
+      title: 'Block user?',
+      message: 'They will be removed from your friends and requests.',
+      confirmLabel: 'Block',
     );
 
-    if (shouldBlock != true) return;
+    if (!shouldBlock) return;
 
     try {
       await friendsBloc.blockUser(userId);
@@ -703,27 +617,14 @@ class ProfileScreen extends StatelessWidget {
     final profileBloc = context.read<ProfileBloc>();
     final messenger = ScaffoldMessenger.maybeOf(context);
 
-    final shouldUnfriend = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Remove friend?'),
-        content: const Text(
-          'This will remove the connection from both accounts.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
+    final shouldUnfriend = await showInkConfirmDialog(
+      context,
+      title: 'Remove friend?',
+      message: 'This will remove the connection from both accounts.',
+      confirmLabel: 'Remove',
     );
 
-    if (shouldUnfriend != true) return;
+    if (!shouldUnfriend) return;
 
     try {
       await friendsBloc.unfriendUser(userId);
@@ -739,27 +640,15 @@ class ProfileScreen extends StatelessWidget {
     final profileBloc = context.read<ProfileBloc>();
     final messenger = ScaffoldMessenger.maybeOf(context);
 
-    final shouldUnblock = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Unblock user?'),
-        content: const Text(
-          'This will allow you to send requests and collaborate again.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Unblock'),
-          ),
-        ],
-      ),
+    final shouldUnblock = await showInkConfirmDialog(
+      context,
+      title: 'Unblock user?',
+      message: 'This will allow you to send requests and collaborate again.',
+      confirmLabel: 'Unblock',
+      destructive: false,
     );
 
-    if (shouldUnblock != true) return;
+    if (!shouldUnblock) return;
 
     try {
       await friendsBloc.unblockUser(userId);
@@ -777,23 +666,26 @@ class ProfileScreen extends StatelessWidget {
     final reasonController = TextEditingController();
     final reason = await showDialog<String?>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Report user'),
-        content: TextField(
+      builder: (dialogContext) => InkDialog(
+        title: 'Report user',
+        content: InkTextField(
           controller: reasonController,
-          minLines: 3,
           maxLines: 5,
-          decoration: const InputDecoration(hintText: 'Optional reason'),
+          hintText: 'Optional reason',
         ),
         actions: [
-          TextButton(
+          InkButton.secondary(
+            label: 'Cancel',
+            expand: false,
+            compact: true,
             onPressed: () => Navigator.pop(dialogContext, null),
-            child: const Text('Cancel'),
           ),
-          FilledButton(
+          InkButton.primary(
+            label: 'Submit',
+            expand: false,
+            compact: true,
             onPressed: () =>
                 Navigator.pop(dialogContext, reasonController.text.trim()),
-            child: const Text('Submit'),
           ),
         ],
       ),
