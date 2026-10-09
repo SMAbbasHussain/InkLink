@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:inklink/app_view.dart';
-import 'package:inklink/core/theme/app_theme.dart';
+import 'package:inklink/ui/theme/ink_theme.dart';
 import 'package:inklink/core/services/firestore_service.dart';
 import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/services/cloud_functions_service.dart';
@@ -321,8 +321,8 @@ class MyApp extends StatelessWidget {
         return MaterialApp(
           navigatorKey: appNavigatorKey,
           title: 'InkLink',
-          theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
+          theme: InkTheme.light(),
+          darkTheme: InkTheme.dark(),
           // This allows the app to respect System, Light, or Dark mode
           themeMode: themeMode,
           home: const AppView(),
