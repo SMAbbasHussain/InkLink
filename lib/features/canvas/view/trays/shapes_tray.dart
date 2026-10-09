@@ -1,63 +1,50 @@
 import 'package:flutter/material.dart';
-import 'package:inklink/core/constants/app_colors.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_type.dart';
 import '../widgets/sliding_tray.dart';
 import 'canvas_shape_type.dart';
 
 class ShapesTray extends StatelessWidget {
   final bool isOpen;
   final ValueChanged<CanvasShapeType> onSelectShapeForDrawing;
+  final CanvasShapeType? selectedType;
 
-  const ShapesTray({super.key, required this.isOpen, required this.onSelectShapeForDrawing});
+  const ShapesTray({
+    super.key,
+    required this.isOpen,
+    required this.onSelectShapeForDrawing,
+    this.selectedType,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    Color backGroundColor = isDark
-        ? AppColors.surfaceDark
-        : AppColors.surfaceLight;
+    final tokens = context.ink;
 
     final items = <({IconData icon, String label, CanvasShapeType type})>[
+      (icon: LucideIcons.square, label: 'Square', type: CanvasShapeType.square),
       (
-        icon: Icons.square_outlined,
-        label: 'Square',
-        type: CanvasShapeType.square,
-      ),
-      (
-        icon: Icons.rectangle_outlined,
+        icon: LucideIcons.rectangleHorizontal,
         label: 'Rect',
         type: CanvasShapeType.rectangle,
       ),
+      (icon: LucideIcons.circle, label: 'Circle', type: CanvasShapeType.circle),
       (
-        icon: Icons.circle_outlined,
-        label: 'Circle',
-        type: CanvasShapeType.circle,
-      ),
-      (
-        icon: Icons.egg_outlined,
+        // No dedicated "ellipse" glyph in Lucide; closest stand-in.
+        icon: LucideIcons.circle,
         label: 'Ellipse',
         type: CanvasShapeType.ellipse,
       ),
+      (icon: LucideIcons.triangle, label: 'Triangle', type: CanvasShapeType.triangle),
+      (icon: LucideIcons.diamond, label: 'Diamond', type: CanvasShapeType.diamond),
+      (icon: LucideIcons.star, label: 'Star', type: CanvasShapeType.star),
+      (icon: LucideIcons.pentagon, label: 'Pentagon', type: CanvasShapeType.pentagon),
+      (icon: LucideIcons.hexagon, label: 'Hexagon', type: CanvasShapeType.hexagon),
+      (icon: LucideIcons.minus, label: 'Line', type: CanvasShapeType.line),
       (
-        icon: Icons.change_history,
-        label: 'Triangle',
-        type: CanvasShapeType.triangle,
-      ),
-      (icon: Icons.diamond, label: 'Diamond', type: CanvasShapeType.diamond),
-      (icon: Icons.star_border, label: 'Star', type: CanvasShapeType.star),
-      (
-        icon: Icons.pentagon_outlined,
-        label: 'Pentagon',
-        type: CanvasShapeType.pentagon,
-      ),
-      (
-        icon: Icons.hexagon_outlined,
-        label: 'Hexagon',
-        type: CanvasShapeType.hexagon,
-      ),
-      (icon: Icons.horizontal_rule, label: 'Line', type: CanvasShapeType.line),
-      (
-        icon: Icons.align_horizontal_left_rounded,
+        // No dedicated "semicircle" glyph in Lucide; closest stand-in.
+        icon: LucideIcons.circle,
         label: 'Semicircle',
         type: CanvasShapeType.semicircle,
       ),
@@ -73,34 +60,35 @@ class ShapesTray extends StatelessWidget {
       child: GridView.builder(
         padding: const EdgeInsets.all(12),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
+          crossAxisCount: 4,
           mainAxisSpacing: 8,
           crossAxisSpacing: 8,
-          childAspectRatio: 0.95,
+          childAspectRatio: 1,
         ),
         itemCount: items.length,
         itemBuilder: (context, i) {
           final item = items[i];
+          final selected = selectedType == item.type;
           return InkWell(
             onTap: () => onSelectShapeForDrawing(item.type),
             borderRadius: BorderRadius.circular(10),
             child: Container(
               decoration: BoxDecoration(
-                color: backGroundColor,
+                color: selected ? tokens.accentSoft : tokens.field,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Theme.of(context).dividerColor),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(item.icon, size: 24),
-                  const SizedBox(height: 6),
+                  Icon(
+                    item.icon,
+                    size: 22,
+                    color: selected ? tokens.accent : tokens.ink,
+                  ),
+                  const SizedBox(height: 4),
                   Text(
                     item.label,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                    ),
+                    style: InkType.caption(selected ? tokens.accentText : tokens.inkMuted),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],

@@ -688,8 +688,18 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(message),
-              backgroundColor: isViewerWarning ? Colors.orange : Colors.red,
+              content: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isViewerWarning ? LucideIcons.triangleAlert : LucideIcons.ban,
+                    size: 16,
+                    color: isViewerWarning ? _tokens.pending : _tokens.danger,
+                  ),
+                  const SizedBox(width: InkSpacing.s8),
+                  Flexible(child: Text(message)),
+                ],
+              ),
               duration: isViewerWarning
                   ? const Duration(seconds: 2)
                   : const Duration(seconds: 4),
@@ -1228,7 +1238,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               child: Container(
                 decoration: BoxDecoration(
                   border:
-                      Border.all(color: Colors.blueAccent, width: 1.5),
+                      Border.all(color: _tokens.accent, width: 1.5),
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
@@ -1244,7 +1254,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  color: Colors.red,
+                  color: _tokens.danger,
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white, width: 2),
                   boxShadow: const [
@@ -1255,7 +1265,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     ),
                   ],
                 ),
-                child: const Icon(Icons.delete, size: 14,
+                child: const Icon(LucideIcons.trash2, size: 14,
                     color: Colors.white),
               ),
             ),
@@ -1349,8 +1359,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           IconButton(
                             onPressed: () =>
                                 _canvasBloc.add(CanvasDeleteElement(element.id)),
-                            icon: const Icon(Icons.delete, size: 18,
-                                color: Colors.red),
+                            icon: Icon(LucideIcons.trash2, size: 18,
+                                color: _tokens.danger),
                             splashRadius: 16,
                             tooltip: 'Delete',
                           ),
@@ -1360,7 +1370,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 _isStrokeEditExpanded = false;
                               });
                             },
-                            icon: const Icon(Icons.expand_more, size: 18),
+                            icon: Icon(LucideIcons.chevronDown, size: 18, color: _tokens.inkMuted),
                             splashRadius: 16,
                             tooltip: 'Minimize',
                           ),
@@ -1372,7 +1382,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         value: state.selectedStrokeWidth.clamp(1, 48),
                         min: 1,
                         max: 48,
-                        activeColor: Colors.blueAccent,
+                        activeColor: _tokens.accent,
                         onChanged: (v) => _canvasBloc.add(
                           CanvasUpdateSelectedStrokeWidth(v),
                         ),
@@ -1387,7 +1397,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         value: state.selectedStrokeOpacity.clamp(0, 1),
                         min: 0,
                         max: 1,
-                        activeColor: Colors.blueAccent,
+                        activeColor: _tokens.accent,
                         onChanged: (v) => _canvasBloc.add(
                           CanvasUpdateSelectedStrokeOpacity(v),
                         ),
@@ -1444,7 +1454,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   ),
                                   child: color.value ==
                                           state.selectedStrokeColor
-                                      ? const Icon(Icons.check,
+                                      ? const Icon(LucideIcons.check,
                                           size: 14, color: Colors.white)
                                       : null,
                                 ),
@@ -1530,7 +1540,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             _isShapeEditTrayExpanded = false;
                           });
                         },
-                        icon: const Icon(Icons.expand_more, size: 18),
+                        icon: Icon(LucideIcons.chevronDown, size: 18, color: _tokens.inkMuted),
                         splashRadius: 16,
                         tooltip: 'Minimize',
                       ),
@@ -1541,7 +1551,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             CanvasDeleteElement(shape.id),
                           );
                         },
-                        icon: const Icon(Icons.delete, size: 18),
+                        icon: Icon(LucideIcons.trash2, size: 18, color: _tokens.danger),
                         splashRadius: 16,
                         tooltip: 'Delete',
                       ),
@@ -1550,7 +1560,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           _commitPendingShapeEdits();
                           _selectShape(null);
                         },
-                        icon: const Icon(Icons.close, size: 18),
+                        icon: Icon(LucideIcons.x, size: 18, color: _tokens.inkMuted),
                         splashRadius: 16,
                         tooltip: 'Deselect shape',
                       ),
@@ -1743,7 +1753,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       },
                       child: Container(
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.blueAccent, width: 1.5),
+                          border: Border.all(color: _tokens.accent, width: 1.5),
                           borderRadius: BorderRadius.circular(8),
                         ),
                       ),
@@ -1790,7 +1800,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         _isRotatingShape = false;
                         _setShapeEditing(false);
                       },
-                      child: _buildHandle(Icons.rotate_right),
+                      child: _buildHandle(LucideIcons.rotateCw),
                     ),
                   ),
                   Positioned(
@@ -1830,7 +1840,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         _isResizingShape = false;
                         _setShapeEditing(false);
                       },
-                      child: _buildHandle(Icons.open_in_full),
+                      child: _buildHandle(LucideIcons.maximize2),
                     ),
                   ),
                 ],
@@ -1846,7 +1856,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  color: Colors.red,
+                  color: _tokens.danger,
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white, width: 2),
                   boxShadow: const [
@@ -1857,7 +1867,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     ),
                   ],
                 ),
-                child: const Icon(Icons.delete, size: 14, color: Colors.white),
+                child: const Icon(LucideIcons.trash2, size: 14, color: Colors.white),
               ),
             ),
           ),
@@ -1873,7 +1883,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.blueAccent, width: 1.5),
+        border: Border.all(color: _tokens.accent, width: 1.5),
         boxShadow: const [
           BoxShadow(
             color: Color(0x22000000),
@@ -1882,7 +1892,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           ),
         ],
       ),
-      child: Icon(icon, size: 14, color: Colors.blueAccent),
+      child: Icon(icon, size: 14, color: _tokens.accent),
     );
   }
 
@@ -1907,6 +1917,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
         ShapesTray(
           isOpen: state.activeTray == 'shapes',
           onSelectShapeForDrawing: _selectShapeForDrawing,
+          selectedType: state.pendingShapeType,
         ),
         BrushTray(
           isOpen: state.activeTray == 'brushes',
@@ -2091,6 +2102,22 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
+  Widget _buildGlassEdgeTab(IconData icon, {bool vertical = true}) {
+    final tokens = _tokens;
+    return IgnorePointer(
+      child: Center(
+        child: GlassPanel(
+          radius: 14,
+          child: SizedBox(
+            width: vertical ? 36 : 56,
+            height: vertical ? 56 : 36,
+            child: Icon(icon, size: 18, color: tokens.inkMuted),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildEdgeTriggers() {
     return Stack(
       children: [
@@ -2106,6 +2133,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               height: 50,
               width: double.infinity,
               color: Colors.transparent,
+              child: _buildGlassEdgeTab(LucideIcons.penLine, vertical: false),
             ),
           ),
         ),
@@ -2122,6 +2150,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               width: 40,
               margin: const EdgeInsets.only(top: 60),
               color: Colors.transparent,
+              child: _buildGlassEdgeTab(LucideIcons.users),
             ),
           ),
         ),
@@ -2138,6 +2167,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               width: 40,
               margin: const EdgeInsets.only(bottom: 60),
               color: Colors.transparent,
+              child: _buildGlassEdgeTab(LucideIcons.slidersHorizontal),
             ),
           ),
         ),
@@ -2154,6 +2184,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               width: 40,
               margin: const EdgeInsets.only(top: 60),
               color: Colors.transparent,
+              child: _buildGlassEdgeTab(LucideIcons.sparkles),
             ),
           ),
         ),
@@ -2170,6 +2201,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               width: 40,
               margin: const EdgeInsets.only(bottom: 60),
               color: Colors.transparent,
+              child: _buildGlassEdgeTab(LucideIcons.shapes),
             ),
           ),
         ),
@@ -2184,17 +2216,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
     final (IconData icon, String label) = switch (state.currentToolMode) {
       CanvasToolMode.shape => (
-        Icons.category_outlined,
+        LucideIcons.shapes,
         state.pendingShapeType != null
             ? 'Shape: ${state.pendingShapeType!.name}'
             : 'Shape',
       ),
-      CanvasToolMode.eraser => (Icons.auto_fix_high_outlined, 'Eraser'),
-      CanvasToolMode.text => (Icons.text_fields, 'Text'),
-      CanvasToolMode.arrow => (Icons.arrow_forward_outlined, 'Arrow'),
-      CanvasToolMode.image => (Icons.image_outlined, 'Image'),
-      CanvasToolMode.highlight => (Icons.highlight_outlined, 'Highlight'),
-      CanvasToolMode.doodle => (Icons.brush, 'Doodle'),
+      CanvasToolMode.eraser => (LucideIcons.eraser, 'Eraser'),
+      CanvasToolMode.text => (LucideIcons.type, 'Text'),
+      CanvasToolMode.arrow => (LucideIcons.moveUpRight, 'Arrow'),
+      CanvasToolMode.image => (LucideIcons.image, 'Image'),
+      CanvasToolMode.highlight => (LucideIcons.highlighter, 'Highlight'),
+      CanvasToolMode.doodle => (LucideIcons.penLine, 'Doodle'),
     };
 
     return Positioned(
@@ -2207,7 +2239,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: Colors.black87,
+            color: const Color(0xD91F2229),
             borderRadius: BorderRadius.circular(16),
             boxShadow: const [
               BoxShadow(color: Color(0x22000000), blurRadius: 4, offset: Offset(0, 2)),
@@ -2355,7 +2387,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           width: 24,
                           height: 24,
                           decoration: BoxDecoration(
-                            color: Colors.red,
+                            color: _tokens.danger,
                             shape: BoxShape.circle,
                             border:
                                 Border.all(color: Colors.white, width: 2),
@@ -2367,7 +2399,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               ),
                             ],
                           ),
-                          child: const Icon(Icons.delete,
+                          child: const Icon(LucideIcons.trash2,
                               size: 12, color: Colors.white),
                         ),
                       ),
@@ -2444,9 +2476,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(9),
-                          border: Border.all(color: Colors.black26),
+                          border: Border.all(color: _tokens.accent, width: 1.5),
                         ),
-                        child: const Icon(Icons.open_in_full, size: 12),
+                        child: Icon(LucideIcons.maximize2, size: 12, color: _tokens.accent),
                       ),
                     ),
                   ),

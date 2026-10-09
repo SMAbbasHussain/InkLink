@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../domain/models/board.dart';
+import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_tokens.dart';
+import '../../../../ui/theme/ink_type.dart';
+import '../../../../ui/widgets/ink_avatar.dart';
+import '../../../../ui/widgets/ink_initials.dart';
+import '../../../../ui/widgets/ink_text_field.dart';
 import '../../bloc/canvas_bloc.dart';
 import '../widgets/sliding_tray.dart';
 
@@ -52,6 +59,7 @@ class _MembersTrayState extends State<MembersTray> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
     return BlocBuilder<CanvasBloc, CanvasState>(
       buildWhen: (prev, curr) =>
           prev.filteredBoardMembers != curr.filteredBoardMembers ||
@@ -67,7 +75,7 @@ class _MembersTrayState extends State<MembersTray> {
           headerActions: _isSearchMode
               ? IconButton(
                   onPressed: _exitSearchMode,
-                  icon: const Icon(Icons.close, size: 18),
+                  icon: Icon(LucideIcons.x, size: 18, color: tokens.inkMuted),
                   tooltip: 'Close search',
                   splashRadius: 18,
                 )
@@ -75,24 +83,20 @@ class _MembersTrayState extends State<MembersTray> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     IconButton(
-                      onPressed: () {
-                        // Call feature - placeholder for now
-                      },
-                      icon: const Icon(Icons.call, size: 18),
+                      onPressed: null,
+                      icon: Icon(LucideIcons.phone, size: 18, color: tokens.inkMuted.withValues(alpha: 0.5)),
                       tooltip: 'Call (Coming soon)',
                       splashRadius: 18,
                     ),
                     IconButton(
-                      onPressed: () {
-                        // Chat feature - placeholder for now
-                      },
-                      icon: const Icon(Icons.chat, size: 18),
+                      onPressed: null,
+                      icon: Icon(LucideIcons.messageCircle, size: 18, color: tokens.inkMuted.withValues(alpha: 0.5)),
                       tooltip: 'Chat (Coming soon)',
                       splashRadius: 18,
                     ),
                     IconButton(
                       onPressed: _enterSearchMode,
-                      icon: const Icon(Icons.search, size: 18),
+                      icon: Icon(LucideIcons.search, size: 18, color: tokens.inkMuted),
                       tooltip: 'Search members',
                       splashRadius: 18,
                     ),
@@ -103,25 +107,15 @@ class _MembersTrayState extends State<MembersTray> {
               if (_isSearchMode)
                 Padding(
                   padding: const EdgeInsets.all(12),
-                  child: TextField(
+                  child: InkTextField(
                     controller: _searchController,
                     focusNode: _searchFocusNode,
                     onChanged: _onSearchChanged,
-                    decoration: InputDecoration(
-                      hintText: 'Search members...',
-                      prefixIcon: const Icon(Icons.search, size: 20),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.close, size: 20),
-                        onPressed: _exitSearchMode,
-                      ),
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        vertical: 8,
-                        horizontal: 12,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                    hintText: 'Search members...',
+                    leadingIcon: LucideIcons.search,
+                    suffixIcon: IconButton(
+                      icon: Icon(LucideIcons.x, size: 18, color: tokens.inkMuted),
+                      onPressed: _exitSearchMode,
                     ),
                   ),
                 ),
@@ -133,20 +127,11 @@ class _MembersTrayState extends State<MembersTray> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(
-                              Icons.people_outline,
-                              size: 48,
-                              color: Colors.grey[400],
-                            ),
-                            const SizedBox(height: 12),
+                            Icon(LucideIcons.users, size: 48, color: tokens.inkMuted),
+                            const SizedBox(height: InkSpacing.s12),
                             Text(
-                              _isSearchMode
-                                  ? 'No members found'
-                                  : 'No members yet',
-                              style: TextStyle(
-                                color: Colors.grey[600],
-                                fontSize: 14,
-                              ),
+                              _isSearchMode ? 'No members found' : 'No members yet',
+                              style: InkType.body(tokens.inkMuted),
                             ),
                           ],
                         ),
@@ -155,22 +140,25 @@ class _MembersTrayState extends State<MembersTray> {
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         children: [
                           ..._buildMemberSection(
+                            tokens,
                             'Owner',
                             filteredMembers,
                             Board.roleOwner,
-                            Colors.orange,
+                            tokens.accent,
                           ),
                           ..._buildMemberSection(
+                            tokens,
                             'Editor',
                             filteredMembers,
                             Board.roleEditor,
-                            Colors.blue,
+                            tokens.inkSecondary,
                           ),
                           ..._buildMemberSection(
+                            tokens,
                             'Viewer',
                             filteredMembers,
                             Board.roleViewer,
-                            Colors.green,
+                            tokens.inkMuted,
                           ),
                         ],
                       ),
@@ -183,6 +171,7 @@ class _MembersTrayState extends State<MembersTray> {
   }
 
   List<Widget> _buildMemberSection(
+    InkTokens tokens,
     String roleLabel,
     List<BoardMember> allMembers,
     String roleValue,
@@ -204,71 +193,62 @@ class _MembersTrayState extends State<MembersTray> {
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-            const SizedBox(width: 8),
-            Text(
-              roleLabel,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[700],
-              ),
-            ),
-            const SizedBox(width: 8),
+            const SizedBox(width: InkSpacing.s8),
+            Text(roleLabel, style: InkType.label(tokens.inkMuted)),
+            const SizedBox(width: InkSpacing.s8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: roleColor.withOpacity(0.2),
+                color: roleColor.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
                 membersInRole.length.toString(),
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: roleColor,
-                ),
+                style: InkType.caption(roleColor),
               ),
             ),
           ],
         ),
       ),
-      ...membersInRole.map((member) => _buildMemberTile(member)),
+      ...membersInRole.map((member) => _buildMemberTile(tokens, member)),
     ];
   }
 
-  Widget _buildMemberTile(BoardMember member) {
+  Widget _buildMemberTile(InkTokens tokens, BoardMember member) {
     final displayName = member.displayName ?? member.email ?? 'Unknown';
     final subtitle = member.email ?? 'No email';
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: ListTile(
-        dense: true,
-        leading: CircleAvatar(
-          radius: 18,
-          backgroundImage:
-              member.photoUrl != null && member.photoUrl!.isNotEmpty
-              ? NetworkImage(member.photoUrl!)
-              : null,
-          child: member.photoUrl == null || member.photoUrl!.isEmpty
-              ? Text(
-                  displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
-                  style: const TextStyle(fontSize: 12),
-                )
-              : null,
-        ),
-        title: Text(
-          displayName,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 14),
-        ),
-        subtitle: Text(
-          subtitle,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12),
-        ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Row(
+        children: [
+          InkAvatar(
+            imageUrl: member.photoUrl,
+            initials: inkInitialsFor(displayName),
+            id: member.uid,
+            size: 36,
+          ),
+          const SizedBox(width: InkSpacing.s12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: InkType.bodyStrong(tokens.ink),
+                ),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: InkType.caption(tokens.inkMuted),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
