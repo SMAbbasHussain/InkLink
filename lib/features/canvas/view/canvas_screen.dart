@@ -153,6 +153,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
       ShapeElement e => e.center,
       TextElement e => e.center,
       ImageElement e => e.center,
+      StickyNoteElement e => e.center,
+      ConnectorElement e => Offset(
+          (e.startPoint.dx + e.endPoint.dx) / 2,
+          (e.startPoint.dy + e.endPoint.dy) / 2,
+        ),
     };
   }
 
@@ -323,9 +328,66 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   Future<void> _uploadImageToCanvas() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: Theme.of(context).cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.withOpacity(0.4),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Insert Image',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: AppColors.primary,
+                  child: Icon(Icons.camera_alt_rounded, color: Colors.white),
+                ),
+                title: const Text('Take Photo with Camera'),
+                subtitle: const Text('Capture a picture and place onto canvas'),
+                onTap: () => Navigator.pop(ctx, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.blueAccent,
+                  child: Icon(Icons.photo_library_rounded, color: Colors.white),
+                ),
+                title: const Text('Choose from Gallery'),
+                subtitle: const Text('Pick an existing photo or graphic'),
+                onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (source == null || !mounted) return;
+
     final picker = ImagePicker();
     final picked = await picker.pickImage(
-      source: ImageSource.gallery,
+      source: source,
       imageQuality: 95,
     );
     if (picked == null || !mounted) return;
@@ -560,6 +622,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
             width: e.width,
             height: e.height,
           );
+        case StickyNoteElement e:
+          candidate = Rect.fromCenter(
+            center: e.center,
+            width: e.width,
+            height: e.height,
+          );
+        case ConnectorElement e:
+          candidate = Rect.fromPoints(e.startPoint, e.endPoint).inflate(16);
       }
 
       bounds = bounds == null ? candidate : bounds.expandToInclude(candidate);
@@ -578,6 +648,302 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   void _clearAll() {
     _canvasBloc.add(const CanvasClearAll());
+  }
+
+  Future<void> _addStickyNoteDialog() async {
+    final textController = TextEditingController();
+    Color selectedColor = const Color(0xFFFFF9A6);
+    final colors = [
+      const Color(0xFFFFF9A6), // Yellow
+      const Color(0xFFD4F8D3), // Mint / Lime
+      const Color(0xFFC7F0FF), // Sky / Cyan
+      const Color(0xFFFFD1DC), // Rose / Pink
+      const Color(0xFFE2D4F8), // Lavender
+    ];
+
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Add Sticky Note'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: textController,
+                maxLines: 4,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'Write note content here...',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Color', style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: colors.map((c) {
+                  final isSelected = c.value == selectedColor.value;
+                  return GestureDetector(
+                    onTap: () => setDialogState(() => selectedColor = c),
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: c,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: isSelected ? Colors.blueAccent : Colors.grey.withOpacity(0.4),
+                          width: isSelected ? 2.5 : 1,
+                        ),
+                        boxShadow: isSelected
+                            ? [const BoxShadow(color: Colors.black26, blurRadius: 4)]
+                            : null,
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Add to Canvas'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (created == true && mounted) {
+      final size = MediaQuery.of(context).size;
+      final centerWorld = _toWorld(Offset(size.width / 2, size.height / 2));
+      _canvasBloc.add(CanvasAddStickyNote(
+        center: centerWorld,
+        text: textController.text.trim(),
+        color: selectedColor,
+      ));
+    }
+  }
+
+  Future<void> _editStickyNote(_CanvasElement element) async {
+    final textController = TextEditingController(text: element.text);
+    Color selectedColor = element.color;
+    final colors = [
+      const Color(0xFFFFF9A6),
+      const Color(0xFFD4F8D3),
+      const Color(0xFFC7F0FF),
+      const Color(0xFFFFD1DC),
+      const Color(0xFFE2D4F8),
+    ];
+
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Edit Sticky Note'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: textController,
+                maxLines: 4,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'Note content...',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Color', style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: colors.map((c) {
+                  final isSelected = c.value == selectedColor.value;
+                  return GestureDetector(
+                    onTap: () => setDialogState(() => selectedColor = c),
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: c,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: isSelected ? Colors.blueAccent : Colors.grey.withOpacity(0.4),
+                          width: isSelected ? 2.5 : 1,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (updated == true && mounted) {
+      _canvasBloc.add(CanvasUpdateStickyNote(
+        elementId: element.id,
+        text: textController.text.trim(),
+        color: selectedColor,
+      ));
+    }
+  }
+
+  Future<void> _addConnectorDialog() async {
+    String selectedStyle = 'straight';
+    bool hasArrowhead = true;
+    Color selectedColor = const Color(0xFF2D3748);
+
+    final elements = _canvasBloc.state.elements;
+    final linkable = elements
+        .where((e) => e is ShapeElement || e is StickyNoteElement)
+        .toList();
+
+    String? startId = linkable.isNotEmpty ? linkable.first.id : null;
+    String? endId = linkable.length > 1 ? linkable[1].id : null;
+    String startAnchor = 'right';
+    String endAnchor = 'left';
+
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Add Connector / Diagram Link'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Line Style',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                DropdownButton<String>(
+                  value: selectedStyle,
+                  isExpanded: true,
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'straight', child: Text('Straight Line')),
+                    DropdownMenuItem(
+                        value: 'curved', child: Text('Curved Bezier')),
+                    DropdownMenuItem(
+                        value: 'orthogonal', child: Text('Orthogonal / Step')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setDialogState(() => selectedStyle = v);
+                  },
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  title: const Text('Arrowhead End'),
+                  value: hasArrowhead,
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (v) => setDialogState(() => hasArrowhead = v),
+                ),
+                if (linkable.length >= 2) ...[
+                  const SizedBox(height: 12),
+                  const Text('Connect Shapes',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButton<String>(
+                          value: startId,
+                          isExpanded: true,
+                          hint: const Text('From Element'),
+                          items: linkable.map((e) {
+                            final label = e is ShapeElement
+                                ? '${e.shapeType.name} (${e.id.substring(0, 4)})'
+                                : 'Note (${e.id.substring(0, 4)})';
+                            return DropdownMenuItem(
+                                value: e.id,
+                                child: Text(label,
+                                    overflow: TextOverflow.ellipsis));
+                          }).toList(),
+                          onChanged: (v) => setDialogState(() => startId = v),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(Icons.arrow_forward, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: DropdownButton<String>(
+                          value: endId,
+                          isExpanded: true,
+                          hint: const Text('To Element'),
+                          items: linkable.map((e) {
+                            final label = e is ShapeElement
+                                ? '${e.shapeType.name} (${e.id.substring(0, 4)})'
+                                : 'Note (${e.id.substring(0, 4)})';
+                            return DropdownMenuItem(
+                                value: e.id,
+                                child: Text(label,
+                                    overflow: TextOverflow.ellipsis));
+                          }).toList(),
+                          onChanged: (v) => setDialogState(() => endId = v),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Add Connector'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (created == true && mounted) {
+      final size = MediaQuery.of(context).size;
+      final centerWorld = _toWorld(Offset(size.width / 2, size.height / 2));
+      _canvasBloc.add(CanvasAddConnector(
+        startElementId: startId,
+        startPoint: Offset(centerWorld.dx - 80, centerWorld.dy),
+        startAnchor: startAnchor,
+        endElementId: endId,
+        endPoint: Offset(centerWorld.dx + 80, centerWorld.dy),
+        endAnchor: endAnchor,
+        lineStyle: selectedStyle,
+        hasArrowhead: hasArrowhead,
+        color: selectedColor,
+      ));
+    }
   }
 
   Future<void> _savePreview() async {
@@ -1007,6 +1373,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               );
                               if (hit.kind == _ElementKind.stroke) {
                                 _selectShape(hitShapeId, expandEditor: false);
+                              } else if (hit.kind == _ElementKind.stickyNote) {
+                                _editStickyNote(hit);
                               }
                             },
                             onTap: () {
@@ -1115,6 +1483,30 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 imageBase64: e.imageBase64,
                 data: e.toMap(),
               ),
+            StickyNoteElement e => _CanvasElement.stickyNote(
+                id: e.id,
+                center: e.center,
+                width: e.width,
+                height: e.height,
+                text: e.text,
+                color: e.color,
+                rotation: e.rotation,
+                data: e.toMap(),
+              ),
+            ConnectorElement e => _CanvasElement.connector(
+                id: e.id,
+                startElementId: e.startElementId,
+                startPoint: e.startPoint,
+                startAnchor: e.startAnchor,
+                endElementId: e.endElementId,
+                endPoint: e.endPoint,
+                endAnchor: e.endAnchor,
+                lineStyle: e.lineStyle,
+                color: e.color,
+                strokeWidth: e.strokeWidth,
+                hasArrowhead: e.hasArrowhead,
+                data: e.toMap(),
+              ),
           };
         })
         .toList(growable: false);
@@ -1208,12 +1600,28 @@ class _CanvasScreenState extends State<CanvasScreen> {
             return element.id;
           }
         }
+      } else if (element.kind == _ElementKind.connector) {
+        Offset start = element.startPoint;
+        Offset end = element.endPoint;
+        if (element.startElementId != null) {
+          final sElem = elements.where((e) => e.id == element.startElementId).firstOrNull;
+          if (sElem != null) start = sElem.center;
+        }
+        if (element.endElementId != null) {
+          final eElem = elements.where((e) => e.id == element.endElementId).firstOrNull;
+          if (eElem != null) end = eElem.center;
+        }
+        final dist = _pointToSegmentDistance(position, start, end);
+        if (dist <= element.strokeWidth / 2 + 14.0) {
+          return element.id;
+        }
       } else {
-        // Shapes, images, text
+        // Shapes, images, text, sticky notes
         final distance = (position - element.center).distance;
         final sizeHit = element.kind == _ElementKind.shape
             ? element.size
-            : element.kind == _ElementKind.image
+            : (element.kind == _ElementKind.image ||
+                    element.kind == _ElementKind.stickyNote)
                 ? math.max(element.width, element.height)
                 : 100.0;
         if (distance <= (sizeHit / 2) + 14) {
@@ -1981,6 +2389,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
           onUndo: _undo,
           onRedo: _redo,
           onClearAll: _clearAll,
+          onAddStickyNote: _addStickyNoteDialog,
+          onAddConnector: _addConnectorDialog,
         ),
         ShapesTray(
           isOpen: state.activeTray == 'shapes',

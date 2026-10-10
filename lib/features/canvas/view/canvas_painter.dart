@@ -1,6 +1,6 @@
 part of 'canvas_screen.dart';
 
-enum _ElementKind { stroke, shape, text, image }
+enum _ElementKind { stroke, shape, text, image, stickyNote, connector }
 
 class _CanvasElement {
   final String id;
@@ -18,12 +18,24 @@ class _CanvasElement {
   final String imageBase64;
   final bool isFilled;
   final String text;
+  final double rotation;
+  final String? startElementId;
+  final Offset startPoint;
+  final String startAnchor;
+  final String? endElementId;
+  final Offset endPoint;
+  final String endAnchor;
+  final String lineStyle;
+  final bool hasArrowhead;
   final Map<String, dynamic> data;
 
   Rect? get bounds {
-    if (kind == _ElementKind.image) {
+    if (kind == _ElementKind.image || kind == _ElementKind.stickyNote) {
       return Rect.fromCenter(center: center, width: width, height: height)
           .inflate(8);
+    }
+    if (kind == _ElementKind.connector) {
+      return Rect.fromPoints(startPoint, endPoint).inflate(strokeWidth + 12);
     }
     if (points.isEmpty) return null;
     double minX = points.first.dx;
@@ -55,6 +67,15 @@ class _CanvasElement {
     this.imageBase64 = '',
     this.isFilled = false,
     this.text = '',
+    this.rotation = 0,
+    this.startElementId,
+    this.startPoint = Offset.zero,
+    this.startAnchor = 'center',
+    this.endElementId,
+    this.endPoint = Offset.zero,
+    this.endAnchor = 'center',
+    this.lineStyle = 'straight',
+    this.hasArrowhead = true,
     this.data = const {},
   });
 
@@ -98,6 +119,7 @@ class _CanvasElement {
       color: color,
       strokeWidth: strokeWidth,
       isFilled: isFilled,
+      rotation: (data['rotation'] as num?)?.toDouble() ?? 0.0,
       data: data,
     );
   }
@@ -139,12 +161,70 @@ class _CanvasElement {
     );
   }
 
+  factory _CanvasElement.stickyNote({
+    required String id,
+    required Offset center,
+    required double width,
+    required double height,
+    required String text,
+    required Color color,
+    double rotation = 0,
+    Map<String, dynamic> data = const {},
+  }) {
+    return _CanvasElement._(
+      id: id,
+      kind: _ElementKind.stickyNote,
+      center: center,
+      width: width,
+      height: height,
+      text: text,
+      color: color,
+      rotation: rotation,
+      data: data,
+    );
+  }
+
+  factory _CanvasElement.connector({
+    required String id,
+    String? startElementId,
+    required Offset startPoint,
+    String startAnchor = 'center',
+    String? endElementId,
+    required Offset endPoint,
+    String endAnchor = 'center',
+    String lineStyle = 'straight',
+    required Color color,
+    required double strokeWidth,
+    bool hasArrowhead = true,
+    Map<String, dynamic> data = const {},
+  }) {
+    return _CanvasElement._(
+      id: id,
+      kind: _ElementKind.connector,
+      startElementId: startElementId,
+      startPoint: startPoint,
+      startAnchor: startAnchor,
+      endElementId: endElementId,
+      endPoint: endPoint,
+      endAnchor: endAnchor,
+      lineStyle: lineStyle,
+      color: color,
+      strokeWidth: strokeWidth,
+      hasArrowhead: hasArrowhead,
+      data: data,
+    );
+  }
+
   _CanvasElement copyWith({
     List<Offset>? points,
     Offset? center,
     double? size,
     double? width,
     double? height,
+    Color? color,
+    double? strokeWidth,
+    double? rotation,
+    String? text,
     Map<String, dynamic>? data,
     bool? isFilled,
   }) {
@@ -152,8 +232,8 @@ class _CanvasElement {
       id: id,
       kind: kind,
       points: points ?? this.points,
-      color: color,
-      strokeWidth: strokeWidth,
+      color: color ?? this.color,
+      strokeWidth: strokeWidth ?? this.strokeWidth,
       opacity: opacity,
       brushType: brushType,
       shapeType: shapeType,
@@ -163,7 +243,16 @@ class _CanvasElement {
       height: height ?? this.height,
       imageBase64: imageBase64,
       isFilled: isFilled ?? this.isFilled,
-      text: text,
+      text: text ?? this.text,
+      rotation: rotation ?? this.rotation,
+      startElementId: startElementId,
+      startPoint: startPoint,
+      startAnchor: startAnchor,
+      endElementId: endElementId,
+      endPoint: endPoint,
+      endAnchor: endAnchor,
+      lineStyle: lineStyle,
+      hasArrowhead: hasArrowhead,
       data: data ?? this.data,
     );
   }
@@ -229,6 +318,12 @@ class _CanvasPainter extends CustomPainter {
           break;
         case _ElementKind.image:
           _paintImage(canvas, element);
+          break;
+        case _ElementKind.stickyNote:
+          _paintStickyNote(canvas, element);
+          break;
+        case _ElementKind.connector:
+          _paintConnector(canvas, element);
           break;
       }
     }
@@ -449,6 +544,28 @@ class _CanvasPainter extends CustomPainter {
         final rect = Rect.fromCenter(center: c, width: s, height: s);
         canvas.drawArc(rect, math.pi, math.pi, true, paint);
         break;
+      case CanvasShapeType.arrow:
+        final p = Path();
+        final halfW = s * 0.65;
+        final halfH = s * 0.35;
+        final headLen = s * 0.42;
+        final shaftThickness = halfH * 0.45;
+
+        final left = c.dx - halfW;
+        final right = c.dx + halfW;
+        final headStart = right - headLen;
+
+        p.moveTo(left, c.dy - shaftThickness / 2);
+        p.lineTo(headStart, c.dy - shaftThickness / 2);
+        p.lineTo(headStart, c.dy - halfH);
+        p.lineTo(right, c.dy);
+        p.lineTo(headStart, c.dy + halfH);
+        p.lineTo(headStart, c.dy + shaftThickness / 2);
+        p.lineTo(left, c.dy + shaftThickness / 2);
+        p.close();
+
+        canvas.drawPath(p, paint);
+        break;
     }
 
     if (selectedShapeId == element.id) {
@@ -552,6 +669,186 @@ class _CanvasPainter extends CustomPainter {
         rect.center.dy - textPainter.height / 2,
       ),
     );
+  }
+
+  Offset _resolveAnchor(String? elementId, String anchor, Offset fallback) {
+    if (elementId == null) return fallback;
+    final target = elements.where((e) => e.id == elementId).firstOrNull;
+    if (target == null) return fallback;
+
+    Rect targetBounds;
+    if (target.kind == _ElementKind.shape) {
+      targetBounds = Rect.fromCenter(
+        center: target.center,
+        width: target.size * 1.2,
+        height: target.size * 1.2,
+      );
+    } else if (target.kind == _ElementKind.stickyNote || target.kind == _ElementKind.image) {
+      targetBounds = Rect.fromCenter(
+        center: target.center,
+        width: target.width,
+        height: target.height,
+      );
+    } else if (target.bounds != null) {
+      targetBounds = target.bounds!;
+    } else {
+      return target.center;
+    }
+
+    switch (anchor) {
+      case 'top':
+        return Offset(targetBounds.center.dx, targetBounds.top);
+      case 'bottom':
+        return Offset(targetBounds.center.dx, targetBounds.bottom);
+      case 'left':
+        return Offset(targetBounds.left, targetBounds.center.dy);
+      case 'right':
+        return Offset(targetBounds.right, targetBounds.center.dy);
+      case 'center':
+      default:
+        return targetBounds.center;
+    }
+  }
+
+  void _paintStickyNote(Canvas canvas, _CanvasElement element) {
+    canvas.save();
+    if (element.rotation != 0) {
+      canvas.translate(element.center.dx, element.center.dy);
+      canvas.rotate(element.rotation);
+      canvas.translate(-element.center.dx, -element.center.dy);
+    }
+
+    final rect = Rect.fromCenter(
+      center: element.center,
+      width: element.width,
+      height: element.height,
+    );
+    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(8));
+
+    // Drop shadow
+    final shadowPaint = Paint()
+      ..color = Colors.black.withOpacity(0.12)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+    canvas.drawRRect(rrect.shift(const Offset(2, 4)), shadowPaint);
+
+    // Sticky note body
+    final fillPaint = Paint()
+      ..color = element.color
+      ..style = PaintingStyle.fill;
+    canvas.drawRRect(rrect, fillPaint);
+
+    // Top tape accent
+    final tapeRect = Rect.fromLTWH(rect.left + 14, rect.top + 3, rect.width - 28, 4);
+    final tapePaint = Paint()
+      ..color = Colors.black.withOpacity(0.06)
+      ..style = PaintingStyle.fill;
+    canvas.drawRRect(RRect.fromRectAndRadius(tapeRect, const Radius.circular(2)), tapePaint);
+
+    // Border
+    final borderPaint = Paint()
+      ..color = Colors.black.withOpacity(0.08)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawRRect(rrect, borderPaint);
+
+    // Text content
+    if (element.text.isNotEmpty) {
+      final textSpan = TextSpan(
+        text: element.text,
+        style: const TextStyle(
+          color: Color(0xFF2D3748),
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          height: 1.35,
+        ),
+      );
+      final textPainter = TextPainter(
+        text: textSpan,
+        textDirection: TextDirection.ltr,
+        maxLines: (element.height / 18).floor().clamp(1, 25),
+        ellipsis: '...',
+      )..layout(maxWidth: math.max(20, element.width - 20));
+
+      textPainter.paint(
+        canvas,
+        Offset(rect.left + 10, rect.top + 14),
+      );
+    }
+
+    // Selection border
+    if (selectedShapeId == element.id) {
+      final selectionPaint = Paint()
+        ..color = Colors.blueAccent
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.0;
+      canvas.drawRRect(rrect.inflate(4), selectionPaint);
+    }
+
+    canvas.restore();
+  }
+
+  void _paintConnector(Canvas canvas, _CanvasElement element) {
+    final start = _resolveAnchor(element.startElementId, element.startAnchor, element.startPoint);
+    final end = _resolveAnchor(element.endElementId, element.endAnchor, element.endPoint);
+
+    final linePaint = Paint()
+      ..color = element.color
+      ..strokeWidth = element.strokeWidth
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+
+    final path = Path();
+    path.moveTo(start.dx, start.dy);
+
+    if (element.lineStyle == 'curved') {
+      final dx = (end.dx - start.dx).abs();
+      final dy = (end.dy - start.dy).abs();
+      final ctrlOffset = math.max(dx, dy) * 0.45;
+      final cp1 = Offset(start.dx + (end.dx > start.dx ? ctrlOffset : -ctrlOffset), start.dy);
+      final cp2 = Offset(end.dx - (end.dx > start.dx ? ctrlOffset : -ctrlOffset), end.dy);
+      path.cubicTo(cp1.dx, cp1.dy, cp2.dx, cp2.dy, end.dx, end.dy);
+    } else if (element.lineStyle == 'orthogonal') {
+      final midX = (start.dx + end.dx) / 2;
+      path.lineTo(midX, start.dy);
+      path.lineTo(midX, end.dy);
+      path.lineTo(end.dx, end.dy);
+    } else {
+      path.lineTo(end.dx, end.dy);
+    }
+
+    canvas.drawPath(path, linePaint);
+
+    if (element.hasArrowhead) {
+      final angle = math.atan2(end.dy - start.dy, end.dx - start.dx);
+      const arrowLen = 14.0;
+      const arrowAngle = 0.45;
+
+      final arrowPath = Path();
+      arrowPath.moveTo(end.dx, end.dy);
+      arrowPath.lineTo(
+        end.dx - arrowLen * math.cos(angle - arrowAngle),
+        end.dy - arrowLen * math.sin(angle - arrowAngle),
+      );
+      arrowPath.lineTo(
+        end.dx - arrowLen * math.cos(angle + arrowAngle),
+        end.dy - arrowLen * math.sin(angle + arrowAngle),
+      );
+      arrowPath.close();
+
+      final arrowPaint = Paint()
+        ..color = element.color
+        ..style = PaintingStyle.fill;
+      canvas.drawPath(arrowPath, arrowPaint);
+    }
+
+    if (selectedShapeId == element.id) {
+      final highlightPaint = Paint()
+        ..color = Colors.blueAccent.withOpacity(0.5)
+        ..strokeWidth = element.strokeWidth + 4
+        ..strokeCap = StrokeCap.round
+        ..style = PaintingStyle.stroke;
+      canvas.drawPath(path, highlightPaint);
+    }
   }
 
   @override

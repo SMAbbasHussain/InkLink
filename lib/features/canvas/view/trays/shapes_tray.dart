@@ -61,6 +61,11 @@ class ShapesTray extends StatelessWidget {
         label: 'Semicircle',
         type: CanvasShapeType.semicircle,
       ),
+      (
+        icon: Icons.arrow_right_alt_rounded,
+        label: 'Arrow',
+        type: CanvasShapeType.arrow,
+      ),
     ];
 
     return SlidingTray(

@@ -10,4 +10,5 @@ enum CanvasShapeType {
   hexagon,
   line,
   semicircle,
+  arrow,
 }

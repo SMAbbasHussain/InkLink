@@ -99,6 +99,82 @@ class CanvasAddImageElement extends CanvasEvent {
   });
 }
 
+/// Add sticky note to canvas
+class CanvasAddStickyNote extends CanvasEvent {
+  final Offset center;
+  final String text;
+  final Color color;
+  final double width;
+  final double height;
+
+  const CanvasAddStickyNote({
+    required this.center,
+    this.text = '',
+    this.color = const Color(0xFFFFF9A6),
+    this.width = 160.0,
+    this.height = 160.0,
+  });
+}
+
+/// Update existing sticky note
+class CanvasUpdateStickyNote extends CanvasEvent {
+  final String elementId;
+  final String? text;
+  final Color? color;
+  final Offset? center;
+
+  const CanvasUpdateStickyNote({
+    required this.elementId,
+    this.text,
+    this.color,
+    this.center,
+  });
+}
+
+/// Add connector element to canvas
+class CanvasAddConnector extends CanvasEvent {
+  final String? startElementId;
+  final Offset startPoint;
+  final String startAnchor;
+  final String? endElementId;
+  final Offset endPoint;
+  final String endAnchor;
+  final String lineStyle;
+  final Color color;
+  final double strokeWidth;
+  final bool hasArrowhead;
+
+  const CanvasAddConnector({
+    this.startElementId,
+    required this.startPoint,
+    this.startAnchor = 'center',
+    this.endElementId,
+    required this.endPoint,
+    this.endAnchor = 'center',
+    this.lineStyle = 'straight',
+    this.color = const Color(0xFF2D3748),
+    this.strokeWidth = 2.5,
+    this.hasArrowhead = true,
+  });
+}
+
+/// Update connector line style or anchors
+class CanvasUpdateConnector extends CanvasEvent {
+  final String elementId;
+  final String? lineStyle;
+  final Color? color;
+  final double? strokeWidth;
+  final bool? hasArrowhead;
+
+  const CanvasUpdateConnector({
+    required this.elementId,
+    this.lineStyle,
+    this.color,
+    this.strokeWidth,
+    this.hasArrowhead,
+  });
+}
+
 /// Update existing image transform
 class CanvasUpdateImageElement extends CanvasEvent {
   final String elementId;

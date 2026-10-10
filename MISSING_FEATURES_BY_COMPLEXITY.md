@@ -23,7 +23,7 @@
 1. [Module 1: Authentication & Identity (FR01)](#module-1-authentication--identity-fr01)
 2. [Module 2: User Profile & Preferences (FR02)](#module-2-user-profile--preferences-fr02)
 3. [Module 3: Board Creation & Management (FR03) — ✅ COMPLETED (100%)](#module-3-board-creation--management-fr03)
-4. [Module 4: Canvas Tools & Visual Elements (FR05)](#module-4-canvas-tools--visual-elements-fr05)
+4. [Module 4: Canvas Tools & Visual Elements (FR05) — ✅ COMPLETED (100%)](#module-4-canvas-tools--visual-elements-fr05)
 5. [Module 5: Board Sharing & Access Control (FR07)](#module-5-board-sharing--access-control-fr07)
 6. [Module 6: Notifications & Preferences (FR15)](#module-6-notifications--preferences-fr15)
 7. [Module 7: Presence & Live Awareness (FR08)](#module-7-presence--live-awareness-fr08)
@@ -70,14 +70,14 @@
 
 ---
 
-## Module 4: Canvas Tools & Visual Elements (FR05)
+## Module 4: Canvas Tools & Visual Elements (FR05) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
 | :--- | :--- | :---: | :---: | :--- |
-| **FR05-16** | Capture images using device camera to canvas | ❌ Missing | 🟢 **Level 1 (1/5)** | In [`canvas_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_screen.dart#L325), provide a bottom sheet to let the user pick between `ImageSource.gallery` or `ImageSource.camera` with camera permission handler before pushing to `MediaEditorScreen`. |
-| **FR05-04** | Predefined Arrow shape | ⚠️ Partial | 🟡 **Level 2 (2/5)** | Add `arrow` value to [`canvas_shape_type.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/canvas_shape_type.dart). In [`canvas_painter.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_painter.dart), implement `_drawArrowShape(Canvas, Rect, Paint)` calculating shaft line and triangle arrowhead points. |
-| **FR05-09** | Insert sticky notes | ❌ Missing | 🟠 **Level 3 (3/5)** | 1. Create `StickyNoteElement` extending [`CanvasElement`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/models/canvas_element.dart) with text, note color (yellow, cyan, lime, rose), size, and shadow.<br>2. Add Sticky Note tool icon to Tools/Shapes tray.<br>3. In [`canvas_painter.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_painter.dart), paint rounded rectangle with drop-shadow and render wrapped multi-line text inside. |
-| **FR05-13**<br>**FR05-14**<br>**FR05-15** | Connectors & Flowchart diagrams with dynamic link maintenance | ❌ Missing | 🔴 **Level 4 (4/5)** | 1. Define `ConnectorElement` with `startElementId`, `startAnchor`, `endElementId`, `endAnchor`, line style (straight, orthogonal, curved).<br>2. Add anchor snap points (top/bottom/left/right) when hovering shapes in connector mode.<br>3. In `CanvasBloc`, when an element is moved/scaled, dynamically update attached connector paths to preserve link topology in CRDT. |
+| **FR05-16** | Capture images using device camera to canvas | ✅ **Implemented** | 🟢 **Level 1 (1/5)** | Provided modal bottom sheet in [`canvas_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_screen.dart) giving users choice between Camera (`ImageSource.camera`) and Gallery (`ImageSource.gallery`) before image processing. |
+| **FR05-04** | Predefined Arrow shape | ✅ **Implemented** | 🟡 **Level 2 (2/5)** | Added `arrow` shape to [`canvas_shape_type.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/canvas_shape_type.dart) and [`shapes_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/shapes_tray.dart). Implemented arrow path calculation (shaft + arrowhead) in [`canvas_painter.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_painter.dart). |
+| **FR05-09** | Insert sticky notes | ✅ **Implemented** | 🟠 **Level 3 (3/5)** | Created `StickyNoteElement` extending [`CanvasElement`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/models/canvas_element.dart) with pastel color presets (yellow, lime, cyan, rose, lavender), wrapped typography, drop shadow, and tape accent. Added sticky note action button to [`tools_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/tools_tray.dart) and double-tap editing dialog. |
+| **FR05-13**<br>**FR05-14**<br>**FR05-15** | Connectors & Flowchart diagrams with dynamic link maintenance | ✅ **Implemented** | 🔴 **Level 4 (4/5)** | Defined `ConnectorElement` with `startElementId`, `startAnchor`, `endElementId`, `endAnchor`, line styles (straight, curved bezier, orthogonal step), and arrowhead. In [`canvas_painter.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_painter.dart), implemented dynamic anchor resolution. In [`canvas_bloc.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/bloc/canvas_bloc.dart), when connected shapes move or resize, dynamically updated attached connector coordinates in CRDT to preserve link topology. |
 
 ---
 

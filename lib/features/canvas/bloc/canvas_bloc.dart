@@ -75,6 +75,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasAddImageElement>(_onAddImageElement);
     on<CanvasPreviewImageElement>(_onPreviewImageElement);
     on<CanvasUpdateImageElement>(_onUpdateImageElement);
+    on<CanvasAddStickyNote>(_onAddStickyNote);
+    on<CanvasUpdateStickyNote>(_onUpdateStickyNote);
+    on<CanvasAddConnector>(_onAddConnector);
+    on<CanvasUpdateConnector>(_onUpdateConnector);
     on<CanvasUndo>(_onUndo);
     on<CanvasRedo>(_onRedo);
     on<CanvasClearAll>(_onClearAll);
@@ -682,6 +686,58 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           height: (payload['height'] as num?)?.toDouble() ?? 160.0,
           imageBase64: (payload['imageBase64'] as String?) ?? '',
         ));
+        continue;
+      }
+      if (type == 'sticky_note') {
+        final z = _readElementOrder(
+          elementId: id,
+          payload: payload,
+          currentOrder: currentOrder,
+          fallbackOrder: maxExistingOrder + rebuilt.length,
+        );
+        rebuilt.add(StickyNoteElement(
+          id: id,
+          z: z,
+          center: Offset(
+            (payload['cx'] as num?)?.toDouble() ?? 0.0,
+            (payload['cy'] as num?)?.toDouble() ?? 0.0,
+          ),
+          width: (payload['width'] as num?)?.toDouble() ?? 160.0,
+          height: (payload['height'] as num?)?.toDouble() ?? 160.0,
+          text: (payload['text'] as String?) ?? '',
+          color: Color((payload['color'] as num?)?.toInt() ?? 0xFFFFF9A6),
+          rotation: (payload['rotation'] as num?)?.toDouble() ?? 0.0,
+        ));
+        continue;
+      }
+      if (type == 'connector') {
+        final z = _readElementOrder(
+          elementId: id,
+          payload: payload,
+          currentOrder: currentOrder,
+          fallbackOrder: maxExistingOrder + rebuilt.length,
+        );
+        rebuilt.add(ConnectorElement(
+          id: id,
+          z: z,
+          startElementId: payload['startElementId'] as String?,
+          startPoint: Offset(
+            (payload['sx'] as num?)?.toDouble() ?? 0.0,
+            (payload['sy'] as num?)?.toDouble() ?? 0.0,
+          ),
+          startAnchor: (payload['startAnchor'] as String?) ?? 'center',
+          endElementId: payload['endElementId'] as String?,
+          endPoint: Offset(
+            (payload['ex'] as num?)?.toDouble() ?? 0.0,
+            (payload['ey'] as num?)?.toDouble() ?? 0.0,
+          ),
+          endAnchor: (payload['endAnchor'] as String?) ?? 'center',
+          lineStyle: (payload['lineStyle'] as String?) ?? 'straight',
+          color: Color((payload['color'] as num?)?.toInt() ?? Colors.black.value),
+          strokeWidth: (payload['strokeWidth'] as num?)?.toDouble() ?? 2.5,
+          hasArrowhead: _parseBool(payload['hasArrowhead'] ?? true),
+        ));
+        continue;
       }
     }
     rebuilt.sort((a, b) {
@@ -705,6 +761,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       ShapeElement() => 'shape',
       TextElement() => 'text',
       ImageElement() => 'image',
+      StickyNoteElement() => 'sticky_note',
+      ConnectorElement() => 'connector',
     };
   }
 
@@ -964,6 +1022,137 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       'height': event.height.clamp(80.0, 720.0),
     };
     await _publishSelectedShapePreview(event.elementId, payload);
+  }
+
+  Future<void> _onAddStickyNote(
+    CanvasAddStickyNote event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final noteId = _uuid.v4();
+    final note = StickyNoteElement(
+      id: noteId,
+      z: _nextZIndex(),
+      center: event.center,
+      width: event.width,
+      height: event.height,
+      text: event.text,
+      color: event.color,
+    );
+    final nextElements = List<CanvasElement>.from(state.elements)..add(note);
+    emit(state.copyWith(
+      elements: nextElements,
+      activeTray: null,
+      selectedShapeId: noteId,
+    ));
+    await _saveCrdtOperation(
+      action: 'create',
+      type: _elementType(note),
+      objectId: noteId,
+      data: note.toMap(),
+      emit: emit,
+    );
+  }
+
+  Future<void> _onUpdateStickyNote(
+    CanvasUpdateStickyNote event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final target =
+        state.elements.where((e) => e.id == event.elementId).firstOrNull;
+    if (target == null || target is! StickyNoteElement) return;
+
+    final updated = StickyNoteElement(
+      id: target.id,
+      z: target.z,
+      center: event.center ?? target.center,
+      width: target.width,
+      height: target.height,
+      text: event.text ?? target.text,
+      color: event.color ?? target.color,
+      rotation: target.rotation,
+    );
+    final nextElements =
+        state.elements.map((e) => e.id == target.id ? updated : e).toList();
+    emit(state.copyWith(elements: nextElements));
+    await _saveCrdtOperation(
+      action: 'update',
+      type: _elementType(updated),
+      objectId: updated.id,
+      data: updated.toMap(),
+      emit: emit,
+    );
+  }
+
+  Future<void> _onAddConnector(
+    CanvasAddConnector event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final connectorId = _uuid.v4();
+    final connector = ConnectorElement(
+      id: connectorId,
+      z: _nextZIndex(),
+      startElementId: event.startElementId,
+      startPoint: event.startPoint,
+      startAnchor: event.startAnchor,
+      endElementId: event.endElementId,
+      endPoint: event.endPoint,
+      endAnchor: event.endAnchor,
+      lineStyle: event.lineStyle,
+      color: event.color,
+      strokeWidth: event.strokeWidth,
+      hasArrowhead: event.hasArrowhead,
+    );
+    final nextElements = List<CanvasElement>.from(state.elements)..add(connector);
+    emit(state.copyWith(
+      elements: nextElements,
+      activeTray: null,
+      selectedShapeId: connectorId,
+    ));
+    await _saveCrdtOperation(
+      action: 'create',
+      type: _elementType(connector),
+      objectId: connectorId,
+      data: connector.toMap(),
+      emit: emit,
+    );
+  }
+
+  Future<void> _onUpdateConnector(
+    CanvasUpdateConnector event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final target =
+        state.elements.where((e) => e.id == event.elementId).firstOrNull;
+    if (target == null || target is! ConnectorElement) return;
+
+    final updated = ConnectorElement(
+      id: target.id,
+      z: target.z,
+      startElementId: target.startElementId,
+      startPoint: target.startPoint,
+      startAnchor: target.startAnchor,
+      endElementId: target.endElementId,
+      endPoint: target.endPoint,
+      endAnchor: target.endAnchor,
+      lineStyle: event.lineStyle ?? target.lineStyle,
+      color: event.color ?? target.color,
+      strokeWidth: event.strokeWidth ?? target.strokeWidth,
+      hasArrowhead: event.hasArrowhead ?? target.hasArrowhead,
+    );
+    final nextElements =
+        state.elements.map((e) => e.id == target.id ? updated : e).toList();
+    emit(state.copyWith(elements: nextElements));
+    await _saveCrdtOperation(
+      action: 'update',
+      type: _elementType(updated),
+      objectId: updated.id,
+      data: updated.toMap(),
+      emit: emit,
+    );
   }
 
   // ──────────────────────────────────────────────
@@ -1485,6 +1674,48 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
   }
 
+  Offset _computeElementAnchor(
+    CanvasElement element,
+    String anchor, {
+    Offset? overrideCenter,
+  }) {
+    Offset center = overrideCenter ?? Offset.zero;
+    double w = 100.0;
+    double h = 100.0;
+
+    if (element is ShapeElement) {
+      center = overrideCenter ?? element.center;
+      w = element.size * 1.2;
+      h = element.size * 1.2;
+    } else if (element is StickyNoteElement) {
+      center = overrideCenter ?? element.center;
+      w = element.width;
+      h = element.height;
+    } else if (element is ImageElement) {
+      center = overrideCenter ?? element.center;
+      w = element.width;
+      h = element.height;
+    } else if (element is TextElement) {
+      center = overrideCenter ?? element.center;
+      w = 120.0;
+      h = 40.0;
+    }
+
+    switch (anchor) {
+      case 'top':
+        return Offset(center.dx, center.dy - h / 2);
+      case 'bottom':
+        return Offset(center.dx, center.dy + h / 2);
+      case 'left':
+        return Offset(center.dx - w / 2, center.dy);
+      case 'right':
+        return Offset(center.dx + w / 2, center.dy);
+      case 'center':
+      default:
+        return center;
+    }
+  }
+
   Future<void> _updateShape(
     String shapeId,
     Map<String, dynamic> data,
@@ -1498,17 +1729,20 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       }
     }
     if (existing == null) return;
-    if (existing is! ShapeElement) return;
-    final currentCx = existing.center.dx;
-    final currentCy = existing.center.dy;
-    final currentSize = existing.size;
-    final currentRotation = existing.rotation % (math.pi * 2);
-    final currentBorderRadius = existing.borderRadius;
-    final currentColor = existing.color.value;
-    final currentFilled = existing.isFilled;
+    if (existing is! ShapeElement && existing is! StickyNoteElement) return;
+
+    final currentCx = existing is ShapeElement ? existing.center.dx : (existing as StickyNoteElement).center.dx;
+    final currentCy = existing is ShapeElement ? existing.center.dy : (existing as StickyNoteElement).center.dy;
+    final currentSize = existing is ShapeElement ? existing.size : (existing as StickyNoteElement).width;
+    final currentRotation = existing is ShapeElement ? (existing.rotation % (math.pi * 2)) : (existing as StickyNoteElement).rotation;
+    final currentBorderRadius = existing is ShapeElement ? existing.borderRadius : 0.0;
+    final currentColor = existing is ShapeElement
+        ? existing.color.value
+        : (existing as StickyNoteElement).color.value;
+    final currentFilled = existing is ShapeElement ? existing.isFilled : true;
     final nextCx = (data['cx'] as num?)?.toDouble() ?? 0.0;
     final nextCy = (data['cy'] as num?)?.toDouble() ?? 0.0;
-    final nextSize = (data['size'] as num?)?.toDouble() ?? 64.0;
+    final nextSize = (data['size'] as num?)?.toDouble() ?? (existing is ShapeElement ? 64.0 : 160.0);
     final nextRotation =
         ((data['rotation'] as num?)?.toDouble() ?? 0.0) % (math.pi * 2);
     final nextBorderRadius = (data['borderRadius'] as num?)?.toDouble() ?? 0.0;
@@ -1537,6 +1771,34 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       data: data,
       emit: emit,
     );
+
+    // Maintain dynamic link topology for attached connectors (FR05-15)
+    final updatedTarget = CanvasElement.fromMap(shapeId, data);
+    for (final el in state.elements) {
+      if (el is ConnectorElement &&
+          (el.startElementId == shapeId || el.endElementId == shapeId)) {
+        final newStart = el.startElementId == shapeId
+            ? _computeElementAnchor(updatedTarget, el.startAnchor,
+                overrideCenter: Offset(nextCx, nextCy))
+            : el.startPoint;
+        final newEnd = el.endElementId == shapeId
+            ? _computeElementAnchor(updatedTarget, el.endAnchor,
+                overrideCenter: Offset(nextCx, nextCy))
+            : el.endPoint;
+        final connectorData = Map<String, dynamic>.from(el.toMap())
+          ..['sx'] = newStart.dx
+          ..['sy'] = newStart.dy
+          ..['ex'] = newEnd.dx
+          ..['ey'] = newEnd.dy;
+        await _saveCrdtOperation(
+          action: 'update',
+          type: 'connector',
+          objectId: el.id,
+          data: connectorData,
+          emit: emit,
+        );
+      }
+    }
   }
 
   // ──────────────────────────────────────────────
