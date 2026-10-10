@@ -37,8 +37,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // 2. Wrap with BlocListener for Navigation/Errors
       body: BlocListener<AuthBloc, AuthState>(
         listener: (context, state) {
-          // AppView handles the authenticated → MainWrapper transition declaratively
-          if (state is AuthError) {
+          if (state is AuthEmailUnverified) {
+            // Dismiss RegisterScreen so AppView reveals EmailVerificationScreen
+            if (Navigator.of(context).canPop()) {
+              Navigator.of(context).pop();
+            }
+          } else if (state is AuthError) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(state.message),
@@ -99,8 +103,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           icon: Icons.lock_reset,
                           isPassword: true,
                         ),
+                        const SizedBox(height: 8),
+                        Text(
+                          "Password must be at least 8 characters and include uppercase, lowercase, number, and special character.",
+                          style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                        ),
 
-                        const SizedBox(height: 40),
+                        const SizedBox(height: 32),
 
                         // 4. Functional Sign Up Button
                         _buildSignUpButton(context, isLoading),
@@ -206,10 +215,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    // 4. Validate password strength
-    if (!isValidPassword(password)) {
+    // 4. Validate password strength (FR01-04)
+    final passwordError = getPasswordStrengthError(password);
+    if (passwordError != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Password must be at least 6 characters")),
+        SnackBar(
+          content: Text(passwordError),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }

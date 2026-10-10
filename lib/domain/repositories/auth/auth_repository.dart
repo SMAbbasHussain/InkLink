@@ -7,6 +7,9 @@ abstract class AuthRepository {
   Future<void> signOut();
   Stream<User?> get user;
   User? get currentUser;
+  Future<void> sendPasswordResetEmail(String email);
+  Future<void> sendEmailVerification();
+  Future<bool> reloadAndCheckEmailVerified();
   Future<Map<String, dynamic>?> getUserData(String uid);
   Future<void> upsertUserData(String uid, Map<String, dynamic> data);
   Future<void> syncFcmToken(String uid, String token);
@@ -26,4 +29,8 @@ abstract class AuthRepository {
   /// Disable Firestore & RTDB to stop listeners and prevent permission-denied
   /// errors after the auth token is invalidated during sign-out.
   Future<void> disableNetwork();
+  /// Delete the user account from Firebase Auth (FR02-06)
+  Future<void> deleteAccount({String? password});
+  /// Re-authenticate the current user for sensitive operations
+  Future<void> reauthenticate({String? password});
 }

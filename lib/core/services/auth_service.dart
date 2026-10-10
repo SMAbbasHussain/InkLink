@@ -14,6 +14,18 @@ abstract class AuthService {
 
   /// Get Firebase Auth instance (if direct access needed)
   FirebaseAuth getInstance();
+
+  /// Send password reset email via Firebase (FR01-07)
+  Future<void> sendPasswordResetEmail(String email);
+
+  /// Send email verification to currently logged in user (FR01-05)
+  Future<void> sendEmailVerification();
+
+  /// Reload user from Firebase and return whether email is verified (FR01-06)
+  Future<bool> reloadAndCheckEmailVerified();
+
+  /// Delete the current authenticated user account (FR02-06)
+  Future<void> deleteAccount();
 }
 
 /// Production implementation using Firebase
@@ -42,5 +54,34 @@ class AuthServiceImpl implements AuthService {
   @override
   Future<String?> getIdToken({bool forceRefresh = false}) async {
     return await _auth.currentUser?.getIdToken(forceRefresh);
+  }
+
+  @override
+  Future<void> sendPasswordResetEmail(String email) async {
+    await _auth.sendPasswordResetEmail(email: email);
+  }
+
+  @override
+  Future<void> sendEmailVerification() async {
+    final user = _auth.currentUser;
+    if (user != null) {
+      await user.sendEmailVerification();
+    }
+  }
+
+  @override
+  Future<bool> reloadAndCheckEmailVerified() async {
+    final user = _auth.currentUser;
+    if (user == null) return false;
+    await user.reload();
+    return _auth.currentUser?.emailVerified ?? false;
+  }
+
+  @override
+  Future<void> deleteAccount() async {
+    final user = _auth.currentUser;
+    if (user != null) {
+      await user.delete();
+    }
   }
 }

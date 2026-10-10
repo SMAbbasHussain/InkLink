@@ -25,6 +25,16 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       developer.log('AuthCheckRequested: currentUser=${authService.currentUser?.uid}', name: 'AuthBloc');
       final user = authService.currentUser;
       if (user != null) {
+        final isPasswordProvider = user.providerData.any((p) => p.providerId == 'password');
+        if (isPasswordProvider) {
+          final isVerified = await authService.reloadAndCheckEmailVerified();
+          final refreshedUser = authService.currentUser ?? user;
+          if (!isVerified) {
+            developer.log('AuthCheckRequested: unverified password account, emitting AuthEmailUnverified', name: 'AuthBloc');
+            emit(AuthEmailUnverified(user: refreshedUser, email: refreshedUser.email ?? ''));
+            return;
+          }
+        }
         await authService.onAuthenticated(user);
         developer.log('AuthCheckRequested: emitting Authenticated', name: 'AuthBloc');
         emit(_toAuthenticated(user));
@@ -54,6 +64,19 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           emit(Unauthenticated());
           return;
         }
+
+        // Enforce verified users only for email/password provider (FR01-06)
+        final isPasswordProvider = user.providerData.any((p) => p.providerId == 'password');
+        if (isPasswordProvider) {
+          final isVerified = await authService.reloadAndCheckEmailVerified();
+          final refreshedUser = authService.currentUser ?? user;
+          if (!isVerified) {
+            developer.log('LoginRequested: user email unverified', name: 'AuthBloc');
+            emit(AuthEmailUnverified(user: refreshedUser, email: refreshedUser.email ?? event.email));
+            return;
+          }
+        }
+
         await authService.onAuthenticated(user);
         developer.log('LoginRequested: emitting Authenticated', name: 'AuthBloc');
         emit(_toAuthenticated(user));
@@ -75,6 +98,14 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           emit(Unauthenticated());
           return;
         }
+
+        // New email/password registrations require verification (FR01-05, FR01-06)
+        if (!user.emailVerified) {
+          developer.log('RegisterRequested: emitting AuthEmailUnverified', name: 'AuthBloc');
+          emit(AuthEmailUnverified(user: user, email: event.email));
+          return;
+        }
+
         await authService.onAuthenticated(user);
         emit(_toAuthenticated(user, fallbackName: event.name));
       } catch (e) {
@@ -112,10 +143,31 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       emit(Unauthenticated());
     });
 
+    on<DeleteAccountRequested>((event, emit) async {
+      developer.log('DeleteAccountRequested: start', name: 'AuthBloc');
+      emit(AuthDeletingAccount());
+      try {
+        await authService.deleteAccount(password: event.password);
+        developer.log('DeleteAccountRequested: account successfully deleted', name: 'AuthBloc');
+        emit(Unauthenticated());
+      } catch (e) {
+        developer.log('DeleteAccountRequested: caught error=$e', name: 'AuthBloc');
+        emit(AuthError(e.toString()));
+      }
+    });
+
     on<AuthenticatedUserAvailable>((event, emit) async {
       developer.log('AuthenticatedUserAvailable: uid=${event.user.uid}, state is Authenticated=${state is Authenticated}', name: 'AuthBloc');
-      if (state is Authenticated || state is AuthLoading) {
+      if (state is Authenticated ||
+          state is AuthLoading ||
+          state is AuthEmailUnverified ||
+          state is AuthDeletingAccount) {
         developer.log('AuthenticatedUserAvailable: skipping (state=${state.runtimeType})', name: 'AuthBloc');
+        return;
+      }
+      final isPasswordProvider = event.user.providerData.any((p) => p.providerId == 'password');
+      if (isPasswordProvider && !event.user.emailVerified) {
+        emit(AuthEmailUnverified(user: event.user, email: event.user.email ?? ''));
         return;
       }
       try {
@@ -131,6 +183,94 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<SignedOut>((event, emit) async {
       developer.log('SignedOut: emitting Unauthenticated', name: 'AuthBloc');
       emit(Unauthenticated());
+    });
+
+    on<PasswordResetRequested>((event, emit) async {
+      emit(AuthLoading());
+      try {
+        await authService.sendPasswordResetEmail(event.email);
+        emit(PasswordResetSent(event.email));
+      } catch (e) {
+        emit(AuthError(e.toString()));
+      }
+    });
+
+    on<SendEmailVerificationRequested>((event, emit) async {
+      final current = state;
+      if (current is AuthEmailUnverified) {
+        emit(AuthEmailUnverified(
+          user: current.user,
+          email: current.email,
+          isChecking: true,
+        ));
+      }
+      try {
+        await authService.sendEmailVerification();
+        if (current is AuthEmailUnverified) {
+          emit(AuthEmailUnverified(
+            user: current.user,
+            email: current.email,
+            message: 'Verification link resent! Please check your inbox and spam folder.',
+            isChecking: false,
+          ));
+        }
+      } catch (e) {
+        if (current is AuthEmailUnverified) {
+          emit(AuthEmailUnverified(
+            user: current.user,
+            email: current.email,
+            message: e.toString(),
+            isChecking: false,
+          ));
+        } else {
+          emit(AuthError(e.toString()));
+        }
+      }
+    });
+
+    on<CheckEmailVerificationRequested>((event, emit) async {
+      final current = state;
+      if (current is AuthEmailUnverified) {
+        emit(AuthEmailUnverified(
+          user: current.user,
+          email: current.email,
+          isChecking: true,
+        ));
+      } else {
+        emit(AuthLoading());
+      }
+
+      try {
+        final isVerified = await authService.reloadAndCheckEmailVerified();
+        final user = authService.currentUser;
+        if (user != null && isVerified) {
+          developer.log('CheckEmailVerificationRequested: verified! Authenticating...', name: 'AuthBloc');
+          await authService.onAuthenticated(user);
+          emit(_toAuthenticated(user));
+        } else if (user != null) {
+          developer.log('CheckEmailVerificationRequested: not verified yet', name: 'AuthBloc');
+          emit(AuthEmailUnverified(
+            user: user,
+            email: user.email ?? (current is AuthEmailUnverified ? current.email : ''),
+            message: 'Email not verified yet. Please click the link in your email first.',
+            isChecking: false,
+          ));
+        } else {
+          emit(Unauthenticated());
+        }
+      } catch (e) {
+        developer.log('CheckEmailVerificationRequested: error=$e', name: 'AuthBloc');
+        if (current is AuthEmailUnverified) {
+          emit(AuthEmailUnverified(
+            user: current.user,
+            email: current.email,
+            message: 'Unable to check verification. Please try again.',
+            isChecking: false,
+          ));
+        } else {
+          emit(AuthError(e.toString()));
+        }
+      }
     });
   }
 
