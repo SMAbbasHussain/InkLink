@@ -11,8 +11,15 @@ class Authenticated extends AuthState {
   final String uid;
   final String? email;
   final String? photoUrl;
+  final bool isPasswordProvider;
 
-  Authenticated(this.userName, {required this.uid, this.email, this.photoUrl});
+  Authenticated(
+    this.userName, {
+    required this.uid,
+    this.email,
+    this.photoUrl,
+    this.isPasswordProvider = false,
+  });
 }
 
 class Unauthenticated extends AuthState {}

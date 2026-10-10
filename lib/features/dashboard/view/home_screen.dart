@@ -389,9 +389,24 @@ class _HomeScreenState extends State<HomeScreen>
               body: TabBarView(
                 controller: _tabController,
                 children: [
-                  _buildBoardGrid(state, isOwner: true, isArchivedTab: false),
-                  _buildBoardGrid(state, isOwner: false, isArchivedTab: false),
-                  _buildBoardGrid(state, isOwner: true, isArchivedTab: true),
+                  _buildBoardGrid(
+                    state,
+                    isOwner: true,
+                    isArchivedTab: false,
+                    currentUserId: authUser?.uid,
+                  ),
+                  _buildBoardGrid(
+                    state,
+                    isOwner: false,
+                    isArchivedTab: false,
+                    currentUserId: authUser?.uid,
+                  ),
+                  _buildBoardGrid(
+                    state,
+                    isOwner: true,
+                    isArchivedTab: true,
+                    currentUserId: authUser?.uid,
+                  ),
                 ],
               ),
             ),
@@ -405,14 +420,13 @@ class _HomeScreenState extends State<HomeScreen>
     DashboardState state, {
     required bool isOwner,
     bool isArchivedTab = false,
+    String? currentUserId,
   }) {
     if (state is DashboardInitial) {
       return const Center(child: CircularProgressIndicator());
     }
 
     if (state is DashboardLoaded) {
-      final authState = context.read<AuthBloc>().state;
-      final currentUserId = authState is Authenticated ? authState.uid : null;
       final List<Board> boards;
       if (isArchivedTab) {
         boards = state.ownedBoards.where((b) => b.isArchived == true).toList();

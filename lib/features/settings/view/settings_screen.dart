@@ -3,7 +3,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
-import '../../../domain/services/auth/auth_session_service.dart';
 import '../bloc/settings_bloc.dart';
 import '../../theme/bloc/theme_bloc.dart';
 import '../../../core/constants/app_colors.dart';
@@ -36,6 +35,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             );
             context.read<SettingsBloc>().add(const SettingsConsumeMessage());
+          },
+        ),
+        BlocListener<AuthBloc, AuthState>(
+          listener: (context, state) {
+            if (state is AuthDeletingAccount) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Deleting account...')),
+              );
+            } else if (state is AuthError) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(state.message),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
           },
         ),
       ],
@@ -243,7 +258,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       subtitle: const Text(
                         'Permanently erase your account, boards, and data',
                       ),
-                      onTap: () => _showDeleteAccountDialog(context),
+                      onTap: () => _showDeleteAccountDialog(
+                        context,
+                        isPasswordUser: authUser?.isPasswordProvider ?? false,
+                      ),
                     ),
                     const SizedBox(height: 32),
                   ],
@@ -305,15 +323,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showDeleteAccountDialog(BuildContext context) {
-    final authSessionService = context.read<AuthSessionService>();
-    final currentUser = authSessionService.currentUser;
-    final isPasswordUser = currentUser?.providerData.any((p) => p.providerId == 'password') ?? false;
-
+  void _showDeleteAccountDialog(
+    BuildContext context, {
+    required bool isPasswordUser,
+  }) {
     final passwordController = TextEditingController();
     bool obscurePassword = true;
     String? errorMessage;
-    bool isVerifying = false;
 
     showDialog(
       context: context,
@@ -399,7 +415,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: isVerifying ? null : () => Navigator.pop(innerContext),
+                  onPressed: () => Navigator.pop(innerContext),
                   child: const Text("Cancel"),
                 ),
                 ElevatedButton(
@@ -407,51 +423,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     backgroundColor: Colors.red,
                     foregroundColor: Colors.white,
                   ),
-                  onPressed: isVerifying
-                      ? null
-                      : () async {
-                          final passwordText = passwordController.text.trim();
-                          if (isPasswordUser && passwordText.isEmpty) {
-                            setDialogState(() {
-                              errorMessage = "Password is required to confirm deletion.";
-                            });
-                            return;
-                          }
+                  onPressed: () {
+                    final passwordText = passwordController.text.trim();
+                    if (isPasswordUser && passwordText.isEmpty) {
+                      setDialogState(() {
+                        errorMessage = "Password is required to confirm deletion.";
+                      });
+                      return;
+                    }
 
-                          setDialogState(() {
-                            isVerifying = true;
-                            errorMessage = null;
-                          });
-
-                          try {
-                            await authSessionService.reauthenticate(password: passwordText);
-                            if (dialogContext.mounted) {
-                              Navigator.pop(dialogContext);
-                            }
-                            if (context.mounted) {
-                              context.read<AuthBloc>().add(
-                                    DeleteAccountRequested(password: passwordText),
-                                  );
-                            }
-                          } catch (e) {
-                            if (dialogContext.mounted) {
-                              setDialogState(() {
-                                isVerifying = false;
-                                errorMessage = e.toString().replaceFirst('Exception: ', '');
-                              });
-                            }
-                          }
-                        },
-                  child: isVerifying
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
+                    Navigator.pop(dialogContext);
+                    context.read<AuthBloc>().add(
+                          DeleteAccountRequested(
+                            password: passwordText.isNotEmpty ? passwordText : null,
                           ),
-                        )
-                      : const Text("Delete Permanently"),
+                        );
+                  },
+                  child: const Text("Delete Permanently"),
                 ),
               ],
             );

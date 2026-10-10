@@ -12,11 +12,14 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   StreamSubscription<User?>? _authSub;
 
   Authenticated _toAuthenticated(User user, {String? fallbackName}) {
+    final isPassword =
+        user.providerData.any((p) => p.providerId == 'password');
     return Authenticated(
       user.displayName ?? fallbackName ?? 'User',
       uid: user.uid,
       email: user.email,
       photoUrl: user.photoURL,
+      isPasswordProvider: isPassword,
     );
   }
 
