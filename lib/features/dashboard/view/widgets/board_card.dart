@@ -11,6 +11,9 @@ class BoardCard extends StatelessWidget {
   final bool isOwner;
   final Function(String) onDelete;
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onDuplicate;
+  final VoidCallback? onArchive;
+  final VoidCallback? onUnarchive;
 
   const BoardCard({
     super.key,
@@ -18,6 +21,9 @@ class BoardCard extends StatelessWidget {
     required this.isOwner,
     required this.onDelete,
     this.onOpenSettings,
+    this.onDuplicate,
+    this.onArchive,
+    this.onUnarchive,
   });
 
   @override
@@ -93,6 +99,19 @@ class BoardCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        if (board.tags.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            board.tags.map((t) => '#$t').join(' '),
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                         const SizedBox(height: 4),
                         Text(
                           "Edited ${_timeAgo(board.updatedAt)}",
@@ -118,6 +137,12 @@ class BoardCard extends StatelessWidget {
                             ),
                           ),
                         );
+                      } else if (value == 'duplicate') {
+                        onDuplicate?.call();
+                      } else if (value == 'archive') {
+                        onArchive?.call();
+                      } else if (value == 'unarchive') {
+                        onUnarchive?.call();
                       } else if (value == 'delete') {
                         onDelete(board.id);
                       } else if (value == 'settings') {
@@ -133,6 +158,21 @@ class BoardCard extends StatelessWidget {
                         value: 'copy',
                         child: Text('Copy Join Code'),
                       ),
+                      if (onDuplicate != null)
+                        PopupMenuItem(
+                          value: 'duplicate',
+                          child: Text(isOwner ? 'Duplicate' : 'Make a Copy'),
+                        ),
+                      if (isOwner && onArchive != null && !board.isArchived)
+                        const PopupMenuItem(
+                          value: 'archive',
+                          child: Text('Archive'),
+                        ),
+                      if (isOwner && onUnarchive != null && board.isArchived)
+                        const PopupMenuItem(
+                          value: 'unarchive',
+                          child: Text('Unarchive'),
+                        ),
                       if (isOwner)
                         const PopupMenuItem(
                           value: 'delete',

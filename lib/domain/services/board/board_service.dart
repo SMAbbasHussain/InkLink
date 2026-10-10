@@ -33,6 +33,7 @@ abstract class BoardService {
     required String defaultLinkJoinRole,
     required String inviteTargetRole,
     required List<String> tags,
+    bool allowMembersToCopy = false,
     List<String> invitedUserIds,
     int inviteExpiryHours,
   });
@@ -42,10 +43,15 @@ abstract class BoardService {
     required String privateJoinPolicy,
     required String whoCanInvite,
     required String defaultLinkJoinRole,
+    bool? allowMembersToCopy,
   });
   Future<void> joinBoard(String boardId);
   Future<void> renameBoard(String boardId, String newName);
   Future<void> deleteBoard(String boardId);
+  Future<void> archiveBoard(String boardId);
+  Future<void> unarchiveBoard(String boardId);
+  Future<String> duplicateBoard(String boardId, {String? customTitle});
+  Future<void> updateBoardTags(String boardId, List<String> tags);
   Stream<List<BoardMember>> getBoardMembers(String boardId);
   Future<void> updateBoardMemberRole(
     String boardId,
@@ -98,6 +104,7 @@ class BoardServiceImpl implements BoardService {
     required String defaultLinkJoinRole,
     required String inviteTargetRole,
     required List<String> tags,
+    bool allowMembersToCopy = false,
     List<String> invitedUserIds = const [],
     int inviteExpiryHours = 72,
   }) async {
@@ -112,6 +119,7 @@ class BoardServiceImpl implements BoardService {
       whoCanInvite: whoCanInvite,
       defaultLinkJoinRole: defaultLinkJoinRole,
       tags: tags,
+      allowMembersToCopy: allowMembersToCopy,
       invitedUserIds: const [],
       inviteExpiryHours: inviteExpiryHours,
     );
@@ -154,14 +162,29 @@ class BoardServiceImpl implements BoardService {
     required String privateJoinPolicy,
     required String whoCanInvite,
     required String defaultLinkJoinRole,
+    bool? allowMembersToCopy,
   }) async {
-    await _cloudFunctionsService.httpsCallable('updateBoardSettings').call({
-      'boardId': boardId,
-      'visibility': visibility,
-      'privateJoinPolicy': privateJoinPolicy,
-      'whoCanInvite': whoCanInvite,
-      'defaultLinkJoinRole': defaultLinkJoinRole,
-    });
+    await _boardRepository.updateBoardSettings(
+      boardId: boardId,
+      visibility: visibility,
+      privateJoinPolicy: privateJoinPolicy,
+      whoCanInvite: whoCanInvite,
+      defaultLinkJoinRole: defaultLinkJoinRole,
+      allowMembersToCopy: allowMembersToCopy,
+    );
+
+    try {
+      await _cloudFunctionsService.httpsCallable('updateBoardSettings').call({
+        'boardId': boardId,
+        'visibility': visibility,
+        'privateJoinPolicy': privateJoinPolicy,
+        'whoCanInvite': whoCanInvite,
+        'defaultLinkJoinRole': defaultLinkJoinRole,
+        'allowMembersToCopy': ?allowMembersToCopy,
+      });
+    } catch (_) {
+      // Local repository already updated.
+    }
   }
 
   @override
@@ -214,6 +237,29 @@ class BoardServiceImpl implements BoardService {
         .then((_) {
           return _boardRepository.deleteBoard(resolvedBoardId);
         });
+  }
+
+  @override
+  Future<void> archiveBoard(String boardId) {
+    return _boardRepository.archiveBoard(boardId.trim());
+  }
+
+  @override
+  Future<void> unarchiveBoard(String boardId) {
+    return _boardRepository.unarchiveBoard(boardId.trim());
+  }
+
+  @override
+  Future<String> duplicateBoard(String boardId, {String? customTitle}) {
+    return _boardRepository.duplicateBoard(
+      boardId.trim(),
+      customTitle: customTitle,
+    );
+  }
+
+  @override
+  Future<void> updateBoardTags(String boardId, List<String> tags) {
+    return _boardRepository.updateBoardTags(boardId.trim(), tags);
   }
 
   @override

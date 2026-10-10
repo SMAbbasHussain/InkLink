@@ -226,7 +226,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (canvasService == null) return;
     _crdtUpdatesSub =
         canvasService.listenToCrdtUpdates(_boardId).listen((updates) {
-      add(CanvasApplyRemoteUpdate(updates));
+      if (!isClosed) {
+        add(CanvasApplyRemoteUpdate(updates));
+      }
     });
   }
 
@@ -236,7 +238,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (canvasService == null) return;
     _previewUpdatesSub =
         canvasService.listenToCanvasPreviews(_boardId).listen((previews) {
-      add(CanvasApplyRemotePreview(previews));
+      if (!isClosed) {
+        add(CanvasApplyRemotePreview(previews));
+      }
     });
   }
 
@@ -245,6 +249,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (canvasService == null || _boardId.isEmpty) return;
     _boardMetaSub?.cancel();
     _boardMetaSub = canvasService.watchBoardById(_boardId).listen((board) {
+      if (isClosed) return;
       if (board == null) {
         if (!_hasSeenBoardMetadata) return;
         _scheduleBoardUnavailableCheck();
@@ -254,10 +259,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       _boardUnavailableTimer = null;
       _hasSeenBoardMetadata = true;
       _canvasService?.setBoardSingleUserStatus(board.members.length <= 1);
-      add(CanvasBoardTitleUpdated(
-        board.title,
-        currentUserRole: board.currentUserRole,
-      ));
+      if (!isClosed) {
+        add(CanvasBoardTitleUpdated(
+          board.title,
+          currentUserRole: board.currentUserRole,
+        ));
+      }
     });
     _startBoardMembersListener();
   }
@@ -269,7 +276,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _membersSub = boardService
         .getBoardMembers(_boardId)
         .listen(
-          (members) => add(CanvasBoardMembersUpdated(members)),
+          (members) {
+            if (!isClosed) {
+              add(CanvasBoardMembersUpdated(members));
+            }
+          },
           onError: (_) {},
         );
   }

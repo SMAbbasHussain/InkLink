@@ -51,6 +51,11 @@ abstract class WorkspaceService {
     required String workspaceId,
     required String boardId,
   });
+  Future<void> moveBoardBetweenWorkspaces({
+    required String boardId,
+    required String sourceWorkspaceId,
+    required String targetWorkspaceId,
+  });
   Future<void> setWorkspaceBoardVisibility({
     required String workspaceId,
     required String boardId,
@@ -208,6 +213,17 @@ class WorkspaceServiceImpl implements WorkspaceService {
   }) => _repository.removeBoardFromWorkspace(
     workspaceId: workspaceId,
     boardId: boardId,
+  );
+
+  @override
+  Future<void> moveBoardBetweenWorkspaces({
+    required String boardId,
+    required String sourceWorkspaceId,
+    required String targetWorkspaceId,
+  }) => _repository.moveBoardBetweenWorkspaces(
+    boardId: boardId,
+    sourceWorkspaceId: sourceWorkspaceId,
+    targetWorkspaceId: targetWorkspaceId,
   );
 
   @override

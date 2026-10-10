@@ -124,6 +124,9 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
                           buildCanvasRoute(context, boardId: board.id),
                         );
                       },
+                      onMoveToWorkspace: isOwner
+                          ? () => _showMoveBoardDialog(context, state, board)
+                          : null,
                       onRemoveFromWorkspace: isOwner
                           ? () => context.read<WorkspaceBloc>().add(
                               RemoveBoardFromWorkspaceRequested(
@@ -137,6 +140,70 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
                 ),
         );
       },
+    );
+  }
+
+  void _showMoveBoardDialog(
+    BuildContext context,
+    WorkspaceLoaded state,
+    Board board,
+  ) {
+    final currentWorkspaceId = widget.workspaceId;
+    final otherWorkspaces = [
+      ...state.ownedWorkspaces,
+      ...state.memberWorkspaces.where(
+        (w) => w.currentUserRole == 'owner' || w.currentUserRole == 'editor',
+      ),
+    ].where((w) => w.id != currentWorkspaceId).toList();
+
+    if (otherWorkspaces.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No other workspaces available to move this board to.'),
+        ),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: Text('Move "${board.title}"'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: otherWorkspaces.length,
+            itemBuilder: (ctx, index) {
+              final target = otherWorkspaces[index];
+              return ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: Text(target.name),
+                subtitle: Text('${target.boardCount} boards'),
+                onTap: () {
+                  Navigator.pop(dialogCtx);
+                  context.read<WorkspaceBloc>().add(
+                    MoveBoardBetweenWorkspacesRequested(
+                      sourceWorkspaceId: currentWorkspaceId,
+                      targetWorkspaceId: target.id,
+                      boardId: board.id,
+                    ),
+                  );
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Board moved to "${target.name}".')),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -378,12 +445,14 @@ class _WorkspaceBoardCard extends StatelessWidget {
   final bool isOwner;
   final VoidCallback onTap;
   final VoidCallback? onRemoveFromWorkspace;
+  final VoidCallback? onMoveToWorkspace;
 
   const _WorkspaceBoardCard({
     required this.board,
     required this.isOwner,
     required this.onTap,
     this.onRemoveFromWorkspace,
+    this.onMoveToWorkspace,
   });
 
   @override
@@ -472,22 +541,30 @@ class _WorkspaceBoardCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (isOwner && onRemoveFromWorkspace != null)
+                  if (isOwner && (onRemoveFromWorkspace != null || onMoveToWorkspace != null))
                     PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert, size: 20),
                       onSelected: (value) {
                         if (value == 'remove') {
                           onRemoveFromWorkspace?.call();
+                        } else if (value == 'move') {
+                          onMoveToWorkspace?.call();
                         }
                       },
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(
-                          value: 'remove',
-                          child: Text(
-                            'Remove from workspace',
-                            style: TextStyle(color: Colors.red),
+                      itemBuilder: (context) => [
+                        if (onMoveToWorkspace != null)
+                          const PopupMenuItem(
+                            value: 'move',
+                            child: Text('Move to workspace'),
                           ),
-                        ),
+                        if (onRemoveFromWorkspace != null)
+                          const PopupMenuItem(
+                            value: 'remove',
+                            child: Text(
+                              'Remove from workspace',
+                              style: TextStyle(color: Colors.red),
+                            ),
+                          ),
                       ],
                     ),
                 ],

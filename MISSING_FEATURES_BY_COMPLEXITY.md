@@ -22,7 +22,7 @@
 
 1. [Module 1: Authentication & Identity (FR01)](#module-1-authentication--identity-fr01)
 2. [Module 2: User Profile & Preferences (FR02)](#module-2-user-profile--preferences-fr02)
-3. [Module 3: Board Creation & Management (FR03)](#module-3-board-creation--management-fr03)
+3. [Module 3: Board Creation & Management (FR03) — ✅ COMPLETED (100%)](#module-3-board-creation--management-fr03)
 4. [Module 4: Canvas Tools & Visual Elements (FR05)](#module-4-canvas-tools--visual-elements-fr05)
 5. [Module 5: Board Sharing & Access Control (FR07)](#module-5-board-sharing--access-control-fr07)
 6. [Module 6: Notifications & Preferences (FR15)](#module-6-notifications--preferences-fr15)
@@ -59,14 +59,14 @@
 
 ---
 
-## Module 3: Board Creation & Management (FR03)
+## Module 3: Board Creation & Management (FR03) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
 | :--- | :--- | :---: | :---: | :--- |
-| **FR03-13** | Validate board tags against predefined format | ⚠️ Partial | 🟢 **Level 1 (1/5)** | In [`create_board_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/create_board_screen.dart) and [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart), enforce tag length `<= 20`, lowercase alphanumeric chars and hyphens only (`RegExp(r'^[a-z0-9\-]+$')`). |
-| **FR03-08** | Owners archive / unarchive boards | ❌ Missing | 🟡 **Level 2 (2/5)** | Add `isArchived: bool` field to [`board.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/models/board.dart) and Firestore. Add "Archive Board" option in board settings popup menu. Filter out archived boards from dashboard default view, adding an "Archived" tab or toggle. |
-| **FR03-07** | Owners duplicate boards | ❌ Missing | 🟡 **Level 2.5 (2.5/5)** | Add `duplicateBoard(boardId)` in [`board_repository_impl.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/repositories/board/board_repository_impl.dart). Deep copy the board document, clone latest Firestore CRDT snapshot document to a new board document ID with title `"$title (Copy)"`. Add UI button in [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart). |
-| **FR03-11** | Move boards between workspaces | ⚠️ Partial | 🟡 **Level 2.5 (2.5/5)** | Create an atomic "Move Board to Workspace" modal dialog in [`workspace_detail_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/workspaces/view/workspace_detail_screen.dart). Execute an atomic Firestore batch to remove from source workspace subcollection and insert into destination workspace. |
+| **FR03-13** | Validate board tags against predefined format | ✅ **Implemented** | 🟢 **Level 1 (1/5)** | Enforced in [`create_board_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/create_board_screen.dart) and [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart) requiring tag length `<= 20`, max 5 tags, lowercase alphanumeric chars and hyphens only (`RegExp(r'^[a-z0-9\-]+$')`). |
+| **FR03-08** | Owners archive / unarchive boards | ✅ **Implemented** | 🟡 **Level 2 (2/5)** | Added `isArchived: bool` field to [`board.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/models/board.dart) and Firestore. Added "Archive Board" & "Unarchive Board" dialogs and actions in [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart), [`board_card.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/widgets/board_card.dart), `DashboardBloc`, and filtered archived boards into a dedicated Archived tab on [`home_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/home_screen.dart). |
+| **FR03-07** | Owners duplicate boards & permission-controlled member copies | ✅ **Implemented** | 🟡 **Level 2.5 (2.5/5)** | 1. Implemented `duplicateBoard(boardId)` in [`board_repository_impl.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/repositories/board/board_repository_impl.dart) with full CRDT drawing update duplication, Firestore snapshot cloning, preview thumbnail copying, and isolating new board membership strictly to the copier.<br>2. Added `allowMembersToCopy: bool` permission toggle in [`board.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/models/board.dart), [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart), and [`create_board_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/create_board_screen.dart).<br>3. Added "Copy from existing board" selector in [`create_board_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/create_board_screen.dart). |
+| **FR03-11** | Move boards between workspaces | ✅ **Implemented** | 🟡 **Level 2.5 (2.5/5)** | Created atomic "Move Board to Workspace" modal dialog in [`workspace_detail_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/workspaces/view/workspace_detail_screen.dart). Implemented atomic Firestore batch in [`workspace_repository_impl.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/repositories/workspace/workspace_repository_impl.dart) to remove board from source workspace and add to destination workspace. |
 
 ---
 
@@ -175,12 +175,12 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 🟢 LEVEL 1 & 1.5: QUICK WINS (1 – 3 HOURS EACH)                                │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │ 1. [FR01-04] Password strength rules regex in helpers.dart (✅ Done)            │
-│ 2. [FR03-13] Board tags format & length validation                             │
+│ 2. [FR03-13] Board tags format & length validation (✅ Done)                   │
 │ 3. [FR05-16] Camera image capture option for canvas images                     │
 │ 4. [FR06-08] AI prompt character length validation                             │
 │ 5. [FR01-05] Trigger email verification email on registration (✅ Done)         │
 │ 6. [FR01-07] Wire up password reset email flow in login screen (✅ Done)        │
-│ 7. [FR02-04] Strict PNG/JPEG/JPG MIME validation for profile photos            │
+│ 7. [FR02-04] Strict PNG/JPEG/JPG MIME validation for profile photos (✅ Done)   │
 │ 8. [FR11-03] Native file share sheet integration with share_plus               │
 │ 9. [FR15-05] Notification preference switches in settings screen               │
 └─────────────────────────────────────────────────────────────────────────────────┘
@@ -189,14 +189,14 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 🟡 LEVEL 2 & 2.5: STANDARD FEATURES & SERVICES (4 – 8 HOURS EACH)              │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │ 10. [FR01-06] Enforce email verification check on user login (✅ Done)          │
-│ 11. [FR02-10] User profile privacy settings (online status, visibility)        │
-│ 12. [FR02-11/12] User preferred tags picker & storage in profile               │
-│ 13. [FR02-05] Settings preferences persistence to Firestore                    │
-│ 14. [FR03-08] Archive / unarchive boards functionality                         │
+│ 11. [FR02-10] User profile privacy settings (online status, visibility) (✅ Done)│
+│ 12. [FR02-11/12] User preferred tags picker & storage in profile (✅ Done)      │
+│ 13. [FR02-05] Settings preferences persistence to Firestore (✅ Done)           │
+│ 14. [FR03-08] Archive / unarchive boards functionality (✅ Done)                │
 │ 15. [FR05-04] Predefined Arrow shape implementation in CanvasPainter           │
 │ 16. [FR07-05] Direct board member access revocation button in MembersTray      │
-│ 17. [FR03-07] Duplicate board functionality with CRDT snapshot cloning         │
-│ 18. [FR03-11] Atomic move boards between workspaces                            │
+│ 17. [FR03-07] Duplicate board functionality with CRDT snapshot cloning (✅ Done)│
+│ 18. [FR03-11] Atomic move boards between workspaces (✅ Done)                   │
 │ 19. [FR08-01] Active online peers indicator in MembersTray                     │
 │ 20. [FR08-04/05] User join/leave toast notifications over WebSockets           │
 │ 21. [FR11-01/04] Export canvas as high-resolution PNG image                    │
@@ -207,7 +207,7 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │ 🟠 LEVEL 3 & 3.5: MODERATE SUBSYSTEMS & SCREENS (1 – 2 DAYS EACH)              │
 ├─────────────────────────────────────────────────────────────────────────────────┤
-│ 24. [FR02-06/07] Account deletion with cascading data purge Cloud Function     │
+│ 24. [FR02-06/07] Account deletion with cascade purge Cloud Function (✅ Done)   │
 │ 25. [FR05-09] Canvas Sticky Note visual elements with text wrapping            │
 │ 26. [FR11-02] Export canvas as paginated PDF document                          │
 │ 27. [FR11-05] Vector SVG serialization and export pipeline                     │

@@ -171,6 +171,18 @@ class RemoveBoardFromWorkspaceRequested extends WorkspaceEvent {
   });
 }
 
+class MoveBoardBetweenWorkspacesRequested extends WorkspaceEvent {
+  final String boardId;
+  final String sourceWorkspaceId;
+  final String targetWorkspaceId;
+
+  MoveBoardBetweenWorkspacesRequested({
+    required this.boardId,
+    required this.sourceWorkspaceId,
+    required this.targetWorkspaceId,
+  });
+}
+
 abstract class WorkspaceState {}
 
 class WorkspaceInitial extends WorkspaceState {}
@@ -263,6 +275,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     on<AddBoardToWorkspaceRequested>(_onAddBoardToWorkspaceRequested);
     on<CreateBoardInWorkspaceRequested>(_onCreateBoardInWorkspaceRequested);
     on<RemoveBoardFromWorkspaceRequested>(_onRemoveBoardFromWorkspaceRequested);
+    on<MoveBoardBetweenWorkspacesRequested>(_onMoveBoardBetweenWorkspacesRequested);
     on<_OwnedWorkspacesUpdated>(_onOwnedWorkspacesUpdated);
     on<_MemberWorkspacesUpdated>(_onMemberWorkspacesUpdated);
     on<_IncomingInvitesUpdated>(_onIncomingInvitesUpdated);
@@ -885,6 +898,36 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       final current = state;
       if (current is WorkspaceLoaded) {
         emit(current.copyWith(actionError: 'Failed to remove board: $e'));
+      }
+    }
+  }
+
+  Future<void> _onMoveBoardBetweenWorkspacesRequested(
+    MoveBoardBetweenWorkspacesRequested event,
+    Emitter<WorkspaceState> emit,
+  ) async {
+    final service = _workspaceService;
+    if (service == null) return;
+
+    try {
+      await service.moveBoardBetweenWorkspaces(
+        boardId: event.boardId,
+        sourceWorkspaceId: event.sourceWorkspaceId,
+        targetWorkspaceId: event.targetWorkspaceId,
+      );
+      final current = state;
+      if (current is WorkspaceLoaded) {
+        emit(
+          current.copyWith(
+            actionInfo: 'Board moved successfully.',
+            actionError: null,
+          ),
+        );
+      }
+    } catch (e) {
+      final current = state;
+      if (current is WorkspaceLoaded) {
+        emit(current.copyWith(actionError: 'Failed to move board: $e'));
       }
     }
   }
