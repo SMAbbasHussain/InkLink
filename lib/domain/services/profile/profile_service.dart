@@ -41,6 +41,13 @@ abstract class ProfileService {
     String? imageData,
     String? filename,
   });
+  Future<void> updatePrivacySettings({
+    required bool isProfilePublic,
+    required bool showOnlineStatus,
+    required bool showEmail,
+  });
+  Future<void> updatePreferredTags(List<String> tags);
+  Future<Map<String, dynamic>?> getCurrentUserData();
 }
 
 class ProfileServiceImpl implements ProfileService {
@@ -182,6 +189,41 @@ class ProfileServiceImpl implements ProfileService {
     );
 
     return photoUrl;
+  }
+
+  @override
+  Future<void> updatePrivacySettings({
+    required bool isProfilePublic,
+    required bool showOnlineStatus,
+    required bool showEmail,
+  }) {
+    final user = _authService.getCurrentUser();
+    if (user == null) {
+      throw Exception('User not authenticated');
+    }
+    return _profileRepository.updateUserFields(user.uid, {
+      'isProfilePublic': isProfilePublic,
+      'showOnlineStatus': showOnlineStatus,
+      'showEmail': showEmail,
+    });
+  }
+
+  @override
+  Future<void> updatePreferredTags(List<String> tags) {
+    final user = _authService.getCurrentUser();
+    if (user == null) {
+      throw Exception('User not authenticated');
+    }
+    return _profileRepository.updateUserFields(user.uid, {
+      'preferredTags': tags,
+    });
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getCurrentUserData() async {
+    final user = _authService.getCurrentUser();
+    if (user == null) return null;
+    return _profileRepository.getUserById(user.uid);
   }
 
   int _toInt(dynamic value) {

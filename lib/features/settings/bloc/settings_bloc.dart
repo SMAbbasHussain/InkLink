@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/services/settings/settings_service.dart';
+import '../../../domain/services/profile/profile_service.dart';
 
 abstract class SettingsEvent {
   const SettingsEvent();
@@ -32,6 +33,24 @@ class SettingsBoardPreviewCompressionToggled extends SettingsEvent {
   const SettingsBoardPreviewCompressionToggled(this.enabled);
 }
 
+class SettingsPrivacyChanged extends SettingsEvent {
+  final bool? isProfilePublic;
+  final bool? showOnlineStatus;
+  final bool? showEmail;
+
+  const SettingsPrivacyChanged({
+    this.isProfilePublic,
+    this.showOnlineStatus,
+    this.showEmail,
+  });
+}
+
+class SettingsPreferredTagsChanged extends SettingsEvent {
+  final List<String> tags;
+
+  const SettingsPreferredTagsChanged(this.tags);
+}
+
 class SettingsConsumeMessage extends SettingsEvent {
   const SettingsConsumeMessage();
 }
@@ -41,6 +60,11 @@ class SettingsState {
   final bool isLoadingTrayTips;
   final String boardPreviewQuality;
   final bool boardPreviewCompressionEnabled;
+  final bool isProfilePublic;
+  final bool showOnlineStatus;
+  final bool showEmail;
+  final List<String> preferredTags;
+  final bool isLoadingProfilePreferences;
   final String? message;
   final bool isError;
 
@@ -49,6 +73,11 @@ class SettingsState {
     this.isLoadingTrayTips = true,
     this.boardPreviewQuality = 'medium',
     this.boardPreviewCompressionEnabled = true,
+    this.isProfilePublic = true,
+    this.showOnlineStatus = true,
+    this.showEmail = false,
+    this.preferredTags = const [],
+    this.isLoadingProfilePreferences = true,
     this.message,
     this.isError = false,
   });
@@ -58,6 +87,11 @@ class SettingsState {
     bool? isLoadingTrayTips,
     String? boardPreviewQuality,
     bool? boardPreviewCompressionEnabled,
+    bool? isProfilePublic,
+    bool? showOnlineStatus,
+    bool? showEmail,
+    List<String>? preferredTags,
+    bool? isLoadingProfilePreferences,
     Object? message = _unset,
     bool? isError,
   }) {
@@ -67,6 +101,12 @@ class SettingsState {
       boardPreviewQuality: boardPreviewQuality ?? this.boardPreviewQuality,
       boardPreviewCompressionEnabled:
           boardPreviewCompressionEnabled ?? this.boardPreviewCompressionEnabled,
+      isProfilePublic: isProfilePublic ?? this.isProfilePublic,
+      showOnlineStatus: showOnlineStatus ?? this.showOnlineStatus,
+      showEmail: showEmail ?? this.showEmail,
+      preferredTags: preferredTags ?? this.preferredTags,
+      isLoadingProfilePreferences:
+          isLoadingProfilePreferences ?? this.isLoadingProfilePreferences,
       message: message == _unset ? this.message : message as String?,
       isError: isError ?? this.isError,
     );
@@ -77,10 +117,14 @@ const Object _unset = Object();
 
 class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
   final SettingsService _settingsService;
+  final ProfileService? _profileService;
 
-  SettingsBloc({required SettingsService settingsService})
-    : _settingsService = settingsService,
-      super(const SettingsState()) {
+  SettingsBloc({
+    required SettingsService settingsService,
+    ProfileService? profileService,
+  })  : _settingsService = settingsService,
+        _profileService = profileService,
+        super(const SettingsState()) {
     on<SettingsLoadRequested>(_onLoadRequested);
     on<SettingsTrayTipsToggled>(_onTrayTipsToggled);
     on<SettingsClearCacheRequested>(_onClearCacheRequested);
@@ -88,6 +132,8 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
     on<SettingsBoardPreviewCompressionToggled>(
       _onBoardPreviewCompressionToggled,
     );
+    on<SettingsPrivacyChanged>(_onPrivacyChanged);
+    on<SettingsPreferredTagsChanged>(_onPreferredTagsChanged);
     on<SettingsConsumeMessage>(_onConsumeMessage);
   }
 
@@ -97,14 +143,40 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
   ) async {
     final value = await _settingsService.getShowTrayTips();
     final quality = await _settingsService.getBoardPreviewQuality();
-    final compression = await _settingsService
-        .getBoardPreviewCompressionEnabled();
+    final compression =
+        await _settingsService.getBoardPreviewCompressionEnabled();
+
+    bool isProfilePublic = state.isProfilePublic;
+    bool showOnlineStatus = state.showOnlineStatus;
+    bool showEmail = state.showEmail;
+    List<String> preferredTags = state.preferredTags;
+
+    if (_profileService != null) {
+      try {
+        final userData = await _profileService.getCurrentUserData();
+        if (userData != null) {
+          isProfilePublic = (userData['isProfilePublic'] as bool?) ?? true;
+          showOnlineStatus = (userData['showOnlineStatus'] as bool?) ?? true;
+          showEmail = (userData['showEmail'] as bool?) ?? false;
+          preferredTags = (userData['preferredTags'] as List<dynamic>?)
+                  ?.map((e) => e.toString())
+                  .toList() ??
+              preferredTags;
+        }
+      } catch (_) {}
+    }
+
     emit(
       state.copyWith(
         showTrayTips: value,
         boardPreviewQuality: quality,
         boardPreviewCompressionEnabled: compression,
         isLoadingTrayTips: false,
+        isProfilePublic: isProfilePublic,
+        showOnlineStatus: showOnlineStatus,
+        showEmail: showEmail,
+        preferredTags: preferredTags,
+        isLoadingProfilePreferences: false,
       ),
     );
   }
@@ -183,6 +255,72 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
         isError: false,
       ),
     );
+  }
+
+  Future<void> _onPrivacyChanged(
+    SettingsPrivacyChanged event,
+    Emitter<SettingsState> emit,
+  ) async {
+    final newIsPublic = event.isProfilePublic ?? state.isProfilePublic;
+    final newShowOnline = event.showOnlineStatus ?? state.showOnlineStatus;
+    final newShowEmail = event.showEmail ?? state.showEmail;
+
+    emit(
+      state.copyWith(
+        isProfilePublic: newIsPublic,
+        showOnlineStatus: newShowOnline,
+        showEmail: newShowEmail,
+      ),
+    );
+
+    if (_profileService != null) {
+      try {
+        await _profileService.updatePrivacySettings(
+          isProfilePublic: newIsPublic,
+          showOnlineStatus: newShowOnline,
+          showEmail: newShowEmail,
+        );
+        emit(
+          state.copyWith(
+            message: 'Privacy settings updated.',
+            isError: false,
+          ),
+        );
+      } catch (e) {
+        emit(
+          state.copyWith(
+            message: 'Failed to update privacy settings.',
+            isError: true,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _onPreferredTagsChanged(
+    SettingsPreferredTagsChanged event,
+    Emitter<SettingsState> emit,
+  ) async {
+    emit(state.copyWith(preferredTags: event.tags));
+
+    if (_profileService != null) {
+      try {
+        await _profileService.updatePreferredTags(event.tags);
+        emit(
+          state.copyWith(
+            message: 'Content preferences updated.',
+            isError: false,
+          ),
+        );
+      } catch (e) {
+        emit(
+          state.copyWith(
+            message: 'Failed to update content preferences.',
+            isError: true,
+          ),
+        );
+      }
+    }
   }
 
   void _onConsumeMessage(

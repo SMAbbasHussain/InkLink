@@ -24,6 +24,10 @@ class UserModel {
   final DateTime? updatedAt;
   final bool? isOnline;
   final DateTime? lastActive;
+  final bool isProfilePublic;
+  final bool showOnlineStatus;
+  final bool showEmail;
+  final List<String> preferredTags;
 
   const UserModel({
     required this.uid,
@@ -37,6 +41,10 @@ class UserModel {
     this.updatedAt,
     this.isOnline,
     this.lastActive,
+    this.isProfilePublic = true,
+    this.showOnlineStatus = true,
+    this.showEmail = false,
+    this.preferredTags = const [],
   });
 
   factory UserModel.fromFirestore(Map<String, dynamic> data, String uid) {
@@ -52,6 +60,13 @@ class UserModel {
       updatedAt: data['updatedAt'] != null ? _parseDate(data['updatedAt']) : null,
       isOnline: data['isOnline'] as bool?,
       lastActive: data['lastActive'] != null ? _parseDate(data['lastActive']) : null,
+      isProfilePublic: (data['isProfilePublic'] as bool?) ?? true,
+      showOnlineStatus: (data['showOnlineStatus'] as bool?) ?? true,
+      showEmail: (data['showEmail'] as bool?) ?? false,
+      preferredTags: (data['preferredTags'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
     );
   }
 
@@ -69,10 +84,50 @@ class UserModel {
       'updatedAt': updatedAt ?? DateTime.now(),
       'isOnline': isOnline,
       'lastActive': lastActive,
+      'isProfilePublic': isProfilePublic,
+      'showOnlineStatus': showOnlineStatus,
+      'showEmail': showEmail,
+      'preferredTags': preferredTags,
     };
   }
 
   Map<String, dynamic> toMap() => toFirestore();
+
+  UserModel copyWith({
+    String? uid,
+    String? displayName,
+    String? email,
+    String? bio,
+    String? photoURL,
+    int? friendCount,
+    int? boardCount,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    bool? isOnline,
+    DateTime? lastActive,
+    bool? isProfilePublic,
+    bool? showOnlineStatus,
+    bool? showEmail,
+    List<String>? preferredTags,
+  }) {
+    return UserModel(
+      uid: uid ?? this.uid,
+      displayName: displayName ?? this.displayName,
+      email: email ?? this.email,
+      bio: bio ?? this.bio,
+      photoURL: photoURL ?? this.photoURL,
+      friendCount: friendCount ?? this.friendCount,
+      boardCount: boardCount ?? this.boardCount,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      isOnline: isOnline ?? this.isOnline,
+      lastActive: lastActive ?? this.lastActive,
+      isProfilePublic: isProfilePublic ?? this.isProfilePublic,
+      showOnlineStatus: showOnlineStatus ?? this.showOnlineStatus,
+      showEmail: showEmail ?? this.showEmail,
+      preferredTags: preferredTags ?? this.preferredTags,
+    );
+  }
 
   /// Backwards-compatible map-like access for legacy UI widgets.
   dynamic operator [](String key) {
@@ -99,6 +154,14 @@ class UserModel {
         return isOnline;
       case 'lastActive':
         return lastActive;
+      case 'isProfilePublic':
+        return isProfilePublic;
+      case 'showOnlineStatus':
+        return showOnlineStatus;
+      case 'showEmail':
+        return showEmail;
+      case 'preferredTags':
+        return preferredTags;
       default:
         return null;
     }

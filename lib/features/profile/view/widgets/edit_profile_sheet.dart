@@ -113,6 +113,52 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
 
       if (pickedFile == null) return;
 
+      // Validate file extension (FR02-04)
+      final ext = pickedFile.name.toLowerCase().split('.').last;
+      if (!['jpg', 'jpeg', 'png'].contains(ext)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Invalid image format. Only PNG, JPEG, and JPG images are supported.',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Validate magic bytes (FR02-04)
+      final rawBytes = await File(pickedFile.path).readAsBytes();
+      final isJpeg = rawBytes.length >= 3 &&
+          rawBytes[0] == 0xFF &&
+          rawBytes[1] == 0xD8 &&
+          rawBytes[2] == 0xFF;
+      final isPng = rawBytes.length >= 8 &&
+          rawBytes[0] == 0x89 &&
+          rawBytes[1] == 0x50 &&
+          rawBytes[2] == 0x4E &&
+          rawBytes[3] == 0x47 &&
+          rawBytes[4] == 0x0D &&
+          rawBytes[5] == 0x0A &&
+          rawBytes[6] == 0x1A &&
+          rawBytes[7] == 0x0A;
+
+      if (!isJpeg && !isPng) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Invalid image content. Only valid PNG, JPEG, and JPG images are accepted.',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
       if (!mounted) return;
 
       // Show loading dialog

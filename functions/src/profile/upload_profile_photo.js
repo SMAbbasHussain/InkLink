@@ -68,7 +68,7 @@ module.exports = async (request) => {
       throw new HttpsError('invalid-argument', 'imageData must be a non-empty base64 string.');
     }
 
-    // Validate filename
+    // Validate filename and extension (FR02-04)
     try {
       validateString(filename, 'filename');
     } catch (validationError) {
@@ -78,6 +78,12 @@ module.exports = async (request) => {
         error: validationError.message
       });
       throw new HttpsError('invalid-argument', 'filename must be a non-empty string.');
+    }
+
+    const extension = (filename || '').toLowerCase().split('.').pop();
+    if (!['jpg', 'jpeg', 'png'].includes(extension)) {
+      logger.warn('Upload profile photo: Disallowed file extension', { filename, extension, uid });
+      throw new HttpsError('invalid-argument', 'Only PNG, JPEG, and JPG image formats are supported.');
     }
 
     // Validate UID format
@@ -112,6 +118,26 @@ module.exports = async (request) => {
         error: error.message
       });
       throw new HttpsError('invalid-argument', 'imageData must be valid base64 encoded data.');
+    }
+
+    // Validate magic bytes (FR02-04: strictly enforce JPEG / PNG)
+    const isJpeg = imageBuffer.length >= 3 &&
+      imageBuffer[0] === 0xFF &&
+      imageBuffer[1] === 0xD8 &&
+      imageBuffer[2] === 0xFF;
+    const isPng = imageBuffer.length >= 8 &&
+      imageBuffer[0] === 0x89 &&
+      imageBuffer[1] === 0x50 &&
+      imageBuffer[2] === 0x4E &&
+      imageBuffer[3] === 0x47 &&
+      imageBuffer[4] === 0x0D &&
+      imageBuffer[5] === 0x0A &&
+      imageBuffer[6] === 0x1A &&
+      imageBuffer[7] === 0x0A;
+
+    if (!isJpeg && !isPng) {
+      logger.warn('Upload profile photo: Invalid magic bytes', { uid, filename });
+      throw new HttpsError('invalid-argument', 'Invalid image file content. Only valid PNG, JPEG, and JPG files are accepted.');
     }
 
     // Check image size (max 5MB)
@@ -212,8 +238,7 @@ function getContentType(filename) {
     jpg: 'image/jpeg',
     jpeg: 'image/jpeg',
     png: 'image/png',
-    gif: 'image/gif',
-    webp: 'image/webp',
   };
-  return mimeTypes[extension] || 'application/octet-stream';
+  return mimeTypes[extension] || 'image/jpeg';
 }
+

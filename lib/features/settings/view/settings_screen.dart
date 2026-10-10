@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
+import '../../../domain/services/auth/auth_session_service.dart';
 import '../bloc/settings_bloc.dart';
 import '../../theme/bloc/theme_bloc.dart';
 import '../../../core/constants/app_colors.dart';
@@ -130,18 +131,121 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         child: const Text('Clear Cache'),
                       ),
                     ),
+                    _buildSectionHeader('Privacy'),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.public_outlined),
+                      title: const Text('Public Profile'),
+                      subtitle: const Text(
+                        'Allow non-friends to view your profile and public boards',
+                      ),
+                      value: settingsState.isProfilePublic,
+                      onChanged: (value) {
+                        context.read<SettingsBloc>().add(
+                          SettingsPrivacyChanged(isProfilePublic: value),
+                        );
+                      },
+                    ),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.online_prediction),
+                      title: const Text('Show Online Status'),
+                      subtitle: const Text(
+                        'Let collaborators see when you are active on boards',
+                      ),
+                      value: settingsState.showOnlineStatus,
+                      onChanged: (value) {
+                        context.read<SettingsBloc>().add(
+                          SettingsPrivacyChanged(showOnlineStatus: value),
+                        );
+                      },
+                    ),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.alternate_email),
+                      title: const Text('Show Email Address'),
+                      subtitle: const Text(
+                        'Display your email address on your public profile',
+                      ),
+                      value: settingsState.showEmail,
+                      onChanged: (value) {
+                        context.read<SettingsBloc>().add(
+                          SettingsPrivacyChanged(showEmail: value),
+                        );
+                      },
+                    ),
+                    _buildSectionHeader('Content Preferences'),
+                    ListTile(
+                      leading: const Icon(Icons.sell_outlined),
+                      title: const Text('Preferred Content Tags'),
+                      subtitle: const Text(
+                        'Personalize your recommended boards and template feed',
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () => _showTagsDialog(
+                          context,
+                          settingsState.preferredTags,
+                        ),
+                      ),
+                    ),
+                    if (settingsState.preferredTags.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: settingsState.preferredTags.map((tag) {
+                            return Chip(
+                              label: Text('#$tag'),
+                              deleteIcon: const Icon(Icons.close, size: 16),
+                              onDeleted: () {
+                                final updated = List<String>.from(settingsState.preferredTags)
+                                  ..remove(tag);
+                                context.read<SettingsBloc>().add(
+                                  SettingsPreferredTagsChanged(updated),
+                                );
+                              },
+                            );
+                          }).toList(),
+                        ),
+                      )
+                    else
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        child: OutlinedButton.icon(
+                          onPressed: () => _showTagsDialog(
+                            context,
+                            settingsState.preferredTags,
+                          ),
+                          icon: const Icon(Icons.add, size: 16),
+                          label: const Text('Select Interest Tags'),
+                        ),
+                      ),
                     _buildSectionHeader('Account'),
                     ListTile(
-                      leading: const Icon(Icons.logout, color: Colors.red),
+                      leading: const Icon(Icons.logout, color: Colors.amber),
                       title: const Text(
                         'Logout',
                         style: TextStyle(
-                          color: Colors.red,
+                          color: Colors.amber,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       onTap: () => _showLogoutDialog(context),
                     ),
+                    ListTile(
+                      leading: const Icon(Icons.delete_forever, color: Colors.red),
+                      title: const Text(
+                        'Delete Account',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      subtitle: const Text(
+                        'Permanently erase your account, boards, and data',
+                      ),
+                      onTap: () => _showDeleteAccountDialog(context),
+                    ),
+                    const SizedBox(height: 32),
                   ],
                 ),
               );
@@ -194,9 +298,273 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Navigator.pop(innerContext);
               context.read<AuthBloc>().add(LogoutRequested());
             },
-            child: const Text("Logout", style: TextStyle(color: Colors.red)),
+            child: const Text("Logout", style: TextStyle(color: Colors.amber)),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showDeleteAccountDialog(BuildContext context) {
+    final authSessionService = context.read<AuthSessionService>();
+    final currentUser = authSessionService.currentUser;
+    final isPasswordUser = currentUser?.providerData.any((p) => p.providerId == 'password') ?? false;
+
+    final passwordController = TextEditingController();
+    bool obscurePassword = true;
+    String? errorMessage;
+    bool isVerifying = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (innerContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text(
+                    "Delete Account",
+                    style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      "Are you sure you want to permanently delete your account?\n\n"
+                      "This action is irreversible. All your boards, workspaces, and profile will be permanently erased.",
+                      style: TextStyle(fontSize: 14),
+                    ),
+                    if (isPasswordUser) ...[
+                      const SizedBox(height: 16),
+                      const Text(
+                        "Please enter your password to confirm:",
+                        style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: passwordController,
+                        obscureText: obscurePassword,
+                        decoration: InputDecoration(
+                          hintText: "Your password",
+                          prefixIcon: const Icon(Icons.lock_outline, size: 20),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              obscurePassword ? Icons.visibility_off : Icons.visibility,
+                              size: 20,
+                            ),
+                            onPressed: () {
+                              setDialogState(() {
+                                obscurePassword = !obscurePassword;
+                              });
+                            },
+                          ),
+                          border: const OutlineInputBorder(),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                        ),
+                      ),
+                    ],
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.red.withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.error_outline, color: Colors.red, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                errorMessage!,
+                                style: const TextStyle(color: Colors.red, fontSize: 12),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isVerifying ? null : () => Navigator.pop(innerContext),
+                  child: const Text("Cancel"),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: isVerifying
+                      ? null
+                      : () async {
+                          final passwordText = passwordController.text.trim();
+                          if (isPasswordUser && passwordText.isEmpty) {
+                            setDialogState(() {
+                              errorMessage = "Password is required to confirm deletion.";
+                            });
+                            return;
+                          }
+
+                          setDialogState(() {
+                            isVerifying = true;
+                            errorMessage = null;
+                          });
+
+                          try {
+                            await authSessionService.reauthenticate(password: passwordText);
+                            if (dialogContext.mounted) {
+                              Navigator.pop(dialogContext);
+                            }
+                            if (context.mounted) {
+                              context.read<AuthBloc>().add(
+                                    DeleteAccountRequested(password: passwordText),
+                                  );
+                            }
+                          } catch (e) {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                isVerifying = false;
+                                errorMessage = e.toString().replaceFirst('Exception: ', '');
+                              });
+                            }
+                          }
+                        },
+                  child: isVerifying
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text("Delete Permanently"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showTagsDialog(BuildContext context, List<String> currentTags) {
+    final availableSuggestions = [
+      'Art',
+      'Architecture',
+      'Brainstorming',
+      'Design',
+      'Education',
+      'Engineering',
+      'Gaming',
+      'Music',
+      'Productivity',
+      'Wireframing',
+    ];
+
+    final selectedTags = Set<String>.from(currentTags);
+    final customTagController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (innerContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Preferred Content Tags'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Select topics that match your creative focus to personalize your InkLink experience:',
+                      style: TextStyle(fontSize: 13, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: availableSuggestions.map((tag) {
+                        final isSelected = selectedTags.contains(tag);
+                        return FilterChip(
+                          label: Text('#$tag'),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setDialogState(() {
+                              if (selected) {
+                                selectedTags.add(tag);
+                              } else {
+                                selectedTags.remove(tag);
+                              }
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: customTagController,
+                            decoration: const InputDecoration(
+                              hintText: 'Add custom tag...',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton.filled(
+                          icon: const Icon(Icons.add),
+                          onPressed: () {
+                            final raw = customTagController.text.trim();
+                            if (raw.isNotEmpty) {
+                              setDialogState(() {
+                                selectedTags.add(raw);
+                                customTagController.clear();
+                              });
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(innerContext),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(innerContext);
+                  context.read<SettingsBloc>().add(
+                    SettingsPreferredTagsChanged(selectedTags.toList()),
+                  );
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
