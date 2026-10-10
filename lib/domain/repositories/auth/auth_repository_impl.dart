@@ -280,7 +280,7 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<void> deleteAccount({String? password}) async {
+  Future<void> deleteAccount({String? password, bool reauthenticateUser = true}) async {
     final user = _authService.getCurrentUser();
     if (user == null) {
       throw 'User not authenticated.';
@@ -291,7 +291,9 @@ class FirebaseAuthRepository implements AuthRepository {
     developer.log('Starting deleteAccount workflow for $uid...', name: 'AuthRepository');
 
     // 0. Pre-authenticate / re-authenticate BEFORE deleting any data!
-    await reauthenticate(password: password);
+    if (reauthenticateUser) {
+      await reauthenticate(password: password);
+    }
 
     developer.log('Purging user data for $uid...', name: 'AuthRepository');
 

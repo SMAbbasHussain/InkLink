@@ -28,9 +28,10 @@ module.exports = async (request) => {
   logger.info(`deleteUserAccount: Starting account purge for user ${uid}`);
 
   const firestore = admin.firestore();
+  const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
 
   try {
-    // 1. Delete owned boards
+    // 1. Delete owned boards (recursively deleting operations, snapshots, members, etc.)
     const ownedBoardsSnap = await firestore
       .collection(FirestorePaths.BOARDS)
       .where('ownerId', '==', uid)
@@ -39,21 +40,15 @@ module.exports = async (request) => {
     for (const doc of ownedBoardsSnap.docs) {
       const boardId = doc.id;
       try {
-        // Delete board members subcollection
-        const membersSnap = await doc.ref.collection(FirestorePaths.BOARD_MEMBERS_SUBCOLLECTION).get();
-        const batch = firestore.batch();
-        membersSnap.docs.forEach((mDoc) => batch.delete(mDoc.ref));
-        await batch.commit();
-
-        // Delete board doc
-        await doc.ref.delete();
-
         // Delete Redis / CRDT state
         try {
           await deleteBoardState(boardId);
         } catch (rErr) {
           logger.warn(`deleteUserAccount: Redis cleanup for board ${boardId} failed: ${rErr.message}`);
         }
+
+        // Recursively delete board doc and all subcollections
+        await firestore.recursiveDelete(doc.ref);
       } catch (err) {
         logger.warn(`deleteUserAccount: Error deleting owned board ${boardId}: ${err.message}`);
       }
@@ -76,7 +71,83 @@ module.exports = async (request) => {
       }
     }
 
-    // 3. Purge friend requests (sent & received)
+    // 3. Purge workspace ownership and memberships
+    // 3a. Delete workspaces owned by user
+    const ownedWorkspacesSnap = await firestore
+      .collection(FirestorePaths.WORKSPACES)
+      .where('ownerId', '==', uid)
+      .get();
+
+    for (const wsDoc of ownedWorkspacesSnap.docs) {
+      try {
+        await firestore.recursiveDelete(wsDoc.ref);
+      } catch (wsErr) {
+        logger.warn(`deleteUserAccount: Error deleting owned workspace ${wsDoc.id}: ${wsErr.message}`);
+      }
+    }
+
+    // 3b. Remove user from non-owned workspaces where they are a member
+    const userDocSnap = await userRef.get();
+    const userData = userDocSnap.data() || {};
+    const joinedWorkspaceIds = new Set(
+      Array.isArray(userData[FirestorePaths.WORKSPACE_IDS])
+        ? userData[FirestorePaths.WORKSPACE_IDS]
+        : [],
+    );
+
+    try {
+      const memberQuerySnap = await firestore
+        .collectionGroup(FirestorePaths.WORKSPACE_MEMBERS_SUBCOLLECTION)
+        .where('uid', '==', uid)
+        .get();
+
+      for (const mDoc of memberQuerySnap.docs) {
+        const parentCol = mDoc.ref.parent;
+        const wsRef = parentCol.parent;
+        if (wsRef && parentCol.id === FirestorePaths.WORKSPACE_MEMBERS_SUBCOLLECTION) {
+          joinedWorkspaceIds.add(wsRef.id);
+        }
+      }
+    } catch (cgErr) {
+      logger.warn(`deleteUserAccount: collectionGroup query for workspace members failed: ${cgErr.message}`);
+    }
+
+    for (const wsId of joinedWorkspaceIds) {
+      try {
+        const wsRef = firestore.collection(FirestorePaths.WORKSPACES).doc(wsId);
+        const wsSnap = await wsRef.get();
+        if (!wsSnap.exists || wsSnap.data()?.ownerId === uid) {
+          continue;
+        }
+        const mRef = wsRef.collection(FirestorePaths.WORKSPACE_MEMBERS_SUBCOLLECTION).doc(uid);
+        const mDoc = await mRef.get();
+        if (mDoc.exists) {
+          await mRef.delete();
+          await wsRef.update({
+            memberCount: admin.firestore.FieldValue.increment(-1),
+            [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+      } catch (err) {
+        logger.warn(`deleteUserAccount: Failed removing from workspace ${wsId}: ${err.message}`);
+      }
+    }
+
+    // 3c. Purge workspace invites
+    try {
+      const [sentWsInvites, receivedWsInvites] = await Promise.all([
+        firestore.collection(FirestorePaths.WORKSPACE_INVITES).where('fromUid', '==', uid).get(),
+        firestore.collection(FirestorePaths.WORKSPACE_INVITES).where('toUid', '==', uid).get(),
+      ]);
+      const wsInvBatch = firestore.batch();
+      sentWsInvites.docs.forEach((d) => wsInvBatch.delete(d.ref));
+      receivedWsInvites.docs.forEach((d) => wsInvBatch.delete(d.ref));
+      await wsInvBatch.commit();
+    } catch (invErr) {
+      logger.warn(`deleteUserAccount: Failed cleaning workspace invites: ${invErr.message}`);
+    }
+
+    // 4. Purge friend requests (sent & received)
     const [sentRequests, receivedRequests] = await Promise.all([
       firestore.collection(FirestorePaths.FRIEND_REQUESTS).where('fromUid', '==', uid).get(),
       firestore.collection(FirestorePaths.FRIEND_REQUESTS).where('toUid', '==', uid).get(),
@@ -87,8 +158,7 @@ module.exports = async (request) => {
     receivedRequests.docs.forEach((d) => reqBatch.delete(d.ref));
     await reqBatch.commit();
 
-    // 4. Purge friendships and reciprocal friend records
-    const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
+    // 5. Purge friendships and reciprocal friend records
     const friendsSnap = await userRef.collection(FirestorePaths.FRIENDS_SUBCOLLECTION).get();
 
     for (const fDoc of friendsSnap.docs) {
@@ -112,7 +182,7 @@ module.exports = async (request) => {
       await fDoc.ref.delete();
     }
 
-    // 5. Delete notifications & user boards subcollection
+    // 6. Delete notifications & user boards subcollection
     const notifsSnap = await userRef.collection(FirestorePaths.NOTIFICATIONS_SUBCOLLECTION).get();
     const notifBatch = firestore.batch();
     notifsSnap.docs.forEach((d) => notifBatch.delete(d.ref));
@@ -123,7 +193,7 @@ module.exports = async (request) => {
     userBoardsSnap.docs.forEach((d) => uBoardsBatch.delete(d.ref));
     await uBoardsBatch.commit();
 
-    // 6. Delete Cloudflare R2 profile photos if configured
+    // 7. Delete Cloudflare R2 profile photos if configured
     if (
       process.env.CLOUDFLARE_R2_ACCESS_KEY &&
       process.env.CLOUDFLARE_R2_SECRET_KEY &&
@@ -161,10 +231,10 @@ module.exports = async (request) => {
       }
     }
 
-    // 7. Delete Firestore user document
+    // 8. Delete Firestore user document
     await userRef.delete();
 
-    // 8. Delete Firebase Auth user record
+    // 9. Delete Firebase Auth user record
     try {
       await admin.auth().deleteUser(uid);
       logger.info(`deleteUserAccount: Firebase Auth record deleted for ${uid}`);

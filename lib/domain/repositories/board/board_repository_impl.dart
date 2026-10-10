@@ -1030,6 +1030,28 @@ class FirestoreBoardRepository implements BoardRepository {
       'isArchived': true,
       'updatedAt': FieldValue.serverTimestamp(),
     });
+
+    final docData = _ownedBoardDocs[boardId] ?? _joinedBoardDocs[boardId];
+    if (docData != null) {
+      docData['isArchived'] = true;
+    } else {
+      if (_ownedBoardIds.contains(boardId)) {
+        _ownedBoardDocs[boardId] = <String, dynamic>{'isArchived': true};
+      } else {
+        _joinedBoardDocs[boardId] = <String, dynamic>{'isArchived': true};
+      }
+    }
+
+    try {
+      final isar = await _localDatabaseService.database;
+      final localBoard = await isar.localBoards.getByBoardId(boardId);
+      if (localBoard != null) {
+        localBoard.updatedAt = DateTime.now();
+        await isar.writeTxn(() async {
+          await isar.localBoards.putByBoardId(localBoard);
+        });
+      }
+    } catch (_) {}
   }
 
   @override
@@ -1041,6 +1063,28 @@ class FirestoreBoardRepository implements BoardRepository {
       'isArchived': false,
       'updatedAt': FieldValue.serverTimestamp(),
     });
+
+    final docData = _ownedBoardDocs[boardId] ?? _joinedBoardDocs[boardId];
+    if (docData != null) {
+      docData['isArchived'] = false;
+    } else {
+      if (_ownedBoardIds.contains(boardId)) {
+        _ownedBoardDocs[boardId] = <String, dynamic>{'isArchived': false};
+      } else {
+        _joinedBoardDocs[boardId] = <String, dynamic>{'isArchived': false};
+      }
+    }
+
+    try {
+      final isar = await _localDatabaseService.database;
+      final localBoard = await isar.localBoards.getByBoardId(boardId);
+      if (localBoard != null) {
+        localBoard.updatedAt = DateTime.now();
+        await isar.writeTxn(() async {
+          await isar.localBoards.putByBoardId(localBoard);
+        });
+      }
+    } catch (_) {}
   }
 
   @override

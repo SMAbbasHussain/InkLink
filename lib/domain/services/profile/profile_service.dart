@@ -85,18 +85,31 @@ class ProfileServiceImpl implements ProfileService {
       isBlocked = results[1];
     }
 
-    final userData = await _profileRepository.getUserById(userId);
-    if (userData == null) {
+    final rawUserData = await _profileRepository.getUserById(userId);
+    if (rawUserData == null) {
       throw Exception('User not found');
     }
 
     await _profileRepository.cacheUserProfile(
       userId,
-      userData,
+      rawUserData,
       isFriend: isFriend,
       isSelf: isSelf,
       source: 'profile_open',
     );
+
+    final userData = Map<String, dynamic>.from(rawUserData);
+    if (!isSelf) {
+      final showEmail = (userData['showEmail'] as bool?) ?? false;
+      if (!showEmail) {
+        userData.remove('email');
+      }
+
+      final isProfilePublic = (userData['isProfilePublic'] as bool?) ?? true;
+      if (!isProfilePublic && !isFriend) {
+        userData['bio'] = null;
+      }
+    }
 
     final friendCount = _toInt(userData['friendCount']);
     final boardCount = _toInt(userData['boardCount']);

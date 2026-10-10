@@ -832,6 +832,8 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
 
     await firestore.runTransaction((transaction) async {
       final sourceBoardDoc = await transaction.get(sourceBoardRef);
+      final targetBoardDoc = await transaction.get(targetBoardRef);
+
       final linkData = sourceBoardDoc.exists && sourceBoardDoc.data() != null
           ? Map<String, dynamic>.from(sourceBoardDoc.data()!)
           : <String, dynamic>{
@@ -849,10 +851,17 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
         FirestorePaths.boardCount: FieldValue.increment(-1),
         FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
       });
-      transaction.update(targetWorkspaceRef, {
-        FirestorePaths.boardCount: FieldValue.increment(1),
-        FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
-      });
+
+      if (!targetBoardDoc.exists) {
+        transaction.update(targetWorkspaceRef, {
+          FirestorePaths.boardCount: FieldValue.increment(1),
+          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+        });
+      } else {
+        transaction.update(targetWorkspaceRef, {
+          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
     });
   }
 

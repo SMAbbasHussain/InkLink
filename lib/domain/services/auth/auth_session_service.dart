@@ -217,6 +217,9 @@ class AuthSessionServiceImpl implements AuthSessionService {
     developer.log('deleteAccount: start', name: 'AuthSessionService');
 
     // Run pre-signout callbacks
+    // 1. Reauthenticate first to validate user credentials before any destructive action
+    await _authRepository.reauthenticate(password: password);
+
     for (final callback in List.of(_preSignOutCallbacks)) {
       try {
         await callback();
@@ -231,6 +234,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
     }
 
     final current = _authService.getCurrentUser();
+    bool cloudDeleted = false;
     if (current != null) {
       try {
         await _presenceService.setUserOffline();
@@ -243,6 +247,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
               .httpsCallable('deleteUserAccount')
               .call()
               .timeout(const Duration(seconds: 3));
+          cloudDeleted = true;
           developer.log('deleteUserAccount Cloud Function succeeded', name: 'AuthSessionService');
         } catch (e) {
           developer.log('deleteUserAccount Cloud Function skipped or timed out: $e', name: 'AuthSessionService');
@@ -261,8 +266,10 @@ class AuthSessionServiceImpl implements AuthSessionService {
     await _canvasSyncRepository.disconnectSocket();
     StreamRegistry.instance.clearAll();
 
-    // Delete user from Firestore & Auth while network is active
-    await _authRepository.deleteAccount(password: password);
+    // If Cloud Function did not delete the user account, use client-side cascade deletion (skipping re-auth since already verified)
+    if (!cloudDeleted) {
+      await _authRepository.deleteAccount(password: password, reauthenticateUser: false);
+    }
 
     // Disable network listeners now that user and data are deleted
     await _authRepository.disableNetwork();

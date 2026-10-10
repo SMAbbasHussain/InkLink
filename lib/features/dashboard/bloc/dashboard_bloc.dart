@@ -445,7 +445,18 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       await boardService.archiveBoard(event.boardId);
       final current = state;
       if (current is DashboardLoaded) {
-        emit(current.copyWith(actionError: null, actionInfo: 'Board archived.'));
+        final updatedOwned = current.ownedBoards
+            .map((b) => b.id == event.boardId ? b.copyWith(isArchived: true) : b)
+            .toList();
+        final updatedJoined = current.joinedBoards
+            .map((b) => b.id == event.boardId ? b.copyWith(isArchived: true) : b)
+            .toList();
+        emit(current.copyWith(
+          ownedBoards: updatedOwned,
+          joinedBoards: updatedJoined,
+          actionError: null,
+          actionInfo: 'Board archived.',
+        ));
       }
     } catch (e) {
       final current = state;
@@ -463,7 +474,18 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       await boardService.unarchiveBoard(event.boardId);
       final current = state;
       if (current is DashboardLoaded) {
-        emit(current.copyWith(actionError: null, actionInfo: 'Board restored from archive.'));
+        final updatedOwned = current.ownedBoards
+            .map((b) => b.id == event.boardId ? b.copyWith(isArchived: false) : b)
+            .toList();
+        final updatedJoined = current.joinedBoards
+            .map((b) => b.id == event.boardId ? b.copyWith(isArchived: false) : b)
+            .toList();
+        emit(current.copyWith(
+          ownedBoards: updatedOwned,
+          joinedBoards: updatedJoined,
+          actionError: null,
+          actionInfo: 'Board restored from archive.',
+        ));
       }
     } catch (e) {
       final current = state;

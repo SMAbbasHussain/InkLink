@@ -30,7 +30,7 @@ abstract class AuthRepository {
   /// errors after the auth token is invalidated during sign-out.
   Future<void> disableNetwork();
   /// Delete the user account from Firebase Auth (FR02-06)
-  Future<void> deleteAccount({String? password});
+  Future<void> deleteAccount({String? password, bool reauthenticateUser = true});
   /// Re-authenticate the current user for sensitive operations
   Future<void> reauthenticate({String? password});
 }
