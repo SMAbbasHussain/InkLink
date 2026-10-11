@@ -20,8 +20,8 @@
 
 ## Table of Modules
 
-1. [Module 1: Authentication & Identity (FR01)](#module-1-authentication--identity-fr01)
-2. [Module 2: User Profile & Preferences (FR02)](#module-2-user-profile--preferences-fr02)
+1. [Module 1: Authentication & Identity (FR01) — ✅ COMPLETED (100%)](#module-1-authentication--identity-fr01)
+2. [Module 2: User Profile & Preferences (FR02) — ✅ COMPLETED (100%)](#module-2-user-profile--preferences-fr02)
 3. [Module 3: Board Creation & Management (FR03) — ✅ COMPLETED (100%)](#module-3-board-creation--management-fr03)
 4. [Module 4: Canvas Tools & Visual Elements (FR05) — ✅ COMPLETED (100%)](#module-4-canvas-tools--visual-elements-fr05)
 5. [Module 5: Board Sharing & Access Control (FR07)](#module-5-board-sharing--access-control-fr07)
@@ -176,7 +176,7 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │ 1. [FR01-04] Password strength rules regex in helpers.dart (✅ Done)            │
 │ 2. [FR03-13] Board tags format & length validation (✅ Done)                   │
-│ 3. [FR05-16] Camera image capture option for canvas images                     │
+│ 3. [FR05-16] Camera image capture option for canvas images (✅ Done)            │
 │ 4. [FR06-08] AI prompt character length validation                             │
 │ 5. [FR01-05] Trigger email verification email on registration (✅ Done)         │
 │ 6. [FR01-07] Wire up password reset email flow in login screen (✅ Done)        │
@@ -193,7 +193,7 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 12. [FR02-11/12] User preferred tags picker & storage in profile (✅ Done)      │
 │ 13. [FR02-05] Settings preferences persistence to Firestore (✅ Done)           │
 │ 14. [FR03-08] Archive / unarchive boards functionality (✅ Done)                │
-│ 15. [FR05-04] Predefined Arrow shape implementation in CanvasPainter           │
+│ 15. [FR05-04] Predefined Arrow shape implementation in CanvasPainter (✅ Done)  │
 │ 16. [FR07-05] Direct board member access revocation button in MembersTray      │
 │ 17. [FR03-07] Duplicate board functionality with CRDT snapshot cloning (✅ Done)│
 │ 18. [FR03-11] Atomic move boards between workspaces (✅ Done)                   │
@@ -208,7 +208,7 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 🟠 LEVEL 3 & 3.5: MODERATE SUBSYSTEMS & SCREENS (1 – 2 DAYS EACH)              │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │ 24. [FR02-06/07] Account deletion with cascade purge Cloud Function (✅ Done)   │
-│ 25. [FR05-09] Canvas Sticky Note visual elements with text wrapping            │
+│ 25. [FR05-09] Canvas Sticky Note visual elements with text wrapping (✅ Done)   │
 │ 26. [FR11-02] Export canvas as paginated PDF document                          │
 │ 27. [FR11-05] Vector SVG serialization and export pipeline                     │
 │ 28. [FR14-04/05] Dedicated Public Board Discovery Screen & feed                │
@@ -226,7 +226,7 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │ 🔴 LEVEL 4 & 4.5: ADVANCED ENGINES & PIPELINES (3 – 5 DAYS EACH)               │
 ├─────────────────────────────────────────────────────────────────────────────────┤
-│ 38. [FR05-13..15] Connectors & Flowchart diagram elements with linked topology │
+│ 38. [FR05-13..15] Connectors & Flowchart diagram elements (✅ Done)             │
 │ 39. [FR08-02] Real-time live peer cursor broadcasting & canvas painter         │
 │ 40. [FR06-01..07] AI object generation via Gemini API & canvas insertion       │
 │ 41. [FR12-01..03/05] Pin-to-canvas threaded comments with replies              │
