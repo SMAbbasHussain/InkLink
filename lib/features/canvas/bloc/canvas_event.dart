@@ -452,3 +452,21 @@ class CanvasSaveBoardPreviewRequested extends CanvasEvent {
 
   const CanvasSaveBoardPreviewRequested(this.pngBytes);
 }
+
+/// Revoke a member's access from the board (Owner only)
+class CanvasRemoveBoardMember extends CanvasEvent {
+  final String targetUid;
+
+  const CanvasRemoveBoardMember(this.targetUid);
+}
+
+/// Update a member's role (Editor/Viewer) on the board (Owner only)
+class CanvasUpdateBoardMemberRole extends CanvasEvent {
+  final String targetUid;
+  final String newRole;
+
+  const CanvasUpdateBoardMemberRole({
+    required this.targetUid,
+    required this.newRole,
+  });
+}

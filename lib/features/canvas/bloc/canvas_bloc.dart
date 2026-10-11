@@ -113,6 +113,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasSaveBoardPreviewRequested>(_onSaveBoardPreviewRequested);
     on<CanvasBoardMembersUpdated>(_onBoardMembersUpdated);
     on<CanvasMemberSearchQueryChanged>(_onMemberSearchQueryChanged);
+    on<CanvasRemoveBoardMember>(_onRemoveBoardMember);
+    on<CanvasUpdateBoardMemberRole>(_onUpdateBoardMemberRole);
     on<CanvasSetToolMode>(_onSetToolMode);
     on<CanvasStartShapeDraw>(_onStartShapeDraw);
     on<CanvasUpdateShapeDraw>(_onUpdateShapeDraw);
@@ -2015,6 +2017,38 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     emit(state.copyWith(memberSearchQuery: event.query));
+  }
+
+  Future<void> _onRemoveBoardMember(
+    CanvasRemoveBoardMember event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final boardService = _boardService;
+    if (boardService == null || _boardId.isEmpty) return;
+    try {
+      await boardService.removeBoardMember(_boardId, event.targetUid);
+      emit(state.copyWith(error: null));
+    } catch (e) {
+      emit(state.copyWith(error: 'Failed to revoke member access: $e'));
+    }
+  }
+
+  Future<void> _onUpdateBoardMemberRole(
+    CanvasUpdateBoardMemberRole event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final boardService = _boardService;
+    if (boardService == null || _boardId.isEmpty) return;
+    try {
+      await boardService.updateBoardMemberRole(
+        _boardId,
+        event.targetUid,
+        event.newRole,
+      );
+      emit(state.copyWith(error: null));
+    } catch (e) {
+      emit(state.copyWith(error: 'Failed to update member role: $e'));
+    }
   }
 
   Future<void> _onSaveBoardPreviewRequested(

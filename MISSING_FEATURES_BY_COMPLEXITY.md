@@ -81,11 +81,11 @@
 
 ---
 
-## Module 5: Board Sharing & Access Control (FR07)
+## Module 5: Board Sharing & Access Control (FR07) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
 | :--- | :--- | :---: | :---: | :--- |
-| **FR07-05** | Revoke member access from board | ⚠️ Partial | 🟡 **Level 2 (2/5)** | In [`members_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/members_tray.dart), add a popup menu with "Revoke Access" for non-owners (visible only to Board Owner). Call backend function to remove member from `boards/{boardId}/members` and disconnect their socket. |
+| **FR07-05** | Revoke member access from board & update roles | ✅ **Implemented** | 🟡 **Level 2 (2/5)** | In [`members_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/members_tray.dart), added owner-only trailing popup menu with options to toggle member role (Editor <-> Viewer via `CanvasUpdateBoardMemberRole`) and revoke access (`CanvasRemoveBoardMember`) with a confirmation dialog. Handled in [`canvas_bloc.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/bloc/canvas_bloc.dart), `BoardService`, and Cloud Functions. |
 
 ---
 
@@ -194,7 +194,7 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 13. [FR02-05] Settings preferences persistence to Firestore (✅ Done)           │
 │ 14. [FR03-08] Archive / unarchive boards functionality (✅ Done)                │
 │ 15. [FR05-04] Predefined Arrow shape implementation in CanvasPainter (✅ Done)  │
-│ 16. [FR07-05] Direct board member access revocation button in MembersTray      │
+│ 16. [FR07-05] Direct board member access revocation button in MembersTray (✅ Done) │
 │ 17. [FR03-07] Duplicate board functionality with CRDT snapshot cloning (✅ Done)│
 │ 18. [FR03-11] Atomic move boards between workspaces (✅ Done)                   │
 │ 19. [FR08-01] Active online peers indicator in MembersTray                     │
