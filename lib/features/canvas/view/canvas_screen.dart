@@ -83,6 +83,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Timer? _shapeEditDebounceTimer;
   final Map<String, dynamic> _pendingShapeEdits = <String, dynamic>{};
   Offset? _lastTapWorldPoint;
+  String? _arrowConnectStartElementId;
 
   static const double _viewportComparisonEpsilon = 0.01;
 
@@ -120,6 +121,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
       (localPoint.dx - _viewportOffset.dx) / _viewportScale,
       (localPoint.dy - _viewportOffset.dy) / _viewportScale,
     );
+  }
+
+  bool _isArrowMode(CanvasState state) {
+    return (state.currentToolMode == CanvasToolMode.shape &&
+            state.pendingShapeType == CanvasShapeType.arrow) ||
+        state.currentToolMode == CanvasToolMode.arrow;
   }
 
   Offset _toScreen(Offset worldPoint) {
@@ -1278,6 +1285,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 details.localFocalPoint,
                               );
 
+                              // In arrow mode, touching an existing element should connect, not draw a freehand shape
+                              if (_isArrowMode(state)) {
+                                final hitShapeId = _hitTestShape(
+                                  mappedElements,
+                                  worldPoint,
+                                );
+                                if (hitShapeId != null) {
+                                  return;
+                                }
+                              }
+
                               // Handle shape drawing mode
                               if (state.currentToolMode == CanvasToolMode.shape &&
                                   state.pendingShapeType != null) {
@@ -1456,6 +1474,70 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 details.localPosition,
                               );
                               _lastTapWorldPoint = worldPoint;
+
+                              // Arrow 2-element connection flow:
+                              if (_isArrowMode(state)) {
+                                final hitShapeId = _hitTestShape(
+                                  mappedElements,
+                                  worldPoint,
+                                );
+                                if (hitShapeId != null) {
+                                  if (_arrowConnectStartElementId == null) {
+                                    setState(() {
+                                      _arrowConnectStartElementId = hitShapeId;
+                                    });
+                                    return;
+                                  } else {
+                                    final startId = _arrowConnectStartElementId!;
+                                    final endId = hitShapeId;
+                                    if (startId != endId) {
+                                      final startElem = mappedElements
+                                          .where((e) => e.id == startId)
+                                          .firstOrNull;
+                                      final endElem = mappedElements
+                                          .where((e) => e.id == endId)
+                                          .firstOrNull;
+                                      final startPt =
+                                          startElem?.center ?? worldPoint;
+                                      final endPt =
+                                          endElem?.center ?? worldPoint;
+
+                                      _canvasBloc.add(CanvasAddConnector(
+                                        startElementId: startId,
+                                        startAnchor: 'auto',
+                                        startPoint: startPt,
+                                        endElementId: endId,
+                                        endAnchor: 'auto',
+                                        endPoint: endPt,
+                                        lineStyle: 'straight',
+                                        hasArrowhead: true,
+                                        color: state.selectedColor,
+                                        strokeWidth:
+                                            math.max(state.strokeWidth, 2.5),
+                                      ));
+
+                                      setState(() {
+                                        _arrowConnectStartElementId = null;
+                                      });
+                                      return;
+                                    } else {
+                                      // Tapped same element again: cancel
+                                      setState(() {
+                                        _arrowConnectStartElementId = null;
+                                      });
+                                      return;
+                                    }
+                                  }
+                                } else {
+                                  // Tapped empty canvas: clear start element
+                                  if (_arrowConnectStartElementId != null) {
+                                    setState(() {
+                                      _arrowConnectStartElementId = null;
+                                    });
+                                  }
+                                }
+                              }
+
                               final hitShapeId = _hitTestShape(
                                 mappedElements,
                                 worldPoint,
@@ -1489,8 +1571,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               }
                             },
                             onTap: () {
-                              // If in shape draw mode, tap switches back to doodle
+                              // If in shape draw mode, tap switches back to doodle unless waiting for 2nd arrow connection
                               if (state.currentToolMode == CanvasToolMode.shape) {
+                                if (state.pendingShapeType ==
+                                        CanvasShapeType.arrow &&
+                                    _arrowConnectStartElementId != null) {
+                                  return;
+                                }
                                 _canvasBloc.add(const CanvasCancelShapeDraw());
                                 return;
                               }
@@ -1519,6 +1606,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   shapeDrawStart: state.shapeDrawStart,
                                   shapeDrawCurrent: state.shapeDrawCurrent,
                                   pendingShapeType: state.pendingShapeType,
+                                  arrowConnectStartElementId:
+                                      _isArrowMode(state)
+                                          ? _arrowConnectStartElementId
+                                          : null,
                                 ),
                               ),
                             ),
@@ -1749,6 +1840,24 @@ class _CanvasScreenState extends State<CanvasScreen> {
         }
         final dist = _pointToSegmentDistance(position, start, end);
         if (dist <= element.strokeWidth / 2 + 14.0) {
+          return element.id;
+        }
+      } else if (element.kind == _ElementKind.shape &&
+          element.shapeType == CanvasShapeType.arrow) {
+        final rot = (element.data['rotation'] as num?)?.toDouble() ?? 0.0;
+        final halfW = element.size * 0.65;
+        final cosR = math.cos(rot);
+        final sinR = math.sin(rot);
+        final start = Offset(
+          element.center.dx - halfW * cosR,
+          element.center.dy - halfW * sinR,
+        );
+        final end = Offset(
+          element.center.dx + halfW * cosR,
+          element.center.dy + halfW * sinR,
+        );
+        final dist = _pointToSegmentDistance(position, start, end);
+        if (dist <= 18.0) {
           return element.id;
         }
       } else {
@@ -3098,28 +3207,40 @@ class _CanvasScreenState extends State<CanvasScreen> {
       return const SizedBox.shrink();
     }
 
-    final (IconData icon, String label) = switch (state.currentToolMode) {
-      CanvasToolMode.shape => (
-        Icons.category_outlined,
-        state.pendingShapeType != null
-            ? 'Shape: ${state.pendingShapeType!.name}'
-            : 'Shape',
-      ),
-      CanvasToolMode.eraser => (Icons.auto_fix_high_outlined, 'Eraser'),
-      CanvasToolMode.text => (Icons.text_fields, 'Text'),
-      CanvasToolMode.arrow => (Icons.arrow_forward_outlined, 'Arrow'),
-      CanvasToolMode.image => (Icons.image_outlined, 'Image'),
-      CanvasToolMode.highlight => (Icons.highlight_outlined, 'Highlight'),
-      CanvasToolMode.doodle => (Icons.brush, 'Doodle'),
-    };
+    final (IconData icon, String label) = _isArrowMode(state)
+        ? (
+            Icons.arrow_forward_outlined,
+            _arrowConnectStartElementId != null
+                ? 'Arrow: Tap 2nd shape to point to'
+                : 'Arrow: Tap 2 shapes to connect, or drag',
+          )
+        : switch (state.currentToolMode) {
+            CanvasToolMode.shape => (
+              Icons.category_outlined,
+              state.pendingShapeType != null
+                  ? 'Shape: ${state.pendingShapeType!.name}'
+                  : 'Shape',
+            ),
+            CanvasToolMode.eraser => (Icons.auto_fix_high_outlined, 'Eraser'),
+            CanvasToolMode.text => (Icons.text_fields, 'Text'),
+            CanvasToolMode.arrow => (Icons.arrow_forward_outlined, 'Arrow'),
+            CanvasToolMode.image => (Icons.image_outlined, 'Image'),
+            CanvasToolMode.highlight => (Icons.highlight_outlined, 'Highlight'),
+            CanvasToolMode.doodle => (Icons.brush, 'Doodle'),
+          };
 
     return Positioned(
       left: 48,
       bottom: 48,
       child: GestureDetector(
-        onTap: () => _canvasBloc.add(
-          const CanvasSetToolMode(CanvasToolMode.doodle),
-        ),
+        onTap: () {
+          setState(() {
+            _arrowConnectStartElementId = null;
+          });
+          _canvasBloc.add(
+            const CanvasSetToolMode(CanvasToolMode.doodle),
+          );
+        },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
