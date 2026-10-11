@@ -86,6 +86,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   static const double _viewportComparisonEpsilon = 0.01;
 
+  bool _preventGestureBack = true;
+  bool _showEdgeTrayButtons = true;
+
   @override
   void initState() {
     super.initState();
@@ -103,6 +106,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   void _openTray(String tray) {
     if (_canvasBloc.state.activeTray == tray) return;
+    _canvasBloc.add(CanvasToggleTray(tray));
+  }
+
+  void _toggleTray(String tray) {
     _canvasBloc.add(CanvasToggleTray(tray));
   }
 
@@ -1070,6 +1077,25 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
             return WillPopScope(
               onWillPop: () async {
+                if (_preventGestureBack) {
+                  if (state.activeTray != null) {
+                    _canvasBloc.add(CanvasToggleTray(state.activeTray!));
+                    return false;
+                  }
+                  if (state.selectedShapeId != null) {
+                    _selectShape(null);
+                    return false;
+                  }
+                  ScaffoldMessenger.of(context).removeCurrentSnackBar();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Tap top-left back arrow to exit board'),
+                      duration: Duration(seconds: 2),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                  return false;
+                }
                 await _savePreview();
                 return true;
               },
@@ -1079,6 +1105,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     : const Color(0xFFF5F5F5),
                 resizeToAvoidBottomInset: false,
                 appBar: AppBar(
+                  leading: IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    tooltip: 'Back to Boards',
+                    onPressed: _exitCanvas,
+                  ),
                   title: GestureDetector(
                     onTap: () => _openSettings(state.boardTitle ?? 'Board'),
                     child: Text(
@@ -1112,6 +1143,22 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               content: Text('Join Code copied to clipboard!'),
                             ),
                           );
+                        } else if (value == 'toggle_gesture_lock') {
+                          setState(() {
+                            _preventGestureBack = !_preventGestureBack;
+                          });
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(_preventGestureBack
+                                  ? 'Gesture back locked (exit via back button).'
+                                  : 'Gesture back unlocked.'),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        } else if (value == 'toggle_edge_buttons') {
+                          setState(() {
+                            _showEdgeTrayButtons = !_showEdgeTrayButtons;
+                          });
                         } else if (value == 'exit') {
                           _exitCanvas();
                         }
@@ -1124,6 +1171,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         const PopupMenuItem(
                           value: 'copy',
                           child: Text('Copy Join Code'),
+                        ),
+                        const PopupMenuDivider(),
+                        CheckedPopupMenuItem<String>(
+                          value: 'toggle_gesture_lock',
+                          checked: _preventGestureBack,
+                          child: const Text('Lock Back Gesture'),
+                        ),
+                        CheckedPopupMenuItem<String>(
+                          value: 'toggle_edge_buttons',
+                          checked: _showEdgeTrayButtons,
+                          child: const Text('Show Tray Edge Icons'),
                         ),
                         const PopupMenuDivider(),
                         const PopupMenuItem(
@@ -1415,13 +1473,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
                           ..._buildImageOverlays(state),
 
+                          _buildEdgeTriggers(state, isDark),
                           _buildAllTrays(state),
                           if (state.selectedShapeId != null)
                             _buildSelectedElementPanel(
                               state,
                               mappedElements,
                             ),
-                          _buildEdgeTriggers(),
 
                           _buildToolModeIndicator(state),
 
@@ -2692,9 +2750,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
-  Widget _buildEdgeTriggers() {
+  Widget _buildEdgeTriggers(CanvasState state, bool isDark) {
     return Stack(
       children: [
+        // Touch triggers for swiping
         // BOTTOM: Swipe Up for Brushes
         Align(
           alignment: Alignment.bottomCenter,
@@ -2774,7 +2833,193 @@ class _CanvasScreenState extends State<CanvasScreen> {
             ),
           ),
         ),
+
+        // Visual Edge Tray Tab Icons (User can tap these instead of swiping)
+        if (_showEdgeTrayButtons) ...[
+          // TOP LEFT: Members Tab
+          _buildSideTab(
+            tray: 'members',
+            icon: Icons.people_alt_outlined,
+            label: 'Members',
+            alignment: Alignment.topLeft,
+            margin: const EdgeInsets.only(top: 130),
+            isLeft: true,
+            isActive: state.activeTray == 'members',
+            isDark: isDark,
+          ),
+          // BOTTOM LEFT: Tools Tab
+          _buildSideTab(
+            tray: 'tools',
+            icon: Icons.handyman_outlined,
+            label: 'Tools',
+            alignment: Alignment.bottomLeft,
+            margin: const EdgeInsets.only(bottom: 120),
+            isLeft: true,
+            isActive: state.activeTray == 'tools',
+            isDark: isDark,
+          ),
+          // TOP RIGHT: AI Tab
+          _buildSideTab(
+            tray: 'ai',
+            icon: Icons.auto_awesome,
+            label: 'AI Assistant',
+            alignment: Alignment.topRight,
+            margin: const EdgeInsets.only(top: 130),
+            isLeft: false,
+            isActive: state.activeTray == 'ai',
+            isDark: isDark,
+          ),
+          // BOTTOM RIGHT: Shapes Tab
+          _buildSideTab(
+            tray: 'shapes',
+            icon: Icons.category_outlined,
+            label: 'Shapes',
+            alignment: Alignment.bottomRight,
+            margin: const EdgeInsets.only(bottom: 120),
+            isLeft: false,
+            isActive: state.activeTray == 'shapes',
+            isDark: isDark,
+          ),
+          // BOTTOM CENTER: Brushes Tab Pill
+          _buildBottomCenterTab(
+            isActive: state.activeTray == 'brushes',
+            isDark: isDark,
+          ),
+        ],
       ],
+    );
+  }
+
+  Widget _buildSideTab({
+    required String tray,
+    required IconData icon,
+    required String label,
+    required Alignment alignment,
+    required EdgeInsets margin,
+    required bool isLeft,
+    required bool isActive,
+    required bool isDark,
+  }) {
+    final bgColor = isDark
+        ? (isActive
+            ? const Color(0xFF1E293B)
+            : const Color(0xFF0F172A).withOpacity(0.92))
+        : (isActive
+            ? Colors.blue.shade50
+            : Colors.white.withOpacity(0.95));
+    final iconColor = isActive
+        ? Colors.blueAccent
+        : (isDark ? Colors.white70 : Colors.black87);
+    final borderColor = isActive
+        ? Colors.blueAccent
+        : (isDark ? Colors.white24 : Colors.black12);
+
+    return Align(
+      alignment: alignment,
+      child: Padding(
+        padding: margin,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _toggleTray(tray),
+          child: Container(
+            width: 38,
+            height: 46,
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.horizontal(
+                left: isLeft ? Radius.zero : const Radius.circular(14),
+                right: isLeft ? const Radius.circular(14) : Radius.zero,
+              ),
+              border: Border(
+                top: BorderSide(color: borderColor, width: 1.2),
+                bottom: BorderSide(color: borderColor, width: 1.2),
+                left: isLeft
+                    ? BorderSide.none
+                    : BorderSide(color: borderColor, width: 1.2),
+                right: isLeft
+                    ? BorderSide(color: borderColor, width: 1.2)
+                    : BorderSide.none,
+              ),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x1F000000),
+                  blurRadius: 6,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Center(
+              child: Icon(icon, size: 20, color: iconColor),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomCenterTab({
+    required bool isActive,
+    required bool isDark,
+  }) {
+    final bgColor = isDark
+        ? (isActive
+            ? const Color(0xFF1E293B)
+            : const Color(0xFF0F172A).withOpacity(0.92))
+        : (isActive
+            ? Colors.blue.shade50
+            : Colors.white.withOpacity(0.95));
+    final iconColor = isActive
+        ? Colors.blueAccent
+        : (isDark ? Colors.white70 : Colors.black87);
+    final borderColor = isActive
+        ? Colors.blueAccent
+        : (isDark ? Colors.white24 : Colors.black12);
+
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 24),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _toggleTray('brushes'),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: borderColor, width: 1.2),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x1F000000),
+                  blurRadius: 6,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.palette_outlined, size: 16, color: iconColor),
+                const SizedBox(width: 6),
+                Text(
+                  'Brushes',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: iconColor,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  isActive ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up,
+                  size: 16,
+                  color: iconColor,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
