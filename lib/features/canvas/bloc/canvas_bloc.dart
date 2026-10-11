@@ -975,21 +975,29 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         (newW - oldElement.width).abs() < 0.1 &&
         (newH - oldElement.height).abs() < 0.1;
     if (unchanged) return;
+    final moved = (newCx - oldElement.center.dx).abs() >= 0.1 ||
+        (newCy - oldElement.center.dy).abs() >= 0.1;
+    final newZ = moved ? _nextZIndex() : oldElement.z;
     final next = state.elements
         .map((e) => e.id == event.elementId
             ? ImageElement(
                 id: e.id,
-                z: e.z,
+                z: newZ,
                 center: Offset(newCx, newCy),
                 width: newW,
                 height: newH,
                 imageBase64: (e as ImageElement).imageBase64,
               )
             : e)
-        .toList(growable: false);
+        .toList();
+    next.sort((a, b) {
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
     emit(state.copyWith(elements: next));
     final updateData = <String, dynamic>{
       'type': 'image',
+      'z': newZ,
       'cx': newCx,
       'cy': newCy,
       'width': newW,
@@ -1063,9 +1071,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         state.elements.where((e) => e.id == event.elementId).firstOrNull;
     if (target == null || target is! StickyNoteElement) return;
 
+    final newZ = event.center != null ? _nextZIndex() : target.z;
     final updated = StickyNoteElement(
       id: target.id,
-      z: target.z,
+      z: newZ,
       center: event.center ?? target.center,
       width: target.width,
       height: target.height,
@@ -1075,6 +1084,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
     final nextElements =
         state.elements.map((e) => e.id == target.id ? updated : e).toList();
+    nextElements.sort((a, b) {
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
     emit(state.copyWith(elements: nextElements));
     await _saveCrdtOperation(
       action: 'update',
@@ -1145,6 +1158,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
     final nextElements =
         state.elements.map((e) => e.id == target.id ? updated : e).toList();
+    nextElements.sort((a, b) {
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
     emit(state.copyWith(elements: nextElements));
     await _saveCrdtOperation(
       action: 'update',
@@ -1328,17 +1345,28 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       (start.dx + current.dx) / 2,
       (start.dy + current.dy) / 2,
     );
+    final dragDistance = (current - start).distance;
     final double size;
-    switch (shapeType) {
-      case CanvasShapeType.rectangle:
-        size = math.min(dx / 1.35, dy / 0.8);
-        break;
-      case CanvasShapeType.ellipse:
-        size = math.min(dx / 1.3, dy / 0.85);
-        break;
-      default:
-        size = math.min(dx, dy);
-        break;
+    final double rotation;
+    if (shapeType == CanvasShapeType.arrow) {
+      size = math.max(dragDistance / 1.3, 40.0).clamp(24.0, 480.0);
+      rotation = math.atan2(current.dy - start.dy, current.dx - start.dx);
+    } else if (shapeType == CanvasShapeType.line) {
+      size = math.max(dragDistance, 32.0).clamp(24.0, 480.0);
+      rotation = math.atan2(current.dy - start.dy, current.dx - start.dx);
+    } else {
+      rotation = 0.0;
+      switch (shapeType) {
+        case CanvasShapeType.rectangle:
+          size = math.min(dx / 1.35, dy / 0.8).clamp(24.0, 320.0);
+          break;
+        case CanvasShapeType.ellipse:
+          size = math.min(dx / 1.3, dy / 0.85).clamp(24.0, 320.0);
+          break;
+        default:
+          size = math.min(dx, dy).clamp(24.0, 320.0);
+          break;
+      }
     }
 
     // Use the existing shape creation logic
@@ -1352,12 +1380,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       color: state.selectedColor,
       strokeWidth: 3.0,
       isFilled: false,
+      rotation: rotation,
     );
     final nextElements = List<CanvasElement>.from(state.elements)..add(shape);
     emit(state.copyWith(
       elements: nextElements,
       activeTray: null,
       selectedShapeId: shapeId,
+      selectedShapeRotation: rotation,
       selectedShapeIsFilled: false,
       selectedShapeBorderRadius: 0.0,
       isDrawingShape: false,
@@ -1447,9 +1477,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     if (shape == null || !_ensureCanEdit(emit)) return;
+    final nextZ = _nextZIndex();
     final data = Map<String, dynamic>.from(shape.toMap())
       ..['cx'] = event.center.dx
-      ..['cy'] = event.center.dy;
+      ..['cy'] = event.center.dy
+      ..['z'] = nextZ;
     await _updateShape(shape.id, data, emit);
   }
 
@@ -1574,9 +1606,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final element = _selectedShape();
     if (element is! StrokeElement) return;
     final newPoints = element.points.map((p) => p + event.delta).toList();
+    final nextZ = _nextZIndex();
     final updated = StrokeElement(
       id: element.id,
-      z: element.z,
+      z: nextZ,
       color: element.color,
       strokeWidth: element.strokeWidth,
       opacity: element.opacity,
@@ -1585,6 +1618,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
     final next =
         state.elements.map((e) => e.id == element.id ? updated : e).toList();
+    next.sort((a, b) {
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
     emit(state.copyWith(elements: next));
     await _saveCrdtOperation(
       action: 'update',
@@ -1748,21 +1785,32 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final nextBorderRadius = (data['borderRadius'] as num?)?.toDouble() ?? 0.0;
     final nextColor = (data['color'] as num?)?.toInt() ?? 0;
     final nextFilled = (data['isFilled'] as bool?) ?? false;
+    final currentZ = existing.z;
+    final nextZ = (data['z'] as num?)?.toInt() ?? currentZ;
     final unchanged = (nextCx - currentCx).abs() < 0.01 &&
         (nextCy - currentCy).abs() < 0.01 &&
         (nextSize - currentSize).abs() < 0.01 &&
         (nextRotation - currentRotation).abs() < 0.0001 &&
         (nextBorderRadius - currentBorderRadius).abs() < 0.01 &&
         nextColor == currentColor &&
-        nextFilled == currentFilled;
+        nextFilled == currentFilled &&
+        nextZ == currentZ;
     if (unchanged) return;
+    if (existing is StickyNoteElement) {
+      data['width'] ??= nextSize;
+      data['height'] ??= nextSize;
+    }
     final fingerprint = _shapeFingerprint(shapeId, data);
     if (_lastShapePayloadFingerprint[shapeId] == fingerprint) return;
     _lastShapePayloadFingerprint[shapeId] = fingerprint;
     final next = state.elements
         .map((e) =>
             e.id == shapeId ? CanvasElement.fromMap(e.id, data) : e)
-        .toList(growable: false);
+        .toList();
+    next.sort((a, b) {
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
     emit(state.copyWith(elements: next));
     await _saveCrdtOperation(
       action: 'update',

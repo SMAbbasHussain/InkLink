@@ -1450,6 +1450,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           return switch (element) {
             StrokeElement e => _CanvasElement.stroke(
                 id: e.id,
+                z: e.z,
                 points: e.points,
                 color: e.color,
                 strokeWidth: e.strokeWidth,
@@ -1458,6 +1459,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               ),
             ShapeElement e => _CanvasElement.shape(
                 id: e.id,
+                z: e.z,
                 shapeType: e.shapeType,
                 center: e.center,
                 size: e.size,
@@ -1471,12 +1473,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
               ),
             TextElement e => _CanvasElement.text(
                 id: e.id,
+                z: e.z,
                 center: e.center,
                 text: e.text,
                 color: e.color,
               ),
             ImageElement e => _CanvasElement.image(
                 id: e.id,
+                z: e.z,
                 center: e.center,
                 width: e.width,
                 height: e.height,
@@ -1485,6 +1489,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               ),
             StickyNoteElement e => _CanvasElement.stickyNote(
                 id: e.id,
+                z: e.z,
                 center: e.center,
                 width: e.width,
                 height: e.height,
@@ -1495,6 +1500,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               ),
             ConnectorElement e => _CanvasElement.connector(
                 id: e.id,
+                z: e.z,
                 startElementId: e.startElementId,
                 startPoint: e.startPoint,
                 startAnchor: e.startAnchor,
@@ -1509,59 +1515,78 @@ class _CanvasScreenState extends State<CanvasScreen> {
               ),
           };
         })
-        .toList(growable: false);
+        .toList();
 
     final draft = _shapeTransformDraft;
 
-    if (draft == null && _pendingShapeEdits.isEmpty) {
-      return mapped;
-    }
+    final processed = mapped.map((element) {
+      _CanvasElement result = element;
 
-    return mapped
-        .map((element) {
-          _CanvasElement result = element;
+      // 1. Apply slider pending edits if this element is selected
+      if (_pendingShapeEdits.isNotEmpty &&
+          element.id == _canvasBloc.state.selectedShapeId) {
+        Map<String, dynamic> updatedData = Map.from(result.data);
+        _pendingShapeEdits.forEach((key, value) {
+          updatedData[key] = value;
+        });
+        // Re-bind properties from updatedData
+        if (result.kind == _ElementKind.shape) {
+          result = result.copyWith(
+            data: updatedData,
+            size: updatedData['size'] ?? result.size,
+            isFilled: updatedData['isFilled'] ?? result.isFilled,
+          );
+        }
+      }
 
-          // 1. Apply slider pending edits if this element is selected
-          if (_pendingShapeEdits.isNotEmpty &&
-              element.id == _canvasBloc.state.selectedShapeId) {
-            Map<String, dynamic> updatedData = Map.from(result.data);
-            _pendingShapeEdits.forEach((key, value) {
-              updatedData[key] = value;
-            });
-            // Re-bind properties from updatedData
-            if (result.kind == _ElementKind.shape) {
-              result = result.copyWith(
-                data: updatedData,
-                size: updatedData['size'] ?? result.size,
-                isFilled: updatedData['isFilled'] ?? result.isFilled,
-              );
-            }
-          }
+      // 2. Apply drag/scale draft overlay edits
+      if (draft != null && result.id == draft.shapeId) {
+        result = result.copyWith(
+          center: draft.center,
+          size: draft.size,
+          width: (draft.width != null && draft.width! > 0)
+              ? draft.width!
+              : (result.width > 0 ? result.width : draft.size),
+          height: (draft.height != null && draft.height! > 0)
+              ? draft.height!
+              : (result.height > 0 ? result.height : draft.size),
+          data: {...result.data, 'rotation': draft.rotation},
+        );
+      } else if (_isDraggingShape &&
+          _shapeDragPreviewCenter != null &&
+          result.id == _canvasBloc.state.selectedShapeId) {
+        result = result.copyWith(center: _shapeDragPreviewCenter!);
+      } else if (_isDraggingStroke &&
+          _strokeDragDelta != null &&
+          _strokeDragOriginalPoints != null &&
+          result.id == _canvasBloc.state.selectedShapeId) {
+        final original = _strokeDragOriginalPoints!;
+        result = result.copyWith(
+          points: original.map((p) => p + _strokeDragDelta!).toList(),
+        );
+      }
 
-          // 2. Apply drag/scale draft overlay edits
-          if (draft != null && result.id == draft.shapeId) {
-            result = result.copyWith(
-              center: draft.center,
-              size: draft.size,
-              data: {...result.data, 'rotation': draft.rotation},
-            );
-          } else if (_isDraggingShape &&
-              _shapeDragPreviewCenter != null &&
-              result.id == _canvasBloc.state.selectedShapeId) {
-            result = result.copyWith(center: _shapeDragPreviewCenter!);
-          } else if (_isDraggingStroke &&
-              _strokeDragDelta != null &&
-              _strokeDragOriginalPoints != null &&
-              result.id == _canvasBloc.state.selectedShapeId) {
-            final original = _strokeDragOriginalPoints!;
-            result = result.copyWith(
-              points: original.map((p) => p + _strokeDragDelta!).toList(),
-            );
-          }
+      return result;
+    }).toList();
 
-          return result;
-        })
-        .toList(growable: false);
+    processed.sort((a, b) {
+      if (draft != null) {
+        if (a.id == draft.shapeId) return 1;
+        if (b.id == draft.shapeId) return -1;
+      }
+      if (_isDraggingShape && _canvasBloc.state.selectedShapeId != null) {
+        if (a.id == _canvasBloc.state.selectedShapeId) return 1;
+        if (b.id == _canvasBloc.state.selectedShapeId) return -1;
+      }
+      if (_isDraggingStroke && _canvasBloc.state.selectedShapeId != null) {
+        if (a.id == _canvasBloc.state.selectedShapeId) return 1;
+        if (b.id == _canvasBloc.state.selectedShapeId) return -1;
+      }
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
+
+    return processed;
   }
 
   double _pointToSegmentDistance(Offset point, Offset a, Offset b) {
@@ -1650,6 +1675,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
         ],
       );
     }
+    if (element.kind == _ElementKind.connector) {
+      return _buildConnectorSelectionOverlay(state, element);
+    }
+    if (element.kind == _ElementKind.stickyNote) {
+      return Stack(
+        children: [
+          if (!_isEditingShape)
+            _buildStickyNoteEditBanner(
+              Theme.of(context).brightness == Brightness.dark,
+              element,
+            ),
+          _buildShapeTransformOverlay(state, mappedElements),
+        ],
+      );
+    }
     return Stack(
       children: [
         if (!_isEditingShape && _isShapeEditTrayExpanded)
@@ -1659,6 +1699,141 @@ class _CanvasScreenState extends State<CanvasScreen> {
             Theme.of(context).brightness == Brightness.dark,
           ),
         _buildShapeTransformOverlay(state, mappedElements),
+      ],
+    );
+  }
+
+  Widget _buildStickyNoteEditBanner(bool isDark, _CanvasElement element) {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 24 + MediaQuery.of(context).padding.bottom,
+      child: Center(
+        child: ElevatedButton.icon(
+          onPressed: () => _editStickyNote(element),
+          icon: Icon(
+            Icons.edit,
+            size: 18,
+            color: isDark
+                ? AppColors.textPrimaryDark
+                : AppColors.textPrimaryLight,
+          ),
+          label: Text(
+            'Edit Note',
+            style: TextStyle(
+              color: isDark
+                  ? AppColors.textPrimaryDark
+                  : AppColors.textPrimaryLight,
+            ),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: isDark
+                ? AppColors.surfaceDark
+                : AppColors.surfaceLight,
+            foregroundColor: isDark
+                ? AppColors.textPrimaryDark
+                : AppColors.textPrimaryLight,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            elevation: 2,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConnectorSelectionOverlay(
+    CanvasState state,
+    _CanvasElement element,
+  ) {
+    Offset start = element.startPoint;
+    Offset end = element.endPoint;
+    if (element.startElementId != null) {
+      final s = state.elements
+          .where((e) => e.id == element.startElementId)
+          .firstOrNull;
+      if (s != null) start = _getElementWorldCenter(s);
+    }
+    if (element.endElementId != null) {
+      final e = state.elements
+          .where((e) => e.id == element.endElementId)
+          .firstOrNull;
+      if (e != null) end = _getElementWorldCenter(e);
+    }
+
+    final screenStart = _toScreen(start);
+    final screenEnd = _toScreen(end);
+    final screenMid = Offset(
+      (screenStart.dx + screenEnd.dx) / 2,
+      (screenStart.dy + screenEnd.dy) / 2,
+    );
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Positioned(
+          left: screenStart.dx - 10,
+          top: screenStart.dy - 10,
+          child: Container(
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              color: Colors.blueAccent,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 4,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          left: screenEnd.dx - 10,
+          top: screenEnd.dy - 10,
+          child: Container(
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              color: Colors.blueAccent,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 4,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          left: screenMid.dx - 14,
+          top: screenMid.dy - 36,
+          child: GestureDetector(
+            onTap: () => _canvasBloc.add(CanvasDeleteElement(element.id)),
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: Colors.redAccent,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 4,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.delete, size: 14, color: Colors.white),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -2153,12 +2328,23 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final selected = mappedElements.where((e) => e.id == state.selectedShapeId);
     if (selected.isEmpty) return const SizedBox.shrink();
     final baseShape = selected.first;
+    if (baseShape.kind == _ElementKind.connector) {
+      return const SizedBox.shrink();
+    }
     final shape =
         _shapeTransformDraft != null &&
             _shapeTransformDraft!.shapeId == baseShape.id
         ? baseShape.copyWith(
             center: _shapeTransformDraft!.center,
             size: _shapeTransformDraft!.size,
+            width: (_shapeTransformDraft!.width != null &&
+                    _shapeTransformDraft!.width! > 0)
+                ? _shapeTransformDraft!.width!
+                : baseShape.width,
+            height: (_shapeTransformDraft!.height != null &&
+                    _shapeTransformDraft!.height! > 0)
+                ? _shapeTransformDraft!.height!
+                : baseShape.height,
             data: {
               ...baseShape.data,
               'rotation': _shapeTransformDraft!.rotation,
@@ -2167,15 +2353,38 @@ class _CanvasScreenState extends State<CanvasScreen> {
         : baseShape;
 
     final center = _toScreen(shape.center);
-    final size = shape.size * _viewportScale;
-    final half = size / 2;
+    final double rawW;
+    final double rawH;
+    if (shape.kind == _ElementKind.stickyNote ||
+        shape.kind == _ElementKind.image) {
+      rawW = shape.width > 0
+          ? shape.width
+          : (shape.size > 0 ? shape.size : 160.0);
+      rawH = shape.height > 0
+          ? shape.height
+          : (shape.size > 0 ? shape.size : 160.0);
+    } else if (shape.shapeType == CanvasShapeType.arrow) {
+      rawW = shape.size * 1.3;
+      rawH = shape.size * 0.7;
+    } else if (shape.shapeType == CanvasShapeType.rectangle) {
+      rawW = shape.size * 1.35;
+      rawH = shape.size * 0.8;
+    } else {
+      rawW = shape.size;
+      rawH = shape.size;
+    }
+
+    final screenW = rawW * _viewportScale;
+    final screenH = rawH * _viewportScale;
+    final halfW = screenW / 2;
+    final halfH = screenH / 2;
     final rotation = (shape.data['rotation'] as num?)?.toDouble() ?? 0.0;
 
     return Positioned(
-      left: center.dx - half - 16,
-      top: center.dy - half - 16,
-      width: size + 32,
-      height: size + 32,
+      left: center.dx - halfW - 16,
+      top: center.dy - halfH - 16,
+      width: screenW + 32,
+      height: screenH + 32,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
@@ -2186,14 +2395,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  Positioned.fill(
+                  Positioned(
+                    left: 16,
+                    top: 16,
+                    width: screenW,
+                    height: screenH,
                     child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onPanStart: (_) {
                         _setShapeEditing(true);
                         _shapeTransformDraft ??= _ShapeTransformDraft(
                           shapeId: shape.id,
                           center: shape.center,
                           size: shape.size,
+                          width: rawW,
+                          height: rawH,
                           rotation:
                               (shape.data['rotation'] as num?)?.toDouble() ??
                               state.selectedShapeRotation,
@@ -2206,6 +2422,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               shapeId: shape.id,
                               center: shape.center,
                               size: shape.size,
+                              width: rawW,
+                              height: rawH,
                               rotation:
                                   (shape.data['rotation'] as num?)?.toDouble() ??
                                   state.selectedShapeRotation,
@@ -2229,15 +2447,19 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       },
                       child: Container(
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.blueAccent, width: 1.5),
-                          borderRadius: BorderRadius.circular(8),
+                          color: Colors.transparent,
+                          border: Border.all(color: Colors.blueAccent, width: 2.0),
+                          borderRadius: BorderRadius.circular(
+                            shape.kind == _ElementKind.stickyNote ? 8 : 4,
+                          ),
                         ),
                       ),
                     ),
                   ),
+                  // Rotate handle (top center)
                   Positioned(
-                    top: -8,
-                    left: size / 2,
+                    top: 2,
+                    left: 16 + (screenW / 2) - 14,
                     child: GestureDetector(
                       onPanStart: (_) {
                         _setShapeEditing(true);
@@ -2249,6 +2471,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           shapeId: shape.id,
                           center: shape.center,
                           size: shape.size,
+                          width: rawW,
+                          height: rawH,
                           rotation: baseRotation,
                         );
                       },
@@ -2279,9 +2503,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       child: _buildHandle(Icons.rotate_right),
                     ),
                   ),
+                  // Resize handle (bottom right)
                   Positioned(
-                    top: size / 2,
-                    right: -8,
+                    bottom: 2,
+                    right: 2,
                     child: GestureDetector(
                       onPanStart: (_) {
                         _setShapeEditing(true);
@@ -2290,6 +2515,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           shapeId: shape.id,
                           center: shape.center,
                           size: shape.size,
+                          width: rawW,
+                          height: rawH,
                           rotation:
                               (shape.data['rotation'] as num?)?.toDouble() ??
                               state.selectedShapeRotation,
@@ -2300,10 +2527,20 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         if (draft == null || draft.shapeId != shape.id) return;
                         final delta = details.delta.dx + details.delta.dy;
                         final nextSize = (draft.size + delta / _viewportScale * 1.8)
-                            .clamp(24.0, 420.0)
+                            .clamp(32.0, 480.0)
+                            .toDouble();
+                        final nextW = ((draft.width ?? draft.size) + details.delta.dx / _viewportScale * 1.8)
+                            .clamp(40.0, 480.0)
+                            .toDouble();
+                        final nextH = ((draft.height ?? draft.size) + details.delta.dy / _viewportScale * 1.8)
+                            .clamp(40.0, 480.0)
                             .toDouble();
                         setState(() {
-                          _shapeTransformDraft = draft.copyWith(size: nextSize);
+                          _shapeTransformDraft = draft.copyWith(
+                            size: nextSize,
+                            width: nextW,
+                            height: nextH,
+                          );
                         });
                         _canvasBloc.add(CanvasPreviewResizeSelectedShape(nextSize));
                       },
@@ -2319,25 +2556,52 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       child: _buildHandle(Icons.open_in_full),
                     ),
                   ),
+                  // Sticky note quick edit button (bottom left)
+                  if (shape.kind == _ElementKind.stickyNote)
+                    Positioned(
+                      bottom: 2,
+                      left: 2,
+                      child: GestureDetector(
+                        onTap: () => _editStickyNote(shape),
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.blueAccent, width: 2),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x33000000),
+                                blurRadius: 4,
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(Icons.edit, size: 14, color: Colors.blueAccent),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
           ),
+          // Delete button (top right)
           Positioned(
-            top: -8,
-            right: -8,
+            top: 2,
+            right: 2,
             child: GestureDetector(
               onTap: () => _canvasBloc.add(CanvasDeleteElement(shape.id)),
               child: Container(
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  color: Colors.red,
+                  color: Colors.redAccent,
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white, width: 2),
                   boxShadow: const [
                     BoxShadow(
-                      color: Color(0x22000000),
+                      color: Color(0x33000000),
                       blurRadius: 4,
                       offset: Offset(0, 2),
                     ),
@@ -2845,24 +3109,32 @@ class _ShapeTransformDraft {
   final String shapeId;
   final Offset center;
   final double size;
+  final double? width;
+  final double? height;
   final double rotation;
 
   const _ShapeTransformDraft({
     required this.shapeId,
     required this.center,
     required this.size,
+    this.width,
+    this.height,
     required this.rotation,
   });
 
   _ShapeTransformDraft copyWith({
     Offset? center,
     double? size,
+    double? width,
+    double? height,
     double? rotation,
   }) {
     return _ShapeTransformDraft(
       shapeId: shapeId,
       center: center ?? this.center,
       size: size ?? this.size,
+      width: width ?? this.width,
+      height: height ?? this.height,
       rotation: rotation ?? this.rotation,
     );
   }

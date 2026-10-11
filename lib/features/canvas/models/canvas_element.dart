@@ -78,8 +78,12 @@ sealed class CanvasElement {
             (data['cx'] as num).toDouble(),
             (data['cy'] as num).toDouble(),
           ),
-          width: (data['width'] as num?)?.toDouble() ?? 160,
-          height: (data['height'] as num?)?.toDouble() ?? 160,
+          width: (data['width'] as num?)?.toDouble() ??
+              (data['size'] as num?)?.toDouble() ??
+              160,
+          height: (data['height'] as num?)?.toDouble() ??
+              (data['size'] as num?)?.toDouble() ??
+              160,
           text: data['text'] as String? ?? '',
           color: Color(data['color'] as int? ?? 0xFFFFF9A6),
           rotation: (data['rotation'] as num?)?.toDouble() ?? 0,
