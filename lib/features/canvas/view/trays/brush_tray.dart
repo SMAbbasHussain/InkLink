@@ -17,6 +17,7 @@ class BrushTray extends StatefulWidget {
   final ValueChanged<CanvasToolMode>? onToolModeChanged;
   final ValueChanged<bool> onEraserEraseEverythingChanged;
   final ValueChanged<bool>? onSmoothDoodlesChanged;
+  final VoidCallback? onClose;
 
   const BrushTray({
     super.key,
@@ -34,6 +35,7 @@ class BrushTray extends StatefulWidget {
     this.onToolModeChanged,
     required this.onEraserEraseEverythingChanged,
     this.onSmoothDoodlesChanged,
+    this.onClose,
   });
 
   @override
@@ -138,6 +140,7 @@ class _BrushTrayState extends State<BrushTray> {
       direction: TrayDirection.bottom,
       title: 'Brush & Color',
       height: 460,
+      onClose: widget.onClose,
       child: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

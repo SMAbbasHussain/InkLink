@@ -13,6 +13,7 @@ class SlidingTray extends StatelessWidget {
   final Widget? headerActions;
   final double? topOffset;
   final double? bottomOffset;
+  final VoidCallback? onClose;
 
   const SlidingTray({
     super.key,
@@ -25,6 +26,7 @@ class SlidingTray extends StatelessWidget {
     this.headerActions,
     this.topOffset,
     this.bottomOffset,
+    this.onClose,
   });
 
   @override
@@ -64,62 +66,121 @@ class SlidingTray extends StatelessWidget {
       bottom: bottom,
       left: left,
       right: right,
-      child: Container(
-        width: width,
-        height: height,
-        decoration: BoxDecoration(
-          color: isDark
-              ? AppColors.surfaceDark.withOpacity(0.95)
-              : Colors.white.withOpacity(0.95),
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragUpdate: (d) {
+          if (direction == TrayDirection.left && d.delta.dx < -8) {
+            onClose?.call();
+          } else if (direction == TrayDirection.right && d.delta.dx > 8) {
+            onClose?.call();
+          }
+        },
+        onVerticalDragUpdate: (d) {
+          if (direction == TrayDirection.bottom && d.delta.dy > 8) {
+            onClose?.call();
+          } else if (direction == TrayDirection.top && d.delta.dy < -8) {
+            onClose?.call();
+          }
+        },
+        child: Container(
+          width: width,
+          height: height,
+          decoration: BoxDecoration(
             color: isDark
-                ? Colors.white.withOpacity(0.1)
-                : AppColors.primary.withOpacity(0.2),
+                ? AppColors.surfaceDark.withOpacity(0.95)
+                : Colors.white.withOpacity(0.95),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withOpacity(0.1)
+                  : AppColors.primary.withOpacity(0.2),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(isDark ? 0.4 : 0.1),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
+              ),
+            ],
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(isDark ? 0.4 : 0.1),
-              blurRadius: 20,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: Column(
-          children: [
-            // Header Handle (UX cue for swiping)
-            Container(
-              margin: const EdgeInsets.only(top: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                vertical: 12.0,
-                horizontal: 16,
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
+          child: Column(
+            children: [
+              // Header Handle (UX cue for swiping)
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragUpdate: (d) {
+                  if (direction == TrayDirection.bottom && d.delta.dy > 6) {
+                    onClose?.call();
+                  } else if (direction == TrayDirection.top && d.delta.dy < -6) {
+                    onClose?.call();
+                  }
+                },
+                onHorizontalDragUpdate: (d) {
+                  if (direction == TrayDirection.left && d.delta.dx < -6) {
+                    onClose?.call();
+                  } else if (direction == TrayDirection.right && d.delta.dx > 6) {
+                    onClose?.call();
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  width: double.infinity,
+                  alignment: Alignment.center,
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                   ),
-                  ?headerActions,
-                ],
+                ),
               ),
-            ),
-            const Divider(height: 1),
-            Expanded(child: child),
-          ],
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  vertical: 8.0,
+                  horizontal: 16,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    ?headerActions,
+                    if (onClose != null) ...[
+                      const SizedBox(width: 8),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: onClose,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isDark
+                                ? Colors.white.withOpacity(0.08)
+                                : Colors.black.withOpacity(0.05),
+                          ),
+                          child: Icon(
+                            Icons.close_rounded,
+                            size: 18,
+                            color: isDark ? Colors.white70 : Colors.black54,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(child: child),
+            ],
+          ),
         ),
       ),
     );

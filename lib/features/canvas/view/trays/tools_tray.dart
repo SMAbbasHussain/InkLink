@@ -9,6 +9,7 @@ class ToolsTray extends StatelessWidget {
   final VoidCallback onClearAll;
   final VoidCallback? onAddStickyNote;
   final VoidCallback? onAddConnector;
+  final VoidCallback? onClose;
 
   const ToolsTray({
     super.key,
@@ -18,6 +19,7 @@ class ToolsTray extends StatelessWidget {
     required this.onClearAll,
     this.onAddStickyNote,
     this.onAddConnector,
+    this.onClose,
   });
 
   @override
@@ -29,6 +31,7 @@ class ToolsTray extends StatelessWidget {
       height: 380,
       width: 230,
       bottomOffset: 60,
+      onClose: onClose,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(

@@ -11,6 +11,7 @@ class AITray extends StatelessWidget {
   final VoidCallback onUploadImage;
   final VoidCallback onGenerateImage;
   final List<Uint8List> recentImages;
+  final VoidCallback? onClose;
 
   const AITray({
     super.key,
@@ -20,6 +21,7 @@ class AITray extends StatelessWidget {
     required this.onUploadImage,
     required this.onGenerateImage,
     required this.recentImages,
+    this.onClose,
   });
 
   @override
@@ -30,6 +32,7 @@ class AITray extends StatelessWidget {
       title: 'Media',
       width: 290,
       height: 420,
+      onClose: onClose,
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: LayoutBuilder(

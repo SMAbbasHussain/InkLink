@@ -88,6 +88,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   bool _preventGestureBack = true;
   bool _showEdgeTrayButtons = true;
+  DateTime? _lastEdgeDragTime;
+  DateTime? _lastBackSnackbarTime;
 
   @override
   void initState() {
@@ -334,69 +336,109 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
-  Future<void> _uploadImageToCanvas() async {
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      backgroundColor: Theme.of(context).cardColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: Colors.grey.withOpacity(0.4),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Insert Image',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+  Future<void> _uploadImageToCanvas([ImageSource? directSource]) async {
+    final ImageSource? source;
+    if (directSource != null) {
+      source = directSource;
+    } else {
+      source = await showModalBottomSheet<ImageSource>(
+        context: context,
+        backgroundColor: Theme.of(context).cardColor,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-              ),
-              ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: AppColors.primary,
-                  child: Icon(Icons.camera_alt_rounded, color: Colors.white),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Insert Image',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
                 ),
-                title: const Text('Take Photo with Camera'),
-                subtitle: const Text('Capture a picture and place onto canvas'),
-                onTap: () => Navigator.pop(ctx, ImageSource.camera),
-              ),
-              ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Colors.blueAccent,
-                  child: Icon(Icons.photo_library_rounded, color: Colors.white),
+                ListTile(
+                  leading: const CircleAvatar(
+                    backgroundColor: AppColors.primary,
+                    child: Icon(Icons.camera_alt_rounded, color: Colors.white),
+                  ),
+                  title: const Text('Take Photo with Camera'),
+                  subtitle: const Text('Capture a picture and place onto canvas'),
+                  onTap: () => Navigator.pop(ctx, ImageSource.camera),
                 ),
-                title: const Text('Choose from Gallery'),
-                subtitle: const Text('Pick an existing photo or graphic'),
-                onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-              ),
-            ],
+                ListTile(
+                  leading: const CircleAvatar(
+                    backgroundColor: Colors.blueAccent,
+                    child: Icon(Icons.photo_library_rounded, color: Colors.white),
+                  ),
+                  title: const Text('Choose from Gallery'),
+                  subtitle: const Text('Pick an existing photo or graphic'),
+                  onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+                ),
+              ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+    }
 
     if (source == null || !mounted) return;
 
     final picker = ImagePicker();
-    final picked = await picker.pickImage(
-      source: source,
-      imageQuality: 95,
-    );
+    final XFile? picked;
+    try {
+      picked = await picker.pickImage(
+        source: source,
+        imageQuality: 95,
+      );
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      final isNoCamera = e.code == 'no_available_camera' ||
+          (e.message?.toLowerCase().contains('no camera') ?? false);
+      final isDenied = e.code == 'camera_access_denied' ||
+          (e.message?.toLowerCase().contains('denied') ?? false);
+
+      final message = isNoCamera
+          ? 'No camera available on this device.'
+          : isDenied
+              ? 'Camera permission was denied.'
+              : 'Failed to access camera: ${e.message ?? e.code}';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          action: isNoCamera
+              ? SnackBarAction(
+                  label: 'Choose Gallery',
+                  onPressed: () => _uploadImageToCanvas(ImageSource.gallery),
+                )
+              : null,
+        ),
+      );
+      return;
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to pick image: $e')),
+      );
+      return;
+    }
+
     if (picked == null || !mounted) return;
 
     try {
@@ -1078,22 +1120,33 @@ class _CanvasScreenState extends State<CanvasScreen> {
             return WillPopScope(
               onWillPop: () async {
                 if (_preventGestureBack) {
-                  if (state.activeTray != null) {
-                    _canvasBloc.add(CanvasToggleTray(state.activeTray!));
+                  // If back gesture is locked:
+                  // 1) NEVER close the active tray here. When a user swipes inward from the edge,
+                  //    Android OS fires a back gesture concurrently with the edge drag. Closing
+                  //    the tray here would instantly snap it shut right after opening!
+                  // 2) Suppress the exit snackbar if the user was recently interacting with edge triggers.
+                  final now = DateTime.now();
+                  final isRecentEdgeDrag = _lastEdgeDragTime != null &&
+                      now.difference(_lastEdgeDragTime!) <
+                          const Duration(milliseconds: 1500);
+
+                  if (isRecentEdgeDrag) {
                     return false;
                   }
-                  if (state.selectedShapeId != null) {
-                    _selectShape(null);
-                    return false;
+
+                  if (_lastBackSnackbarTime == null ||
+                      now.difference(_lastBackSnackbarTime!) >
+                          const Duration(seconds: 3)) {
+                    _lastBackSnackbarTime = now;
+                    ScaffoldMessenger.of(context).removeCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Tap top-left back arrow to exit board'),
+                        duration: Duration(seconds: 2),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
                   }
-                  ScaffoldMessenger.of(context).removeCurrentSnackBar();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Tap top-left back arrow to exit board'),
-                      duration: Duration(seconds: 2),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
                   return false;
                 }
                 await _savePreview();
@@ -2697,7 +2750,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Widget _buildAllTrays(CanvasState state) {
     return Stack(
       children: [
-        MembersTray(isOpen: state.activeTray == 'members'),
+        MembersTray(
+          isOpen: state.activeTray == 'members',
+          onClose: () => _toggleTray('members'),
+        ),
         AITray(
           isOpen: state.activeTray == 'ai',
           controller: _aiPromptController,
@@ -2705,6 +2761,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           onUploadImage: _uploadImageToCanvas,
           onGenerateImage: _onGenerateImagePlaceholder,
           recentImages: _recentImages,
+          onClose: () => _toggleTray('ai'),
         ),
         ToolsTray(
           isOpen: state.activeTray == 'tools',
@@ -2713,10 +2770,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
           onClearAll: _clearAll,
           onAddStickyNote: _addStickyNoteDialog,
           onAddConnector: _addConnectorDialog,
+          onClose: () => _toggleTray('tools'),
         ),
         ShapesTray(
           isOpen: state.activeTray == 'shapes',
           onSelectShapeForDrawing: _selectShapeForDrawing,
+          onClose: () => _toggleTray('shapes'),
         ),
         BrushTray(
           isOpen: state.activeTray == 'brushes',
@@ -2745,6 +2804,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           onToolModeChanged: (mode) {
             _canvasBloc.add(CanvasSetToolMode(mode));
           },
+          onClose: () => _toggleTray('brushes'),
         ),
       ],
     );
@@ -2758,12 +2818,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
         Align(
           alignment: Alignment.bottomCenter,
           child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
+            behavior: HitTestBehavior.opaque,
+            onVerticalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onVerticalDragUpdate: (d) {
-              if (d.delta.dy < -8) _openTray('brushes');
+              _lastEdgeDragTime = DateTime.now();
+              if (d.delta.dy < -6) _openTray('brushes');
             },
             child: Container(
-              height: 50,
+              height: 55,
               width: double.infinity,
               color: Colors.transparent,
             ),
@@ -2773,13 +2835,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
         Align(
           alignment: Alignment.topLeft,
           child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
-              if (d.delta.dx > 8) _openTray('members');
+              _lastEdgeDragTime = DateTime.now();
+              if (d.delta.dx > 6) _openTray('members');
             },
             child: Container(
-              height: 200,
-              width: 40,
+              height: 220,
+              width: 50,
               margin: const EdgeInsets.only(top: 60),
               color: Colors.transparent,
             ),
@@ -2789,13 +2853,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
         Align(
           alignment: Alignment.bottomLeft,
           child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
-              if (d.delta.dx > 8) _openTray('tools');
+              _lastEdgeDragTime = DateTime.now();
+              if (d.delta.dx > 6) _openTray('tools');
             },
             child: Container(
-              height: 200,
-              width: 40,
+              height: 220,
+              width: 50,
               margin: const EdgeInsets.only(bottom: 60),
               color: Colors.transparent,
             ),
@@ -2805,13 +2871,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
         Align(
           alignment: Alignment.topRight,
           child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
-              if (d.delta.dx < -8) _openTray('ai');
+              _lastEdgeDragTime = DateTime.now();
+              if (d.delta.dx < -6) _openTray('ai');
             },
             child: Container(
-              height: 200,
-              width: 40,
+              height: 220,
+              width: 50,
               margin: const EdgeInsets.only(top: 60),
               color: Colors.transparent,
             ),
@@ -2821,13 +2889,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
         Align(
           alignment: Alignment.bottomRight,
           child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
-              if (d.delta.dx < -8) _openTray('shapes');
+              _lastEdgeDragTime = DateTime.now();
+              if (d.delta.dx < -6) _openTray('shapes');
             },
             child: Container(
-              height: 200,
-              width: 40,
+              height: 220,
+              width: 50,
               margin: const EdgeInsets.only(bottom: 60),
               color: Colors.transparent,
             ),

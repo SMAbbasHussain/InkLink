@@ -1,6 +1,7 @@
-import 'dart:io';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -189,7 +190,32 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
           SnackBar(content: Text('Error processing image: ${e.toString()}')),
         );
       }
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      final isNoCamera = e.code == 'no_available_camera' ||
+          (e.message?.toLowerCase().contains('no camera') ?? false);
+      final isDenied = e.code == 'camera_access_denied' ||
+          (e.message?.toLowerCase().contains('denied') ?? false);
+
+      final message = isNoCamera
+          ? 'No camera available on this device.'
+          : isDenied
+              ? 'Camera permission was denied.'
+              : 'Failed to access camera: ${e.message ?? e.code}';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          action: isNoCamera
+              ? SnackBarAction(
+                  label: 'Choose Gallery',
+                  onPressed: () => _pickImage(ImageSource.gallery),
+                )
+              : null,
+        ),
+      );
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error picking image: ${e.toString()}')),
       );
