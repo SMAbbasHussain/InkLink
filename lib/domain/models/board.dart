@@ -34,6 +34,10 @@ class Board {
   final String whoCanInvite;
   final String defaultLinkJoinRole;
   final String currentUserRole;
+  final bool? _isArchived;
+  bool get isArchived => _isArchived ?? false;
+  final bool? _allowMembersToCopy;
+  bool get allowMembersToCopy => _allowMembersToCopy ?? false;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -50,9 +54,12 @@ class Board {
     this.whoCanInvite = inviteOwnerOnly,
     this.defaultLinkJoinRole = roleViewer,
     this.currentUserRole = roleViewer,
+    bool isArchived = false,
+    bool allowMembersToCopy = false,
     required this.createdAt,
     required this.updatedAt,
-  });
+  }) : _isArchived = isArchived,
+       _allowMembersToCopy = allowMembersToCopy;
 
   factory Board.fromMap(Map<String, dynamic> map, String id) {
     final invitePolicy = map['invitePolicy'] as Map<String, dynamic>?;
@@ -72,8 +79,48 @@ class Board {
       defaultLinkJoinRole:
           (invitePolicy?['defaultLinkJoinRole'] as String?) ?? roleViewer,
       currentUserRole: (map['currentUserRole'] as String?) ?? roleViewer,
+      isArchived: (map['isArchived'] as bool?) ?? false,
+      allowMembersToCopy: (map['allowMembersToCopy'] as bool?) ?? false,
       createdAt: _parseDate(map['createdAt']),
       updatedAt: _parseDate(map['updatedAt']),
+    );
+  }
+
+  Board copyWith({
+    String? id,
+    String? title,
+    String? ownerId,
+    List<String>? members,
+    String? previewPath,
+    String? visibility,
+    String? privateJoinPolicy,
+    List<String>? tags,
+    bool? joinViaCodeEnabled,
+    String? whoCanInvite,
+    String? defaultLinkJoinRole,
+    String? currentUserRole,
+    bool? isArchived,
+    bool? allowMembersToCopy,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    return Board(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      ownerId: ownerId ?? this.ownerId,
+      members: members ?? this.members,
+      previewPath: previewPath ?? this.previewPath,
+      visibility: visibility ?? this.visibility,
+      privateJoinPolicy: privateJoinPolicy ?? this.privateJoinPolicy,
+      tags: tags ?? this.tags,
+      joinViaCodeEnabled: joinViaCodeEnabled ?? this.joinViaCodeEnabled,
+      whoCanInvite: whoCanInvite ?? this.whoCanInvite,
+      defaultLinkJoinRole: defaultLinkJoinRole ?? this.defaultLinkJoinRole,
+      currentUserRole: currentUserRole ?? this.currentUserRole,
+      isArchived: isArchived ?? this.isArchived,
+      allowMembersToCopy: allowMembersToCopy ?? this.allowMembersToCopy,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 
@@ -86,6 +133,8 @@ class Board {
       'visibility': visibility,
       'tags': tags,
       'joinViaCodeEnabled': joinViaCodeEnabled,
+      'isArchived': isArchived,
+      'allowMembersToCopy': allowMembersToCopy,
       'invitePolicy': {
         'whoCanInvite': whoCanInvite,
         'defaultLinkJoinRole': defaultLinkJoinRole,

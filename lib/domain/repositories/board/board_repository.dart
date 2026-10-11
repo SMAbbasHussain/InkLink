@@ -23,6 +23,7 @@ abstract class BoardRepository {
     required String whoCanInvite,
     required String defaultLinkJoinRole,
     required List<String> tags,
+    bool allowMembersToCopy = false,
     List<String> invitedUserIds = const [],
     int inviteExpiryHours = 72,
   });
@@ -31,6 +32,18 @@ abstract class BoardRepository {
   Future<void> removeBoardSync(String boardId);
   Future<void> renameBoard(String boardId, String newName);
   Future<void> deleteBoard(String boardId);
+  Future<void> archiveBoard(String boardId);
+  Future<void> unarchiveBoard(String boardId);
+  Future<String> duplicateBoard(String boardId, {String? customTitle});
+  Future<void> updateBoardTags(String boardId, List<String> tags);
+  Future<void> updateBoardSettings({
+    required String boardId,
+    required String visibility,
+    required String privateJoinPolicy,
+    required String whoCanInvite,
+    required String defaultLinkJoinRole,
+    bool? allowMembersToCopy,
+  });
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes);
   Stream<String?> watchBoardPreview(String boardId);
 }

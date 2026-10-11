@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
+import '../../../domain/models/board.dart';
 import '../../canvas/view/canvas_route.dart';
 import '../../board_invitations/bloc/board_invitations_bloc.dart';
 import '../../board_invitations/view/board_invites_screen.dart';
@@ -35,7 +36,7 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     context.read<BoardInvitationsBloc>().add(
       const BoardInvitationsLoadRequested(),
     );
@@ -376,6 +377,7 @@ class _HomeScreenState extends State<HomeScreen>
                       tabs: const [
                         Tab(text: "My Boards"),
                         Tab(text: "Joined Boards"),
+                        Tab(text: "Archived"),
                       ],
                     ),
                     isDark
@@ -387,8 +389,24 @@ class _HomeScreenState extends State<HomeScreen>
               body: TabBarView(
                 controller: _tabController,
                 children: [
-                  _buildBoardGrid(state, isOwner: true),
-                  _buildBoardGrid(state, isOwner: false),
+                  _buildBoardGrid(
+                    state,
+                    isOwner: true,
+                    isArchivedTab: false,
+                    currentUserId: authUser?.uid,
+                  ),
+                  _buildBoardGrid(
+                    state,
+                    isOwner: false,
+                    isArchivedTab: false,
+                    currentUserId: authUser?.uid,
+                  ),
+                  _buildBoardGrid(
+                    state,
+                    isOwner: true,
+                    isArchivedTab: true,
+                    currentUserId: authUser?.uid,
+                  ),
                 ],
               ),
             ),
@@ -398,18 +416,38 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildBoardGrid(DashboardState state, {required bool isOwner}) {
+  Widget _buildBoardGrid(
+    DashboardState state, {
+    required bool isOwner,
+    bool isArchivedTab = false,
+    String? currentUserId,
+  }) {
     if (state is DashboardInitial) {
       return const Center(child: CircularProgressIndicator());
     }
 
     if (state is DashboardLoaded) {
-      final boards = isOwner ? state.ownedBoards : state.joinedBoards;
+      final List<Board> boards;
+      if (isArchivedTab) {
+        boards = state.ownedBoards.where((b) => b.isArchived == true).toList();
+      } else if (isOwner) {
+        boards = state.ownedBoards.where((b) => b.isArchived != true).toList();
+      } else {
+        boards = state.joinedBoards.where((b) => b.isArchived != true).toList();
+      }
 
       if (boards.isEmpty) {
+        final String emptyMsg;
+        if (isArchivedTab) {
+          emptyMsg = "No archived boards.";
+        } else if (isOwner) {
+          emptyMsg = "No boards created yet.";
+        } else {
+          emptyMsg = "No boards joined yet.";
+        }
         return Center(
           child: Text(
-            isOwner ? "No boards created yet." : "No boards joined yet.",
+            emptyMsg,
             style: const TextStyle(color: Colors.grey),
           ),
         );
@@ -426,13 +464,47 @@ class _HomeScreenState extends State<HomeScreen>
         itemCount: boards.length,
         itemBuilder: (context, index) {
           final board = boards[index];
+          final isBoardOwner = board.ownerId == currentUserId;
+
           return BoardCard(
             board: board,
-            isOwner: isOwner,
+            isOwner: isBoardOwner,
             onDelete: (id) => context.read<DashboardBloc>().add(
               DashboardDeleteBoardRequested(id),
             ),
-            onOpenSettings: isOwner
+            onDuplicate: (isBoardOwner || board.allowMembersToCopy)
+                ? () {
+                    context.read<DashboardBloc>().add(
+                      DashboardDuplicateBoardRequested(board.id),
+                    );
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          isBoardOwner
+                              ? 'Board duplicate created!'
+                              : 'Board copy created!',
+                        ),
+                      ),
+                    );
+                  }
+                : null,
+            onArchive: () {
+              context.read<DashboardBloc>().add(
+                DashboardArchiveBoardRequested(board.id),
+              );
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Board moved to archive.')),
+              );
+            },
+            onUnarchive: () {
+              context.read<DashboardBloc>().add(
+                DashboardUnarchiveBoardRequested(board.id),
+              );
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Board unarchived.')),
+              );
+            },
+            onOpenSettings: isBoardOwner
                 ? () {
                     Navigator.push(
                       context,

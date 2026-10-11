@@ -191,6 +191,322 @@ class FirebaseAuthRepository implements AuthRepository {
     await _authService.getInstance().signOut();
   }
 
+  @override
+  Future<void> sendPasswordResetEmail(String email) async {
+    try {
+      final normalizedEmail = email.trim().toLowerCase();
+      await _authService.sendPasswordResetEmail(normalizedEmail);
+    } on FirebaseAuthException catch (e) {
+      throw _mapFirebaseAuthError(e);
+    } catch (e) {
+      throw 'Failed to send password reset email. Please try again.';
+    }
+  }
+
+  @override
+  Future<void> sendEmailVerification() async {
+    try {
+      await _authService.sendEmailVerification();
+    } on FirebaseAuthException catch (e) {
+      throw _mapFirebaseAuthError(e);
+    } catch (e) {
+      throw 'Failed to send verification email. Please try again.';
+    }
+  }
+
+  @override
+  Future<bool> reloadAndCheckEmailVerified() async {
+    try {
+      return await _authService.reloadAndCheckEmailVerified();
+    } catch (e) {
+      developer.log('Failed to check email verified status: $e', name: 'Auth', error: e);
+      return false;
+    }
+  }
+
+  @override
+  Future<void> reauthenticate({String? password}) async {
+    final user = _authService.getCurrentUser();
+    if (user == null) {
+      throw 'User not authenticated.';
+    }
+    final uid = user.uid;
+
+    final isPasswordUser = user.providerData.any((p) => p.providerId == 'password');
+    final isGoogleUser = user.providerData.any((p) => p.providerId == 'google.com');
+
+    try {
+      if (isPasswordUser) {
+        if (password == null || password.trim().isEmpty) {
+          throw 'Please enter your password to confirm.';
+        }
+        final email = user.email;
+        if (email != null && email.isNotEmpty) {
+          final credential = EmailAuthProvider.credential(
+            email: email,
+            password: password.trim(),
+          );
+          await user.reauthenticateWithCredential(credential);
+          developer.log('Re-authenticated email/password user $uid', name: 'AuthRepository');
+        }
+      } else if (isGoogleUser) {
+        await _ensureGoogleInitialized();
+        final GoogleSignInAccount googleUser = await _googleSignIn.authenticate();
+        final GoogleSignInAuthentication googleAuth = googleUser.authentication;
+        if (googleAuth.idToken == null) {
+          throw 'Google re-authentication failed: missing ID token.';
+        }
+        final credential = GoogleAuthProvider.credential(
+          idToken: googleAuth.idToken,
+        );
+        await user.reauthenticateWithCredential(credential);
+        developer.log('Re-authenticated Google user $uid', name: 'AuthRepository');
+      }
+    } on GoogleSignInException catch (e) {
+      if (e.code == GoogleSignInExceptionCode.canceled) {
+        throw 'Google re-authentication was cancelled.';
+      }
+      throw 'Google re-authentication failed (${e.code}).';
+    } on FirebaseAuthException catch (e) {
+      developer.log('Re-authentication failed: ${e.code}', name: 'AuthRepository', error: e);
+      if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
+        throw 'Incorrect password. Please verify and try again.';
+      }
+      throw _mapFirebaseAuthError(e);
+    } catch (e) {
+      if (e is String) rethrow;
+      throw 'Re-authentication failed: $e';
+    }
+  }
+
+  @override
+  Future<void> deleteAccount({String? password, bool reauthenticateUser = true}) async {
+    final user = _authService.getCurrentUser();
+    if (user == null) {
+      throw 'User not authenticated.';
+    }
+    final uid = user.uid;
+    final firestore = _firestoreService.getInstance();
+
+    developer.log('Starting deleteAccount workflow for $uid...', name: 'AuthRepository');
+
+    // 0. Pre-authenticate / re-authenticate BEFORE deleting any data!
+    if (reauthenticateUser) {
+      await reauthenticate(password: password);
+    }
+
+    developer.log('Purging user data for $uid...', name: 'AuthRepository');
+
+    try {
+      // 1. Remove FCM token
+      try {
+        await removeFcmTokenOnSignOut(uid);
+      } catch (e) {
+        developer.log('Failed removing FCM token: $e', name: 'AuthRepository');
+      }
+
+      // 2. Cascade delete boards owned by user (including members, operations, snapshot subcollections)
+      try {
+        final ownedBoardsSnap = await firestore
+            .collection('boards')
+            .where('ownerId', isEqualTo: uid)
+            .get();
+        for (final doc in ownedBoardsSnap.docs) {
+          try {
+            final membersSnap = await doc.reference.collection('members').get();
+            for (final mDoc in membersSnap.docs) {
+              await mDoc.reference.delete();
+            }
+          } catch (_) {}
+          try {
+            final opsSnap = await doc.reference.collection('operations').get();
+            for (final opDoc in opsSnap.docs) {
+              await opDoc.reference.delete();
+            }
+          } catch (_) {}
+          try {
+            final snapDocs = await doc.reference.collection('snapshot').get();
+            for (final sDoc in snapDocs.docs) {
+              await sDoc.reference.delete();
+            }
+          } catch (_) {}
+          await doc.reference.delete();
+        }
+      } catch (e) {
+        developer.log('Failed purging owned boards: $e', name: 'AuthRepository');
+      }
+
+      // 3. Check users/{uid}/boards subcollection for any additional owned boards or links
+      try {
+        final userBoardsSnap = await firestore
+            .collection('users')
+            .doc(uid)
+            .collection('boards')
+            .get();
+        for (final doc in userBoardsSnap.docs) {
+          final data = doc.data();
+          if (data['relation'] == 'owned') {
+            final boardId = doc.id;
+            try {
+              final boardRef = firestore.collection('boards').doc(boardId);
+              final boardSnap = await boardRef.get();
+              if (boardSnap.exists && (boardSnap.data()?['ownerId'] == uid)) {
+                final membersSnap = await boardRef.collection('members').get();
+                for (final mDoc in membersSnap.docs) {
+                  await mDoc.reference.delete();
+                }
+                final opsSnap = await boardRef.collection('operations').get();
+                for (final opDoc in opsSnap.docs) {
+                  await opDoc.reference.delete();
+                }
+                final snapDocs = await boardRef.collection('snapshot').get();
+                for (final sDoc in snapDocs.docs) {
+                  await sDoc.reference.delete();
+                }
+                await boardRef.delete();
+              }
+            } catch (_) {}
+          }
+          await doc.reference.delete();
+        }
+      } catch (e) {
+        developer.log('Failed purging user boards subcollection: $e', name: 'AuthRepository');
+      }
+
+      // 4. Remove user from joined boards / group boards
+      // Note: Do not delete canvas elements or edits made in groups; simply remove user from member lists
+      try {
+        final memberBoardsSnap = await firestore
+            .collection('boards')
+            .where('members', arrayContains: uid)
+            .get();
+        for (final doc in memberBoardsSnap.docs) {
+          try {
+            await doc.reference.update({
+              'members': FieldValue.arrayRemove([uid]),
+            });
+            await doc.reference.collection('members').doc(uid).delete();
+          } catch (_) {}
+        }
+      } catch (e) {
+        developer.log('Failed removing from member boards: $e', name: 'AuthRepository');
+      }
+
+      // 5. Clean up friends & reciprocal friend lists
+      try {
+        final friendsSnap = await firestore
+            .collection('users')
+            .doc(uid)
+            .collection('friends')
+            .get();
+        for (final fDoc in friendsSnap.docs) {
+          final friendUid = fDoc.id;
+          try {
+            await firestore
+                .collection('users')
+                .doc(friendUid)
+                .collection('friends')
+                .doc(uid)
+                .delete();
+            await firestore.collection('users').doc(friendUid).update({
+              'friendCount': FieldValue.increment(-1),
+            });
+          } catch (_) {}
+          await fDoc.reference.delete();
+        }
+      } catch (e) {
+        developer.log('Failed purging friends: $e', name: 'AuthRepository');
+      }
+
+      // 6. Clean up friend requests (sent & received)
+      try {
+        final sentReqs = await firestore
+            .collection('friend_requests')
+            .where('fromUid', isEqualTo: uid)
+            .get();
+        for (final doc in sentReqs.docs) {
+          await doc.reference.delete();
+        }
+        final recvReqs = await firestore
+            .collection('friend_requests')
+            .where('toUid', isEqualTo: uid)
+            .get();
+        for (final doc in recvReqs.docs) {
+          await doc.reference.delete();
+        }
+      } catch (e) {
+        developer.log('Failed purging friend requests: $e', name: 'AuthRepository');
+      }
+
+      // 7. Clean up workspaces / groups:
+      // Remove user from joined groups and delete workspaces owned by user
+      try {
+        final ownedWorkspaces = await firestore
+            .collection('workspaces')
+            .where('ownerId', isEqualTo: uid)
+            .get();
+        for (final doc in ownedWorkspaces.docs) {
+          try {
+            final membersSnap = await doc.reference.collection('members').get();
+            for (final mDoc in membersSnap.docs) {
+              await mDoc.reference.delete();
+            }
+          } catch (_) {}
+          await doc.reference.delete();
+        }
+
+        final memberWorkspaces = await firestore
+            .collection('workspaces')
+            .where('members', arrayContains: uid)
+            .get();
+        for (final doc in memberWorkspaces.docs) {
+          try {
+            await doc.reference.update({
+              'members': FieldValue.arrayRemove([uid]),
+            });
+            await doc.reference.collection('members').doc(uid).delete();
+          } catch (_) {}
+        }
+      } catch (e) {
+        developer.log('Failed purging workspaces: $e', name: 'AuthRepository');
+      }
+
+      // 8. Delete user notifications subcollection
+      try {
+        final notifsSnap = await firestore
+            .collection('users')
+            .doc(uid)
+            .collection('notifications')
+            .get();
+        for (final doc in notifsSnap.docs) {
+          await doc.reference.delete();
+        }
+      } catch (e) {
+        developer.log('Failed purging user notifications: $e', name: 'AuthRepository');
+      }
+
+      // 9. Delete user profile document
+      try {
+        await firestore.collection('users').doc(uid).delete();
+      } catch (e) {
+        developer.log('Failed deleting user doc: $e', name: 'AuthRepository');
+      }
+
+      // 10. Delete Firebase Auth user
+      await _authService.deleteAccount();
+      developer.log('Successfully deleted Firebase Auth user $uid', name: 'AuthRepository');
+
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'requires-recent-login') {
+        throw 'This sensitive operation requires recent login. Please log out, sign in again, and retry deleting your account.';
+      }
+      throw _mapFirebaseAuthError(e);
+    } catch (e) {
+      if (e is String) rethrow;
+      throw 'Failed to delete account: $e';
+    }
+  }
+
   String _mapFirebaseAuthError(FirebaseAuthException e) {
     switch (e.code) {
       case 'account-exists-with-different-credential':
@@ -198,13 +514,21 @@ class FirebaseAuthRepository implements AuthRepository {
       case 'invalid-credential':
         return 'Invalid credential. Check Google sign-in configuration.';
       case 'operation-not-allowed':
-        return 'Google sign-in is disabled for this project.';
+        return 'Operation is disabled for this project.';
       case 'user-disabled':
         return "This account has been disabled.";
       case 'user-not-found':
         return "No account found with this email.";
       case 'wrong-password':
         return "Incorrect password.";
+      case 'invalid-email':
+        return "Please enter a valid email address.";
+      case 'email-already-in-use':
+        return "An account already exists with this email address.";
+      case 'weak-password':
+        return "The password provided is too weak.";
+      case 'too-many-requests':
+        return "Too many attempts. Please wait a moment and try again.";
       case 'network-request-failed':
         return "Check your internet connection.";
       default:

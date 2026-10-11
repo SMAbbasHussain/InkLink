@@ -158,7 +158,7 @@ class ProfileScreen extends StatelessWidget {
               final user = state.userData;
               return Column(
                 children: [
-                  _buildHeader(user, isDark),
+                  _buildHeader(user, isDark, isSelf: state.isSelf),
                   const SizedBox(height: 24),
                   _buildBioSection(user, isDark),
                   const Spacer(),
@@ -169,17 +169,26 @@ class ProfileScreen extends StatelessWidget {
 
             if (state is ProfileLoaded) {
               final user = state.userData;
+              final isProfilePublic = (user['isProfilePublic'] as bool?) ?? true;
+              final isPrivateToViewer =
+                  !state.isSelf && !state.isFriend && !isProfilePublic;
+
               return Column(
                 children: [
-                  _buildHeader(user, isDark),
+                  _buildHeader(user, isDark, isSelf: state.isSelf),
                   const SizedBox(height: 12),
-                  _buildProfileStats(state, isDark),
-                  const SizedBox(height: 12),
-                  _buildJoinDate(_asDateTime(user['createdAt']), isDark),
+                  if (!isPrivateToViewer) ...[
+                    _buildProfileStats(state, isDark),
+                    const SizedBox(height: 12),
+                    _buildJoinDate(_asDateTime(user['createdAt']), isDark),
+                  ],
                   if (state.isBlocked) const SizedBox(height: 12),
                   if (state.isBlocked) _buildBlockedBanner(isDark),
                   const SizedBox(height: 12),
-                  _buildBioSection(user, isDark),
+                  if (isPrivateToViewer)
+                    _buildPrivateProfileBanner(isDark)
+                  else
+                    _buildBioSection(user, isDark),
                   const Spacer(),
                   _buildActionButtons(context, state, isDark),
                   const SizedBox(height: 40),
@@ -194,7 +203,14 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(Map<String, dynamic> user, bool isDark) {
+  Widget _buildHeader(
+    Map<String, dynamic> user,
+    bool isDark, {
+    bool isSelf = false,
+  }) {
+    final showEmail = isSelf || ((user['showEmail'] as bool?) ?? false);
+    final email = user['email']?.toString() ?? '';
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(24, 100, 24, 40),
@@ -239,10 +255,11 @@ class ProfileScreen extends StatelessWidget {
             user['displayName'] ?? 'User',
             style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
           ),
-          Text(
-            user['email'] ?? '',
-            style: TextStyle(color: Colors.grey.shade500, fontSize: 16),
-          ),
+          if (showEmail && email.isNotEmpty)
+            Text(
+              email,
+              style: TextStyle(color: Colors.grey.shade500, fontSize: 16),
+            ),
         ],
       ),
     );
@@ -295,6 +312,17 @@ class ProfileScreen extends StatelessWidget {
   Widget _buildProfileStats(ProfileLoaded state, bool isDark) {
     if (state.isSelf) return const SizedBox.shrink();
 
+    final showOnlineStatus = state.isSelf ||
+        ((state.userData['showOnlineStatus'] as bool?) ?? true);
+    final String statusText;
+    if (!showOnlineStatus) {
+      statusText = 'Hidden';
+    } else if (state.isOnline) {
+      statusText = '🟢 Online';
+    } else {
+      statusText = _formatLastActive(state.lastActive);
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Row(
@@ -303,7 +331,7 @@ class ProfileScreen extends StatelessWidget {
           _buildStatItem(state.boardCount.toString(), 'Boards', isDark),
           _buildStatItem(state.friendCount.toString(), 'Friends', isDark),
           _buildStatItem(
-            state.isOnline ? '🟢 Online' : _formatLastActive(state.lastActive),
+            statusText,
             'Status',
             isDark,
           ),
@@ -426,6 +454,39 @@ class ProfileScreen extends StatelessWidget {
                 'You blocked this user. Unblock from the menu to collaborate again.',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPrivateProfileBanner(bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.surfaceDark : Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isDark ? Colors.white10 : Colors.grey.shade200,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(Icons.lock_outline, size: 40, color: Colors.grey.shade400),
+            const SizedBox(height: 12),
+            const Text(
+              'This Account is Private',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Add this user as a friend to view their boards, bio, and activity.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
             ),
           ],
         ),

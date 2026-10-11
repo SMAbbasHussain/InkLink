@@ -190,6 +190,7 @@ void main() async {
             localDatabaseService: context.read<LocalDatabaseService>(),
             presenceService: context.read<PresenceService>(),
             canvasSyncRepository: context.read<CanvasSyncRepository>(),
+            cloudFunctionsService: context.read<CloudFunctionsService>(),
           ),
         ),
         RepositoryProvider<FriendsService>(

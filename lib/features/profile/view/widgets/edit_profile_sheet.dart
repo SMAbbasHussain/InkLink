@@ -1,6 +1,7 @@
-import 'dart:io';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -113,6 +114,52 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
 
       if (pickedFile == null) return;
 
+      // Validate file extension (FR02-04)
+      final ext = pickedFile.name.toLowerCase().split('.').last;
+      if (!['jpg', 'jpeg', 'png'].contains(ext)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Invalid image format. Only PNG, JPEG, and JPG images are supported.',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Validate magic bytes (FR02-04)
+      final rawBytes = await File(pickedFile.path).readAsBytes();
+      final isJpeg = rawBytes.length >= 3 &&
+          rawBytes[0] == 0xFF &&
+          rawBytes[1] == 0xD8 &&
+          rawBytes[2] == 0xFF;
+      final isPng = rawBytes.length >= 8 &&
+          rawBytes[0] == 0x89 &&
+          rawBytes[1] == 0x50 &&
+          rawBytes[2] == 0x4E &&
+          rawBytes[3] == 0x47 &&
+          rawBytes[4] == 0x0D &&
+          rawBytes[5] == 0x0A &&
+          rawBytes[6] == 0x1A &&
+          rawBytes[7] == 0x0A;
+
+      if (!isJpeg && !isPng) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Invalid image content. Only valid PNG, JPEG, and JPG images are accepted.',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
       if (!mounted) return;
 
       // Show loading dialog
@@ -143,7 +190,32 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
           SnackBar(content: Text('Error processing image: ${e.toString()}')),
         );
       }
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      final isNoCamera = e.code == 'no_available_camera' ||
+          (e.message?.toLowerCase().contains('no camera') ?? false);
+      final isDenied = e.code == 'camera_access_denied' ||
+          (e.message?.toLowerCase().contains('denied') ?? false);
+
+      final message = isNoCamera
+          ? 'No camera available on this device.'
+          : isDenied
+              ? 'Camera permission was denied.'
+              : 'Failed to access camera: ${e.message ?? e.code}';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          action: isNoCamera
+              ? SnackBarAction(
+                  label: 'Choose Gallery',
+                  onPressed: () => _pickImage(ImageSource.gallery),
+                )
+              : null,
+        ),
+      );
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error picking image: ${e.toString()}')),
       );

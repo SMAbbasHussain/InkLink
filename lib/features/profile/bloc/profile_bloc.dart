@@ -148,6 +148,18 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
 
       if (currentState is ProfileLoaded) {
         final mergedUserData = {...currentState.userData, ...event.userData};
+        if (!currentState.isSelf) {
+          final showEmail = (mergedUserData['showEmail'] as bool?) ?? false;
+          if (!showEmail) {
+            mergedUserData.remove('email');
+          }
+
+          final isProfilePublic =
+              (mergedUserData['isProfilePublic'] as bool?) ?? true;
+          if (!isProfilePublic && !currentState.isFriend) {
+            mergedUserData['bio'] = null;
+          }
+        }
 
         emit(
           ProfileLoaded(
@@ -182,6 +194,8 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
     on<_ProfilePresenceUpdated>((event, emit) {
       final currentState = state;
       if (currentState is ProfileLoaded) {
+        final bool showOnline = currentState.isSelf ||
+            ((currentState.userData['showOnlineStatus'] as bool?) ?? true);
         emit(
           ProfileLoaded(
             userData: currentState.userData,
@@ -190,8 +204,8 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             isBlocked: currentState.isBlocked,
             friendCount: currentState.friendCount,
             boardCount: currentState.boardCount,
-            isOnline: event.isOnline,
-            lastActive: event.lastActive,
+            isOnline: showOnline ? event.isOnline : false,
+            lastActive: showOnline ? event.lastActive : null,
           ),
         );
       } else if (currentState is ProfilePhotoUploading) {

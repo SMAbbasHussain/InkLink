@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/bloc/auth_state.dart';
 import 'features/auth/view/login_screen.dart';
+import 'features/auth/view/email_verification_screen.dart';
 import 'features/navigation/view/main_wrapper.dart';
 import 'features/dashboard/bloc/dashboard_bloc.dart';
 import 'features/workspaces/bloc/workspace_bloc.dart';
@@ -62,9 +63,18 @@ class _AppViewState extends State<AppView> {
     return BlocConsumer<AuthBloc, AuthState>(
       listenWhen: (previous, current) =>
           (previous is! Authenticated && current is Authenticated) ||
-          (previous is Authenticated && current is! Authenticated),
+          (previous is Authenticated && current is! Authenticated) ||
+          current is AuthEmailUnverified ||
+          current is AuthDeletingAccount,
       listener: (context, state) async {
-        if (state is Authenticated) {
+        if (state is AuthDeletingAccount) {
+          Navigator.of(context, rootNavigator: true)
+              .popUntil((route) => route.isFirst);
+        } else if (state is AuthEmailUnverified) {
+          // Ensure we pop back to the root route so EmailVerificationScreen is displayed immediately
+          Navigator.of(context, rootNavigator: true)
+              .popUntil((route) => route.isFirst);
+        } else if (state is Authenticated) {
           // Ensure we're at the root route so the declarative MainWrapper is visible.
           Navigator.of(context, rootNavigator: true)
               .popUntil((route) => route.isFirst);
@@ -84,18 +94,54 @@ class _AppViewState extends State<AppView> {
           context.read<FriendsBloc>().add(LoadFriendsInfo());
         } else if (state is Unauthenticated) {
           // Extra safety in case logout happened outside standard authSessionService.signOut
+          Navigator.of(context, rootNavigator: true)
+              .popUntil((route) => route.isFirst);
           await _stopBlocsForLogout();
         }
       },
       builder: (context, state) {
+        if (state is AuthDeletingAccount) {
+          return const Scaffold(
+            body: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(color: Colors.red),
+                  SizedBox(height: 24),
+                  Text(
+                    "Deleting Account & Data...",
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    "Permanently purging boards, memberships, and profile",
+                    style: TextStyle(fontSize: 13, color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
         if (state is Authenticated) {
           return const MainWrapper();
+        }
+
+        if (state is AuthEmailUnverified) {
+          return EmailVerificationScreen(
+            user: state.user,
+            email: state.email,
+          );
         }
 
         if (state is Unauthenticated ||
             state is AuthInitial ||
             state is AuthError ||
-            state is AuthLoading) {
+            state is AuthLoading ||
+            state is PasswordResetSent) {
           return const LoginScreen();
         }
         // While checking session or loading

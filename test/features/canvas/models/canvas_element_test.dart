@@ -167,6 +167,122 @@ void main() {
       });
     });
 
+    group('StickyNoteElement', () {
+      test('toMap / fromMap round-trip', () {
+        final original = StickyNoteElement(
+          id: 'note-1',
+          z: 5,
+          center: const Offset(150, 250),
+          width: 180,
+          height: 180,
+          text: 'Sprint planning idea',
+          color: const Color(0xFFFFF9A6),
+          rotation: 0.1,
+        );
+
+        final map = original.toMap();
+        final restored = CanvasElement.fromMap(original.id, map);
+
+        expect(restored, isA<StickyNoteElement>());
+        final note = restored as StickyNoteElement;
+        expect(note.id, original.id);
+        expect(note.z, original.z);
+        expect(note.center, original.center);
+        expect(note.width, original.width);
+        expect(note.height, original.height);
+        expect(note.text, original.text);
+        expect(note.color.value, original.color.value);
+        expect(note.rotation, original.rotation);
+      });
+
+      test('equality and hashCode', () {
+        final a = StickyNoteElement(
+          id: 'note-1',
+          z: 2,
+          center: const Offset(10, 20),
+          text: 'Hello',
+        );
+        final b = StickyNoteElement(
+          id: 'note-1',
+          z: 2,
+          center: const Offset(10, 20),
+          text: 'Hello',
+        );
+        final c = StickyNoteElement(
+          id: 'note-2',
+          z: 2,
+          center: const Offset(10, 20),
+          text: 'Hello',
+        );
+
+        expect(a, equals(b));
+        expect(a.hashCode, equals(b.hashCode));
+        expect(a, isNot(equals(c)));
+      });
+    });
+
+    group('ConnectorElement', () {
+      test('toMap / fromMap round-trip', () {
+        final original = ConnectorElement(
+          id: 'conn-1',
+          z: 3,
+          startElementId: 'shape-1',
+          startPoint: const Offset(50, 50),
+          startAnchor: 'right',
+          endElementId: 'shape-2',
+          endPoint: const Offset(200, 200),
+          endAnchor: 'left',
+          lineStyle: 'orthogonal',
+          color: const Color(0xFF1E293B),
+          strokeWidth: 3.0,
+          hasArrowhead: true,
+        );
+
+        final map = original.toMap();
+        final restored = CanvasElement.fromMap(original.id, map);
+
+        expect(restored, isA<ConnectorElement>());
+        final conn = restored as ConnectorElement;
+        expect(conn.id, original.id);
+        expect(conn.z, original.z);
+        expect(conn.startElementId, original.startElementId);
+        expect(conn.startPoint, original.startPoint);
+        expect(conn.startAnchor, original.startAnchor);
+        expect(conn.endElementId, original.endElementId);
+        expect(conn.endPoint, original.endPoint);
+        expect(conn.endAnchor, original.endAnchor);
+        expect(conn.lineStyle, original.lineStyle);
+        expect(conn.color.value, original.color.value);
+        expect(conn.strokeWidth, original.strokeWidth);
+        expect(conn.hasArrowhead, original.hasArrowhead);
+      });
+
+      test('equality and hashCode', () {
+        final a = ConnectorElement(
+          id: 'conn-1',
+          z: 1,
+          startPoint: const Offset(10, 10),
+          endPoint: const Offset(100, 100),
+        );
+        final b = ConnectorElement(
+          id: 'conn-1',
+          z: 1,
+          startPoint: const Offset(10, 10),
+          endPoint: const Offset(100, 100),
+        );
+        final c = ConnectorElement(
+          id: 'conn-1',
+          z: 1,
+          startPoint: const Offset(20, 20),
+          endPoint: const Offset(100, 100),
+        );
+
+        expect(a, equals(b));
+        expect(a.hashCode, equals(b.hashCode));
+        expect(a, isNot(equals(c)));
+      });
+    });
+
     group('sealed class exhaustiveness', () {
       test('all subtypes can be pattern matched', () {
         final elements = <CanvasElement>[
@@ -177,6 +293,8 @@ void main() {
           ),
           TextElement(id: 't', z: 0, text: '', center: Offset.zero, color: Colors.black),
           ImageElement(id: 'i', z: 0, center: Offset.zero, imageBase64: ''),
+          StickyNoteElement(id: 'sn', z: 0, center: Offset.zero),
+          ConnectorElement(id: 'cn', z: 0, startPoint: Offset.zero, endPoint: const Offset(10, 10)),
         ];
 
         final types = elements.map((e) => switch (e) {
@@ -184,9 +302,11 @@ void main() {
           ShapeElement _ => 'shape',
           TextElement _ => 'text',
           ImageElement _ => 'image',
+          StickyNoteElement _ => 'sticky_note',
+          ConnectorElement _ => 'connector',
         });
 
-        expect(types, containsAll(['stroke', 'shape', 'text', 'image']));
+        expect(types, containsAll(['stroke', 'shape', 'text', 'image', 'sticky_note', 'connector']));
       });
 
       test('is checks work correctly', () {
@@ -197,12 +317,16 @@ void main() {
         );
         final text = TextElement(id: 't', z: 0, text: '', center: Offset.zero, color: Colors.black);
         final image = ImageElement(id: 'i', z: 0, center: Offset.zero, imageBase64: '');
+        final sticky = StickyNoteElement(id: 'sn', z: 0, center: Offset.zero);
+        final connector = ConnectorElement(id: 'cn', z: 0, startPoint: Offset.zero, endPoint: const Offset(10, 10));
 
         expect(stroke is StrokeElement, isTrue);
         expect(stroke is CanvasElement, isTrue);
         expect(shape is ShapeElement, isTrue);
         expect(text is TextElement, isTrue);
         expect(image is ImageElement, isTrue);
+        expect(sticky is StickyNoteElement, isTrue);
+        expect(connector is ConnectorElement, isTrue);
         expect(stroke is ShapeElement, isFalse);
       });
 

@@ -7,8 +7,9 @@ import '../widgets/sliding_tray.dart';
 
 class MembersTray extends StatefulWidget {
   final bool isOpen;
+  final VoidCallback? onClose;
 
-  const MembersTray({super.key, required this.isOpen});
+  const MembersTray({super.key, required this.isOpen, this.onClose});
 
   @override
   State<MembersTray> createState() => _MembersTrayState();
@@ -64,6 +65,7 @@ class _MembersTrayState extends State<MembersTray> {
           direction: TrayDirection.left,
           title: 'Members',
           width: 320,
+          onClose: widget.onClose,
           headerActions: _isSearchMode
               ? IconButton(
                   onPressed: _exitSearchMode,

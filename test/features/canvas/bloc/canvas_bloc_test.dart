@@ -492,4 +492,43 @@ void main() {
       },
     );
   });
+
+  group('CanvasBloc — visual elements (sticky notes & connectors)', () {
+    test('CanvasAddStickyNote adds a StickyNoteElement to state', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddStickyNote(
+        center: Offset(100, 100),
+        text: 'Important task',
+        color: Color(0xFFFFF9A6),
+      ));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.elements, hasLength(1));
+      expect(bloc.state.elements.first, isA<StickyNoteElement>());
+      final note = bloc.state.elements.first as StickyNoteElement;
+      expect(note.text, 'Important task');
+      expect(note.center, const Offset(100, 100));
+      await bloc.close();
+    });
+
+    test('CanvasAddConnector adds a ConnectorElement to state', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddConnector(
+        startPoint: Offset(10, 10),
+        endPoint: Offset(100, 100),
+        lineStyle: 'curved',
+        hasArrowhead: true,
+      ));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.elements, hasLength(1));
+      expect(bloc.state.elements.first, isA<ConnectorElement>());
+      final conn = bloc.state.elements.first as ConnectorElement;
+      expect(conn.lineStyle, 'curved');
+      expect(conn.hasArrowhead, isTrue);
+      await bloc.close();
+    });
+  });
 }

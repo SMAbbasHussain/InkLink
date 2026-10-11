@@ -7,8 +7,14 @@ import 'canvas_shape_type.dart';
 class ShapesTray extends StatelessWidget {
   final bool isOpen;
   final ValueChanged<CanvasShapeType> onSelectShapeForDrawing;
+  final VoidCallback? onClose;
 
-  const ShapesTray({super.key, required this.isOpen, required this.onSelectShapeForDrawing});
+  const ShapesTray({
+    super.key,
+    required this.isOpen,
+    required this.onSelectShapeForDrawing,
+    this.onClose,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -61,6 +67,11 @@ class ShapesTray extends StatelessWidget {
         label: 'Semicircle',
         type: CanvasShapeType.semicircle,
       ),
+      (
+        icon: Icons.arrow_right_alt_rounded,
+        label: 'Arrow',
+        type: CanvasShapeType.arrow,
+      ),
     ];
 
     return SlidingTray(
@@ -70,6 +81,7 @@ class ShapesTray extends StatelessWidget {
       height: 360,
       width: 244,
       bottomOffset: 60,
+      onClose: onClose,
       child: GridView.builder(
         padding: const EdgeInsets.all(12),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
