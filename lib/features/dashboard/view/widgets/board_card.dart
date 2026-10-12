@@ -1,15 +1,10 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:inklink/domain/models/board.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../canvas/view/canvas_route.dart';
-import '../../../../ui/theme/ink_colors.dart';
 import '../../../../ui/theme/ink_theme.dart';
-import '../../../../ui/theme/ink_type.dart';
-import '../../../../ui/widgets/desk_background.dart';
-import '../../../../ui/widgets/paper_card.dart';
+import '../../../../ui/widgets/board_card_frame.dart';
 
 class BoardCard extends StatelessWidget {
   final Board board;
@@ -28,117 +23,46 @@ class BoardCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
-    final placeholderColor = InkColors.stickyForId(board.id);
-    final placeholderInk = InkColors.stickyInkFor(placeholderColor);
 
-    return GestureDetector(
+    return BoardCardFrame(
+      previewPath: board.previewPath,
+      title: board.title,
+      caption: "Edited ${_timeAgo(board.updatedAt)}",
       onTap: () {
         Navigator.push(context, buildCanvasRoute(context, boardId: board.id));
       },
-      child: PaperCard(
-        tiltId: board.id,
-        showTape: true,
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(3),
-                child:
-                    board.previewPath != null && board.previewPath!.isNotEmpty
-                    ? DeskBackground(
-                        child: Image.file(
-                          File(board.previewPath!),
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                          gaplessPlayback: true,
-                          errorBuilder: (_, _, _) => Center(
-                            child: Icon(
-                              LucideIcons.penLine,
-                              size: 36,
-                              color: tokens.inkMuted,
-                            ),
-                          ),
-                        ),
-                      )
-                    : Container(
-                        color: placeholderColor,
-                        child: Center(
-                          child: Icon(
-                            LucideIcons.penLine,
-                            size: 36,
-                            color: placeholderInk,
-                          ),
-                        ),
-                      ),
+      menuButton: PopupMenuButton<String>(
+        tooltip: 'Board options',
+        icon: Icon(LucideIcons.ellipsisVertical, size: 18, color: tokens.ink),
+        onSelected: (value) {
+          if (value == 'copy') {
+            Clipboard.setData(ClipboardData(text: board.id));
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Join Code (Board ID) copied to clipboard!'),
               ),
+            );
+          } else if (value == 'delete') {
+            onDelete(board.id);
+          } else if (value == 'settings') {
+            onOpenSettings?.call();
+          }
+        },
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            value: 'settings',
+            child: _menuRow(LucideIcons.slidersHorizontal, 'Settings', tokens.ink),
+          ),
+          PopupMenuItem(
+            value: 'copy',
+            child: _menuRow(LucideIcons.copy, 'Copy Join Code', tokens.ink),
+          ),
+          if (isOwner)
+            PopupMenuItem(
+              value: 'delete',
+              child: _menuRow(LucideIcons.trash2, 'Delete', tokens.danger),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12.0,
-                vertical: 8.0,
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          board.title,
-                          style: InkType.cardTitle(tokens.ink),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          "Edited ${_timeAgo(board.updatedAt)}",
-                          style: InkType.caption(tokens.inkMuted),
-                        ),
-                      ],
-                    ),
-                  ),
-                  PopupMenuButton<String>(
-                    icon: Icon(LucideIcons.ellipsis, size: 20, color: tokens.inkMuted),
-                    onSelected: (value) {
-                      if (value == 'copy') {
-                        Clipboard.setData(ClipboardData(text: board.id));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Join Code (Board ID) copied to clipboard!',
-                            ),
-                          ),
-                        );
-                      } else if (value == 'delete') {
-                        onDelete(board.id);
-                      } else if (value == 'settings') {
-                        onOpenSettings?.call();
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      PopupMenuItem(
-                        value: 'settings',
-                        child: _menuRow(LucideIcons.slidersHorizontal, 'Settings', tokens.ink),
-                      ),
-                      PopupMenuItem(
-                        value: 'copy',
-                        child: _menuRow(LucideIcons.copy, 'Copy Join Code', tokens.ink),
-                      ),
-                      if (isOwner)
-                        PopupMenuItem(
-                          value: 'delete',
-                          child: _menuRow(LucideIcons.trash2, 'Delete', tokens.danger),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }

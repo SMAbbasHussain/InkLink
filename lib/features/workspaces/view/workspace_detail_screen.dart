@@ -5,16 +5,15 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../domain/models/board.dart';
-import '../../../ui/theme/ink_colors.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/board_card_frame.dart';
 import '../../../ui/widgets/empty_state.dart';
 import '../../../ui/widgets/glass_panel.dart';
 import '../../../ui/widgets/ink_button.dart';
 import '../../../ui/widgets/ink_dialog.dart';
 import '../../../ui/widgets/ink_text_field.dart';
-import '../../../ui/widgets/paper_card.dart';
 import '../../canvas/view/canvas_route.dart';
 import '../bloc/workspace_bloc.dart';
 import 'workspace_settings_screen.dart';
@@ -114,9 +113,9 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
                   padding: const EdgeInsets.all(InkSpacing.s16),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 24,
-                    childAspectRatio: 0.85,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    mainAxisExtent: 196,
                   ),
                   itemCount: boards.length,
                   itemBuilder: (context, index) {
@@ -424,91 +423,35 @@ class _WorkspaceBoardCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
-    final placeholderColor = InkColors.stickyForId(board.id);
-    final placeholderInk = InkColors.stickyInkFor(placeholderColor);
 
-    return GestureDetector(
+    return BoardCardFrame(
+      previewPath: board.previewPath,
+      title: board.title,
+      caption: 'Edited ${_timeAgo(board.updatedAt)}',
       onTap: onTap,
-      child: PaperCard(
-        tiltId: board.id,
-        showTape: true,
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Container(
-                color: board.previewPath != null &&
-                        board.previewPath!.isNotEmpty &&
-                        File(board.previewPath!).existsSync()
-                    ? tokens.field
-                    : placeholderColor,
-                child: board.previewPath != null &&
-                        board.previewPath!.isNotEmpty &&
-                        File(board.previewPath!).existsSync()
-                    ? Image.file(
-                        File(board.previewPath!),
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        gaplessPlayback: true,
-                        errorBuilder: (_, _, _) => Center(
-                          child: Icon(LucideIcons.penLine, size: 36, color: tokens.inkMuted),
-                        ),
-                      )
-                    : Center(
-                        child: Icon(LucideIcons.penLine, size: 36, color: placeholderInk),
-                      ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          board.title,
-                          style: InkType.cardTitle(tokens.ink),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Edited ${_timeAgo(board.updatedAt)}',
-                          style: InkType.caption(tokens.inkMuted),
-                        ),
-                      ],
-                    ),
+      menuButton: (isOwner && onRemoveFromWorkspace != null)
+          ? PopupMenuButton<String>(
+              tooltip: 'Board options',
+              icon: Icon(LucideIcons.ellipsisVertical, size: 18, color: tokens.ink),
+              onSelected: (value) {
+                if (value == 'remove') {
+                  onRemoveFromWorkspace?.call();
+                }
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  value: 'remove',
+                  child: Row(
+                    children: [
+                      Icon(LucideIcons.folderMinus, size: 18, color: tokens.danger),
+                      const SizedBox(width: 10),
+                      Text('Remove from workspace', style: TextStyle(color: tokens.danger)),
+                    ],
                   ),
-                  if (isOwner && onRemoveFromWorkspace != null)
-                    PopupMenuButton<String>(
-                      icon: Icon(LucideIcons.ellipsis, size: 20, color: tokens.inkMuted),
-                      onSelected: (value) {
-                        if (value == 'remove') {
-                          onRemoveFromWorkspace?.call();
-                        }
-                      },
-                      itemBuilder: (context) => [
-                        PopupMenuItem(
-                          value: 'remove',
-                          child: Row(
-                            children: [
-                              Icon(LucideIcons.folderMinus, size: 18, color: tokens.danger),
-                              const SizedBox(width: 10),
-                              Text('Remove from workspace', style: TextStyle(color: tokens.danger)),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+                ),
+              ],
+            )
+          : null,
     );
   }
 
