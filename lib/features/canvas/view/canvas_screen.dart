@@ -2127,6 +2127,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           alignment: Alignment.bottomCenter,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
+            onTap: () => _openTray('brushes'),
             onVerticalDragUpdate: (d) {
               if (d.delta.dy < -8) _openTray('brushes');
             },
@@ -2143,6 +2144,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           alignment: Alignment.topLeft,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
+            onTap: () => _openTray('members'),
             onHorizontalDragUpdate: (d) {
               if (d.delta.dx > 8) _openTray('members');
             },
@@ -2160,6 +2162,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           alignment: Alignment.bottomLeft,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
+            onTap: () => _openTray('tools'),
             onHorizontalDragUpdate: (d) {
               if (d.delta.dx > 8) _openTray('tools');
             },
@@ -2177,6 +2180,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           alignment: Alignment.topRight,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
+            onTap: () => _openTray('ai'),
             onHorizontalDragUpdate: (d) {
               if (d.delta.dx < -8) _openTray('ai');
             },
@@ -2194,6 +2198,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           alignment: Alignment.bottomRight,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
+            onTap: () => _openTray('shapes'),
             onHorizontalDragUpdate: (d) {
               if (d.delta.dx < -8) _openTray('shapes');
             },
