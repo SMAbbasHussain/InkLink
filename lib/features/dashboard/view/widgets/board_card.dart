@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:inklink/domain/models/board.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../canvas/view/canvas_route.dart';
+import '../../../../ui/theme/ink_colors.dart';
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_type.dart';
 import '../../../../ui/widgets/desk_background.dart';
@@ -27,6 +28,8 @@ class BoardCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final placeholderColor = InkColors.stickyForId(board.id);
+    final placeholderInk = InkColors.stickyInkFor(placeholderColor);
 
     return GestureDetector(
       onTap: () {
@@ -60,12 +63,13 @@ class BoardCard extends StatelessWidget {
                           ),
                         ),
                       )
-                    : DeskBackground(
+                    : Container(
+                        color: placeholderColor,
                         child: Center(
                           child: Icon(
                             LucideIcons.penLine,
                             size: 36,
-                            color: tokens.inkMuted,
+                            color: placeholderInk,
                           ),
                         ),
                       ),

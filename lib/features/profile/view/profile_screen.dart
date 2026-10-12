@@ -143,8 +143,11 @@ class ProfileScreen extends StatelessWidget {
               final user = state.userData;
               return SingleChildScrollView(
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _buildHeader(context, user),
+                    const SizedBox(height: InkSpacing.s12),
+                    _buildNameEmail(context, user),
                     const SizedBox(height: InkSpacing.s24),
                     _buildBioSection(context, user),
                     const SizedBox(height: InkSpacing.s32),
@@ -157,8 +160,11 @@ class ProfileScreen extends StatelessWidget {
               final user = state.userData;
               return SingleChildScrollView(
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _buildHeader(context, user),
+                    const SizedBox(height: InkSpacing.s12),
+                    _buildNameEmail(context, user),
                     const SizedBox(height: InkSpacing.s12),
                     _buildProfileStats(context, state),
                     const SizedBox(height: InkSpacing.s12),
@@ -196,44 +202,51 @@ class ProfileScreen extends StatelessWidget {
   }
 
   Widget _buildHeader(BuildContext context, Map<String, dynamic> user) {
-    final tokens = context.ink;
     final name = (user['displayName'] ?? 'User').toString();
     final photoUrl = user['photoURL']?.toString();
 
     return SizedBox(
       height: 180 + 48,
       child: Stack(
-        clipBehavior: Clip.none,
         children: [
-          SizedBox(
+          const SizedBox(
             height: 180,
             width: double.infinity,
-            child: const DeskBackground(),
+            child: DeskBackground(),
           ),
           Positioned(
             top: 180 - 48,
             left: 0,
             right: 0,
-            child: Column(
-              children: [
-                InkAvatar(
-                  imageUrl: photoUrl,
-                  initials: inkInitialsFor(name),
-                  id: userId,
-                  size: 96,
-                  ring: true,
-                ),
-                const SizedBox(height: InkSpacing.s12),
-                Text(name, style: InkType.headline(tokens.ink)),
-                Text(
-                  user['email'] ?? '',
-                  style: InkType.body(tokens.inkSecondary),
-                ),
-              ],
+            child: Center(
+              child: InkAvatar(
+                imageUrl: photoUrl,
+                initials: inkInitialsFor(name),
+                id: userId,
+                size: 96,
+                ring: true,
+              ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildNameEmail(BuildContext context, Map<String, dynamic> user) {
+    final tokens = context.ink;
+    final name = (user['displayName'] ?? 'User').toString();
+
+    return Column(
+      children: [
+        Text(name, style: InkType.headline(tokens.ink), textAlign: TextAlign.center),
+        const SizedBox(height: InkSpacing.s4),
+        Text(
+          user['email'] ?? '',
+          style: InkType.body(tokens.inkSecondary),
+          textAlign: TextAlign.center,
+        ),
+      ],
     );
   }
 

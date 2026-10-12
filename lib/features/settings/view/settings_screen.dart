@@ -69,7 +69,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     InkSpacing.s16,
                     InkSpacing.s8,
                     InkSpacing.s16,
-                    InkSpacing.s32,
+                    112,
                   ),
                   children: [
                     _buildProfileHeader(tokens, authUser),

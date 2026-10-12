@@ -278,7 +278,12 @@ class _WorkspacesScreenState extends State<WorkspacesScreen>
                                   ),
                           ),
                           Padding(
-                            padding: const EdgeInsets.all(InkSpacing.s16),
+                            padding: const EdgeInsets.fromLTRB(
+                              InkSpacing.s16,
+                              InkSpacing.s16,
+                              InkSpacing.s16,
+                              100,
+                            ),
                             child: InkButton.primary(
                               label: 'Create Workspace',
                               icon: const Icon(LucideIcons.plus),

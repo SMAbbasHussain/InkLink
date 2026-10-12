@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../domain/models/board.dart';
+import '../../../ui/theme/ink_colors.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
@@ -423,6 +424,8 @@ class _WorkspaceBoardCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final placeholderColor = InkColors.stickyForId(board.id);
+    final placeholderInk = InkColors.stickyInkFor(placeholderColor);
 
     return GestureDetector(
       onTap: onTap,
@@ -435,7 +438,11 @@ class _WorkspaceBoardCard extends StatelessWidget {
           children: [
             Expanded(
               child: Container(
-                color: tokens.field,
+                color: board.previewPath != null &&
+                        board.previewPath!.isNotEmpty &&
+                        File(board.previewPath!).existsSync()
+                    ? tokens.field
+                    : placeholderColor,
                 child: board.previewPath != null &&
                         board.previewPath!.isNotEmpty &&
                         File(board.previewPath!).existsSync()
@@ -449,7 +456,7 @@ class _WorkspaceBoardCard extends StatelessWidget {
                         ),
                       )
                     : Center(
-                        child: Icon(LucideIcons.penLine, size: 36, color: tokens.inkMuted),
+                        child: Icon(LucideIcons.penLine, size: 36, color: placeholderInk),
                       ),
               ),
             ),

@@ -5,6 +5,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:inklink/domain/models/board.dart';
 import 'package:inklink/domain/models/workspace.dart';
+import 'package:inklink/ui/theme/ink_colors.dart';
 import 'package:inklink/ui/theme/ink_theme.dart';
 import 'package:inklink/ui/theme/ink_tokens.dart';
 import 'package:inklink/ui/theme/ink_type.dart';
@@ -137,10 +138,16 @@ class _BoardPreviewTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final hasPreview = board != null &&
+        board!.previewPath != null &&
+        board!.previewPath!.isNotEmpty &&
+        File(board!.previewPath!).existsSync();
+    final placeholderColor =
+        board != null ? InkColors.stickyForId(board!.id) : tokens.field;
 
     return Container(
       decoration: BoxDecoration(
-        color: tokens.field,
+        color: hasPreview ? tokens.field : placeholderColor,
         borderRadius: BorderRadius.circular(8),
       ),
       child: board == null
@@ -171,7 +178,7 @@ class _FallbackPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tokens = context.ink;
+    final ink = InkColors.stickyInkFor(InkColors.stickyForId(board.id));
     return Container(
       alignment: Alignment.center,
       padding: const EdgeInsets.all(6),
@@ -180,7 +187,7 @@ class _FallbackPreview extends StatelessWidget {
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
         textAlign: TextAlign.center,
-        style: InkType.caption(tokens.inkSecondary),
+        style: InkType.caption(ink),
       ),
     );
   }
