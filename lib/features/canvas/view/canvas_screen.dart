@@ -1218,10 +1218,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
         trailing: const Icon(Icons.download, size: 20),
         onTap: () {
           Navigator.pop(sheetContext);
+          ScaffoldMessenger.of(context).removeCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Exporting ${format.name.toUpperCase()}...'),
+              duration: const Duration(seconds: 1),
+            ),
+          );
           _canvasBloc.add(
             CanvasExportBoardRequested(
               format: format,
-              shareAfterExport: false,
+              shareAfterExport: true,
             ),
           );
         },
@@ -1368,11 +1375,22 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       tooltip: 'Reset View',
                       onPressed: _toggleResetView,
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.file_download_outlined),
-                      tooltip: 'Export & Share Board',
-                      onPressed: () => _showExportOptionsSheet(context),
-                    ),
+                    state.isExporting
+                        ? const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 12),
+                            child: Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            ),
+                          )
+                        : IconButton(
+                            icon: const Icon(Icons.file_download_outlined),
+                            tooltip: 'Export & Share Board',
+                            onPressed: () => _showExportOptionsSheet(context),
+                          ),
                     PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert),
                       onSelected: (value) {

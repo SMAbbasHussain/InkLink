@@ -2095,7 +2095,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         state.copyWith(
           isExporting: false,
           lastExportedFilePath: file.path,
-          exportSuccessMessage: 'Board successfully exported as $ext!',
+          exportSuccessMessage: 'Board exported as $ext!\nSaved to: ${file.path}',
         ),
       );
     } catch (e) {

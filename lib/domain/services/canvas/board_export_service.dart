@@ -50,27 +50,74 @@ class BoardExportServiceImpl implements BoardExportService {
   }) async {
     final sanitizedTitle = _sanitizeFileName(boardTitle);
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final tempDir = await getTemporaryDirectory();
+    final exportDir = await _resolveExportDirectory();
 
     switch (format) {
       case BoardExportFormat.png:
         final pngBytes = await renderToPng(elements);
-        final file = File('${tempDir.path}/${sanitizedTitle}_$timestamp.png');
+        final file = File('${exportDir.path}/${sanitizedTitle}_$timestamp.png');
         await file.writeAsBytes(pngBytes, flush: true);
         return file;
 
       case BoardExportFormat.pdf:
         final pdfBytes = await renderToPdf(boardTitle, elements);
-        final file = File('${tempDir.path}/${sanitizedTitle}_$timestamp.pdf');
+        final file = File('${exportDir.path}/${sanitizedTitle}_$timestamp.pdf');
         await file.writeAsBytes(pdfBytes, flush: true);
         return file;
 
       case BoardExportFormat.svg:
         final svgString = renderToSvg(boardTitle, elements);
-        final file = File('${tempDir.path}/${sanitizedTitle}_$timestamp.svg');
+        final file = File('${exportDir.path}/${sanitizedTitle}_$timestamp.svg');
         await file.writeAsString(svgString, flush: true);
         return file;
     }
+  }
+
+  Future<Directory> _resolveExportDirectory() async {
+    if (Platform.isAndroid) {
+      try {
+        final publicDownloadDir = Directory('/storage/emulated/0/Download');
+        if (await publicDownloadDir.exists()) {
+          final inkLinkDir = Directory('${publicDownloadDir.path}/InkLink');
+          if (!await inkLinkDir.exists()) {
+            await inkLinkDir.create(recursive: true);
+          }
+          final testFile = File('${inkLinkDir.path}/.test_${DateTime.now().millisecondsSinceEpoch}');
+          await testFile.writeAsString('test');
+          await testFile.delete();
+          return inkLinkDir;
+        }
+      } catch (_) {}
+    }
+
+    try {
+      final downloads = await getDownloadsDirectory();
+      if (downloads != null && await downloads.exists()) {
+        return downloads;
+      }
+    } catch (_) {}
+
+    try {
+      final ext = await getExternalStorageDirectory();
+      if (ext != null && await ext.exists()) {
+        final inkLinkDir = Directory('${ext.path}/InkLink');
+        if (!await inkLinkDir.exists()) {
+          await inkLinkDir.create(recursive: true);
+        }
+        return inkLinkDir;
+      }
+    } catch (_) {}
+
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final inkLinkDir = Directory('${docs.path}/InkLink');
+      if (!await inkLinkDir.exists()) {
+        await inkLinkDir.create(recursive: true);
+      }
+      return inkLinkDir;
+    } catch (_) {}
+
+    return await getTemporaryDirectory();
   }
 
   @override
@@ -514,93 +561,202 @@ class BoardExportServiceImpl implements BoardExportService {
     String boardTitle,
     List<CanvasElement> elements,
   ) async {
-    final pngBytes = await renderToPng(elements);
-    final imageProvider = pw.MemoryImage(pngBytes);
+    final pageImageBytes = await renderPdfPageImage(boardTitle, elements);
+    final imageProvider = pw.MemoryImage(pageImageBytes);
 
     final pdf = pw.Document(
-      title: boardTitle,
+      title: _sanitizeToAscii(boardTitle),
       author: 'InkLink',
     );
-
-    final exportDate = DateTime.now().toLocal().toString().split('.').first;
 
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4.landscape,
-        margin: const pw.EdgeInsets.all(24),
+        margin: pw.EdgeInsets.zero,
         build: (pw.Context context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
-                    children: [
-                      pw.Text(
-                        boardTitle,
-                        style: pw.TextStyle(
-                          fontSize: 22,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                      ),
-                      pw.SizedBox(height: 2),
-                      pw.Text(
-                        'InkLink Collaborative Whiteboard',
-                        style: const pw.TextStyle(
-                          fontSize: 10,
-                          color: PdfColors.grey700,
-                        ),
-                      ),
-                    ],
-                  ),
-                  pw.Text(
-                    'Exported: $exportDate',
-                    style: const pw.TextStyle(
-                      fontSize: 10,
-                      color: PdfColors.grey600,
-                    ),
-                  ),
-                ],
+          return pw.FullPage(
+            ignoreMargins: true,
+            child: pw.Center(
+              child: pw.Image(
+                imageProvider,
+                fit: pw.BoxFit.contain,
               ),
-              pw.SizedBox(height: 12),
-              pw.Divider(color: PdfColors.grey300),
-              pw.SizedBox(height: 8),
-              pw.Expanded(
-                child: pw.Center(
-                  child: pw.Image(imageProvider, fit: pw.BoxFit.contain),
-                ),
-              ),
-              pw.SizedBox(height: 8),
-              pw.Divider(color: PdfColors.grey300),
-              pw.SizedBox(height: 4),
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Text(
-                    'Exported from InkLink',
-                    style: const pw.TextStyle(
-                      fontSize: 8,
-                      color: PdfColors.grey500,
-                    ),
-                  ),
-                  pw.Text(
-                    'Page 1 of 1',
-                    style: const pw.TextStyle(
-                      fontSize: 8,
-                      color: PdfColors.grey500,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            ),
           );
         },
       ),
     );
 
     return pdf.save();
+  }
+
+  Future<Uint8List> renderPdfPageImage(
+    String boardTitle,
+    List<CanvasElement> elements,
+  ) async {
+    const double pageWidth = 1600.0;
+    const double pageHeight = 1131.0;
+
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(
+      recorder,
+      const Rect.fromLTWH(0, 0, pageWidth, pageHeight),
+    );
+
+    // Page background
+    final bgPaint = ui.Paint()..color = const Color(0xFFFFFFFF);
+    canvas.drawRect(const Rect.fromLTWH(0, 0, pageWidth, pageHeight), bgPaint);
+
+    // Header: Board Title
+    final displayTitle = boardTitle.trim().isEmpty ? 'Board' : boardTitle.trim();
+    final titlePainter = TextPainter(
+      text: TextSpan(
+        text: displayTitle,
+        style: const TextStyle(
+          color: Color(0xFF0F172A),
+          fontSize: 28,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+      ellipsis: '...',
+    )..layout(maxWidth: 950);
+    titlePainter.paint(canvas, const Offset(48, 32));
+
+    // Header: Subtitle
+    final subtitlePainter = TextPainter(
+      text: const TextSpan(
+        text: 'InkLink Collaborative Whiteboard',
+        style: TextStyle(
+          color: Color(0xFF64748B),
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    subtitlePainter.paint(canvas, const Offset(48, 70));
+
+    // Header: Export Date Badge
+    final exportDate = DateTime.now().toLocal().toString().split('.').first;
+    final datePainter = TextPainter(
+      text: TextSpan(
+        text: 'Exported: $exportDate',
+        style: const TextStyle(
+          color: Color(0xFF64748B),
+          fontSize: 13,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    datePainter.paint(canvas, Offset(pageWidth - 48 - datePainter.width, 42));
+
+    // Header divider line
+    final dividerPaint = ui.Paint()
+      ..color = const Color(0xFFE2E8F0)
+      ..strokeWidth = 1.5;
+    canvas.drawLine(
+      const Offset(48, 102),
+      const Offset(pageWidth - 48, 102),
+      dividerPaint,
+    );
+
+    // Content container area
+    const contentLeft = 48.0;
+    const contentTop = 118.0;
+    const contentWidth = pageWidth - (contentLeft * 2);
+    const contentHeight = pageHeight - contentTop - 64.0;
+    final contentRect = const Rect.fromLTWH(
+      contentLeft,
+      contentTop,
+      contentWidth,
+      contentHeight,
+    );
+
+    // Background card for canvas elements
+    final cardBgPaint = ui.Paint()..color = const Color(0xFFFAFAFA);
+    final cardBorderPaint = ui.Paint()
+      ..color = const Color(0xFFE2E8F0)
+      ..style = ui.PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(contentRect, const Radius.circular(8)),
+      cardBgPaint,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(contentRect, const Radius.circular(8)),
+      cardBorderPaint,
+    );
+
+    final bounds = computeElementsBounds(elements);
+    final scaleX = (contentWidth - 40) / bounds.width;
+    final scaleY = (contentHeight - 40) / bounds.height;
+    final fitScale = math.min(scaleX, scaleY).clamp(0.01, 3.0);
+    final fittedWidth = bounds.width * fitScale;
+    final fittedHeight = bounds.height * fitScale;
+    final elemOffsetX = contentLeft + (contentWidth - fittedWidth) / 2;
+    final elemOffsetY = contentTop + (contentHeight - fittedHeight) / 2;
+
+    canvas.save();
+    canvas.clipRRect(
+      RRect.fromRectAndRadius(contentRect, const Radius.circular(8)),
+    );
+    canvas.translate(elemOffsetX, elemOffsetY);
+    canvas.scale(fitScale, fitScale);
+    canvas.translate(-bounds.left, -bounds.top);
+
+    final sorted = List<CanvasElement>.from(elements)
+      ..sort((a, b) => a.z.compareTo(b.z));
+    for (final element in sorted) {
+      _paintElement(canvas, element);
+    }
+    canvas.restore();
+
+    // Footer divider line
+    canvas.drawLine(
+      const Offset(48, pageHeight - 50),
+      const Offset(pageWidth - 48, pageHeight - 50),
+      dividerPaint,
+    );
+
+    // Footer Text Left
+    final footerLeft = TextPainter(
+      text: const TextSpan(
+        text: 'Exported from InkLink • Layout integrity preserved',
+        style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    footerLeft.paint(canvas, const Offset(48, pageHeight - 38));
+
+    // Footer Text Right
+    final footerRight = TextPainter(
+      text: const TextSpan(
+        text: 'Page 1 of 1',
+        style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    footerRight.paint(canvas, Offset(pageWidth - 48 - footerRight.width, pageHeight - 38));
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(pageWidth.toInt(), pageHeight.toInt());
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    return byteData!.buffer.asUint8List();
+  }
+
+  String _sanitizeToAscii(String input) {
+    final buffer = StringBuffer();
+    for (final char in input.runes) {
+      if (char >= 32 && char <= 126) {
+        buffer.writeCharCode(char);
+      } else {
+        buffer.write('_');
+      }
+    }
+    final result = buffer.toString().trim();
+    return result.isEmpty ? 'Board' : result;
   }
 
   // ──────────────────────────────────────────────

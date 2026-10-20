@@ -192,5 +192,29 @@ void main() {
       expect(pdfBytes[2], 0x44); // D
       expect(pdfBytes[3], 0x46); // F
     });
+
+    test('renders canvas elements to valid PDF with Unicode and emojis without warning', () async {
+      final elements = <CanvasElement>[
+        const ShapeElement(
+          id: 's-1',
+          z: 0,
+          shapeType: CanvasShapeType.circle,
+          center: Offset(120, 120),
+          size: 60,
+          color: Colors.deepPurple,
+        ),
+      ];
+
+      final pdfBytes = await exportService.renderToPdf(
+        '🎨 Design Board — 2026’s “Ideas” & Plans …',
+        elements,
+      );
+
+      expect(pdfBytes, isNotEmpty);
+      expect(pdfBytes[0], 0x25); // %
+      expect(pdfBytes[1], 0x50); // P
+      expect(pdfBytes[2], 0x44); // D
+      expect(pdfBytes[3], 0x46); // F
+    });
   });
 }
