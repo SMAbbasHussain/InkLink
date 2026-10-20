@@ -75,17 +75,39 @@ class BoardExportServiceImpl implements BoardExportService {
 
   Future<Directory> _resolveExportDirectory() async {
     if (Platform.isAndroid) {
+      // 1. Try public Android Download directory
       try {
         final publicDownloadDir = Directory('/storage/emulated/0/Download');
         if (await publicDownloadDir.exists()) {
           final inkLinkDir = Directory('${publicDownloadDir.path}/InkLink');
           if (!await inkLinkDir.exists()) {
-            await inkLinkDir.create(recursive: true);
+            try {
+              await inkLinkDir.create(recursive: true);
+            } catch (_) {}
           }
-          final testFile = File('${inkLinkDir.path}/.test_${DateTime.now().millisecondsSinceEpoch}');
+          final targetDir = (await inkLinkDir.exists()) ? inkLinkDir : publicDownloadDir;
+          final testFile = File('${targetDir.path}/.test_${DateTime.now().millisecondsSinceEpoch}');
           await testFile.writeAsString('test');
           await testFile.delete();
-          return inkLinkDir;
+          return targetDir;
+        }
+      } catch (_) {}
+
+      // 2. Try public Android Documents directory
+      try {
+        final publicDocsDir = Directory('/storage/emulated/0/Documents');
+        if (await publicDocsDir.exists()) {
+          final inkLinkDir = Directory('${publicDocsDir.path}/InkLink');
+          if (!await inkLinkDir.exists()) {
+            try {
+              await inkLinkDir.create(recursive: true);
+            } catch (_) {}
+          }
+          final targetDir = (await inkLinkDir.exists()) ? inkLinkDir : publicDocsDir;
+          final testFile = File('${targetDir.path}/.test_${DateTime.now().millisecondsSinceEpoch}');
+          await testFile.writeAsString('test');
+          await testFile.delete();
+          return targetDir;
         }
       } catch (_) {}
     }
@@ -93,7 +115,13 @@ class BoardExportServiceImpl implements BoardExportService {
     try {
       final downloads = await getDownloadsDirectory();
       if (downloads != null && await downloads.exists()) {
-        return downloads;
+        final inkLinkDir = Directory('${downloads.path}/InkLink');
+        if (!await inkLinkDir.exists()) {
+          try {
+            await inkLinkDir.create(recursive: true);
+          } catch (_) {}
+        }
+        return (await inkLinkDir.exists()) ? inkLinkDir : downloads;
       }
     } catch (_) {}
 
@@ -102,9 +130,11 @@ class BoardExportServiceImpl implements BoardExportService {
       if (ext != null && await ext.exists()) {
         final inkLinkDir = Directory('${ext.path}/InkLink');
         if (!await inkLinkDir.exists()) {
-          await inkLinkDir.create(recursive: true);
+          try {
+            await inkLinkDir.create(recursive: true);
+          } catch (_) {}
         }
-        return inkLinkDir;
+        return (await inkLinkDir.exists()) ? inkLinkDir : ext;
       }
     } catch (_) {}
 
@@ -112,9 +142,11 @@ class BoardExportServiceImpl implements BoardExportService {
       final docs = await getApplicationDocumentsDirectory();
       final inkLinkDir = Directory('${docs.path}/InkLink');
       if (!await inkLinkDir.exists()) {
-        await inkLinkDir.create(recursive: true);
+        try {
+          await inkLinkDir.create(recursive: true);
+        } catch (_) {}
       }
-      return inkLinkDir;
+      return (await inkLinkDir.exists()) ? inkLinkDir : docs;
     } catch (_) {}
 
     return await getTemporaryDirectory();

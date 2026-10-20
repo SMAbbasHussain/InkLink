@@ -1215,20 +1215,64 @@ class _CanvasScreenState extends State<CanvasScreen> {
           subtitle,
           style: const TextStyle(fontSize: 12, color: Colors.grey),
         ),
-        trailing: const Icon(Icons.download, size: 20),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.file_download_outlined, size: 22),
+              tooltip: 'Save to Device Storage',
+              onPressed: () {
+                Navigator.pop(sheetContext);
+                ScaffoldMessenger.of(context).removeCurrentSnackBar();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Saving ${format.name.toUpperCase()} to device storage...'),
+                    duration: const Duration(seconds: 1),
+                  ),
+                );
+                _canvasBloc.add(
+                  CanvasExportBoardRequested(
+                    format: format,
+                    shareAfterExport: false,
+                  ),
+                );
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.share_outlined, size: 20),
+              tooltip: 'Share via...',
+              onPressed: () {
+                Navigator.pop(sheetContext);
+                ScaffoldMessenger.of(context).removeCurrentSnackBar();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Preparing ${format.name.toUpperCase()} for sharing...'),
+                    duration: const Duration(seconds: 1),
+                  ),
+                );
+                _canvasBloc.add(
+                  CanvasExportBoardRequested(
+                    format: format,
+                    shareAfterExport: true,
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
         onTap: () {
           Navigator.pop(sheetContext);
           ScaffoldMessenger.of(context).removeCurrentSnackBar();
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Exporting ${format.name.toUpperCase()}...'),
+              content: Text('Saving ${format.name.toUpperCase()} to device storage...'),
               duration: const Duration(seconds: 1),
             ),
           );
           _canvasBloc.add(
             CanvasExportBoardRequested(
               format: format,
-              shareAfterExport: true,
+              shareAfterExport: false,
             ),
           );
         },

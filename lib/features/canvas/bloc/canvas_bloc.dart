@@ -2091,11 +2091,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       }
 
       final ext = event.format.name.toUpperCase();
+      final destination = file.path.contains('Download') ? 'Downloads' : 'device storage';
+      final successMsg = event.shareAfterExport
+          ? 'Board exported as $ext and opened in Share Sheet!'
+          : 'Board saved locally to $destination as $ext!\n${file.path}';
       emit(
         state.copyWith(
           isExporting: false,
           lastExportedFilePath: file.path,
-          exportSuccessMessage: 'Board exported as $ext!\nSaved to: ${file.path}',
+          exportSuccessMessage: successMsg,
         ),
       );
     } catch (e) {
