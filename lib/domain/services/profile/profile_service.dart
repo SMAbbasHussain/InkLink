@@ -46,6 +46,11 @@ abstract class ProfileService {
     required bool showOnlineStatus,
     required bool showEmail,
   });
+  Future<void> updateNotificationPreferences({
+    bool? pushNotificationsEnabled,
+    bool? inviteAlertsEnabled,
+    bool? friendAlertsEnabled,
+  });
   Future<void> updatePreferredTags(List<String> tags);
   Future<Map<String, dynamic>?> getCurrentUserData();
 }
@@ -219,6 +224,34 @@ class ProfileServiceImpl implements ProfileService {
       'showOnlineStatus': showOnlineStatus,
       'showEmail': showEmail,
     });
+  }
+
+  @override
+  Future<void> updateNotificationPreferences({
+    bool? pushNotificationsEnabled,
+    bool? inviteAlertsEnabled,
+    bool? friendAlertsEnabled,
+  }) async {
+    final user = _authService.getCurrentUser();
+    if (user == null) {
+      throw Exception('User not authenticated');
+    }
+    final updates = <String, dynamic>{};
+    if (pushNotificationsEnabled != null) {
+      updates['notificationPreferences.pushNotificationsEnabled'] =
+          pushNotificationsEnabled;
+    }
+    if (inviteAlertsEnabled != null) {
+      updates['notificationPreferences.inviteAlertsEnabled'] =
+          inviteAlertsEnabled;
+    }
+    if (friendAlertsEnabled != null) {
+      updates['notificationPreferences.friendAlertsEnabled'] =
+          friendAlertsEnabled;
+    }
+    if (updates.isNotEmpty) {
+      await _profileRepository.updateUserFields(user.uid, updates);
+    }
   }
 
   @override

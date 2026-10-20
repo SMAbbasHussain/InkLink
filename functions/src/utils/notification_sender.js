@@ -71,6 +71,22 @@ async function sendUserNotification({
     .collection(FirestorePaths.NOTIFICATIONS_SUBCOLLECTION)
     .add(notificationPayload);
 
+  const notificationPrefs = userData.notificationPreferences || {};
+  if (notificationPrefs.pushNotificationsEnabled === false) {
+    logger.info('Push notifications disabled by recipient preference', { recipientUid });
+    return { notificationId: notificationRef.id, deliveredToTokens: 0 };
+  }
+
+  if (type === 'board_invite' && notificationPrefs.inviteAlertsEnabled === false) {
+    logger.info('Invite alerts disabled by recipient preference', { recipientUid });
+    return { notificationId: notificationRef.id, deliveredToTokens: 0 };
+  }
+
+  if ((type === 'friend_request' || type === 'friend_accepted') && notificationPrefs.friendAlertsEnabled === false) {
+    logger.info('Friend alerts disabled by recipient preference', { recipientUid });
+    return { notificationId: notificationRef.id, deliveredToTokens: 0 };
+  }
+
   if (tokens.length === 0) {
     logger.warn('No FCM tokens found for recipient', { recipientUid });
     return { notificationId: notificationRef.id, deliveredToTokens: 0 };

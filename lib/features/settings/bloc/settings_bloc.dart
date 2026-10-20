@@ -51,6 +51,18 @@ class SettingsPreferredTagsChanged extends SettingsEvent {
   const SettingsPreferredTagsChanged(this.tags);
 }
 
+class SettingsNotificationPreferencesChanged extends SettingsEvent {
+  final bool? pushNotificationsEnabled;
+  final bool? inviteAlertsEnabled;
+  final bool? friendAlertsEnabled;
+
+  const SettingsNotificationPreferencesChanged({
+    this.pushNotificationsEnabled,
+    this.inviteAlertsEnabled,
+    this.friendAlertsEnabled,
+  });
+}
+
 class SettingsConsumeMessage extends SettingsEvent {
   const SettingsConsumeMessage();
 }
@@ -64,6 +76,9 @@ class SettingsState {
   final bool showOnlineStatus;
   final bool showEmail;
   final List<String> preferredTags;
+  final bool pushNotificationsEnabled;
+  final bool inviteAlertsEnabled;
+  final bool friendAlertsEnabled;
   final bool isLoadingProfilePreferences;
   final String? message;
   final bool isError;
@@ -77,6 +92,9 @@ class SettingsState {
     this.showOnlineStatus = true,
     this.showEmail = false,
     this.preferredTags = const [],
+    this.pushNotificationsEnabled = true,
+    this.inviteAlertsEnabled = true,
+    this.friendAlertsEnabled = true,
     this.isLoadingProfilePreferences = true,
     this.message,
     this.isError = false,
@@ -91,6 +109,9 @@ class SettingsState {
     bool? showOnlineStatus,
     bool? showEmail,
     List<String>? preferredTags,
+    bool? pushNotificationsEnabled,
+    bool? inviteAlertsEnabled,
+    bool? friendAlertsEnabled,
     bool? isLoadingProfilePreferences,
     Object? message = _unset,
     bool? isError,
@@ -105,6 +126,10 @@ class SettingsState {
       showOnlineStatus: showOnlineStatus ?? this.showOnlineStatus,
       showEmail: showEmail ?? this.showEmail,
       preferredTags: preferredTags ?? this.preferredTags,
+      pushNotificationsEnabled:
+          pushNotificationsEnabled ?? this.pushNotificationsEnabled,
+      inviteAlertsEnabled: inviteAlertsEnabled ?? this.inviteAlertsEnabled,
+      friendAlertsEnabled: friendAlertsEnabled ?? this.friendAlertsEnabled,
       isLoadingProfilePreferences:
           isLoadingProfilePreferences ?? this.isLoadingProfilePreferences,
       message: message == _unset ? this.message : message as String?,
@@ -134,6 +159,7 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
     );
     on<SettingsPrivacyChanged>(_onPrivacyChanged);
     on<SettingsPreferredTagsChanged>(_onPreferredTagsChanged);
+    on<SettingsNotificationPreferencesChanged>(_onNotificationPreferencesChanged);
     on<SettingsConsumeMessage>(_onConsumeMessage);
   }
 
@@ -145,11 +171,17 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
     final quality = await _settingsService.getBoardPreviewQuality();
     final compression =
         await _settingsService.getBoardPreviewCompressionEnabled();
+    final pushEnabled = await _settingsService.getPushNotificationsEnabled();
+    final inviteEnabled = await _settingsService.getInviteAlertsEnabled();
+    final friendEnabled = await _settingsService.getFriendAlertsEnabled();
 
     bool isProfilePublic = state.isProfilePublic;
     bool showOnlineStatus = state.showOnlineStatus;
     bool showEmail = state.showEmail;
     List<String> preferredTags = state.preferredTags;
+    bool pushNotificationsEnabled = pushEnabled;
+    bool inviteAlertsEnabled = inviteEnabled;
+    bool friendAlertsEnabled = friendEnabled;
 
     if (_profileService != null) {
       try {
@@ -162,6 +194,26 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
                   ?.map((e) => e.toString())
                   .toList() ??
               preferredTags;
+
+          final notifPrefs = userData['notificationPreferences'];
+          if (notifPrefs is Map<String, dynamic>) {
+            if (notifPrefs.containsKey('pushNotificationsEnabled')) {
+              pushNotificationsEnabled =
+                  (notifPrefs['pushNotificationsEnabled'] as bool?) ?? pushEnabled;
+              await _settingsService
+                  .setPushNotificationsEnabled(pushNotificationsEnabled);
+            }
+            if (notifPrefs.containsKey('inviteAlertsEnabled')) {
+              inviteAlertsEnabled =
+                  (notifPrefs['inviteAlertsEnabled'] as bool?) ?? inviteEnabled;
+              await _settingsService.setInviteAlertsEnabled(inviteAlertsEnabled);
+            }
+            if (notifPrefs.containsKey('friendAlertsEnabled')) {
+              friendAlertsEnabled =
+                  (notifPrefs['friendAlertsEnabled'] as bool?) ?? friendEnabled;
+              await _settingsService.setFriendAlertsEnabled(friendAlertsEnabled);
+            }
+          }
         }
       } catch (_) {}
     }
@@ -176,6 +228,9 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
         showOnlineStatus: showOnlineStatus,
         showEmail: showEmail,
         preferredTags: preferredTags,
+        pushNotificationsEnabled: pushNotificationsEnabled,
+        inviteAlertsEnabled: inviteAlertsEnabled,
+        friendAlertsEnabled: friendAlertsEnabled,
         isLoadingProfilePreferences: false,
       ),
     );
@@ -321,6 +376,55 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
         );
       }
     }
+  }
+
+  Future<void> _onNotificationPreferencesChanged(
+    SettingsNotificationPreferencesChanged event,
+    Emitter<SettingsState> emit,
+  ) async {
+    final newPush =
+        event.pushNotificationsEnabled ?? state.pushNotificationsEnabled;
+    final newInvite =
+        event.inviteAlertsEnabled ?? state.inviteAlertsEnabled;
+    final newFriend =
+        event.friendAlertsEnabled ?? state.friendAlertsEnabled;
+
+    emit(
+      state.copyWith(
+        pushNotificationsEnabled: newPush,
+        inviteAlertsEnabled: newInvite,
+        friendAlertsEnabled: newFriend,
+        message: null,
+        isError: false,
+      ),
+    );
+
+    if (event.pushNotificationsEnabled != null) {
+      await _settingsService.setPushNotificationsEnabled(newPush);
+    }
+    if (event.inviteAlertsEnabled != null) {
+      await _settingsService.setInviteAlertsEnabled(newInvite);
+    }
+    if (event.friendAlertsEnabled != null) {
+      await _settingsService.setFriendAlertsEnabled(newFriend);
+    }
+
+    if (_profileService != null) {
+      try {
+        await _profileService.updateNotificationPreferences(
+          pushNotificationsEnabled: event.pushNotificationsEnabled,
+          inviteAlertsEnabled: event.inviteAlertsEnabled,
+          friendAlertsEnabled: event.friendAlertsEnabled,
+        );
+      } catch (_) {}
+    }
+
+    emit(
+      state.copyWith(
+        message: 'Notification preferences updated.',
+        isError: false,
+      ),
+    );
   }
 
   void _onConsumeMessage(

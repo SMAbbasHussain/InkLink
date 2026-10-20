@@ -89,11 +89,11 @@
 
 ---
 
-## Module 6: Notifications & Preferences (FR15)
+## Module 6: Notifications & Preferences (FR15) — ✅ COMPLETED (FR15-05)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
 | :--- | :--- | :---: | :---: | :--- |
-| **FR15-05** | Enable or disable notifications in settings | ⚠️ Partial | 🟢 **Level 1.5 (1.5/5)** | In [`settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/settings/view/settings_screen.dart), add a "Notifications" section with switches (Push Notifications, Invite Alerts, Friend Alerts). Link to [`notification_preferences.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/core/utils/notification_preferences.dart). |
+| **FR15-05** | Enable or disable notifications in settings | ✅ **Implemented** | 🟢 **Level 1.5 (1.5/5)** | In [`settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/settings/view/settings_screen.dart), added "Notifications" section with switches for Push Notifications, Board Invite Alerts, and Friend Request Alerts. Backed by [`notification_preferences.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/core/utils/notification_preferences.dart), [`settings_bloc.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/settings/bloc/settings_bloc.dart), `ProfileService`, and checked in [`notification_sender.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/utils/notification_sender.js). |
 | **FR15-04** | Notify users when mentioned in a comment | ❌ Missing | 🟠 **Level 3 (3/5)** | Parse `@displayName` regex in comments. When comment is submitted, query user UID and trigger Cloud Function [`send_notification.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/notifications/send_notification.js) with FCM payload and in-app notification. *(Depends on Module 11 Comment System).* |
 
 ---
