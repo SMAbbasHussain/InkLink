@@ -1085,6 +1085,150 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
+  void _showExportOptionsSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Export & Share Board',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(sheetContext),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Export your canvas elements with full layout integrity:',
+                  style: TextStyle(color: Colors.grey, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                _buildExportTile(
+                  sheetContext,
+                  icon: Icons.image_outlined,
+                  iconColor: Colors.blue,
+                  title: 'PNG Image',
+                  subtitle: 'High-resolution lossless raster export (2x scale)',
+                  format: BoardExportFormat.png,
+                ),
+                const SizedBox(height: 10),
+                _buildExportTile(
+                  sheetContext,
+                  icon: Icons.picture_as_pdf_outlined,
+                  iconColor: Colors.redAccent,
+                  title: 'PDF Document',
+                  subtitle: 'Printable formatted document with metadata header',
+                  format: BoardExportFormat.pdf,
+                ),
+                const SizedBox(height: 10),
+                _buildExportTile(
+                  sheetContext,
+                  icon: Icons.code_outlined,
+                  iconColor: Colors.teal,
+                  title: 'SVG Vector File',
+                  subtitle: 'Scalable vector graphics compatible with Figma & Illustrator',
+                  format: BoardExportFormat.svg,
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.share_outlined, size: 20),
+                    label: const Text(
+                      'Share Board File (Native Sheet)',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      _canvasBloc.add(
+                        const CanvasExportBoardRequested(
+                          format: BoardExportFormat.png,
+                          shareAfterExport: true,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildExportTile(
+    BuildContext sheetContext, {
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required BoardExportFormat format,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.withOpacity(0.2)),
+      ),
+      child: ListTile(
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: iconColor),
+        ),
+        title: Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        trailing: const Icon(Icons.download, size: 20),
+        onTap: () {
+          Navigator.pop(sheetContext);
+          _canvasBloc.add(
+            CanvasExportBoardRequested(
+              format: format,
+              shareAfterExport: false,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -1092,8 +1236,43 @@ class _CanvasScreenState extends State<CanvasScreen> {
     return BlocProvider.value(
       value: _canvasBloc,
       child: BlocListener<CanvasBloc, CanvasState>(
-        listenWhen: (previous, current) => previous.error != current.error,
+        listenWhen: (previous, current) =>
+            previous.error != current.error ||
+            (current.exportSuccessMessage != null &&
+                current.exportSuccessMessage != previous.exportSuccessMessage),
         listener: (context, state) async {
+          if (state.exportSuccessMessage != null) {
+            final msg = state.exportSuccessMessage!;
+            final path = state.lastExportedFilePath;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(msg),
+                backgroundColor: Colors.teal.shade700,
+                duration: const Duration(seconds: 4),
+                action: path != null
+                    ? SnackBarAction(
+                        label: 'Share',
+                        textColor: Colors.white,
+                        onPressed: () {
+                          final format = path.endsWith('.pdf')
+                              ? BoardExportFormat.pdf
+                              : path.endsWith('.svg')
+                                  ? BoardExportFormat.svg
+                                  : BoardExportFormat.png;
+                          context.read<CanvasBloc>().add(
+                            CanvasExportBoardRequested(
+                              format: format,
+                              shareAfterExport: true,
+                            ),
+                          );
+                        },
+                      )
+                    : null,
+              ),
+            );
+            context.read<CanvasBloc>().add(const CanvasConsumeExportMessage());
+          }
+
           final message = state.error;
           if (message == null || message.isEmpty) return;
 
@@ -1189,11 +1368,25 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       tooltip: 'Reset View',
                       onPressed: _toggleResetView,
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.file_download_outlined),
+                      tooltip: 'Export & Share Board',
+                      onPressed: () => _showExportOptionsSheet(context),
+                    ),
                     PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert),
                       onSelected: (value) {
                         if (value == 'settings') {
                           _openSettings(state.boardTitle ?? 'Board');
+                        } else if (value == 'export') {
+                          _showExportOptionsSheet(context);
+                        } else if (value == 'share') {
+                          _canvasBloc.add(
+                            const CanvasExportBoardRequested(
+                              format: BoardExportFormat.png,
+                              shareAfterExport: true,
+                            ),
+                          );
                         } else if (value == 'copy') {
                           Clipboard.setData(
                             ClipboardData(text: widget.boardId),
@@ -1227,6 +1420,26 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         const PopupMenuItem(
                           value: 'settings',
                           child: Text('Board Settings'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'export',
+                          child: Row(
+                            children: [
+                              Icon(Icons.file_download_outlined, size: 18),
+                              SizedBox(width: 8),
+                              Text('Export Board...'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'share',
+                          child: Row(
+                            children: [
+                              Icon(Icons.share_outlined, size: 18),
+                              SizedBox(width: 8),
+                              Text('Share Board'),
+                            ],
+                          ),
                         ),
                         const PopupMenuItem(
                           value: 'copy',
@@ -2879,6 +3092,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           onClearAll: _clearAll,
           onAddStickyNote: _addStickyNoteDialog,
           onAddConnector: _addConnectorDialog,
+          onExport: () => _showExportOptionsSheet(context),
           onClose: () => _toggleTray('tools'),
         ),
         ShapesTray(

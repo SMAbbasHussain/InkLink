@@ -109,14 +109,14 @@
 
 ---
 
-## Module 8: Board Export & File Sharing (FR11)
+## Module 8: Board Export & File Sharing (FR11) — ✅ COMPLETED
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
 | :--- | :--- | :---: | :---: | :--- |
-| **FR11-03** | Share exported file | ❌ Missing | 🟢 **Level 1.5 (1.5/5)** | Add `share_plus: ^10.1.0` to [`pubspec.yaml`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/pubspec.yaml). Call `Share.shareXFiles([XFile(filePath)], text: 'Exported board from InkLink')` when any export completes. |
-| **FR11-01**<br>**FR11-04** | Export board as PNG image with layout integrity | ❌ Missing | 🟡 **Level 2.5 (2.5/5)** | Calculate bounding box of all canvas elements. Render offscreen onto a `PictureRecorder` + `Canvas` at 2x/3x scale. Convert to image (`toByteData(format: ImageByteFormat.png)`). Save to device storage via `path_provider`. Add "Export as PNG" to canvas menu. |
-| **FR11-02** | Export board as PDF file | ❌ Missing | 🟠 **Level 3.5 (3.5/5)** | Add `pdf: ^3.11.1` and `printing: ^5.13.2` to `pubspec.yaml`. Create a PDF document containing a full-resolution vector/raster page layout of the canvas elements with title header and metadata footer. Add "Export as PDF" to canvas menu. |
-| **FR11-05** | Export boards as SVG files | ❌ Missing | 🟠 **Level 3.5 (3.5/5)** | Build an `SvgExporter` class that iterates through all `CanvasElement` models: translate strokes into `<path d="...">`, shapes into `<rect>`, `<circle>`, `<polygon>`, text into `<text>`, and images into embedded `<image>`. Write `.svg` string to file. |
+| **FR11-03** | Share exported file | ✅ **Implemented** | 🟢 **Level 1.5 (1.5/5)** | Added `share_plus: ^13.3.1`. Integrated `exportService.shareBoardFile(path)` via native share sheet triggered directly from export modal sheet or completion SnackBar action. |
+| **FR11-01**<br>**FR11-04** | Export board as PNG image with layout integrity | ✅ **Implemented** | 🟡 **Level 2.5 (2.5/5)** | Computes bounding box with generous padding across all canvas elements. Renders offscreen via `ui.PictureRecorder` + `ui.Canvas` at 2x resolution to preserve layout integrity. Encodes to PNG and saves to device storage. |
+| **FR11-02** | Export board as PDF file | ✅ **Implemented** | 🟠 **Level 3.5 (3.5/5)** | Added `pdf: ^3.13.1`. Generates styled PDF document with board title header, creation metadata badge, high-res canvas image, and footer. Saves to device storage. |
+| **FR11-05** | Export boards as SVG files | ✅ **Implemented** | 🟠 **Level 3.5 (3.5/5)** | Full vector SVG serializer converting freehand strokes into `<path d="...">`, all 12 shape types into `<rect>`, `<circle>`, `<polygon>`, `<path>`, connectors with arrow markers, sticky notes, and text. Outputs valid XML `.svg` file. |
 
 ---
 
@@ -181,8 +181,8 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 5. [FR01-05] Trigger email verification email on registration (✅ Done)         │
 │ 6. [FR01-07] Wire up password reset email flow in login screen (✅ Done)        │
 │ 7. [FR02-04] Strict PNG/JPEG/JPG MIME validation for profile photos (✅ Done)   │
-│ 8. [FR11-03] Native file share sheet integration with share_plus               │
-│ 9. [FR15-05] Notification preference switches in settings screen               │
+│ 8. [FR11-03] Native file share sheet integration with share_plus (✅ Done)      │
+│ 9. [FR15-05] Notification preference switches in settings screen (✅ Done)      │
 └─────────────────────────────────────────────────────────────────────────────────┘
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
@@ -199,7 +199,7 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 18. [FR03-11] Atomic move boards between workspaces (✅ Done)                   │
 │ 19. [FR08-01] Active online peers indicator in MembersTray                     │
 │ 20. [FR08-04/05] User join/leave toast notifications over WebSockets           │
-│ 21. [FR11-01/04] Export canvas as high-resolution PNG image                    │
+│ 21. [FR11-01/04] Export canvas as high-resolution PNG image (✅ Done)           │
 │ 22. [FR14-02] Public board deep linking scheme (inklink://board/:id)           │
 │ 23. [FR14-11/12] Compound indexing for public boards & tags in firestore       │
 └─────────────────────────────────────────────────────────────────────────────────┘
@@ -209,8 +209,8 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │ 24. [FR02-06/07] Account deletion with cascade purge Cloud Function (✅ Done)   │
 │ 25. [FR05-09] Canvas Sticky Note visual elements with text wrapping (✅ Done)   │
-│ 26. [FR11-02] Export canvas as paginated PDF document                          │
-│ 27. [FR11-05] Vector SVG serialization and export pipeline                     │
+│ 26. [FR11-02] Export canvas as paginated PDF document (✅ Done)                 │
+│ 27. [FR11-05] Vector SVG serialization and export pipeline (✅ Done)            │
 │ 28. [FR14-04/05] Dedicated Public Board Discovery Screen & feed                │
 │ 29. [FR14-06/07] Public board search and tag filter chips                      │
 │ 30. [FR14-16] Public board sorting (most popular, most recent)                 │

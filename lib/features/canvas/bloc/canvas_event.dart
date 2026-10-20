@@ -470,3 +470,19 @@ class CanvasUpdateBoardMemberRole extends CanvasEvent {
     required this.newRole,
   });
 }
+
+/// Export canvas board in specified format (PNG, PDF, SVG) and optionally share
+class CanvasExportBoardRequested extends CanvasEvent {
+  final BoardExportFormat format;
+  final bool shareAfterExport;
+
+  const CanvasExportBoardRequested({
+    required this.format,
+    this.shareAfterExport = false,
+  });
+}
+
+/// Reset export message and status
+class CanvasConsumeExportMessage extends CanvasEvent {
+  const CanvasConsumeExportMessage();
+}

@@ -182,11 +182,11 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 
 | Req ID | Specification | Status | Implementation Evidence & Gap Details |
 | :--- | :--- | :---: | :--- |
-| **FR11-01** | Export board as PNG image | ❌ **Missing** | Only internal board thumbnail generation exists (`saveBoardPreview`). No user-facing PNG export action or download flow exists. |
-| **FR11-02** | Export board as PDF file | ❌ **Missing** | No PDF export capability (`pdf` package is not in `pubspec.yaml`). |
-| **FR11-03** | Share exported file | ❌ **Missing** | No native share sheet integration (`share_plus` is not in `pubspec.yaml`). |
-| **FR11-04** | Maintain layout integrity during export | ❌ **Missing** | Export pipeline not implemented. |
-| **FR11-05** | Export boards as SVG files | ❌ **Missing** | No SVG vector serialization or export pipeline exists. |
+| **FR11-01** | Export board as PNG image | ✅ **Implemented** | Implemented via `BoardExportService.exportBoard(format: BoardExportFormat.png)`. Generates high-res (2x) offscreen image via `ui.PictureRecorder` + `ui.Canvas`, saves PNG to local storage, and presents native share / download feedback. |
+| **FR11-02** | Export board as PDF file | ✅ **Implemented** | Implemented using `package:pdf/widgets.dart`. Generates high-resolution multi-element page layout with board title header, creation metadata badge, and canvas image, saved to local storage. |
+| **FR11-03** | Share exported file | ✅ **Implemented** | Integrated with `share_plus` (`BoardExportService.shareBoardFile`). Allows immediate dispatch to OS native share sheet from export options sheet or completion SnackBar. |
+| **FR11-04** | Maintain layout integrity during export | ✅ **Implemented** | `BoardExportService.computeElementsBounds` calculates full bounding envelope of all shapes, strokes, connectors, sticky notes, and images with 60px padding, maintaining aspect ratio and vector positions. |
+| **FR11-05** | Export boards as SVG files | ✅ **Implemented** | `BoardExportService.renderToSvg` iterates through elements converting strokes into `<path>`, shapes into SVG `<rect>`, `<circle>`, `<polygon>`, or `<path>`, connectors with arrow markers, sticky notes, and text into standards-compliant SVG. |
 
 ---
 
@@ -311,9 +311,9 @@ Here is the categorized summary of all features required by the specification th
 * Only a text box and a button that displays `"AI image generation is coming soon."` exist in [`ai_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/ai_tray.dart).
 * Missing: External AI API integration (e.g., Gemini API), prompt length validation, parsing AI output into canvas shapes, error handling, user request tracking, and request limit enforcement.
 
-### 4. Board Export & Sharing (FR11) — *0% Implemented*
-* All 5 export requirements (FR11-01 through FR11-05) are missing.
-* Missing: PNG exporter, PDF document generator, SVG vector converter, and OS-level file sharing sheet.
+### 4. Board Export & Sharing (FR11) — *100% Implemented*
+* All 5 export requirements (FR11-01 through FR11-05) are fully implemented via `BoardExportService`.
+* Capabilities: High-res PNG exporter (2x scale), styled PDF document generator with metadata header/footer, vector SVG converter for all 12 shapes, strokes, connectors, and sticky notes, plus OS-level file sharing sheet (`share_plus`).
 
 ### 5. Public Board Discovery & Tag Recommendation (FR14) — *20% Implemented*
 * Public boards can be created, but cannot be browsed, searched, or recommended.

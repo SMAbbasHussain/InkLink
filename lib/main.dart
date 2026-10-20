@@ -34,6 +34,7 @@ import 'package:inklink/domain/repositories/workspace/workspace_repository_impl.
 import 'package:inklink/domain/repositories/theme/theme_repository_impl.dart';
 import 'package:inklink/domain/services/auth/auth_session_service.dart';
 import 'package:inklink/domain/services/board/board_service.dart';
+import 'package:inklink/domain/services/canvas/board_export_service.dart';
 import 'package:inklink/domain/services/canvas/canvas_service.dart';
 import 'package:inklink/domain/services/friends/friends_service.dart';
 import 'package:inklink/domain/services/invitation/invitation_service.dart';
@@ -228,6 +229,9 @@ void main() async {
             boardRepository: context.read<BoardRepository>(),
             syncRepository: context.read<CanvasSyncRepository>(),
           ),
+        ),
+        RepositoryProvider<BoardExportService>(
+          create: (context) => const BoardExportServiceImpl(),
         ),
         RepositoryProvider<WorkspaceService>(
           create: (context) => WorkspaceServiceImpl(

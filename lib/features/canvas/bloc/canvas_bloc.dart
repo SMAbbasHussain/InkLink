@@ -11,12 +11,14 @@ import '../../../core/crdt/canvas_crdt_adapter.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../domain/models/board.dart';
 import '../../../domain/services/board/board_service.dart';
+import '../../../domain/services/canvas/board_export_service.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
 import '../models/canvas_element.dart';
 import '../models/canvas_tool_mode.dart';
 import '../view/trays/canvas_shape_type.dart';
 import 'canvas_state.dart';
 
+export '../../../domain/services/canvas/board_export_service.dart';
 export '../models/canvas_element.dart';
 export 'canvas_state.dart';
 
@@ -53,12 +55,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   String _currentUserRole = Board.roleViewer;
   DateTime? _lastViewerWarningAt;
 
+  final BoardExportService _boardExportService;
+
   CanvasBloc({
     CanvasService? canvasService,
     BoardService? boardService,
+    BoardExportService? boardExportService,
     String boardId = '',
   }) : _canvasService = canvasService,
        _boardService = boardService,
+       _boardExportService = boardExportService ?? const BoardExportServiceImpl(),
        _boardId = boardId,
        super(CanvasInitial()) {
     on<CanvasRenameBoardRequested>(_onCanvasRenameBoardRequested);
@@ -120,6 +126,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasUpdateShapeDraw>(_onUpdateShapeDraw);
     on<CanvasEndShapeDraw>(_onEndShapeDraw);
     on<CanvasCancelShapeDraw>(_onCancelShapeDraw);
+    on<CanvasExportBoardRequested>(_onExportBoardRequested);
+    on<CanvasConsumeExportMessage>(_onConsumeExportMessage);
   }
 
   bool get _canSync => _canvasService != null && _boardId.isNotEmpty;
@@ -2060,6 +2068,51 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     try {
       await canvasService.saveBoardPreview(_boardId, event.pngBytes);
     } catch (_) {}
+  }
+
+  Future<void> _onExportBoardRequested(
+    CanvasExportBoardRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    emit(state.copyWith(isExporting: true, error: null));
+    try {
+      final boardTitle = state.boardTitle ?? 'Board';
+      final file = await _boardExportService.exportBoard(
+        boardTitle: boardTitle,
+        elements: state.elements,
+        format: event.format,
+      );
+
+      if (event.shareAfterExport) {
+        await _boardExportService.shareBoardFile(
+          file: file,
+          boardTitle: boardTitle,
+        );
+      }
+
+      final ext = event.format.name.toUpperCase();
+      emit(
+        state.copyWith(
+          isExporting: false,
+          lastExportedFilePath: file.path,
+          exportSuccessMessage: 'Board successfully exported as $ext!',
+        ),
+      );
+    } catch (e) {
+      emit(
+        state.copyWith(
+          isExporting: false,
+          error: 'Failed to export board: $e',
+        ),
+      );
+    }
+  }
+
+  void _onConsumeExportMessage(
+    CanvasConsumeExportMessage event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(exportSuccessMessage: null));
   }
 
   // ──────────────────────────────────────────────
