@@ -23,6 +23,7 @@ class CanvasState {
   final bool isLoading;
   final String? error;
   final String currentUserRole;
+  final String currentUserId;
   final List<BoardMember> boardMembers;
   final String memberSearchQuery;
   final String? selectedShapeId;
@@ -65,6 +66,7 @@ class CanvasState {
     this.isLoading = false,
     this.error,
     this.currentUserRole = 'viewer',
+    this.currentUserId = '',
     this.boardMembers = const [],
     this.memberSearchQuery = '',
     this.selectedShapeId,
@@ -110,6 +112,7 @@ class CanvasState {
     bool? isLoading,
     Object? error = _unset,
     String? currentUserRole,
+    String? currentUserId,
     List<BoardMember>? boardMembers,
     String? memberSearchQuery,
     Object? selectedShapeId = _unset,
@@ -157,6 +160,7 @@ class CanvasState {
       isLoading: isLoading ?? this.isLoading,
       error: error == _unset ? this.error : error as String?,
       currentUserRole: currentUserRole ?? this.currentUserRole,
+      currentUserId: currentUserId ?? this.currentUserId,
       boardMembers: boardMembers ?? this.boardMembers,
       memberSearchQuery: memberSearchQuery ?? this.memberSearchQuery,
       selectedShapeId: selectedShapeId == _unset
@@ -236,6 +240,7 @@ class CanvasState {
           isLoading == other.isLoading &&
           error == other.error &&
           currentUserRole == other.currentUserRole &&
+          currentUserId == other.currentUserId &&
           boardMembers == other.boardMembers &&
           memberSearchQuery == other.memberSearchQuery &&
           selectedShapeId == other.selectedShapeId &&
@@ -276,6 +281,7 @@ class CanvasState {
       isLoading.hashCode ^
       error.hashCode ^
       currentUserRole.hashCode ^
+      currentUserId.hashCode ^
       boardMembers.hashCode ^
       memberSearchQuery.hashCode ^
       selectedShapeId.hashCode ^
@@ -303,7 +309,7 @@ class CanvasState {
 }
 
 class CanvasInitial extends CanvasState {
-  const CanvasInitial() : super();
+  const CanvasInitial({super.currentUserId});
 }
 
 class CanvasCreating extends CanvasState {

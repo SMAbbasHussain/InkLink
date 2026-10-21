@@ -81,6 +81,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     BoardCommentsService? boardCommentsService,
     BoardChatService? boardChatService,
     VoiceService? voiceService,
+    String currentUserId = '',
     String boardId = '',
   }) : _canvasService = canvasService,
        _boardService = boardService,
@@ -89,7 +90,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
        _boardChatService = boardChatService,
        _voiceService = voiceService,
        _boardId = boardId,
-       super(CanvasInitial()) {
+       super(CanvasInitial(currentUserId: currentUserId)) {
     on<CanvasRenameBoardRequested>(_onCanvasRenameBoardRequested);
     on<CanvasBoardTitleUpdated>(_onCanvasBoardTitleUpdated);
     on<CanvasBoardUnavailable>(_onCanvasBoardUnavailable);

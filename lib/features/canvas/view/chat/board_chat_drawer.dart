@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/services/auth_service.dart';
 import '../../bloc/canvas_bloc.dart';
 
 class BoardChatDrawer extends StatefulWidget {
@@ -57,10 +58,13 @@ class _BoardChatDrawerState extends State<BoardChatDrawer> {
           return const SizedBox.shrink();
         }
 
-        final currentUserId = state.boardMembers
-            .where((m) => m.role == state.currentUserRole)
-            .map((m) => m.uid)
-            .firstOrNull;
+        final currentUserId = state.currentUserId.isNotEmpty
+            ? state.currentUserId
+            : (context.read<AuthService?>()?.getCurrentUserId() ??
+                state.boardMembers
+                    .where((m) => m.role == state.currentUserRole)
+                    .map((m) => m.uid)
+                    .firstOrNull);
 
         return Positioned(
           top: 70,

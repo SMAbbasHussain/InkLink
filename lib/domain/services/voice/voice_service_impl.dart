@@ -6,10 +6,12 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../../../core/services/auth_service.dart';
 import '../../../features/canvas/models/voice_participant.dart';
+import 'rtc_media_client.dart';
 import 'voice_service.dart';
 
 class VoiceServiceImpl implements VoiceService {
   final AuthService _authService;
+  final RtcMediaClient _rtcMediaClient;
   io.Socket? _socket;
 
   final StreamController<List<VoiceParticipant>> _participantsController =
@@ -24,8 +26,11 @@ class VoiceServiceImpl implements VoiceService {
   bool _isMuted = false;
   String? _activeBoardId;
 
-  VoiceServiceImpl({required AuthService authService})
-      : _authService = authService;
+  VoiceServiceImpl({
+    required AuthService authService,
+    RtcMediaClient? rtcMediaClient,
+  })  : _authService = authService,
+        _rtcMediaClient = rtcMediaClient ?? DefaultRtcMediaClient();
 
   @override
   bool get isInCall => _isInCall;
@@ -56,75 +61,85 @@ class VoiceServiceImpl implements VoiceService {
     final token = await _authService.getIdToken();
     if (token == null) return false;
 
-    final serverUrl = dotenv.env['WEBSOCKET_URL'] ?? 'http://10.0.2.2:3000';
-    _socket = io.io(
-      serverUrl,
-      io.OptionBuilder()
-          .setTransports(['websocket'])
-          .setAuth({'token': token})
-          .disableAutoConnect()
-          .build(),
-    );
-
-    _socket!.on('voice_participant_joined', (data) {
-      try {
-        if (data is Map) {
-          final participant =
-              VoiceParticipant.fromMap(Map<String, dynamic>.from(data));
-          _participants.removeWhere((p) => p.uid == participant.uid);
-          _participants.add(participant);
-          _participantsController.add(List.from(_participants));
-        }
-      } catch (e) {
-        developer.log('voice_participant_joined error: $e', name: 'VoiceService');
+    if (_socket != null) {
+      if (!_socket!.connected) {
+        _socket!.connect();
       }
-    });
+    } else {
+      final serverUrl = dotenv.env['WEBSOCKET_URL'] ?? 'http://10.0.2.2:3000';
+      _socket = io.io(
+        serverUrl,
+        io.OptionBuilder()
+            .setTransports(['websocket'])
+            .setAuth({'token': token})
+            .disableAutoConnect()
+            .build(),
+      );
 
-    _socket!.on('voice_participant_left', (data) {
-      try {
-        if (data is Map) {
-          final uid = data['uid'] as String?;
-          if (uid != null) {
-            _participants.removeWhere((p) => p.uid == uid);
+      _socket!.on('voice_participant_joined', (data) {
+        try {
+          if (data is Map) {
+            final participant =
+                VoiceParticipant.fromMap(Map<String, dynamic>.from(data));
+            _participants.removeWhere((p) => p.uid == participant.uid);
+            _participants.add(participant);
             _participantsController.add(List.from(_participants));
           }
+        } catch (e) {
+          developer.log('voice_participant_joined error: $e', name: 'VoiceService');
         }
-      } catch (e) {
-        developer.log('voice_participant_left error: $e', name: 'VoiceService');
-      }
-    });
+      });
 
-    _socket!.on('voice_speaking_changed', (data) {
-      try {
-        if (data is Map) {
-          final uid = data['uid'] as String?;
-          final isSpeaking = data['isSpeaking'] as bool? ?? false;
-          final isMuted = data['isMuted'] as bool? ?? false;
-
-          final idx = _participants.indexWhere((p) => p.uid == uid);
-          if (idx != -1) {
-            _participants[idx] = _participants[idx].copyWith(
-              isSpeaking: isSpeaking,
-              isMuted: isMuted,
-            );
-            _participantsController.add(List.from(_participants));
+      _socket!.on('voice_participant_left', (data) {
+        try {
+          if (data is Map) {
+            final uid = data['uid'] as String?;
+            if (uid != null) {
+              _participants.removeWhere((p) => p.uid == uid);
+              _participantsController.add(List.from(_participants));
+            }
           }
+        } catch (e) {
+          developer.log('voice_participant_left error: $e', name: 'VoiceService');
         }
-      } catch (e) {
-        developer.log('voice_speaking_changed error: $e', name: 'VoiceService');
-      }
-    });
+      });
 
-    _socket!.connect();
+      _socket!.on('voice_speaking_changed', (data) {
+        try {
+          if (data is Map) {
+            final uid = data['uid'] as String?;
+            final isSpeaking = data['isSpeaking'] as bool? ?? false;
+            final isMuted = data['isMuted'] as bool? ?? false;
+
+            final idx = _participants.indexWhere((p) => p.uid == uid);
+            if (idx != -1) {
+              _participants[idx] = _participants[idx].copyWith(
+                isSpeaking: isSpeaking,
+                isMuted: isMuted,
+              );
+              _participantsController.add(List.from(_participants));
+            }
+          }
+        } catch (e) {
+          developer.log('voice_speaking_changed error: $e', name: 'VoiceService');
+        }
+      });
+
+      _socket!.connect();
+    }
+
+    if (_socket!.connected) return true;
 
     final completer = Completer<void>();
-    _socket!.onConnect((_) {
+    void onConnectHandler(_) {
       if (!completer.isCompleted) completer.complete();
-    });
+    }
+
+    _socket!.once('connect', onConnectHandler);
 
     await Future.any([
       completer.future,
-      Future.delayed(const Duration(seconds: 3)),
+      Future.delayed(const Duration(seconds: 5)),
     ]);
 
     return _socket != null && _socket!.connected;
@@ -133,7 +148,15 @@ class VoiceServiceImpl implements VoiceService {
   @override
   Future<void> joinCall(String boardId) async {
     _activeBoardId = boardId;
-    await _ensureConnected();
+    final connected = await _ensureConnected();
+    if (!connected || _socket == null || !_socket!.connected) {
+      _isInCall = false;
+      _isInCallController.add(false);
+      throw StateError(
+        'Voice signaling server is unreachable. Please verify your connection.',
+      );
+    }
+
     final user = _authService.getCurrentUser();
     final displayName = user?.displayName ?? 'Anonymous';
     final photoUrl = user?.photoURL;
@@ -147,9 +170,26 @@ class VoiceServiceImpl implements VoiceService {
         'displayName': displayName,
         'photoUrl': photoUrl,
       },
-      ack: (dynamic res) {
+      ack: (dynamic res) async {
         try {
           if (res is Map && res['status'] == 'success') {
+            final appId = res['appId']?.toString() ?? dotenv.env['AGORA_APP_ID'] ?? '';
+            final channelName = res['channelName']?.toString() ?? 'board_$boardId';
+            final token = res['token']?.toString() ?? '';
+            final currentUid = _authService.getCurrentUserId() ?? '';
+
+            // Consume server credentials to start RTC media session
+            try {
+              await _rtcMediaClient.joinSession(
+                appId: appId,
+                channelName: channelName,
+                token: token,
+                uid: currentUid,
+              );
+            } catch (mediaErr) {
+              developer.log('RTC media session start error: $mediaErr', name: 'VoiceService');
+            }
+
             _isInCall = true;
             _isMuted = false;
             _isInCallController.add(true);
@@ -178,10 +218,12 @@ class VoiceServiceImpl implements VoiceService {
     );
 
     return completer.future.timeout(
-      const Duration(seconds: 5),
+      const Duration(seconds: 8),
       onTimeout: () {
-        _isInCall = true;
-        _isInCallController.add(true);
+        _isInCall = false;
+        _isInCallController.add(false);
+        _activeBoardId = null;
+        throw TimeoutException('Failed to join voice call. The server did not respond.');
       },
     );
   }
@@ -212,6 +254,10 @@ class VoiceServiceImpl implements VoiceService {
   @override
   Future<void> leaveCall(String boardId) async {
     _socket?.emit('leave_voice_call', {'boardId': boardId});
+    try {
+      await _rtcMediaClient.leaveSession();
+    } catch (_) {}
+
     _isInCall = false;
     _isMuted = false;
     _activeBoardId = null;
@@ -226,6 +272,10 @@ class VoiceServiceImpl implements VoiceService {
   Future<void> toggleMute(String boardId) async {
     _isMuted = !_isMuted;
     _isMutedController.add(_isMuted);
+
+    try {
+      await _rtcMediaClient.setMicrophoneMuted(_isMuted);
+    } catch (_) {}
 
     final currentUid = _authService.getCurrentUserId();
     final idx = _participants.indexWhere((p) => p.uid == currentUid);
@@ -270,6 +320,9 @@ class VoiceServiceImpl implements VoiceService {
     if (_isInCall && _activeBoardId != null) {
       await leaveCall(_activeBoardId!);
     }
+    try {
+      await _rtcMediaClient.dispose();
+    } catch (_) {}
     _socket?.disconnect();
     _socket = null;
     await _participantsController.close();
@@ -277,3 +330,4 @@ class VoiceServiceImpl implements VoiceService {
     await _isMutedController.close();
   }
 }
+

@@ -203,7 +203,7 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
           const p = redis.pipeline();
           p.sadd(`board_members:${boardId}`, uid);
           p.expire(`board_members:${boardId}`, 604800);
-          await p.exec().catch(() => {});
+          await p.exec().catch(() => { });
         }
         return true;
       }
@@ -226,7 +226,7 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
         const p = redis.pipeline();
         p.sadd(`board_members:${boardId}`, uid);
         p.expire(`board_members:${boardId}`, 604800);
-        await p.exec().catch(() => {});
+        await p.exec().catch(() => { });
       }
       return true;
     }
@@ -482,14 +482,14 @@ setInterval(async () => {
 // ============================================================
 io.use(async (socket, next) => {
   try {
-    const {token} = socket.handshake.auth;
+    const { token } = socket.handshake.auth;
     if (!token) return next(new Error('Authentication error: Token missing'));
 
     if (db) {
-        const decodedToken = await admin.auth().verifyIdToken(token);
-        socket.data.uid = decodedToken.uid;
+      const decodedToken = await admin.auth().verifyIdToken(token);
+      socket.data.uid = decodedToken.uid;
     } else {
-        socket.data.uid = socket.handshake.auth.uid || "test-user";
+      socket.data.uid = socket.handshake.auth.uid || "test-user";
     }
     next();
   } catch (error) {
@@ -501,7 +501,7 @@ io.use(async (socket, next) => {
 // SOCKET.IO CONNECTION
 // ============================================================
 io.on('connection', (socket) => {
-  const {uid} = socket.data;
+  const { uid } = socket.data;
   console.log(`User connected: ${uid} (socket: ${socket.id})`);
 
   // ----------------------------------------------------------
@@ -629,7 +629,7 @@ io.on('connection', (socket) => {
             version = result;
 
             // Update last activity timestamp (best-effort)
-            redis.set(`board:lastActivity:${boardId}`, Date.now().toString(), 'EX', 604800).catch(() => {});
+            redis.set(`board:lastActivity:${boardId}`, Date.now().toString(), 'EX', 604800).catch(() => { });
           }
         } catch (luaError) {
           console.warn(`[crdt_update] Lua script failed: ${luaError.message}`);
@@ -684,7 +684,7 @@ io.on('connection', (socket) => {
       if (typeof ack === 'function') {
         try {
           ack({ status: 'error', message: error.message });
-        } catch (e) {}
+        } catch (e) { }
       }
     }
   });
@@ -782,7 +782,7 @@ io.on('connection', (socket) => {
             const hasMore = entries.length >= 100;
 
             // Store cursor for this user
-            await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => {});
+            await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => { });
 
             logWsEvent('SYNC RESPONSE (cursor)', [
               `[user] ${uid}`,
@@ -846,7 +846,7 @@ io.on('connection', (socket) => {
             }
 
             const newCursor = `${lastEntryId}:${lastVer}`;
-            await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => {});
+            await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => { });
 
             logWsEvent('SYNC RESPONSE (snapshot+delta)', [
               `[user] ${uid}`,
@@ -892,7 +892,7 @@ io.on('connection', (socket) => {
             if (entry.version > lastVer) lastVer = entry.version;
           }
           const newCursor = `${lastEntryId}:${lastVer}`;
-          await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => {});
+          await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => { });
 
           logWsEvent('SYNC RESPONSE (stream catch-up)', [
             `[user] ${uid}`,
@@ -910,7 +910,7 @@ io.on('connection', (socket) => {
         // Stream is empty — seed cursor from current version
         const currentVersion = await redis.get(`board:${boardId}:version`) || '0';
         const dummyCursor = `0-0:${currentVersion}`;
-        await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, dummyCursor, 'EX', 604800).catch(() => {});
+        await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, dummyCursor, 'EX', 604800).catch(() => { });
 
         if (typeof callback === 'function') {
           callback({ status: 'success', updates: [], cursor: dummyCursor, hasMore: false, source: 'cursor' });
@@ -992,40 +992,16 @@ io.on('connection', (socket) => {
       // 1. Broadcast immediately to all active board viewers in real-time
       io.to(`board_room:${boardId}`).emit('board_chat_message', chatMessage);
 
-      // 2. Store in Redis with TTL (7 days: 604800s)
+      // 2. Cache in Redis with TTL (7 days: 604800s) for low-latency retrieval
       if (redisAvailable) {
         const historyKey = `board_chat:${boardId}:history`;
-        const unpersistedKey = `board_chat:${boardId}:unpersisted`;
         const payloadStr = JSON.stringify(chatMessage);
-
         await redis.rpush(historyKey, payloadStr);
         await redis.expire(historyKey, 604800); // 7 days TTL
-        await redis.rpush(unpersistedKey, payloadStr);
+      }
 
-        const unpersistedCount = await redis.llen(unpersistedKey);
-        // Batch sync to Firestore when 30 messages accumulate
-        if (unpersistedCount >= 30 && db) {
-          try {
-            const rawBatch = await redis.lrange(unpersistedKey, 0, 29);
-            if (rawBatch && rawBatch.length > 0) {
-              const batch = db.batch();
-              for (const raw of rawBatch) {
-                const parsed = JSON.parse(raw);
-                const ref = db.collection('boards').doc(boardId).collection('chat_messages').doc(parsed.id);
-                batch.set(ref, {
-                  ...parsed,
-                  createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                });
-              }
-              await batch.commit();
-              await redis.ltrim(unpersistedKey, rawBatch.length, -1);
-              console.log(`[board_chat] Synced batch of ${rawBatch.length} messages to Firestore for board ${boardId}`);
-            }
-          } catch (batchErr) {
-            console.error(`[board_chat] Failed batch sync to Firestore: ${batchErr.message}`);
-          }
-        }
-      } else if (db) {
+      // 3. Persist to Firestore so messages are never lost after Redis TTL expiry
+      if (db) {
         await db.collection('boards').doc(boardId).collection('chat_messages').doc(chatMessage.id).set({
           ...chatMessage,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1172,13 +1148,18 @@ io.on('connection', (socket) => {
         isSpeaking: !!isSpeaking,
         isMuted: !!isMuted,
       });
-    } catch (_) {}
+    } catch (_) { }
   });
 
   socket.on('get_voice_participants', async ({ boardId }, callback) => {
     try {
       if (!isValidBoardId(boardId)) {
         if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
+        return;
+      }
+      const hasAccess = await canUserAccessBoard(boardId, uid, false);
+      if (!hasAccess) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'forbidden' });
         return;
       }
       if (redisAvailable) {
@@ -1207,7 +1188,7 @@ io.on('connection', (socket) => {
           await redis.hdel(`voice:board:${voiceBoardId}:participants`, uid);
         }
         io.to(`board_room:${voiceBoardId}`).emit('voice_participant_left', { uid, boardId: voiceBoardId });
-      } catch (_) {}
+      } catch (_) { }
     }
   });
 
