@@ -10,6 +10,13 @@
 analyzer:
   exclude:
     - lib/**.g.dart
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
   errors:
     deprecated_member_use: ignore
 include: package:flutter_lints/flutter.yaml
