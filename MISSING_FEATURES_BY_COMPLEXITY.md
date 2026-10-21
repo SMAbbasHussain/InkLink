@@ -24,10 +24,10 @@
 2. [Module 2: User Profile & Preferences (FR02) — ✅ COMPLETED (100%)](#module-2-user-profile--preferences-fr02)
 3. [Module 3: Board Creation & Management (FR03) — ✅ COMPLETED (100%)](#module-3-board-creation--management-fr03)
 4. [Module 4: Canvas Tools & Visual Elements (FR05) — ✅ COMPLETED (100%)](#module-4-canvas-tools--visual-elements-fr05)
-5. [Module 5: Board Sharing & Access Control (FR07)](#module-5-board-sharing--access-control-fr07)
+5. [Module 5: Board Sharing & Access Control (FR07) — ✅ COMPLETED (100%)](#module-5-board-sharing--access-control-fr07)
 6. [Module 6: Notifications & Preferences (FR15) — ✅ COMPLETED (100%)](#module-6-notifications--preferences-fr15)
 7. [Module 7: Presence & Live Awareness (FR08)](#module-7-presence--live-awareness-fr08)
-8. [Module 8: Board Export & File Sharing (FR11)](#module-8-board-export--file-sharing-fr11)
+8. [Module 8: Board Export & File Sharing (FR11) — ✅ COMPLETED (100%)](#module-8-board-export--file-sharing-fr11)
 9. [Module 9: Public Board Access & Discovery (FR14)](#module-9-public-board-access--discovery-fr14)
 10. [Module 10: AI-Assisted Object Generation & Limits (FR06 & FR16)](#module-10-ai-assisted-object-generation--limits-fr06--fr16)
 11. [Module 11: In-App Communication & Audio (FR12) — ✅ COMPLETED (100%)](#module-11-in-app-communication--audio-fr12)
@@ -109,7 +109,7 @@
 
 ---
 
-## Module 8: Board Export & File Sharing (FR11) — ✅ COMPLETED
+## Module 8: Board Export & File Sharing (FR11) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
 | :--- | :--- | :---: | :---: | :--- |

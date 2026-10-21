@@ -8,6 +8,8 @@ InkLink is a Flutter app for collaborative canvases with Firebase-backed realtim
 - Firebase Auth, Firestore, Realtime Database presence, Cloud Functions, and FCM integrations.
 - Isar-backed local cache and settings storage.
 - Canvas collaboration powered by CRDT sync.
+- Board export (PNG, PDF, SVG) with layout preservation and native file sharing.
+- In-app communication: real-time WebSocket chat, threaded pin comments, @mention alerts, and Agora voice calling.
 - Social graph + board invitation + notifications flows are implemented.
 - Architecture guardrails are enforced locally and in CI.
 
@@ -36,7 +38,7 @@ Composition roots:
 
 - lib/features/auth: email/password + Google auth and session bootstrap.
 - lib/features/dashboard: boards listing and board CRUD entry points.
-- lib/features/canvas: board editing, CRDT sync initialization.
+- lib/features/canvas: board editing, CRDT sync, board export (PNG/PDF/SVG), in-app chat, comment pins & threads, voice call HUD.
 - lib/features/friends: requests, friend actions, block/report/unfriend flows.
 - lib/features/board_invitations: invite inbox and accept/decline.
 - lib/features/notifications: in-app notification stream.

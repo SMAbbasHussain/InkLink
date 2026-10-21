@@ -12,9 +12,10 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 
 ### Key Statistics
 * **Total Functional Requirements Specified:** **87 requirements across 17 categories (FR01 – FR17)**
-  * **Fully Implemented (✅):** 47 requirements (~54.0%)
-  * **Partially Implemented (⚠️):** 7 requirements (~8.0%)
-  * **Missing / Not Implemented (❌):** 33 requirements (~38.0%)
+  * **Fully Implemented (✅):** 68 requirements (~78.2%)
+  * **Partially Implemented (⚠️):** 4 requirements (~4.6%)
+  * **Missing / Not Implemented (❌):** 15 requirements (~17.2%)
+* **Fully Completed Modules (100% Compliance):** **Module 1 (FR01), Module 2 (FR02), Module 3 (FR03), Module 4 (FR05), Module 5 (FR07), Module 6 (FR15), Module 8 (FR11), Module 11 (FR12), and Module 13 (FR13).**
 * **Non-Functional Requirements (NFR01 – NFR08):** Strong foundational architectural alignment (Clean Architecture, Yjs CRDT, hybrid Redis/Firestore synchronization, Isar offline storage), but lacking formal automated benchmark testing suites.
 * **Unspecified Extra Features in Codebase:** **8 substantial systems/features** built in the codebase that were not requested or documented in `Requirements.docx`.
 
@@ -58,7 +59,7 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 
 ---
 
-### FR03: Board Creation & Management
+### FR03: Board Creation & Management — ✅ COMPLETED (100%)
 
 | Req ID | Specification | Status | Implementation Evidence & Gap Details |
 | :--- | :--- | :---: | :--- |
@@ -68,18 +69,18 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 | **FR03-04** | Owners rename boards | ✅ **Fully Implemented** | `renameBoard()` in [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart). |
 | **FR03-05** | Owners delete boards they own | ✅ **Fully Implemented** | `deleteBoard()` in [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart) backed by [`delete_board.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/boards/delete_board.js). |
 | **FR03-06** | Prevent Editors and Viewers from deleting boards | ✅ **Fully Implemented** | Enforced by [`firestore.rules`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/firestore.rules#L58-L62) and Cloud Functions checking board ownership. |
-| **FR03-07** | Owners duplicate boards | ❌ **Missing** | No duplicate board endpoint, repository method, or UI action exists. |
-| **FR03-08** | Owners archive boards | ❌ **Missing** | No `isArchived` flag or archive/unarchive functionality exists on boards. |
+| **FR03-07** | Owners duplicate boards | ✅ **Fully Implemented** | Implemented `duplicateBoard()` in [`board_repository_impl.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/repositories/board/board_repository_impl.dart) with full CRDT snapshot cloning, thumbnail copy, `allowMembersToCopy` permission toggle in [`board.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/models/board.dart), and copy selector in [`create_board_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/create_board_screen.dart). |
+| **FR03-08** | Owners archive boards | ✅ **Fully Implemented** | Added `isArchived: bool` field to [`board.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/models/board.dart). Added Archive/Unarchive actions in [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart), [`board_card.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/widgets/board_card.dart), `DashboardBloc`, and dedicated Archived tab on [`home_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/home_screen.dart). |
 | **FR03-09** | Display list of owned and shared boards | ✅ **Fully Implemented** | Tabbed views in [`home_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/home_screen.dart) ("My Boards" and "Shared With Me"). |
 | **FR03-10** | Organize boards into workspaces or folders | ✅ **Fully Implemented** | Implemented through [`workspace_bloc.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/workspaces/bloc/workspace_bloc.dart) and [`workspaces_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/workspaces/view/workspaces_screen.dart). |
-| **FR03-11** | Move boards between workspaces | ⚠️ **Partially Implemented** | Users can add a board to a workspace and remove it from another, but there is no direct atomic "Move Board" modal/feature. |
+| **FR03-11** | Move boards between workspaces | ✅ **Fully Implemented** | Atomic "Move Board to Workspace" modal dialog in [`workspace_detail_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/workspaces/view/workspace_detail_screen.dart) and atomic Firestore batch in [`workspace_repository_impl.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/repositories/workspace/workspace_repository_impl.dart). |
 | **FR03-12** | Assign tags to board during creation/editing | ✅ **Fully Implemented** | Tag inputs in [`create_board_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/create_board_screen.dart) and [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart). |
-| **FR03-13** | Validate tags against predefined format | ⚠️ **Partially Implemented** | Basic trimming and duplicate filtering exists, but max length and regex character validation rules are not strictly enforced. |
+| **FR03-13** | Validate tags against predefined format | ✅ **Fully Implemented** | Strictly enforced in [`create_board_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/create_board_screen.dart) and [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart) requiring tag length `<= 20`, max 5 tags, lowercase alphanumeric and hyphens only (`RegExp(r'^[a-z0-9\-]+$')`). |
 | **FR03-14** | Owners update or remove tags from existing boards | ✅ **Fully Implemented** | Interactive tag chip removal and addition in [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart). |
 
 ---
 
-### FR04: Real-Time Collaborative Editing
+### FR04: Real-Time Collaborative Editing — ✅ COMPLETED (100%)
 
 | Req ID | Specification | Status | Implementation Evidence & Gap Details |
 | :--- | :--- | :---: | :--- |
@@ -93,26 +94,26 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 
 ---
 
-### FR05: Canvas Tools & Visual Elements
+### FR05: Canvas Tools & Visual Elements — ✅ COMPLETED (100%)
 
 | Req ID | Specification | Status | Implementation Evidence & Gap Details |
 | :--- | :--- | :---: | :--- |
 | **FR05-01** | Freehand drawing tool | ✅ **Fully Implemented** | `StrokeElement` rendering in [`canvas_painter.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_painter.dart). |
 | **FR05-02** | Customize brush size | ✅ **Fully Implemented** | Brush width slider in [`brush_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/brush_tray.dart). |
 | **FR05-03** | Select drawing colors | ✅ **Fully Implemented** | Palette, hex, and RGB sliders in [`brush_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/brush_tray.dart). |
-| **FR05-04** | Predefined shapes including rectangle, circle, and arrow | ⚠️ **Partially Implemented** | Shapes include square, rectangle, circle, ellipse, triangle, diamond, star, pentagon, hexagon, line, semicircle in [`canvas_shape_type.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/canvas_shape_type.dart). **Arrow shape is missing** from `CanvasShapeType` and shape painter! |
+| **FR05-04** | Predefined shapes including rectangle, circle, and arrow | ✅ **Fully Implemented** | Added `arrow` shape to [`canvas_shape_type.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/canvas_shape_type.dart) and [`shapes_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/shapes_tray.dart). Implemented arrow path calculation (shaft + arrowhead) in [`canvas_painter.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_painter.dart) and tap-to-connect 2 shapes support in [`canvas_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_screen.dart). |
 | **FR05-05** | Resize shapes | ✅ **Fully Implemented** | Interactive transform overlay handles in [`canvas_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_screen.dart). |
 | **FR05-06** | Rotate shapes | ✅ **Fully Implemented** | Rotation knob handle in [`canvas_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_screen.dart). |
 | **FR05-07** | Insert text boxes | ✅ **Fully Implemented** | `TextElement` created via prompt in [`canvas_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_screen.dart). |
 | **FR05-08** | Edit inserted text | ✅ **Fully Implemented** | Editing dialog updates text content via `CanvasUpdateTextElement`. |
-| **FR05-09** | Insert sticky notes | ❌ **Missing** | No sticky note visual element or tool in the canvas engine. (Documented in `plan.md` as planned feature 1.4, but not implemented). |
+| **FR05-09** | Insert sticky notes | ✅ **Fully Implemented** | Created `StickyNoteElement` extending [`CanvasElement`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/models/canvas_element.dart) with pastel color presets (yellow, lime, cyan, rose, lavender), wrapped typography, drop shadow, and tape accent. Added sticky note action button to [`tools_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/tools_tray.dart) and double-tap editing dialog. |
 | **FR05-10** | Upload images | ✅ **Fully Implemented** | `ImageElement` supported via `image_picker` (gallery upload). |
 | **FR05-11** | Reposition images | ✅ **Fully Implemented** | Drag gestures update `ImageElement.center`. |
 | **FR05-12** | Resize images | ✅ **Fully Implemented** | Scale gestures resize `ImageElement` width and height. |
-| **FR05-13** | Create connectors between canvas elements | ❌ **Missing** | No connector element, line anchors, or binding points exist in codebase. |
-| **FR05-14** | Create flowchart diagrams using connected elements | ❌ **Missing** | No flowchart node or diagramming support. |
-| **FR05-15** | Move connected elements while maintaining links | ❌ **Missing** | No linked element relationship tracking. |
-| **FR05-16** | Capture images using device camera and insert onto canvas | ❌ **Missing** | [`canvas_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_screen.dart#L328) hardcodes `source: ImageSource.gallery`. No camera capture option is available on the canvas. |
+| **FR05-13** | Create connectors between canvas elements | ✅ **Fully Implemented** | Defined `ConnectorElement` with `startElementId`, `startAnchor`, `endElementId`, `endAnchor`, line styles (straight, curved bezier, orthogonal step), and arrowhead in [`canvas_element.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/models/canvas/canvas_element.dart). |
+| **FR05-14** | Create flowchart diagrams using connected elements | ✅ **Fully Implemented** | Connector endpoints dynamically link shapes and flowchart elements on canvas with dynamic anchor calculation in [`canvas_painter.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_painter.dart). |
+| **FR05-15** | Move connected elements while maintaining links | ✅ **Fully Implemented** | Handled in [`canvas_bloc.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/bloc/canvas_bloc.dart); when connected shapes move or resize, attached connector coordinates update in CRDT to preserve link topology. |
+| **FR05-16** | Capture images using device camera and insert onto canvas | ✅ **Fully Implemented** | Provided modal bottom sheet in [`canvas_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/canvas_screen.dart) giving users choice between Camera (`ImageSource.camera`) and Gallery (`ImageSource.gallery`) before image processing. |
 
 ---
 
@@ -131,7 +132,7 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 
 ---
 
-### FR07: Board Sharing & Access Control
+### FR07: Board Sharing & Access Control — ✅ COMPLETED (100%)
 
 | Req ID | Specification | Status | Implementation Evidence & Gap Details |
 | :--- | :--- | :---: | :--- |
@@ -139,7 +140,7 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 | **FR07-02** | Assign roles (Owner, Editor, Viewer) | ✅ **Fully Implemented** | Role selection configured during invite and board creation. |
 | **FR07-03** | Restrict editing rights to Editors and Owner only | ✅ **Fully Implemented** | Viewers cannot interact with drawing tools; enforced in `CanvasBloc`, `canvas_screen.dart`, and Socket server. |
 | **FR07-04** | Restrict deletion rights to Owner only | ✅ **Fully Implemented** | Firestore rules & Cloud Functions prevent non-owners from deleting. |
-| **FR07-05** | Allow Owner to revoke access from other Users | ⚠️ **Partially Implemented** | Implemented for workspaces (`removeMemberFromWorkspace`), but board-level members tray lacks a direct "Revoke Member Access" UI action. |
+| **FR07-05** | Allow Owner to revoke access from other Users | ✅ **Fully Implemented** | In [`members_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/members_tray.dart), added owner-only trailing popup menu with options to toggle member role (Editor <-> Viewer via `CanvasUpdateBoardMemberRole`) and revoke access (`CanvasRemoveBoardMember`) with a confirmation dialog. Handled in [`canvas_bloc.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/bloc/canvas_bloc.dart), `BoardService`, and idempotent Cloud Function [`remove_board_member.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/boards/remove_board_member.js). |
 | **FR07-06** | Prevent unauthorized board access (unauthorized users/bots) | ✅ **Fully Implemented** | Token validation in Socket.IO, security rules in Firestore, rate-limiting on Socket server. |
 
 ---
@@ -178,7 +179,7 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 
 ---
 
-### FR11: Export & Sharing
+### FR11: Board Export & File Sharing — ✅ COMPLETED (100%)
 
 | Req ID | Specification | Status | Implementation Evidence & Gap Details |
 | :--- | :--- | :---: | :--- |
@@ -190,7 +191,7 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 
 ---
 
-### FR12: In-App Communication
+### FR12: In-App Communication & Audio — ✅ COMPLETED (100%)
 
 | Req ID | Specification | Status | Implementation Evidence & Gap Details |
 | :--- | :--- | :---: | :--- |
@@ -204,7 +205,7 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 
 ---
 
-### FR13: Social and Friend Management
+### FR13: Social and Friend Management — ✅ COMPLETED (100%)
 
 | Req ID | Specification | Status | Implementation Evidence & Gap Details |
 | :--- | :--- | :---: | :--- |
@@ -239,7 +240,7 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 
 ---
 
-### FR15: Notifications
+### FR15: Notifications & Preferences — ✅ COMPLETED (100%)
 
 | Req ID | Specification | Status | Implementation Evidence & Gap Details |
 | :--- | :--- | :---: | :--- |
@@ -296,40 +297,36 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 
 ## 3. What Features Are Left (Missing / Incomplete)
 
-Here is the categorized summary of all features required by the specification that are missing or incomplete:
+Here is the categorized summary of all features required by the specification that are currently missing or incomplete:
 
 ### 1. Direct Messaging (DM) System (FR17) — *0% Implemented*
 * All 12 DM requirements (FR17-01 through FR17-12) are completely missing.
 * Needs: Conversation thread data models, chat UI screen, socket/Firestore real-time message stream, read receipts, offline message queue, attachments, and push notifications.
 
-### 2. Canvas Communication: Comments & Voice Calling (FR12) — *100% Implemented*
-* **Board Comments (FR12-01 to FR12-03, FR12-05, FR15-04):** Pinned canvas comment badges, threaded replies, author-only deletion, and mention notifications via Cloud Function.
-* **In-Session Voice Calls (FR12-06, FR12-07):** Agora-backed voice call session with Socket.IO signaling, speaking detection, mic mute/unmute, and floating voice HUD.
-* **Live In-Board Chat (FR12-04):** Real-time chat drawer over WebSockets, cached in Redis (7-day TTL), synced to Firestore in batches of 30 messages.
+### 2. AI-Assisted Object Generation & Limits (FR06 & FR16) — *10% Implemented*
+* Only a text prompt input exists in [`ai_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/ai_tray.dart).
+* Missing: External AI API integration (e.g., Gemini API), prompt length validation (FR06-08), parsing AI output into canvas shapes (FR06-01 to FR06-07), error handling, user request tracking, and request limit enforcement (FR16-01, FR16-02).
 
-### 3. AI-Assisted Object Generation & Limits (FR06 & FR16) — *5% Implemented*
-* Only a text box and a button that displays `"AI image generation is coming soon."` exist in [`ai_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/ai_tray.dart).
-* Missing: External AI API integration (e.g., Gemini API), prompt length validation, parsing AI output into canvas shapes, error handling, user request tracking, and request limit enforcement.
+### 3. Public Board Discovery & Tag Recommendation (FR14) — *35% Implemented*
+* Public boards can be created, join policies and default roles configured, but cannot be browsed, searched, or recommended.
+* Missing: Dedicated Public Boards Discovery Screen (FR14-04), public board feed (FR14-05), keyword search (FR14-06), tag filtering (FR14-07), preferred tag-based recommendations (FR14-08 to FR14-10), deep link handling (FR14-02), compound tag indexes (FR14-11, FR14-12), and popularity/recency sorting (FR14-16).
 
-### 4. Board Export & Sharing (FR11) — *100% Implemented*
-* All 5 export requirements (FR11-01 through FR11-05) are fully implemented via `BoardExportService`.
-* Capabilities: High-res PNG exporter (2x scale), styled PDF document generator with metadata header/footer, vector SVG converter for all 12 shapes, strokes, connectors, and sticky notes, plus OS-level file sharing sheet (`share_plus`).
-
-### 5. Public Board Discovery & Tag Recommendation (FR14) — *20% Implemented*
-* Public boards can be created, but cannot be browsed, searched, or recommended.
-* Missing: Dedicated Public Boards Discovery Screen (FR14-04), public board feed (FR14-05), keyword search (FR14-06), tag filtering (FR14-07), preferred tag-based recommendations (FR14-08 to FR14-10), and popularity/recency sorting (FR14-16).
-
-### 6. Live Participant Awareness & Cursors (FR08) — *10% Implemented*
+### 4. Live Participant Awareness & Cursors (FR08) — *20% Implemented*
+* Active participants query exists, but live visual awareness is incomplete.
 * Missing: Live participant cursor positions rendered on canvas (FR08-02), active object editing indicators (FR08-03), and user join/leave session notifications (FR08-04, FR08-05).
 
-### 7. Canvas Elements & Tools (FR05) — *75% Implemented*
-* Missing: Predefined **Arrow shape** (FR05-04), **Sticky notes** (FR05-09), **Connectors / Flowcharts** with persistent link relationships (FR05-13, FR05-14, FR05-15), and **Camera image capture** on canvas (FR05-16).
+---
 
-### 8. Board Management Gaps (FR03) — *80% Implemented*
-* Missing: **Duplicate board** (FR03-07), **Archive board** (FR03-08), and atomic **Move board between workspaces** (FR03-11).
-
-### 9. Account & Authentication Gaps (FR01 & FR02) — *70% Implemented*
-* Missing: **Password reset via email** (FR01-07), **Email verification email & login check** (FR01-05, FR01-06), **Account deletion with data purge** (FR02-06, FR02-07), **Profile privacy settings** (FR02-10), and **Preferred tag selection** (FR02-11, FR02-12).
+### Fully Completed Subsystems (100% Implemented)
+* **Module 1: Authentication & Identity (FR01):** Password strength validation, email verification and login enforcement, email password reset, token sessions.
+* **Module 2: User Profile Management (FR02):** Profile customization, strict photo MIME validation, privacy toggles, preferred tags, account deletion with cascade purge.
+* **Module 3: Board Creation & Management (FR03):** Board CRUD, duplicate board with CRDT cloning, archive/unarchive, atomic workspace moves, tag regex validation.
+* **Module 4: Canvas Tools & Visual Elements (FR05):** Freehand brushes, shapes, Arrow shape with tap-to-connect, Sticky notes, Connectors & Flowcharts with dynamic topology maintenance, camera/gallery image insertion.
+* **Module 5: Board Sharing & Access Control (FR07):** Friend invites, role assignments (Owner, Editor, Viewer), role toggling, owner member access revocation.
+* **Module 6: Notifications & Preferences (FR15):** FCM push alerts, in-app notification center, comment @mention notifications, user notification preference toggles in settings.
+* **Module 8: Board Export & Sharing (FR11):** High-res PNG (2x), styled PDF document with header/footer, vector SVG serialization for all 12 shapes/connectors/stickies/text/images, OS-level file sharing sheet (`share_plus`).
+* **Module 11: In-App Communication & Audio (FR12):** Pin-to-canvas threaded comments with replies, live WebSocket in-board chat drawer with Redis TTL and Firestore batch sync (30 msgs), Agora voice call session with floating HUD.
+* **Module 13: Social & Friend Management (FR13):** User search, send/accept/decline friend requests, reciprocal friend lists, direct board invites.
 
 ---
 
