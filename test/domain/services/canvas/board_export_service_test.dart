@@ -114,7 +114,8 @@ void main() {
 
       final svg = exportService.renderToSvg('Flowchart', elements);
 
-      expect(svg, contains('marker-end="url(#arrowhead)"'));
+      expect(svg, contains('marker-end="url(#arrowhead_0f766e)"'));
+      expect(svg, contains('<polygon points="0 0, 10 3.5, 0 7" fill="#0f766e" />'));
       expect(svg, contains('stroke="#0f766e"'));
       expect(svg, contains('stroke-width="3.0"'));
     });

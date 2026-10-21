@@ -51,33 +51,36 @@ class SettingsRepositoryImpl implements SettingsRepository {
   }
 
   @override
-  Future<bool> getPushNotificationsEnabled() {
-    return _notificationPreferences.getPushNotificationsEnabled();
+  Future<bool> getPushNotificationsEnabled([String? userId]) async {
+    final val = await _notificationPreferences.getPushNotificationsEnabled(userId);
+    return val ?? true;
   }
 
   @override
-  Future<void> setPushNotificationsEnabled(bool value) {
-    return _notificationPreferences.setPushNotificationsEnabled(value);
+  Future<void> setPushNotificationsEnabled(bool value, [String? userId]) {
+    return _notificationPreferences.setPushNotificationsEnabled(value, userId);
   }
 
   @override
-  Future<bool> getInviteAlertsEnabled() {
-    return _notificationPreferences.getInviteAlertsEnabled();
+  Future<bool> getInviteAlertsEnabled([String? userId]) async {
+    final val = await _notificationPreferences.getInviteAlertsEnabled(userId);
+    return val ?? true;
   }
 
   @override
-  Future<void> setInviteAlertsEnabled(bool value) {
-    return _notificationPreferences.setInviteAlertsEnabled(value);
+  Future<void> setInviteAlertsEnabled(bool value, [String? userId]) {
+    return _notificationPreferences.setInviteAlertsEnabled(value, userId);
   }
 
   @override
-  Future<bool> getFriendAlertsEnabled() {
-    return _notificationPreferences.getFriendAlertsEnabled();
+  Future<bool> getFriendAlertsEnabled([String? userId]) async {
+    final val = await _notificationPreferences.getFriendAlertsEnabled(userId);
+    return val ?? true;
   }
 
   @override
-  Future<void> setFriendAlertsEnabled(bool value) {
-    return _notificationPreferences.setFriendAlertsEnabled(value);
+  Future<void> setFriendAlertsEnabled(bool value, [String? userId]) {
+    return _notificationPreferences.setFriendAlertsEnabled(value, userId);
   }
 
   @override

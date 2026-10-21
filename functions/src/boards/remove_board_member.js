@@ -40,7 +40,14 @@ module.exports = async (request) => {
 
       const members = Array.isArray(boardData.members) ? boardData.members : [];
       if (!members.includes(targetUid)) {
-        throw new HttpsError('not-found', 'User is not a member of this board.');
+        // Idempotent: member already removed from Firestore.
+        // Return success so post-commit socket/Redis cleanup can run and be retried safely.
+        return {
+          success: true,
+          boardId: boardId.trim(),
+          targetUid: targetUid.trim(),
+          alreadyRemoved: true,
+        };
       }
 
       transaction.update(boardRef, {
@@ -75,12 +82,16 @@ module.exports = async (request) => {
     });
 
     if (result.success) {
-      await removeBoardMember(boardId.trim(), targetUid.trim());
-      await publishBoardEvent({
-        type: 'member_removed',
-        boardId: boardId.trim(),
-        uid: targetUid.trim(),
-      });
+      try {
+        await removeBoardMember(boardId.trim(), targetUid.trim());
+        await publishBoardEvent({
+          type: 'member_removed',
+          boardId: boardId.trim(),
+          uid: targetUid.trim(),
+        });
+      } catch (cleanupError) {
+        logger.error('Post-commit socket/redis cleanup failed for removeBoardMember', cleanupError);
+      }
     }
 
     return result;

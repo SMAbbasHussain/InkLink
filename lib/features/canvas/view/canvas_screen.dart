@@ -1569,6 +1569,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 if (hitShapeId != null) {
                                   return;
                                 }
+                                // Empty canvas drag in arrow mode: start drawing an arrow shape
+                                _canvasBloc.add(CanvasStartShapeDraw(worldPoint));
+                                return;
                               }
 
                               // Handle shape drawing mode
@@ -1847,7 +1850,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             },
                             onTap: () {
                               // If in shape draw mode, tap switches back to doodle unless waiting for 2nd arrow connection
-                              if (state.currentToolMode == CanvasToolMode.shape) {
+                              if (state.currentToolMode == CanvasToolMode.shape ||
+                                  _isArrowMode(state)) {
                                 if (state.pendingShapeType ==
                                         CanvasShapeType.arrow &&
                                     _arrowConnectStartElementId != null) {

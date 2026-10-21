@@ -82,7 +82,12 @@ async function sendUserNotification({
     return { notificationId: notificationRef.id, deliveredToTokens: 0 };
   }
 
-  if ((type === 'friend_request' || type === 'friend_accepted') && notificationPrefs.friendAlertsEnabled === false) {
+  if (
+    (type === 'friend_request' ||
+      type === 'friend_accepted' ||
+      type === 'friend_request_accepted') &&
+    notificationPrefs.friendAlertsEnabled === false
+  ) {
     logger.info('Friend alerts disabled by recipient preference', { recipientUid });
     return { notificationId: notificationRef.id, deliveredToTokens: 0 };
   }

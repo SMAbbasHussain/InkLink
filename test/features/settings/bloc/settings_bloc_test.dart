@@ -37,26 +37,29 @@ class FakeSettingsService implements SettingsService {
   }
 
   @override
-  Future<bool> getPushNotificationsEnabled() async => pushNotificationsEnabled;
+  Future<bool> getPushNotificationsEnabled([String? userId]) async =>
+      pushNotificationsEnabled;
 
   @override
-  Future<void> setPushNotificationsEnabled(bool value) async {
+  Future<void> setPushNotificationsEnabled(bool value, [String? userId]) async {
     pushNotificationsEnabled = value;
   }
 
   @override
-  Future<bool> getInviteAlertsEnabled() async => inviteAlertsEnabled;
+  Future<bool> getInviteAlertsEnabled([String? userId]) async =>
+      inviteAlertsEnabled;
 
   @override
-  Future<void> setInviteAlertsEnabled(bool value) async {
+  Future<void> setInviteAlertsEnabled(bool value, [String? userId]) async {
     inviteAlertsEnabled = value;
   }
 
   @override
-  Future<bool> getFriendAlertsEnabled() async => friendAlertsEnabled;
+  Future<bool> getFriendAlertsEnabled([String? userId]) async =>
+      friendAlertsEnabled;
 
   @override
-  Future<void> setFriendAlertsEnabled(bool value) async {
+  Future<void> setFriendAlertsEnabled(bool value, [String? userId]) async {
     friendAlertsEnabled = value;
   }
 
@@ -67,14 +70,19 @@ class FakeSettingsService implements SettingsService {
 class FakeProfileService implements ProfileService {
   Map<String, dynamic>? userData;
   Map<String, dynamic> lastUpdatedNotifPrefs = {};
+  String? userId = 'test-user-id';
 
-  FakeProfileService({this.userData});
+  FakeProfileService({this.userData, this.userId = 'test-user-id'});
+
+  @override
+  String? getCurrentUserId() => userId;
 
   @override
   Future<Map<String, dynamic>?> getCurrentUserData() async => userData;
 
   @override
   Future<void> updateNotificationPreferences({
+    String? uid,
     bool? pushNotificationsEnabled,
     bool? inviteAlertsEnabled,
     bool? friendAlertsEnabled,

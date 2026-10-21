@@ -10,37 +10,42 @@ class NotificationPreferences {
   static const String _inviteAlertsKey = 'invite_alerts_enabled';
   static const String _friendAlertsKey = 'friend_alerts_enabled';
 
-  Future<Set<String>> getReadNotificationIds() =>
-      Future.value(_prefs.getStringList(_readNotificationIdsKey)?.toSet() ?? <String>{});
+  String _userKey(String baseKey, [String? userId]) =>
+      (userId != null && userId.isNotEmpty) ? '${baseKey}_$userId' : baseKey;
 
-  Future<void> markAsRead(String notificationId) async {
-    final current = _prefs.getStringList(_readNotificationIdsKey) ?? <String>[];
+  Future<Set<String>> getReadNotificationIds([String? userId]) =>
+      Future.value(_prefs.getStringList(_userKey(_readNotificationIdsKey, userId))?.toSet() ?? <String>{});
+
+  Future<void> markAsRead(String notificationId, [String? userId]) async {
+    final key = _userKey(_readNotificationIdsKey, userId);
+    final current = _prefs.getStringList(key) ?? <String>[];
     if (current.contains(notificationId)) return;
     current.add(notificationId);
-    await _prefs.setStringList(_readNotificationIdsKey, current);
+    await _prefs.setStringList(key, current);
   }
 
-  Future<void> remove(String notificationId) async {
-    final current = _prefs.getStringList(_readNotificationIdsKey) ?? <String>[];
+  Future<void> remove(String notificationId, [String? userId]) async {
+    final key = _userKey(_readNotificationIdsKey, userId);
+    final current = _prefs.getStringList(key) ?? <String>[];
     current.remove(notificationId);
-    await _prefs.setStringList(_readNotificationIdsKey, current);
+    await _prefs.setStringList(key, current);
   }
 
-  Future<bool> getPushNotificationsEnabled() =>
-      Future.value(_prefs.getBool(_pushNotificationsKey) ?? true);
+  Future<bool?> getPushNotificationsEnabled([String? userId]) =>
+      Future.value(_prefs.getBool(_userKey(_pushNotificationsKey, userId)));
 
-  Future<void> setPushNotificationsEnabled(bool value) =>
-      _prefs.setBool(_pushNotificationsKey, value);
+  Future<void> setPushNotificationsEnabled(bool value, [String? userId]) =>
+      _prefs.setBool(_userKey(_pushNotificationsKey, userId), value);
 
-  Future<bool> getInviteAlertsEnabled() =>
-      Future.value(_prefs.getBool(_inviteAlertsKey) ?? true);
+  Future<bool?> getInviteAlertsEnabled([String? userId]) =>
+      Future.value(_prefs.getBool(_userKey(_inviteAlertsKey, userId)));
 
-  Future<void> setInviteAlertsEnabled(bool value) =>
-      _prefs.setBool(_inviteAlertsKey, value);
+  Future<void> setInviteAlertsEnabled(bool value, [String? userId]) =>
+      _prefs.setBool(_userKey(_inviteAlertsKey, userId), value);
 
-  Future<bool> getFriendAlertsEnabled() =>
-      Future.value(_prefs.getBool(_friendAlertsKey) ?? true);
+  Future<bool?> getFriendAlertsEnabled([String? userId]) =>
+      Future.value(_prefs.getBool(_userKey(_friendAlertsKey, userId)));
 
-  Future<void> setFriendAlertsEnabled(bool value) =>
-      _prefs.setBool(_friendAlertsKey, value);
+  Future<void> setFriendAlertsEnabled(bool value, [String? userId]) =>
+      _prefs.setBool(_userKey(_friendAlertsKey, userId), value);
 }

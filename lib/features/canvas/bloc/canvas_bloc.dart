@@ -1305,10 +1305,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     if (!_ensureCanEdit(emit)) return;
-    if (state.currentToolMode != CanvasToolMode.shape) return;
-    if (state.pendingShapeType == null) return;
+    final isArrow = state.currentToolMode == CanvasToolMode.arrow ||
+        (state.currentToolMode == CanvasToolMode.shape &&
+            state.pendingShapeType == CanvasShapeType.arrow);
+    if (state.currentToolMode != CanvasToolMode.shape && !isArrow) return;
+    final shapeType =
+        state.pendingShapeType ?? (isArrow ? CanvasShapeType.arrow : null);
+    if (shapeType == null) return;
     emit(state.copyWith(
       isDrawingShape: true,
+      pendingShapeType: shapeType,
       shapeDrawStart: event.point,
       shapeDrawCurrent: event.point,
     ));
@@ -1341,7 +1347,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (!state.isDrawingShape) return;
     final start = state.shapeDrawStart;
     final current = state.shapeDrawCurrent;
-    final shapeType = state.pendingShapeType;
+    final shapeType = state.pendingShapeType ??
+        (state.currentToolMode == CanvasToolMode.arrow
+            ? CanvasShapeType.arrow
+            : null);
     if (start == null || current == null || shapeType == null) return;
 
     final dx = (current.dx - start.dx).abs();
@@ -2070,10 +2079,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     } catch (_) {}
   }
 
+  int _activeExportCount = 0;
+
   Future<void> _onExportBoardRequested(
     CanvasExportBoardRequested event,
     Emitter<CanvasState> emit,
   ) async {
+    _activeExportCount++;
     emit(state.copyWith(isExporting: true, error: null));
     try {
       final boardTitle = state.boardTitle ?? 'Board';
@@ -2095,17 +2107,19 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       final successMsg = event.shareAfterExport
           ? 'Board exported as $ext and opened in Share Sheet!'
           : 'Board saved locally to $destination as $ext!\n${file.path}';
+      _activeExportCount = math.max(0, _activeExportCount - 1);
       emit(
         state.copyWith(
-          isExporting: false,
+          isExporting: _activeExportCount > 0,
           lastExportedFilePath: file.path,
           exportSuccessMessage: successMsg,
         ),
       );
     } catch (e) {
+      _activeExportCount = math.max(0, _activeExportCount - 1);
       emit(
         state.copyWith(
-          isExporting: false,
+          isExporting: _activeExportCount > 0,
           error: 'Failed to export board: $e',
         ),
       );

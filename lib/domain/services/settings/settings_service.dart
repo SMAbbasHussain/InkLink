@@ -7,12 +7,12 @@ abstract class SettingsService {
   Future<void> setBoardPreviewQuality(String quality);
   Future<bool> getBoardPreviewCompressionEnabled();
   Future<void> setBoardPreviewCompressionEnabled(bool enabled);
-  Future<bool> getPushNotificationsEnabled();
-  Future<void> setPushNotificationsEnabled(bool value);
-  Future<bool> getInviteAlertsEnabled();
-  Future<void> setInviteAlertsEnabled(bool value);
-  Future<bool> getFriendAlertsEnabled();
-  Future<void> setFriendAlertsEnabled(bool value);
+  Future<bool> getPushNotificationsEnabled([String? userId]);
+  Future<void> setPushNotificationsEnabled(bool value, [String? userId]);
+  Future<bool> getInviteAlertsEnabled([String? userId]);
+  Future<void> setInviteAlertsEnabled(bool value, [String? userId]);
+  Future<bool> getFriendAlertsEnabled([String? userId]);
+  Future<void> setFriendAlertsEnabled(bool value, [String? userId]);
   Future<void> clearLocalCache();
 }
 
@@ -51,33 +51,33 @@ class SettingsServiceImpl implements SettingsService {
   }
 
   @override
-  Future<bool> getPushNotificationsEnabled() {
-    return _settingsRepository.getPushNotificationsEnabled();
+  Future<bool> getPushNotificationsEnabled([String? userId]) {
+    return _settingsRepository.getPushNotificationsEnabled(userId);
   }
 
   @override
-  Future<void> setPushNotificationsEnabled(bool value) {
-    return _settingsRepository.setPushNotificationsEnabled(value);
+  Future<void> setPushNotificationsEnabled(bool value, [String? userId]) {
+    return _settingsRepository.setPushNotificationsEnabled(value, userId);
   }
 
   @override
-  Future<bool> getInviteAlertsEnabled() {
-    return _settingsRepository.getInviteAlertsEnabled();
+  Future<bool> getInviteAlertsEnabled([String? userId]) {
+    return _settingsRepository.getInviteAlertsEnabled(userId);
   }
 
   @override
-  Future<void> setInviteAlertsEnabled(bool value) {
-    return _settingsRepository.setInviteAlertsEnabled(value);
+  Future<void> setInviteAlertsEnabled(bool value, [String? userId]) {
+    return _settingsRepository.setInviteAlertsEnabled(value, userId);
   }
 
   @override
-  Future<bool> getFriendAlertsEnabled() {
-    return _settingsRepository.getFriendAlertsEnabled();
+  Future<bool> getFriendAlertsEnabled([String? userId]) {
+    return _settingsRepository.getFriendAlertsEnabled(userId);
   }
 
   @override
-  Future<void> setFriendAlertsEnabled(bool value) {
-    return _settingsRepository.setFriendAlertsEnabled(value);
+  Future<void> setFriendAlertsEnabled(bool value, [String? userId]) {
+    return _settingsRepository.setFriendAlertsEnabled(value, userId);
   }
 
   @override

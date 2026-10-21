@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -21,8 +22,8 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
-import '../../../features/canvas/models/canvas_element.dart';
-import '../../../features/canvas/view/trays/canvas_shape_type.dart';
+import '../../models/canvas/canvas_element.dart';
+import '../../models/canvas/canvas_shape_type.dart';
 
 enum BoardExportFormat { png, pdf, svg }
 
@@ -50,24 +51,26 @@ class BoardExportServiceImpl implements BoardExportService {
   }) async {
     final sanitizedTitle = _sanitizeFileName(boardTitle);
     final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final randomPart = math.Random().nextInt(1000000).toString().padLeft(6, '0');
+    final uniqueSuffix = '${timestamp}_$randomPart';
     final exportDir = await _resolveExportDirectory();
 
     switch (format) {
       case BoardExportFormat.png:
         final pngBytes = await renderToPng(elements);
-        final file = File('${exportDir.path}/${sanitizedTitle}_$timestamp.png');
+        final file = File('${exportDir.path}/${sanitizedTitle}_$uniqueSuffix.png');
         await file.writeAsBytes(pngBytes, flush: true);
         return file;
 
       case BoardExportFormat.pdf:
         final pdfBytes = await renderToPdf(boardTitle, elements);
-        final file = File('${exportDir.path}/${sanitizedTitle}_$timestamp.pdf');
+        final file = File('${exportDir.path}/${sanitizedTitle}_$uniqueSuffix.pdf');
         await file.writeAsBytes(pdfBytes, flush: true);
         return file;
 
       case BoardExportFormat.svg:
         final svgString = renderToSvg(boardTitle, elements);
-        final file = File('${exportDir.path}/${sanitizedTitle}_$timestamp.svg');
+        final file = File('${exportDir.path}/${sanitizedTitle}_$uniqueSuffix.svg');
         await file.writeAsString(svgString, flush: true);
         return file;
     }
@@ -110,46 +113,48 @@ class BoardExportServiceImpl implements BoardExportService {
           return targetDir;
         }
       } catch (_) {}
+
+      // 3. Fallback to external storage directory
+      try {
+        final extDir = await getExternalStorageDirectory();
+        if (extDir != null) {
+          final inkLinkDir = Directory('${extDir.path}/InkLink');
+          if (!await inkLinkDir.exists()) {
+            await inkLinkDir.create(recursive: true);
+          }
+          return inkLinkDir;
+        }
+      } catch (_) {}
+    }
+
+    if (Platform.isIOS || Platform.isMacOS) {
+      try {
+        final docsDir = await getApplicationDocumentsDirectory();
+        final inkLinkDir = Directory('${docsDir.path}/InkLink');
+        if (!await inkLinkDir.exists()) {
+          await inkLinkDir.create(recursive: true);
+        }
+        return inkLinkDir;
+      } catch (_) {}
     }
 
     try {
-      final downloads = await getDownloadsDirectory();
-      if (downloads != null && await downloads.exists()) {
-        final inkLinkDir = Directory('${downloads.path}/InkLink');
+      final downloadsDir = await getDownloadsDirectory();
+      if (downloadsDir != null) {
+        final inkLinkDir = Directory('${downloadsDir.path}/InkLink');
         if (!await inkLinkDir.exists()) {
-          try {
-            await inkLinkDir.create(recursive: true);
-          } catch (_) {}
-        }
-        return (await inkLinkDir.exists()) ? inkLinkDir : downloads;
-      }
-    } catch (_) {}
-
-    try {
-      final ext = await getExternalStorageDirectory();
-      if (ext != null && await ext.exists()) {
-        final inkLinkDir = Directory('${ext.path}/InkLink');
-        if (!await inkLinkDir.exists()) {
-          try {
-            await inkLinkDir.create(recursive: true);
-          } catch (_) {}
-        }
-        return (await inkLinkDir.exists()) ? inkLinkDir : ext;
-      }
-    } catch (_) {}
-
-    try {
-      final docs = await getApplicationDocumentsDirectory();
-      final inkLinkDir = Directory('${docs.path}/InkLink');
-      if (!await inkLinkDir.exists()) {
-        try {
           await inkLinkDir.create(recursive: true);
-        } catch (_) {}
+        }
+        return inkLinkDir;
       }
-      return (await inkLinkDir.exists()) ? inkLinkDir : docs;
     } catch (_) {}
 
-    return await getTemporaryDirectory();
+    final appDocDir = await getApplicationDocumentsDirectory();
+    final inkLinkDir = Directory('${appDocDir.path}/InkLink');
+    if (!await inkLinkDir.exists()) {
+      await inkLinkDir.create(recursive: true);
+    }
+    return inkLinkDir;
   }
 
   @override
@@ -157,29 +162,74 @@ class BoardExportServiceImpl implements BoardExportService {
     required File file,
     required String boardTitle,
   }) async {
+    final xFile = XFile(file.path);
     await Share.shareXFiles(
-      [XFile(file.path)],
-      text: 'Exported board: $boardTitle from InkLink',
-      subject: 'InkLink Board Export: $boardTitle',
+      [xFile],
+      text: 'Exported board "$boardTitle" from InkLink',
+      subject: boardTitle,
     );
+  }
+
+  String _sanitizeFileName(String title) {
+    var sanitized = title
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_')
+        .trim();
+    if (sanitized.isEmpty) {
+      sanitized = 'board';
+    }
+    if (sanitized.length > 50) {
+      sanitized = sanitized.substring(0, 50);
+    }
+    return sanitized;
   }
 
   // ──────────────────────────────────────────────
   // PNG Render Pipeline
   // ──────────────────────────────────────────────
 
-  Future<Uint8List> renderToPng(List<CanvasElement> elements) async {
+  Future<Uint8List> renderToPng(
+    List<CanvasElement> elements, {
+    double scale = 2.0,
+  }) async {
+    final elementMap = {for (final e in elements) e.id: e};
     final bounds = computeElementsBounds(elements);
-    const double scale = 2.0;
+
+    // Pre-decode base64 images for raster rendering (Comment 10)
+    final decodedImages = <String, ui.Image>{};
+    for (final el in elements) {
+      if (el is ImageElement && el.imageBase64.isNotEmpty) {
+        try {
+          final cleanBase64 = el.imageBase64.trim().replaceAll(RegExp(r'\s+'), '');
+          if (RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(cleanBase64)) {
+            final bytes = base64Decode(cleanBase64);
+            final codec = await ui.instantiateImageCodec(bytes);
+            final frame = await codec.getNextFrame();
+            decodedImages[el.id] = frame.image;
+          }
+        } catch (_) {}
+      }
+    }
 
     final recorder = ui.PictureRecorder();
-    final canvas = ui.Canvas(
-      recorder,
-      Rect.fromLTWH(0, 0, bounds.width * scale, bounds.height * scale),
-    );
+    final canvas = ui.Canvas(recorder);
+
+    // Enforce maximum dimension and pixel area to prevent OOM on large coordinate spans (Comment 11)
+    const double maxDimension = 4096.0;
+    const double maxArea = 4096.0 * 4096.0;
+
+    double effectiveScale = scale;
+    final rawW = bounds.width * effectiveScale;
+    final rawH = bounds.height * effectiveScale;
+    if (rawW > maxDimension || rawH > maxDimension || (rawW * rawH) > maxArea) {
+      final dimScale = math.min(maxDimension / bounds.width, maxDimension / bounds.height);
+      final areaScale = math.sqrt(maxArea / (bounds.width * bounds.height));
+      effectiveScale = math.min(dimScale, areaScale);
+    }
+    effectiveScale = math.max(0.05, effectiveScale);
 
     // Scale up for high-resolution retina output
-    canvas.scale(scale);
+    canvas.scale(effectiveScale);
     // Translate origin to top-left of elements bounding box
     canvas.translate(-bounds.left, -bounds.top);
 
@@ -191,19 +241,23 @@ class BoardExportServiceImpl implements BoardExportService {
       ..sort((a, b) => a.z.compareTo(b.z));
 
     for (final element in sorted) {
-      _paintElement(canvas, element);
+      _paintElement(canvas, element, elementMap, decodedImages);
     }
 
     final picture = recorder.endRecording();
-    final image = await picture.toImage(
-      math.max(1, (bounds.width * scale).ceil()),
-      math.max(1, (bounds.height * scale).ceil()),
-    );
+    final outWidth = math.max(1, (bounds.width * effectiveScale).ceil());
+    final outHeight = math.max(1, (bounds.height * effectiveScale).ceil());
+    final image = await picture.toImage(outWidth, outHeight);
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     return byteData!.buffer.asUint8List();
   }
 
-  void _paintElement(ui.Canvas canvas, CanvasElement element) {
+  void _paintElement(
+    ui.Canvas canvas,
+    CanvasElement element,
+    Map<String, CanvasElement> elementMap,
+    Map<String, ui.Image> decodedImages,
+  ) {
     switch (element) {
       case StrokeElement stroke:
         _paintStroke(canvas, stroke);
@@ -218,10 +272,10 @@ class BoardExportServiceImpl implements BoardExportService {
         _paintStickyNote(canvas, sticky);
         break;
       case ConnectorElement connector:
-        _paintConnector(canvas, connector);
+        _paintConnector(canvas, connector, elementMap);
         break;
       case ImageElement image:
-        _paintImagePlaceholder(canvas, image);
+        _paintImage(canvas, image, decodedImages[image.id]);
         break;
     }
   }
@@ -235,21 +289,24 @@ class BoardExportServiceImpl implements BoardExportService {
       ..strokeCap = ui.StrokeCap.round
       ..strokeJoin = ui.StrokeJoin.round;
 
+    if (stroke.brushType == 'highlighter') {
+      paint.color = stroke.color.withOpacity(0.4);
+      paint.strokeWidth = stroke.strokeWidth * 2.5;
+    }
+
     if (stroke.points.length == 1) {
-      canvas.drawCircle(
-        stroke.points.first,
-        stroke.strokeWidth / 2,
-        ui.Paint()
-          ..color = stroke.color.withOpacity(stroke.opacity.clamp(0.0, 1.0))
-          ..style = ui.PaintingStyle.fill,
-      );
+      canvas.drawCircle(stroke.points.first, stroke.strokeWidth / 2, paint);
       return;
     }
 
     final path = ui.Path()..moveTo(stroke.points.first.dx, stroke.points.first.dy);
     for (int i = 1; i < stroke.points.length; i++) {
-      path.lineTo(stroke.points[i].dx, stroke.points[i].dy);
+      final p0 = stroke.points[i - 1];
+      final p1 = stroke.points[i];
+      final mid = Offset((p0.dx + p1.dx) / 2, (p0.dy + p1.dy) / 2);
+      path.quadraticBezierTo(p0.dx, p0.dy, mid.dx, mid.dy);
     }
+    path.lineTo(stroke.points.last.dx, stroke.points.last.dy);
     canvas.drawPath(path, paint);
   }
 
@@ -262,17 +319,24 @@ class BoardExportServiceImpl implements BoardExportService {
     canvas.save();
     canvas.translate(shape.center.dx, shape.center.dy);
     if (shape.rotation != 0) {
-      canvas.rotate(shape.rotation * math.pi / 180);
+      // Rotation in ShapeElement is already in radians (Comment 16)
+      canvas.rotate(shape.rotation);
     }
 
     final half = shape.size / 2;
-    final rect = Rect.fromCenter(center: Offset.zero, width: shape.size, height: shape.size);
 
     switch (shape.shapeType) {
       case CanvasShapeType.square:
+        final rect = Rect.fromCenter(center: Offset.zero, width: shape.size, height: shape.size);
         canvas.drawRect(rect, paint);
         break;
       case CanvasShapeType.rectangle:
+        // Use canvas painter dimensions: size * 1.35 by size * 0.8 (Comment 19)
+        final rect = Rect.fromCenter(
+          center: Offset.zero,
+          width: shape.size * 1.35,
+          height: shape.size * 0.8,
+        );
         if (shape.borderRadius > 0) {
           canvas.drawRRect(
             RRect.fromRectAndRadius(rect, Radius.circular(shape.borderRadius)),
@@ -286,8 +350,13 @@ class BoardExportServiceImpl implements BoardExportService {
         canvas.drawCircle(Offset.zero, half, paint);
         break;
       case CanvasShapeType.ellipse:
+        // Use canvas painter dimensions: size * 1.3 by size * 0.85 (Comment 19)
         canvas.drawOval(
-          Rect.fromCenter(center: Offset.zero, width: shape.size, height: shape.size * 0.7),
+          Rect.fromCenter(
+            center: Offset.zero,
+            width: shape.size * 1.3,
+            height: shape.size * 0.85,
+          ),
           paint,
         );
         break;
@@ -309,94 +378,46 @@ class BoardExportServiceImpl implements BoardExportService {
         canvas.drawPath(path, paint);
         break;
       case CanvasShapeType.star:
-        final path = _createStarPath(half);
+        final path = _getStarPath(half);
         canvas.drawPath(path, paint);
         break;
       case CanvasShapeType.pentagon:
-        final path = ui.Path();
-        for (int i = 0; i < 5; i++) {
-          final angle = (math.pi / 2) + i * (2 * math.pi / 5);
-          final point = Offset(
-            math.cos(angle) * half,
-            -math.sin(angle) * half,
-          );
-          if (i == 0) {
-            path.moveTo(point.dx, point.dy);
-          } else {
-            path.lineTo(point.dx, point.dy);
-          }
-        }
-        path.close();
+        final path = _getPolygonPath(5, half);
         canvas.drawPath(path, paint);
         break;
       case CanvasShapeType.hexagon:
-        final path = ui.Path();
-        for (int i = 0; i < 6; i++) {
-          final angle = (math.pi / 2) + i * (2 * math.pi / 6);
-          final point = Offset(
-            math.cos(angle) * half,
-            -math.sin(angle) * half,
-          );
-          if (i == 0) {
-            path.moveTo(point.dx, point.dy);
-          } else {
-            path.lineTo(point.dx, point.dy);
-          }
-        }
-        path.close();
+        final path = _getPolygonPath(6, half);
         canvas.drawPath(path, paint);
         break;
       case CanvasShapeType.semicircle:
-        final arcRect = Rect.fromCenter(center: Offset.zero, width: shape.size, height: shape.size);
-        canvas.drawArc(arcRect, math.pi, math.pi, true, paint);
+        final path = ui.Path()
+          ..arcTo(
+            Rect.fromCenter(center: Offset.zero, width: shape.size, height: shape.size),
+            0,
+            math.pi,
+            true,
+          )
+          ..close();
+        canvas.drawPath(path, paint);
         break;
       case CanvasShapeType.line:
         canvas.drawLine(Offset(-half, 0), Offset(half, 0), paint);
         break;
       case CanvasShapeType.arrow:
-        _paintArrow(canvas, Offset(-half, 0), Offset(half, 0), paint);
+        canvas.drawLine(Offset(-half, 0), Offset(half, 0), paint);
+        _paintArrowHead(canvas, Offset(-half, 0), Offset(half, 0), shape.color);
         break;
     }
+
     canvas.restore();
   }
 
-  void _paintArrow(ui.Canvas canvas, Offset start, Offset end, ui.Paint paint) {
-    // Shaft line
-    canvas.drawLine(start, end, paint);
-    // Arrowhead
-    const arrowSize = 14.0;
-    final dx = end.dx - start.dx;
-    final dy = end.dy - start.dy;
-    final angle = math.atan2(dy, dx);
-    const arrowAngle = 25 * math.pi / 180;
-
-    final p1 = Offset(
-      end.dx - arrowSize * math.cos(angle - arrowAngle),
-      end.dy - arrowSize * math.sin(angle - arrowAngle),
-    );
-    final p2 = Offset(
-      end.dx - arrowSize * math.cos(angle + arrowAngle),
-      end.dy - arrowSize * math.sin(angle + arrowAngle),
-    );
-
-    final arrowPath = ui.Path()
-      ..moveTo(end.dx, end.dy)
-      ..lineTo(p1.dx, p1.dy)
-      ..lineTo(p2.dx, p2.dy)
-      ..close();
-
-    final fillPaint = ui.Paint()
-      ..color = paint.color
-      ..style = ui.PaintingStyle.fill;
-    canvas.drawPath(arrowPath, fillPaint);
-  }
-
-  ui.Path _createStarPath(double radius) {
+  ui.Path _getStarPath(double radius) {
+    const points = 5;
+    final innerRadius = radius * 0.45;
     final path = ui.Path();
-    const int points = 5;
-    final double innerRadius = radius * 0.45;
     double angle = -math.pi / 2;
-    const double step = math.pi / points;
+    const step = math.pi / points;
 
     for (int i = 0; i < points * 2; i++) {
       final r = (i % 2 == 0) ? radius : innerRadius;
@@ -413,17 +434,38 @@ class BoardExportServiceImpl implements BoardExportService {
     return path;
   }
 
+  ui.Path _getPolygonPath(int sides, double radius) {
+    final path = ui.Path();
+    double angle = -math.pi / 2;
+    final step = (2 * math.pi) / sides;
+
+    for (int i = 0; i < sides; i++) {
+      final x = radius * math.cos(angle);
+      final y = radius * math.sin(angle);
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+      angle += step;
+    }
+    path.close();
+    return path;
+  }
+
   void _paintText(ui.Canvas canvas, TextElement text) {
     if (text.text.isEmpty) return;
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: text.text,
-        style: TextStyle(
-          color: text.color,
-          fontSize: 18,
-          fontWeight: FontWeight.normal,
-        ),
+    final textSpan = TextSpan(
+      text: text.text,
+      style: TextStyle(
+        color: text.color,
+        fontSize: 18.0,
+        fontWeight: FontWeight.w500,
       ),
+    );
+
+    final textPainter = TextPainter(
+      text: textSpan,
       textDirection: TextDirection.ltr,
     )..layout();
 
@@ -437,7 +479,8 @@ class BoardExportServiceImpl implements BoardExportService {
     canvas.save();
     canvas.translate(sticky.center.dx, sticky.center.dy);
     if (sticky.rotation != 0) {
-      canvas.rotate(sticky.rotation * math.pi / 180);
+      // Rotation is already in radians (Comment 16)
+      canvas.rotate(sticky.rotation);
     }
 
     final rect = Rect.fromCenter(
@@ -455,57 +498,151 @@ class BoardExportServiceImpl implements BoardExportService {
       shadowPaint,
     );
 
-    // Note card
-    final notePaint = ui.Paint()..color = sticky.color;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, const Radius.circular(8)),
-      notePaint,
-    );
+    // Sticky background
+    final bgPaint = ui.Paint()..color = sticky.color;
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(8)), bgPaint);
 
-    // Border
+    // Subtle border
     final borderPaint = ui.Paint()
-      ..color = const Color(0x30000000)
+      ..color = const Color(0x1F000000)
       ..style = ui.PaintingStyle.stroke
-      ..strokeWidth = 1;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, const Radius.circular(8)),
-      borderPaint,
-    );
+      ..strokeWidth = 1.0;
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(8)), borderPaint);
 
-    // Note text
+    // Sticky Note Text
     if (sticky.text.isNotEmpty) {
-      final textPainter = TextPainter(
-        text: TextSpan(
-          text: sticky.text,
-          style: const TextStyle(
-            color: Color(0xFF1E293B),
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-          ),
+      final textSpan = TextSpan(
+        text: sticky.text,
+        style: const TextStyle(
+          color: Color(0xFF1E293B),
+          fontSize: 14.0,
+          fontWeight: FontWeight.w500,
+          height: 1.35,
         ),
+      );
+
+      final textPainter = TextPainter(
+        text: textSpan,
         textDirection: TextDirection.ltr,
-        maxLines: 8,
-      )..layout(maxWidth: sticky.width - 20);
+        maxLines: math.max(1, (sticky.height / 20).floor()),
+        ellipsis: '...',
+      )..layout(maxWidth: math.max(10.0, sticky.width - 24.0));
 
       textPainter.paint(
         canvas,
-        Offset(-sticky.width / 2 + 10, -sticky.height / 2 + 12),
+        Offset(-sticky.width / 2 + 12.0, -sticky.height / 2 + 12.0),
       );
     }
+
     canvas.restore();
   }
 
-  void _paintConnector(ui.Canvas canvas, ConnectorElement connector) {
+  (Offset, Offset) _resolveConnectorEndpoints(
+    ConnectorElement connector,
+    Map<String, CanvasElement> elementMap,
+  ) {
+    final startRaw = _resolveAnchor(
+      elementMap[connector.startElementId],
+      'center',
+      connector.startPoint,
+    );
+    final endRaw = _resolveAnchor(
+      elementMap[connector.endElementId],
+      'center',
+      connector.endPoint,
+    );
+    final start = _resolveAnchor(
+      elementMap[connector.startElementId],
+      connector.startAnchor,
+      connector.startPoint,
+      towards: endRaw,
+    );
+    final end = _resolveAnchor(
+      elementMap[connector.endElementId],
+      connector.endAnchor,
+      connector.endPoint,
+      towards: startRaw,
+    );
+    return (start, end);
+  }
+
+  Offset _resolveAnchor(
+    CanvasElement? target,
+    String anchor,
+    Offset fallback, {
+    Offset? towards,
+  }) {
+    if (target == null) return fallback;
+
+    final Rect targetBounds;
+    if (target is ShapeElement) {
+      final w = target.shapeType == CanvasShapeType.rectangle
+          ? target.size * 1.35
+          : (target.shapeType == CanvasShapeType.ellipse ? target.size * 1.3 : target.size);
+      final h = target.shapeType == CanvasShapeType.rectangle
+          ? target.size * 0.8
+          : (target.shapeType == CanvasShapeType.ellipse ? target.size * 0.85 : target.size);
+      targetBounds = Rect.fromCenter(center: target.center, width: w, height: h);
+    } else if (target is StickyNoteElement) {
+      targetBounds = Rect.fromCenter(
+        center: target.center,
+        width: target.width > 0 ? target.width : 150,
+        height: target.height > 0 ? target.height : 150,
+      );
+    } else if (target is ImageElement) {
+      targetBounds = Rect.fromCenter(
+        center: target.center,
+        width: target.width > 0 ? target.width : 150,
+        height: target.height > 0 ? target.height : 150,
+      );
+    } else {
+      return fallback;
+    }
+
+    String effectiveAnchor = anchor;
+    if (effectiveAnchor == 'auto' && towards != null) {
+      final dx = towards.dx - targetBounds.center.dx;
+      final dy = towards.dy - targetBounds.center.dy;
+      if (dx.abs() > dy.abs()) {
+        effectiveAnchor = dx > 0 ? 'right' : 'left';
+      } else {
+        effectiveAnchor = dy > 0 ? 'bottom' : 'top';
+      }
+    }
+
+    switch (effectiveAnchor) {
+      case 'top':
+        return Offset(targetBounds.center.dx, targetBounds.top);
+      case 'bottom':
+        return Offset(targetBounds.center.dx, targetBounds.bottom);
+      case 'left':
+        return Offset(targetBounds.left, targetBounds.center.dy);
+      case 'right':
+        return Offset(targetBounds.right, targetBounds.center.dy);
+      case 'center':
+      default:
+        return targetBounds.center;
+    }
+  }
+
+  void _paintConnector(
+    ui.Canvas canvas,
+    ConnectorElement connector,
+    Map<String, CanvasElement> elementMap,
+  ) {
+    // Resolve attached anchors so connector connects directly to shape boundaries (Comment 14)
+    final (start, end) = _resolveConnectorEndpoints(connector, elementMap);
+
     final paint = ui.Paint()
       ..color = connector.color
       ..strokeWidth = connector.strokeWidth
       ..style = ui.PaintingStyle.stroke
       ..strokeCap = ui.StrokeCap.round;
 
-    final start = connector.startPoint;
-    final end = connector.endPoint;
+    final isStep = connector.lineStyle == 'step' || connector.lineStyle == 'orthogonal';
+    final isCurved = connector.lineStyle == 'bezier' || connector.lineStyle == 'curved';
 
-    if (connector.lineStyle == 'step') {
+    if (isStep) {
       final midX = (start.dx + end.dx) / 2;
       final path = ui.Path()
         ..moveTo(start.dx, start.dy)
@@ -513,11 +650,15 @@ class BoardExportServiceImpl implements BoardExportService {
         ..lineTo(midX, end.dy)
         ..lineTo(end.dx, end.dy);
       canvas.drawPath(path, paint);
-    } else if (connector.lineStyle == 'bezier') {
-      final midX = (start.dx + end.dx) / 2;
+    } else if (isCurved) {
+      final dx = (end.dx - start.dx).abs();
+      final dy = (end.dy - start.dy).abs();
+      final ctrlOffset = math.max(dx, dy) * 0.45;
+      final cp1 = Offset(start.dx + (end.dx > start.dx ? ctrlOffset : -ctrlOffset), start.dy);
+      final cp2 = Offset(end.dx - (end.dx > start.dx ? ctrlOffset : -ctrlOffset), end.dy);
       final path = ui.Path()
         ..moveTo(start.dx, start.dy)
-        ..cubicTo(midX, start.dy, midX, end.dy, end.dx, end.dy);
+        ..cubicTo(cp1.dx, cp1.dy, cp2.dx, cp2.dy, end.dx, end.dy);
       canvas.drawPath(path, paint);
     } else {
       canvas.drawLine(start, end, paint);
@@ -554,6 +695,29 @@ class BoardExportServiceImpl implements BoardExportService {
       ..color = color
       ..style = ui.PaintingStyle.fill;
     canvas.drawPath(path, fillPaint);
+  }
+
+  void _paintImage(
+    ui.Canvas canvas,
+    ImageElement image,
+    ui.Image? decodedImage,
+  ) {
+    if (decodedImage != null) {
+      final src = Rect.fromLTWH(
+        0,
+        0,
+        decodedImage.width.toDouble(),
+        decodedImage.height.toDouble(),
+      );
+      final dst = Rect.fromCenter(
+        center: image.center,
+        width: image.width,
+        height: image.height,
+      );
+      canvas.drawImageRect(decodedImage, src, dst, ui.Paint());
+    } else {
+      _paintImagePlaceholder(canvas, image);
+    }
   }
 
   void _paintImagePlaceholder(ui.Canvas canvas, ImageElement image) {
@@ -593,27 +757,120 @@ class BoardExportServiceImpl implements BoardExportService {
     String boardTitle,
     List<CanvasElement> elements,
   ) async {
-    final pageImageBytes = await renderPdfPageImage(boardTitle, elements);
-    final imageProvider = pw.MemoryImage(pageImageBytes);
-
     final pdf = pw.Document(
-      title: _sanitizeToAscii(boardTitle),
+      title: boardTitle,
       author: 'InkLink',
+      creator: 'InkLink Collaborative Whiteboard',
     );
+
+    // Rasterize canvas image to embed into PDF
+    final pngBytes = await renderToPng(elements, scale: 2.0);
+    final pdfImage = pw.MemoryImage(pngBytes);
+
+    final creationDate = DateTime.now();
+    final formattedDate =
+        '${creationDate.year}-${creationDate.month.toString().padLeft(2, '0')}-${creationDate.day.toString().padLeft(2, '0')}';
+
+    final ttfBase = pw.Font.helvetica();
+    final ttfBold = pw.Font.helveticaBold();
+
+    final safeTitle = _sanitizePdfString(boardTitle);
+    final safeBrand = _sanitizePdfString('InkLink Whiteboard');
+    final safeDate = _sanitizePdfString('Exported: $formattedDate');
+    final safeElementCount = _sanitizePdfString('${elements.length} elements');
 
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4.landscape,
-        margin: pw.EdgeInsets.zero,
+        margin: const pw.EdgeInsets.all(32),
+        theme: pw.ThemeData.withFont(
+          base: ttfBase,
+          bold: ttfBold,
+        ),
         build: (pw.Context context) {
-          return pw.FullPage(
-            ignoreMargins: true,
-            child: pw.Center(
-              child: pw.Image(
-                imageProvider,
-                fit: pw.BoxFit.contain,
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              // Header
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text(
+                        safeTitle,
+                        style: pw.TextStyle(
+                          font: ttfBold,
+                          fontSize: 22,
+                          color: PdfColor.fromHex('#0F172A'),
+                        ),
+                      ),
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                        safeDate,
+                        style: pw.TextStyle(
+                          font: ttfBase,
+                          fontSize: 10,
+                          color: PdfColor.fromHex('#64748B'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  pw.Container(
+                    padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: pw.BoxDecoration(
+                      color: PdfColor.fromHex('#F1F5F9'),
+                      borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+                    ),
+                    child: pw.Text(
+                      safeBrand,
+                      style: pw.TextStyle(
+                        font: ttfBold,
+                        fontSize: 10,
+                        color: PdfColor.fromHex('#475569'),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
+              pw.Divider(thickness: 1, color: PdfColor.fromHex('#E2E8F0')),
+              pw.SizedBox(height: 12),
+
+              // Canvas Content Image
+              pw.Expanded(
+                child: pw.Center(
+                  child: pw.Image(
+                    pdfImage,
+                    fit: pw.BoxFit.contain,
+                  ),
+                ),
+              ),
+
+              pw.SizedBox(height: 12),
+              pw.Divider(thickness: 1, color: PdfColor.fromHex('#E2E8F0')),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text(
+                    safeElementCount,
+                    style: pw.TextStyle(
+                      font: ttfBase,
+                      fontSize: 9,
+                      color: PdfColor.fromHex('#94A3B8'),
+                    ),
+                  ),
+                  pw.Text(
+                    _sanitizePdfString('Page 1 of 1'),
+                    style: pw.TextStyle(
+                      font: ttfBase,
+                      fontSize: 9,
+                      color: PdfColor.fromHex('#94A3B8'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           );
         },
       ),
@@ -622,180 +879,27 @@ class BoardExportServiceImpl implements BoardExportService {
     return pdf.save();
   }
 
-  Future<Uint8List> renderPdfPageImage(
-    String boardTitle,
-    List<CanvasElement> elements,
-  ) async {
-    const double pageWidth = 1600.0;
-    const double pageHeight = 1131.0;
-
-    final recorder = ui.PictureRecorder();
-    final canvas = ui.Canvas(
-      recorder,
-      const Rect.fromLTWH(0, 0, pageWidth, pageHeight),
-    );
-
-    // Page background
-    final bgPaint = ui.Paint()..color = const Color(0xFFFFFFFF);
-    canvas.drawRect(const Rect.fromLTWH(0, 0, pageWidth, pageHeight), bgPaint);
-
-    // Header: Board Title
-    final displayTitle = boardTitle.trim().isEmpty ? 'Board' : boardTitle.trim();
-    final titlePainter = TextPainter(
-      text: TextSpan(
-        text: displayTitle,
-        style: const TextStyle(
-          color: Color(0xFF0F172A),
-          fontSize: 28,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-      ellipsis: '...',
-    )..layout(maxWidth: 950);
-    titlePainter.paint(canvas, const Offset(48, 32));
-
-    // Header: Subtitle
-    final subtitlePainter = TextPainter(
-      text: const TextSpan(
-        text: 'InkLink Collaborative Whiteboard',
-        style: TextStyle(
-          color: Color(0xFF64748B),
-          fontSize: 13,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    subtitlePainter.paint(canvas, const Offset(48, 70));
-
-    // Header: Export Date Badge
-    final exportDate = DateTime.now().toLocal().toString().split('.').first;
-    final datePainter = TextPainter(
-      text: TextSpan(
-        text: 'Exported: $exportDate',
-        style: const TextStyle(
-          color: Color(0xFF64748B),
-          fontSize: 13,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    datePainter.paint(canvas, Offset(pageWidth - 48 - datePainter.width, 42));
-
-    // Header divider line
-    final dividerPaint = ui.Paint()
-      ..color = const Color(0xFFE2E8F0)
-      ..strokeWidth = 1.5;
-    canvas.drawLine(
-      const Offset(48, 102),
-      const Offset(pageWidth - 48, 102),
-      dividerPaint,
-    );
-
-    // Content container area
-    const contentLeft = 48.0;
-    const contentTop = 118.0;
-    const contentWidth = pageWidth - (contentLeft * 2);
-    const contentHeight = pageHeight - contentTop - 64.0;
-    final contentRect = const Rect.fromLTWH(
-      contentLeft,
-      contentTop,
-      contentWidth,
-      contentHeight,
-    );
-
-    // Background card for canvas elements
-    final cardBgPaint = ui.Paint()..color = const Color(0xFFFAFAFA);
-    final cardBorderPaint = ui.Paint()
-      ..color = const Color(0xFFE2E8F0)
-      ..style = ui.PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(contentRect, const Radius.circular(8)),
-      cardBgPaint,
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(contentRect, const Radius.circular(8)),
-      cardBorderPaint,
-    );
-
-    final bounds = computeElementsBounds(elements);
-    final scaleX = (contentWidth - 40) / bounds.width;
-    final scaleY = (contentHeight - 40) / bounds.height;
-    final fitScale = math.min(scaleX, scaleY).clamp(0.01, 3.0);
-    final fittedWidth = bounds.width * fitScale;
-    final fittedHeight = bounds.height * fitScale;
-    final elemOffsetX = contentLeft + (contentWidth - fittedWidth) / 2;
-    final elemOffsetY = contentTop + (contentHeight - fittedHeight) / 2;
-
-    canvas.save();
-    canvas.clipRRect(
-      RRect.fromRectAndRadius(contentRect, const Radius.circular(8)),
-    );
-    canvas.translate(elemOffsetX, elemOffsetY);
-    canvas.scale(fitScale, fitScale);
-    canvas.translate(-bounds.left, -bounds.top);
-
-    final sorted = List<CanvasElement>.from(elements)
-      ..sort((a, b) => a.z.compareTo(b.z));
-    for (final element in sorted) {
-      _paintElement(canvas, element);
-    }
-    canvas.restore();
-
-    // Footer divider line
-    canvas.drawLine(
-      const Offset(48, pageHeight - 50),
-      const Offset(pageWidth - 48, pageHeight - 50),
-      dividerPaint,
-    );
-
-    // Footer Text Left
-    final footerLeft = TextPainter(
-      text: const TextSpan(
-        text: 'Exported from InkLink • Layout integrity preserved',
-        style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    footerLeft.paint(canvas, const Offset(48, pageHeight - 38));
-
-    // Footer Text Right
-    final footerRight = TextPainter(
-      text: const TextSpan(
-        text: 'Page 1 of 1',
-        style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    footerRight.paint(canvas, Offset(pageWidth - 48 - footerRight.width, pageHeight - 38));
-
-    final picture = recorder.endRecording();
-    final image = await picture.toImage(pageWidth.toInt(), pageHeight.toInt());
-    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-    return byteData!.buffer.asUint8List();
-  }
-
-  String _sanitizeToAscii(String input) {
+  String _sanitizePdfString(String input) {
     final buffer = StringBuffer();
     for (final char in input.runes) {
-      if (char >= 32 && char <= 126) {
+      if (char <= 0x00FF && char != 0x007F) {
         buffer.writeCharCode(char);
       } else {
-        buffer.write('_');
+        buffer.write('?');
       }
     }
-    final result = buffer.toString().trim();
-    return result.isEmpty ? 'Board' : result;
+    return buffer.toString();
   }
 
   // ──────────────────────────────────────────────
-  // SVG Vector Serializer Pipeline
+  // SVG Vector Pipeline
   // ──────────────────────────────────────────────
 
-  String renderToSvg(String boardTitle, List<CanvasElement> elements) {
+  String renderToSvg(
+    String boardTitle,
+    List<CanvasElement> elements,
+  ) {
+    final elementMap = {for (final e in elements) e.id: e};
     final bounds = computeElementsBounds(elements);
     final width = bounds.width.ceil();
     final height = bounds.height.ceil();
@@ -807,11 +911,35 @@ class BoardExportServiceImpl implements BoardExportService {
     buffer.writeln(
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 $width $height" width="$width" height="$height">',
     );
+
+    // Dynamically generate colored arrowhead markers for each arrow/connector color (Comment 20)
+    final arrowColors = <String>{};
+    for (final el in elements) {
+      if (el is ConnectorElement && el.hasArrowhead) {
+        arrowColors.add(_colorToHex(el.color));
+      } else if (el is ShapeElement && el.shapeType == CanvasShapeType.arrow) {
+        arrowColors.add(_colorToHex(el.color));
+      }
+    }
     buffer.writeln('  <defs>');
-    buffer.writeln('    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">');
-    buffer.writeln('      <polygon points="0 0, 10 3.5, 0 7" fill="#333333" />');
-    buffer.writeln('    </marker>');
+    if (arrowColors.isEmpty) {
+      buffer.writeln('    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">');
+      buffer.writeln('      <polygon points="0 0, 10 3.5, 0 7" fill="#333333" />');
+      buffer.writeln('    </marker>');
+    } else {
+      final firstColor = arrowColors.first;
+      buffer.writeln('    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">');
+      buffer.writeln('      <polygon points="0 0, 10 3.5, 0 7" fill="$firstColor" />');
+      buffer.writeln('    </marker>');
+      for (final colorHex in arrowColors) {
+        final id = 'arrowhead_${colorHex.replaceAll('#', '')}';
+        buffer.writeln('    <marker id="$id" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">');
+        buffer.writeln('      <polygon points="0 0, 10 3.5, 0 7" fill="$colorHex" />');
+        buffer.writeln('    </marker>');
+      }
+    }
     buffer.writeln('  </defs>');
+
     buffer.writeln('  <!-- Background -->');
     buffer.writeln('  <rect width="100%" height="100%" fill="#ffffff" />');
     buffer.writeln('  <!-- Canvas Elements -->');
@@ -821,7 +949,7 @@ class BoardExportServiceImpl implements BoardExportService {
       ..sort((a, b) => a.z.compareTo(b.z));
 
     for (final element in sorted) {
-      _serializeSvgElement(buffer, element);
+      _serializeSvgElement(buffer, element, elementMap);
     }
 
     buffer.writeln('  </g>');
@@ -830,7 +958,11 @@ class BoardExportServiceImpl implements BoardExportService {
     return buffer.toString();
   }
 
-  void _serializeSvgElement(StringBuffer buffer, CanvasElement element) {
+  void _serializeSvgElement(
+    StringBuffer buffer,
+    CanvasElement element,
+    Map<String, CanvasElement> elementMap,
+  ) {
     switch (element) {
       case StrokeElement stroke:
         _serializeSvgStroke(buffer, stroke);
@@ -845,7 +977,7 @@ class BoardExportServiceImpl implements BoardExportService {
         _serializeSvgStickyNote(buffer, sticky);
         break;
       case ConnectorElement connector:
-        _serializeSvgConnector(buffer, connector);
+        _serializeSvgConnector(buffer, connector, elementMap);
         break;
       case ImageElement image:
         _serializeSvgImage(buffer, image);
@@ -857,49 +989,57 @@ class BoardExportServiceImpl implements BoardExportService {
     if (stroke.points.isEmpty) return;
     final colorHex = _colorToHex(stroke.color);
     final opacity = stroke.opacity.clamp(0.0, 1.0);
+    final strokeWidth = stroke.brushType == 'highlighter' ? stroke.strokeWidth * 2.5 : stroke.strokeWidth;
+    final strokeOpacity = stroke.brushType == 'highlighter' ? 0.4 : opacity;
 
     if (stroke.points.length == 1) {
       final p = stroke.points.first;
       buffer.writeln(
-        '    <circle cx="${p.dx}" cy="${p.dy}" r="${stroke.strokeWidth / 2}" fill="$colorHex" opacity="$opacity" />',
+        '    <circle cx="${p.dx}" cy="${p.dy}" r="${strokeWidth / 2}" fill="$colorHex" opacity="$strokeOpacity" />',
       );
       return;
     }
 
-    final d = StringBuffer('M ${stroke.points.first.dx} ${stroke.points.first.dy}');
+    final pathData = StringBuffer();
+    pathData.write('M ${stroke.points.first.dx} ${stroke.points.first.dy}');
     for (int i = 1; i < stroke.points.length; i++) {
-      d.write(' L ${stroke.points[i].dx} ${stroke.points[i].dy}');
+      pathData.write(' L ${stroke.points[i].dx} ${stroke.points[i].dy}');
     }
 
     buffer.writeln(
-      '    <path d="$d" fill="none" stroke="$colorHex" stroke-width="${stroke.strokeWidth}" stroke-linecap="round" stroke-linejoin="round" opacity="$opacity" />',
+      '    <path d="$pathData" fill="none" stroke="$colorHex" stroke-width="$strokeWidth" stroke-linecap="round" stroke-linejoin="round" opacity="$strokeOpacity" />',
     );
   }
 
   void _serializeSvgShape(StringBuffer buffer, ShapeElement shape) {
     final colorHex = _colorToHex(shape.color);
     final fill = shape.isFilled ? colorHex : 'none';
-    final stroke = colorHex;
-    final strokeWidth = shape.strokeWidth;
+    // Omit stroke for filled shapes unless unfilled (Comment 21)
+    final stroke = shape.isFilled ? 'none' : colorHex;
+    final strokeWidth = shape.isFilled ? 0 : shape.strokeWidth;
     final cx = shape.center.dx;
     final cy = shape.center.dy;
     final half = shape.size / 2;
-    final rotAttr = shape.rotation != 0 ? ' transform="rotate(${shape.rotation} $cx $cy)"' : '';
+    // SVG transform expects degrees! Convert radians to degrees (Comment 16)
+    final deg = shape.rotation * 180 / math.pi;
+    final rotAttr = shape.rotation != 0 ? ' transform="rotate($deg $cx $cy)"' : '';
 
     switch (shape.shapeType) {
       case CanvasShapeType.square:
         final x = cx - half;
-        final y = cx - half;
+        final y = cy - half; // Fix Comment 18: use cy
         buffer.writeln(
           '    <rect x="$x" y="$y" width="${shape.size}" height="${shape.size}" fill="$fill" stroke="$stroke" stroke-width="$strokeWidth"$rotAttr />',
         );
         break;
       case CanvasShapeType.rectangle:
-        final x = cx - half;
-        final y = cx - half;
+        final rectW = shape.size * 1.35; // Fix Comment 19: proper dimensions
+        final rectH = shape.size * 0.8;
+        final x = cx - rectW / 2;
+        final y = cy - rectH / 2; // Fix Comment 18: use cy
         final rx = shape.borderRadius;
         buffer.writeln(
-          '    <rect x="$x" y="$y" width="${shape.size}" height="${shape.size}" rx="$rx" fill="$fill" stroke="$stroke" stroke-width="$strokeWidth"$rotAttr />',
+          '    <rect x="$x" y="$y" width="$rectW" height="$rectH" rx="$rx" fill="$fill" stroke="$stroke" stroke-width="$strokeWidth"$rotAttr />',
         );
         break;
       case CanvasShapeType.circle:
@@ -908,9 +1048,10 @@ class BoardExportServiceImpl implements BoardExportService {
         );
         break;
       case CanvasShapeType.ellipse:
-        final ry = half * 0.7;
+        final rx = (shape.size * 1.3) / 2; // Fix Comment 19: proper dimensions
+        final ry = (shape.size * 0.85) / 2;
         buffer.writeln(
-          '    <ellipse cx="$cx" cy="$cy" rx="$half" ry="$ry" fill="$fill" stroke="$stroke" stroke-width="$strokeWidth"$rotAttr />',
+          '    <ellipse cx="$cx" cy="$cy" rx="$rx" ry="$ry" fill="$fill" stroke="$stroke" stroke-width="$strokeWidth"$rotAttr />',
         );
         break;
       case CanvasShapeType.triangle:
@@ -937,27 +1078,15 @@ class BoardExportServiceImpl implements BoardExportService {
         );
         break;
       case CanvasShapeType.pentagon:
-        final points = <String>[];
-        for (int i = 0; i < 5; i++) {
-          final angle = (math.pi / 2) + i * (2 * math.pi / 5);
-          final px = (cx + math.cos(angle) * half).toStringAsFixed(1);
-          final py = (cy - math.sin(angle) * half).toStringAsFixed(1);
-          points.add('$px,$py');
-        }
+        final pointsStr = _getPolygonPointsString(5, cx, cy, half);
         buffer.writeln(
-          '    <polygon points="${points.join(' ')}" fill="$fill" stroke="$stroke" stroke-width="$strokeWidth"$rotAttr />',
+          '    <polygon points="$pointsStr" fill="$fill" stroke="$stroke" stroke-width="$strokeWidth"$rotAttr />',
         );
         break;
       case CanvasShapeType.hexagon:
-        final points = <String>[];
-        for (int i = 0; i < 6; i++) {
-          final angle = (math.pi / 2) + i * (2 * math.pi / 6);
-          final px = (cx + math.cos(angle) * half).toStringAsFixed(1);
-          final py = (cy - math.sin(angle) * half).toStringAsFixed(1);
-          points.add('$px,$py');
-        }
+        final pointsStr = _getPolygonPointsString(6, cx, cy, half);
         buffer.writeln(
-          '    <polygon points="${points.join(' ')}" fill="$fill" stroke="$stroke" stroke-width="$strokeWidth"$rotAttr />',
+          '    <polygon points="$pointsStr" fill="$fill" stroke="$stroke" stroke-width="$strokeWidth"$rotAttr />',
         );
         break;
       case CanvasShapeType.semicircle:
@@ -968,12 +1097,13 @@ class BoardExportServiceImpl implements BoardExportService {
         break;
       case CanvasShapeType.line:
         buffer.writeln(
-          '    <line x1="${cx - half}" y1="$cy" x2="${cx + half}" y2="$cy" stroke="$stroke" stroke-width="$strokeWidth"$rotAttr />',
+          '    <line x1="${cx - half}" y1="$cy" x2="${cx + half}" y2="$cy" stroke="$colorHex" stroke-width="${shape.strokeWidth}"$rotAttr />',
         );
         break;
       case CanvasShapeType.arrow:
+        final markerId = 'arrowhead_${colorHex.replaceAll('#', '')}';
         buffer.writeln(
-          '    <line x1="${cx - half}" y1="$cy" x2="${cx + half}" y2="$cy" stroke="$stroke" stroke-width="$strokeWidth" marker-end="url(#arrowhead)"$rotAttr />',
+          '    <line x1="${cx - half}" y1="$cy" x2="${cx + half}" y2="$cy" stroke="$colorHex" stroke-width="${shape.strokeWidth}" marker-end="url(#$markerId)"$rotAttr />',
         );
         break;
     }
@@ -996,6 +1126,20 @@ class BoardExportServiceImpl implements BoardExportService {
     return parts.join(' ');
   }
 
+  String _getPolygonPointsString(int sides, double cx, double cy, double radius) {
+    double angle = -math.pi / 2;
+    final step = (2 * math.pi) / sides;
+    final parts = <String>[];
+
+    for (int i = 0; i < sides; i++) {
+      final x = cx + radius * math.cos(angle);
+      final y = cy + radius * math.sin(angle);
+      parts.add('${x.toStringAsFixed(1)},${y.toStringAsFixed(1)}');
+      angle += step;
+    }
+    return parts.join(' ');
+  }
+
   void _serializeSvgText(StringBuffer buffer, TextElement text) {
     if (text.text.isEmpty) return;
     final colorHex = _colorToHex(text.color);
@@ -1011,7 +1155,8 @@ class BoardExportServiceImpl implements BoardExportService {
     final cy = sticky.center.dy;
     final x = cx - sticky.width / 2;
     final y = cy - sticky.height / 2;
-    final rotAttr = sticky.rotation != 0 ? ' transform="rotate(${sticky.rotation} $cx $cy)"' : '';
+    final deg = sticky.rotation * 180 / math.pi; // Convert radians to degrees (Comment 16)
+    final rotAttr = sticky.rotation != 0 ? ' transform="rotate($deg $cx $cy)"' : '';
     final escaped = _escapeXml(sticky.text);
 
     buffer.writeln('    <g$rotAttr>');
@@ -1026,21 +1171,32 @@ class BoardExportServiceImpl implements BoardExportService {
     buffer.writeln('    </g>');
   }
 
-  void _serializeSvgConnector(StringBuffer buffer, ConnectorElement connector) {
+  void _serializeSvgConnector(
+    StringBuffer buffer,
+    ConnectorElement connector,
+    Map<String, CanvasElement> elementMap,
+  ) {
+    final (start, end) = _resolveConnectorEndpoints(connector, elementMap);
     final colorHex = _colorToHex(connector.color);
-    final start = connector.startPoint;
-    final end = connector.endPoint;
-    final marker = connector.hasArrowhead ? ' marker-end="url(#arrowhead)"' : '';
+    final markerId = 'arrowhead_${colorHex.replaceAll('#', '')}';
+    final marker = connector.hasArrowhead ? ' marker-end="url(#$markerId)"' : '';
 
-    if (connector.lineStyle == 'step') {
+    final isStep = connector.lineStyle == 'step' || connector.lineStyle == 'orthogonal';
+    final isCurved = connector.lineStyle == 'bezier' || connector.lineStyle == 'curved';
+
+    if (isStep) {
       final midX = (start.dx + end.dx) / 2;
       final d = 'M ${start.dx} ${start.dy} L $midX ${start.dy} L $midX ${end.dy} L ${end.dx} ${end.dy}';
       buffer.writeln(
         '    <path d="$d" fill="none" stroke="$colorHex" stroke-width="${connector.strokeWidth}" stroke-linecap="round"$marker />',
       );
-    } else if (connector.lineStyle == 'bezier') {
-      final midX = (start.dx + end.dx) / 2;
-      final d = 'M ${start.dx} ${start.dy} C $midX ${start.dy}, $midX ${end.dy}, ${end.dx} ${end.dy}';
+    } else if (isCurved) {
+      final dx = (end.dx - start.dx).abs();
+      final dy = (end.dy - start.dy).abs();
+      final ctrlOffset = math.max(dx, dy) * 0.45;
+      final cp1 = Offset(start.dx + (end.dx > start.dx ? ctrlOffset : -ctrlOffset), start.dy);
+      final cp2 = Offset(end.dx - (end.dx > start.dx ? ctrlOffset : -ctrlOffset), end.dy);
+      final d = 'M ${start.dx} ${start.dy} C ${cp1.dx} ${cp1.dy}, ${cp2.dx} ${cp2.dy}, ${end.dx} ${end.dy}';
       buffer.writeln(
         '    <path d="$d" fill="none" stroke="$colorHex" stroke-width="${connector.strokeWidth}" stroke-linecap="round"$marker />',
       );
@@ -1054,9 +1210,13 @@ class BoardExportServiceImpl implements BoardExportService {
   void _serializeSvgImage(StringBuffer buffer, ImageElement image) {
     final x = image.center.dx - image.width / 2;
     final y = image.center.dy - image.height / 2;
-    if (image.imageBase64.isNotEmpty) {
+    final cleanBase64 = image.imageBase64.trim().replaceAll(RegExp(r'\s+'), '');
+    final isValidBase64 = cleanBase64.isNotEmpty &&
+        RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(cleanBase64);
+
+    if (isValidBase64) {
       buffer.writeln(
-        '    <image x="$x" y="$y" width="${image.width}" height="${image.height}" href="data:image/png;base64,${image.imageBase64}" />',
+        '    <image x="$x" y="$y" width="${image.width}" height="${image.height}" href="data:image/png;base64,$cleanBase64" />',
       );
     } else {
       buffer.writeln(
@@ -1074,6 +1234,7 @@ class BoardExportServiceImpl implements BoardExportService {
       return const Rect.fromLTWH(0, 0, 1000, 700);
     }
 
+    final elementMap = {for (final e in elements) e.id: e};
     double minX = double.infinity;
     double minY = double.infinity;
     double maxX = -double.infinity;
@@ -1081,63 +1242,98 @@ class BoardExportServiceImpl implements BoardExportService {
 
     bool hasAny = false;
 
+    void includePoint(double x, double y) {
+      hasAny = true;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+
+    void includeRotatedRect(Offset center, double width, double height, double rotation, [double padding = 0]) {
+      final halfW = width / 2 + padding;
+      final halfH = height / 2 + padding;
+      if (rotation == 0) {
+        includePoint(center.dx - halfW, center.dy - halfH);
+        includePoint(center.dx + halfW, center.dy + halfH);
+        return;
+      }
+      final cos = math.cos(rotation);
+      final sin = math.sin(rotation);
+      for (final dx in [-halfW, halfW]) {
+        for (final dy in [-halfH, halfH]) {
+          final rx = center.dx + dx * cos - dy * sin;
+          final ry = center.dy + dx * sin + dy * cos;
+          includePoint(rx, ry);
+        }
+      }
+    }
+
     for (final element in elements) {
       switch (element) {
         case StrokeElement stroke:
           for (final p in stroke.points) {
-            hasAny = true;
-            if (p.dx - stroke.strokeWidth < minX) minX = p.dx - stroke.strokeWidth;
-            if (p.dy - stroke.strokeWidth < minY) minY = p.dy - stroke.strokeWidth;
-            if (p.dx + stroke.strokeWidth > maxX) maxX = p.dx + stroke.strokeWidth;
-            if (p.dy + stroke.strokeWidth > maxY) maxY = p.dy + stroke.strokeWidth;
+            includePoint(p.dx - stroke.strokeWidth, p.dy - stroke.strokeWidth);
+            includePoint(p.dx + stroke.strokeWidth, p.dy + stroke.strokeWidth);
           }
           break;
         case ShapeElement shape:
-          hasAny = true;
-          final half = shape.size / 2 + shape.strokeWidth;
-          if (shape.center.dx - half < minX) minX = shape.center.dx - half;
-          if (shape.center.dy - half < minY) minY = shape.center.dy - half;
-          if (shape.center.dx + half > maxX) maxX = shape.center.dx + half;
-          if (shape.center.dy + half > maxY) maxY = shape.center.dy + half;
+          final double w;
+          final double h;
+          switch (shape.shapeType) {
+            case CanvasShapeType.rectangle:
+              w = shape.size * 1.35;
+              h = shape.size * 0.8;
+              break;
+            case CanvasShapeType.ellipse:
+              w = shape.size * 1.3;
+              h = shape.size * 0.85;
+              break;
+            default:
+              w = shape.size;
+              h = shape.size;
+              break;
+          }
+          includeRotatedRect(shape.center, w, h, shape.rotation, shape.strokeWidth);
           break;
         case TextElement text:
-          hasAny = true;
-          const approxW = 120.0;
-          const approxH = 36.0;
-          if (text.center.dx - approxW / 2 < minX) minX = text.center.dx - approxW / 2;
-          if (text.center.dy - approxH / 2 < minY) minY = text.center.dy - approxH / 2;
-          if (text.center.dx + approxW / 2 > maxX) maxX = text.center.dx + approxW / 2;
-          if (text.center.dy + approxH / 2 > maxY) maxY = text.center.dy + approxH / 2;
+          final tp = TextPainter(
+            text: TextSpan(
+              text: text.text,
+              style: const TextStyle(fontSize: 18.0),
+            ),
+            textDirection: TextDirection.ltr,
+          )..layout();
+          final textW = tp.width + 16.0;
+          final textH = tp.height + 16.0;
+          includeRotatedRect(text.center, textW, textH, 0.0);
           break;
         case StickyNoteElement sticky:
-          hasAny = true;
-          final halfW = sticky.width / 2 + 10;
-          final halfH = sticky.height / 2 + 10;
-          if (sticky.center.dx - halfW < minX) minX = sticky.center.dx - halfW;
-          if (sticky.center.dy - halfH < minY) minY = sticky.center.dy - halfH;
-          if (sticky.center.dx + halfW > maxX) maxX = sticky.center.dx + halfW;
-          if (sticky.center.dy + halfH > maxY) maxY = sticky.center.dy + halfH;
+          includeRotatedRect(sticky.center, sticky.width, sticky.height, sticky.rotation, 10.0);
           break;
         case ConnectorElement connector:
-          hasAny = true;
-          final pad = connector.strokeWidth + 20;
-          final left = math.min(connector.startPoint.dx, connector.endPoint.dx) - pad;
-          final top = math.min(connector.startPoint.dy, connector.endPoint.dy) - pad;
-          final right = math.max(connector.startPoint.dx, connector.endPoint.dx) + pad;
-          final bottom = math.max(connector.startPoint.dy, connector.endPoint.dy) + pad;
-          if (left < minX) minX = left;
-          if (top < minY) minY = top;
-          if (right > maxX) maxX = right;
-          if (bottom > maxY) maxY = bottom;
+          final (start, end) = _resolveConnectorEndpoints(connector, elementMap);
+          final pad = connector.strokeWidth + 20.0;
+          includePoint(start.dx - pad, start.dy - pad);
+          includePoint(start.dx + pad, start.dy + pad);
+          includePoint(end.dx - pad, end.dy - pad);
+          includePoint(end.dx + pad, end.dy + pad);
+          if (connector.lineStyle == 'step' || connector.lineStyle == 'orthogonal') {
+            final midX = (start.dx + end.dx) / 2;
+            includePoint(midX - pad, start.dy - pad);
+            includePoint(midX + pad, end.dy + pad);
+          } else if (connector.lineStyle == 'bezier' || connector.lineStyle == 'curved') {
+            final dx = (end.dx - start.dx).abs();
+            final dy = (end.dy - start.dy).abs();
+            final ctrlOffset = math.max(dx, dy) * 0.45;
+            final cp1 = Offset(start.dx + (end.dx > start.dx ? ctrlOffset : -ctrlOffset), start.dy);
+            final cp2 = Offset(end.dx - (end.dx > start.dx ? ctrlOffset : -ctrlOffset), end.dy);
+            includePoint(cp1.dx - pad, cp1.dy - pad);
+            includePoint(cp2.dx + pad, cp2.dy + pad);
+          }
           break;
         case ImageElement image:
-          hasAny = true;
-          final halfW = image.width / 2;
-          final halfH = image.height / 2;
-          if (image.center.dx - halfW < minX) minX = image.center.dx - halfW;
-          if (image.center.dy - halfH < minY) minY = image.center.dy - halfH;
-          if (image.center.dx + halfW > maxX) maxX = image.center.dx + halfW;
-          if (image.center.dy + halfH > maxY) maxY = image.center.dy + halfH;
+          includeRotatedRect(image.center, image.width, image.height, 0.0);
           break;
       }
     }
@@ -1147,23 +1343,13 @@ class BoardExportServiceImpl implements BoardExportService {
     }
 
     final raw = Rect.fromLTRB(minX, minY, maxX, maxY);
-    // Add margin around elements
-    final bounds = raw.inflate(48.0);
-    final w = math.max(300.0, bounds.width);
-    final h = math.max(200.0, bounds.height);
-    return Rect.fromLTWH(bounds.left, bounds.top, w, h);
-  }
-
-  // ──────────────────────────────────────────────
-  // Helpers
-  // ──────────────────────────────────────────────
-
-  String _sanitizeFileName(String name) {
-    final cleaned = name
-        .replaceAll(RegExp(r'[^\w\s\-]'), '')
-        .trim()
-        .replaceAll(RegExp(r'\s+'), '_');
-    return cleaned.isEmpty ? 'board' : cleaned;
+    const padding = 60.0;
+    return Rect.fromLTRB(
+      raw.left - padding,
+      raw.top - padding,
+      raw.right + padding,
+      raw.bottom + padding,
+    );
   }
 
   String _colorToHex(Color color) {
@@ -1173,8 +1359,8 @@ class BoardExportServiceImpl implements BoardExportService {
     return '#$r$g$b';
   }
 
-  String _escapeXml(String text) {
-    return text
+  String _escapeXml(String input) {
+    return input
         .replaceAll('&', '&amp;')
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;')

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../view/trays/canvas_shape_type.dart';
+import '../../../domain/models/canvas/canvas_shape_type.dart';
 
 sealed class CanvasElement {
   final String id;
