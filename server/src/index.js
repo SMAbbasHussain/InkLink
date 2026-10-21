@@ -203,7 +203,7 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
           const p = redis.pipeline();
           p.sadd(`board_members:${boardId}`, uid);
           p.expire(`board_members:${boardId}`, 604800);
-          await p.exec().catch(() => {});
+          await p.exec().catch(() => { });
         }
         return true;
       }
@@ -226,7 +226,7 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
         const p = redis.pipeline();
         p.sadd(`board_members:${boardId}`, uid);
         p.expire(`board_members:${boardId}`, 604800);
-        await p.exec().catch(() => {});
+        await p.exec().catch(() => { });
       }
       return true;
     }
@@ -482,14 +482,14 @@ setInterval(async () => {
 // ============================================================
 io.use(async (socket, next) => {
   try {
-    const {token} = socket.handshake.auth;
+    const { token } = socket.handshake.auth;
     if (!token) return next(new Error('Authentication error: Token missing'));
 
     if (db) {
-        const decodedToken = await admin.auth().verifyIdToken(token);
-        socket.data.uid = decodedToken.uid;
+      const decodedToken = await admin.auth().verifyIdToken(token);
+      socket.data.uid = decodedToken.uid;
     } else {
-        socket.data.uid = socket.handshake.auth.uid || "test-user";
+      socket.data.uid = socket.handshake.auth.uid || "test-user";
     }
     next();
   } catch (error) {
@@ -501,7 +501,7 @@ io.use(async (socket, next) => {
 // SOCKET.IO CONNECTION
 // ============================================================
 io.on('connection', (socket) => {
-  const {uid} = socket.data;
+  const { uid } = socket.data;
   console.log(`User connected: ${uid} (socket: ${socket.id})`);
 
   // ----------------------------------------------------------
@@ -629,7 +629,7 @@ io.on('connection', (socket) => {
             version = result;
 
             // Update last activity timestamp (best-effort)
-            redis.set(`board:lastActivity:${boardId}`, Date.now().toString(), 'EX', 604800).catch(() => {});
+            redis.set(`board:lastActivity:${boardId}`, Date.now().toString(), 'EX', 604800).catch(() => { });
           }
         } catch (luaError) {
           console.warn(`[crdt_update] Lua script failed: ${luaError.message}`);
@@ -684,7 +684,7 @@ io.on('connection', (socket) => {
       if (typeof ack === 'function') {
         try {
           ack({ status: 'error', message: error.message });
-        } catch (e) {}
+        } catch (e) { }
       }
     }
   });
@@ -782,7 +782,7 @@ io.on('connection', (socket) => {
             const hasMore = entries.length >= 100;
 
             // Store cursor for this user
-            await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => {});
+            await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => { });
 
             logWsEvent('SYNC RESPONSE (cursor)', [
               `[user] ${uid}`,
@@ -846,7 +846,7 @@ io.on('connection', (socket) => {
             }
 
             const newCursor = `${lastEntryId}:${lastVer}`;
-            await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => {});
+            await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => { });
 
             logWsEvent('SYNC RESPONSE (snapshot+delta)', [
               `[user] ${uid}`,
@@ -892,7 +892,7 @@ io.on('connection', (socket) => {
             if (entry.version > lastVer) lastVer = entry.version;
           }
           const newCursor = `${lastEntryId}:${lastVer}`;
-          await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => {});
+          await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => { });
 
           logWsEvent('SYNC RESPONSE (stream catch-up)', [
             `[user] ${uid}`,
@@ -910,7 +910,7 @@ io.on('connection', (socket) => {
         // Stream is empty — seed cursor from current version
         const currentVersion = await redis.get(`board:${boardId}:version`) || '0';
         const dummyCursor = `0-0:${currentVersion}`;
-        await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, dummyCursor, 'EX', 604800).catch(() => {});
+        await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, dummyCursor, 'EX', 604800).catch(() => { });
 
         if (typeof callback === 'function') {
           callback({ status: 'success', updates: [], cursor: dummyCursor, hasMore: false, source: 'cursor' });
@@ -958,12 +958,238 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ============================================================
+  // board_chat_message — IN-BOARD LIVE CHAT + REDIS TTL + FIRESTORE 30-BATCH
+  // ============================================================
+  socket.on('board_chat_message', async (data, ack) => {
+    try {
+      const boardId = data?.boardId;
+      const messageObj = (data?.message && typeof data.message === 'object') ? data.message : (data || {});
+      const rawText = messageObj?.text || data?.text || '';
+      const text = String(rawText).trim();
+
+      if (!isValidBoardId(boardId) || !text) {
+        if (typeof ack === 'function') ack({ status: 'error', message: 'invalid_payload' });
+        return;
+      }
+
+      const hasAccess = await canUserAccessBoard(boardId, uid, false);
+      if (!hasAccess) {
+        if (typeof ack === 'function') ack({ status: 'error', message: 'forbidden' });
+        return;
+      }
+
+      const chatMessage = {
+        id: messageObj.id || data?.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        boardId,
+        senderUid: uid,
+        senderName: messageObj.senderName || data?.senderName || 'Anonymous',
+        senderPhotoUrl: messageObj.senderPhotoUrl || data?.senderPhotoUrl || null,
+        text: text.substring(0, 2000),
+        timestamp: messageObj.timestamp || data?.timestamp || Date.now(),
+      };
+
+      // 1. Broadcast immediately to all active board viewers in real-time
+      io.to(`board_room:${boardId}`).emit('board_chat_message', chatMessage);
+
+      // 2. Cache in Redis with TTL (7 days: 604800s) for low-latency retrieval
+      if (redisAvailable) {
+        const historyKey = `board_chat:${boardId}:history`;
+        const payloadStr = JSON.stringify(chatMessage);
+        await redis.rpush(historyKey, payloadStr);
+        await redis.expire(historyKey, 604800); // 7 days TTL
+      }
+
+      // 3. Persist to Firestore so messages are never lost after Redis TTL expiry
+      if (db) {
+        await db.collection('boards').doc(boardId).collection('chat_messages').doc(chatMessage.id).set({
+          ...chatMessage,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+
+      if (typeof ack === 'function') ack({ status: 'success', message: chatMessage });
+    } catch (err) {
+      console.error('[board_chat_message] Error:', err);
+      if (typeof ack === 'function') ack({ status: 'error', message: err.message });
+    }
+  });
+
+  socket.on('get_board_chat_history', async ({ boardId, limit = 50 }, callback) => {
+    try {
+      if (!isValidBoardId(boardId)) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
+        return;
+      }
+      const hasAccess = await canUserAccessBoard(boardId, uid, false);
+      if (!hasAccess) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'forbidden' });
+        return;
+      }
+
+      if (redisAvailable) {
+        const historyKey = `board_chat:${boardId}:history`;
+        const raw = await redis.lrange(historyKey, -limit, -1);
+        if (raw && raw.length > 0) {
+          const messages = raw.map(r => JSON.parse(r));
+          if (typeof callback === 'function') callback({ status: 'success', messages });
+          return;
+        }
+      }
+
+      if (db) {
+        const snap = await db.collection('boards').doc(boardId).collection('chat_messages')
+          .orderBy('timestamp', 'asc')
+          .limit(limit)
+          .get();
+        const messages = snap.docs.map(doc => doc.data());
+        if (typeof callback === 'function') callback({ status: 'success', messages });
+        return;
+      }
+
+      if (typeof callback === 'function') callback({ status: 'success', messages: [] });
+    } catch (err) {
+      console.error('[get_board_chat_history] Error:', err);
+      if (typeof callback === 'function') callback({ status: 'error', message: err.message });
+    }
+  });
+
+  // ============================================================
+  // AGORA VOICE CALL SIGNALING & SESSION MANAGEMENT
+  // ============================================================
+  socket.on('join_voice_call', async (data, callback) => {
+    try {
+      const { boardId, displayName, photoUrl } = data || {};
+      if (!isValidBoardId(boardId)) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
+        return;
+      }
+      const hasAccess = await canUserAccessBoard(boardId, uid, false);
+      if (!hasAccess) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'forbidden' });
+        return;
+      }
+
+      const participant = {
+        uid,
+        displayName: displayName || 'Anonymous',
+        photoUrl: photoUrl || null,
+        joinedAt: Date.now(),
+        isSpeaking: false,
+        isMuted: false,
+      };
+
+      if (redisAvailable) {
+        const voiceKey = `voice:board:${boardId}:participants`;
+        await redis.hset(voiceKey, uid, JSON.stringify(participant));
+        await redis.expire(voiceKey, 86400); // 24h TTL
+      }
+
+      socket.join(`board_voice:${boardId}`);
+      socket.data.currentVoiceBoardId = boardId;
+
+      io.to(`board_room:${boardId}`).emit('voice_participant_joined', participant);
+
+      const channelName = `board_${boardId}`;
+      const appId = process.env.AGORA_APP_ID || 'dummy_agora_app_id_inklink_2026';
+      const token = `dummy_agora_token_${channelName}_${uid}`;
+
+      console.log(`[voice] User ${uid} joined voice channel ${channelName}`);
+      if (typeof callback === 'function') {
+        callback({
+          status: 'success',
+          channelName,
+          appId,
+          token,
+          participant,
+        });
+      }
+    } catch (err) {
+      console.error('[join_voice_call] Error:', err);
+      if (typeof callback === 'function') callback({ status: 'error', message: err.message });
+    }
+  });
+
+  socket.on('leave_voice_call', async (data, callback) => {
+    try {
+      const boardId = data?.boardId || socket.data.currentVoiceBoardId;
+      if (boardId) {
+        if (redisAvailable) {
+          const voiceKey = `voice:board:${boardId}:participants`;
+          await redis.hdel(voiceKey, uid);
+        }
+        socket.leave(`board_voice:${boardId}`);
+        socket.data.currentVoiceBoardId = null;
+        io.to(`board_room:${boardId}`).emit('voice_participant_left', { uid, boardId });
+        console.log(`[voice] User ${uid} left voice channel board_${boardId}`);
+      }
+      if (typeof callback === 'function') callback({ status: 'success' });
+    } catch (err) {
+      console.error('[leave_voice_call] Error:', err);
+      if (typeof callback === 'function') callback({ status: 'error', message: err.message });
+    }
+  });
+
+  socket.on('voice_speaking_state', async ({ boardId, isSpeaking, isMuted }) => {
+    try {
+      if (!isValidBoardId(boardId)) return;
+      if (redisAvailable) {
+        const voiceKey = `voice:board:${boardId}:participants`;
+        const raw = await redis.hget(voiceKey, uid);
+        if (raw) {
+          const p = JSON.parse(raw);
+          if (isSpeaking !== undefined) p.isSpeaking = !!isSpeaking;
+          if (isMuted !== undefined) p.isMuted = !!isMuted;
+          await redis.hset(voiceKey, uid, JSON.stringify(p));
+        }
+      }
+      io.to(`board_room:${boardId}`).emit('voice_speaking_changed', {
+        uid,
+        isSpeaking: !!isSpeaking,
+        isMuted: !!isMuted,
+      });
+    } catch (_) { }
+  });
+
+  socket.on('get_voice_participants', async ({ boardId }, callback) => {
+    try {
+      if (!isValidBoardId(boardId)) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
+        return;
+      }
+      const hasAccess = await canUserAccessBoard(boardId, uid, false);
+      if (!hasAccess) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'forbidden' });
+        return;
+      }
+      if (redisAvailable) {
+        const voiceKey = `voice:board:${boardId}:participants`;
+        const rawMap = await redis.hgetall(voiceKey);
+        const participants = Object.values(rawMap || {}).map(v => JSON.parse(v));
+        if (typeof callback === 'function') callback({ status: 'success', participants });
+        return;
+      }
+      if (typeof callback === 'function') callback({ status: 'success', participants: [] });
+    } catch (err) {
+      if (typeof callback === 'function') callback({ status: 'error', message: err.message });
+    }
+  });
+
   // ----------------------------------------------------------
   // disconnect
   // ----------------------------------------------------------
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     console.log(`[WS DISCONNECT] user=${uid} socket=${socket.id}`);
     socketEventCounts.delete(socket.id);
+    const voiceBoardId = socket.data.currentVoiceBoardId;
+    if (voiceBoardId) {
+      try {
+        if (redisAvailable) {
+          await redis.hdel(`voice:board:${voiceBoardId}:participants`, uid);
+        }
+        io.to(`board_room:${voiceBoardId}`).emit('voice_participant_left', { uid, boardId: voiceBoardId });
+      } catch (_) { }
+    }
   });
 
   // ----------------------------------------------------------

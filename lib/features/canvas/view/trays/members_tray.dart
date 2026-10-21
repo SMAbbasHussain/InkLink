@@ -79,18 +79,53 @@ class _MembersTrayState extends State<MembersTray> {
                   children: [
                     IconButton(
                       onPressed: () {
-                        // Call feature - placeholder for now
+                        final bloc = context.read<CanvasBloc>();
+                        if (bloc.state.isVoiceCallActive) {
+                          bloc.add(const CanvasLeaveVoiceCallRequested());
+                        } else {
+                          bloc.add(const CanvasJoinVoiceCallRequested());
+                        }
                       },
-                      icon: const Icon(Icons.call, size: 18),
-                      tooltip: 'Call (Coming soon)',
+                      icon: Icon(
+                        state.isVoiceCallActive ? Icons.call_end : Icons.call,
+                        size: 18,
+                        color: state.isVoiceCallActive ? Colors.green : null,
+                      ),
+                      tooltip: state.isVoiceCallActive
+                          ? 'Leave Voice Call'
+                          : 'Join Voice Call',
                       splashRadius: 18,
                     ),
                     IconButton(
                       onPressed: () {
-                        // Chat feature - placeholder for now
+                        context
+                            .read<CanvasBloc>()
+                            .add(const CanvasToggleChatDrawer());
                       },
-                      icon: const Icon(Icons.chat, size: 18),
-                      tooltip: 'Chat (Coming soon)',
+                      icon: Icon(
+                        Icons.chat,
+                        size: 18,
+                        color: state.isChatDrawerOpen
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
+                      ),
+                      tooltip: 'Board Chat',
+                      splashRadius: 18,
+                    ),
+                    IconButton(
+                      onPressed: () {
+                        context
+                            .read<CanvasBloc>()
+                            .add(const CanvasToggleCommentsTray());
+                      },
+                      icon: Icon(
+                        Icons.comment_outlined,
+                        size: 18,
+                        color: state.isCommentsTrayOpen
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
+                      ),
+                      tooltip: 'Comments',
                       splashRadius: 18,
                     ),
                     IconButton(

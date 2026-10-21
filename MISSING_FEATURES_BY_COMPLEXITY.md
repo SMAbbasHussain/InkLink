@@ -24,13 +24,13 @@
 2. [Module 2: User Profile & Preferences (FR02) — ✅ COMPLETED (100%)](#module-2-user-profile--preferences-fr02)
 3. [Module 3: Board Creation & Management (FR03) — ✅ COMPLETED (100%)](#module-3-board-creation--management-fr03)
 4. [Module 4: Canvas Tools & Visual Elements (FR05) — ✅ COMPLETED (100%)](#module-4-canvas-tools--visual-elements-fr05)
-5. [Module 5: Board Sharing & Access Control (FR07)](#module-5-board-sharing--access-control-fr07)
-6. [Module 6: Notifications & Preferences (FR15)](#module-6-notifications--preferences-fr15)
+5. [Module 5: Board Sharing & Access Control (FR07) — ✅ COMPLETED (100%)](#module-5-board-sharing--access-control-fr07)
+6. [Module 6: Notifications & Preferences (FR15) — ✅ COMPLETED (100%)](#module-6-notifications--preferences-fr15)
 7. [Module 7: Presence & Live Awareness (FR08)](#module-7-presence--live-awareness-fr08)
-8. [Module 8: Board Export & File Sharing (FR11)](#module-8-board-export--file-sharing-fr11)
+8. [Module 8: Board Export & File Sharing (FR11) — ✅ COMPLETED (100%)](#module-8-board-export--file-sharing-fr11)
 9. [Module 9: Public Board Access & Discovery (FR14)](#module-9-public-board-access--discovery-fr14)
 10. [Module 10: AI-Assisted Object Generation & Limits (FR06 & FR16)](#module-10-ai-assisted-object-generation--limits-fr06--fr16)
-11. [Module 11: In-App Communication & Audio (FR12)](#module-11-in-app-communication--audio-fr12)
+11. [Module 11: In-App Communication & Audio (FR12) — ✅ COMPLETED (100%)](#module-11-in-app-communication--audio-fr12)
 12. [Module 12: Direct Messaging (DM) System (FR17)](#module-12-direct-messaging-dm-system-fr17)
 13. [Cross-Module Global Backlog Summary](#cross-module-global-backlog-summary)
 
@@ -89,12 +89,12 @@
 
 ---
 
-## Module 6: Notifications & Preferences (FR15) — ✅ COMPLETED (FR15-05)
+## Module 6: Notifications & Preferences (FR15) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
 | :--- | :--- | :---: | :---: | :--- |
 | **FR15-05** | Enable or disable notifications in settings | ✅ **Implemented** | 🟢 **Level 1.5 (1.5/5)** | In [`settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/settings/view/settings_screen.dart), added "Notifications" section with switches for Push Notifications, Board Invite Alerts, and Friend Request Alerts. Backed by [`notification_preferences.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/core/utils/notification_preferences.dart), [`settings_bloc.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/settings/bloc/settings_bloc.dart), `ProfileService`, and checked in [`notification_sender.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/utils/notification_sender.js). |
-| **FR15-04** | Notify users when mentioned in a comment | ❌ Missing | 🟠 **Level 3 (3/5)** | Parse `@displayName` regex in comments. When comment is submitted, query user UID and trigger Cloud Function [`send_notification.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/notifications/send_notification.js) with FCM payload and in-app notification. *(Depends on Module 11 Comment System).* |
+| **FR15-04** | Notify users when mentioned in a comment | ✅ **Implemented** | 🟠 **Level 3 (3/5)** | Implemented regex `@displayName` and `@username` extraction in [`board_comments_service_impl.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/services/canvas/board_comments_service_impl.dart). Triggered callable Cloud Function [`send_comment_mention.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/notifications/send_comment_mention.js) which resolves recipient users and dispatches in-app notifications and FCM push alerts. |
 
 ---
 
@@ -109,7 +109,7 @@
 
 ---
 
-## Module 8: Board Export & File Sharing (FR11) — ✅ COMPLETED
+## Module 8: Board Export & File Sharing (FR11) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
 | :--- | :--- | :---: | :---: | :--- |
@@ -143,13 +143,13 @@
 
 ---
 
-## Module 11: In-App Communication & Audio (FR12)
+## Module 11: In-App Communication & Audio (FR12) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
 | :--- | :--- | :---: | :---: | :--- |
-| **FR12-01**<br>**FR12-02**<br>**FR12-03**<br>**FR12-05** | Board Canvas Text Comments, Replies & Mentions | ❌ Missing | 🔴 **Level 4 (4/5)** | 1. Create `Comment` model (`id`, `boardId`, `x`, `y`, `authorUid`, `text`, `createdAt`, `replies`).<br>2. Store in Firestore subcollection `boards/{boardId}/comments`.<br>3. Render comment pin markers on canvas viewport.<br>4. Tap pin to open threaded comment bottom sheet with reply and delete capabilities.<br>5. Dispatch notifications on new comment / reply. |
-| **FR12-04** | Live in-board chat for active participants | ❌ Missing | 🔴 **Level 4 (4/5)** | 1. Replace placeholder button in [`members_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/members_tray.dart#L86-L92) with a slide-out Chat Drawer.<br>2. Stream chat messages over Socket.IO room `board_room:${boardId}` via `board_chat_message` events.<br>3. Store in Firestore `boards/{boardId}/chat_messages` for session persistence.<br>4. Unread badge indicator on chat icon. |
-| **FR12-06**<br>**FR12-07** | Initiate and join/leave in-session Voice Calls | ❌ Missing | 🟣 **Level 5 (5/5)** | 1. Integrate WebRTC or audio provider (e.g., LiveKit, Agora, or flutter_webrtc with SFU signaling).<br>2. Add audio room signaling to Socket.IO server (`voice_join`, `voice_leave`, `ice_candidate`, `offer_answer`).<br>3. Request microphone permissions (`permission_handler`).<br>4. Build in-canvas voice HUD showing speaking indicators, mute/unmute toggle, and disconnect button. |
+| **FR12-01**<br>**FR12-02**<br>**FR12-03**<br>**FR12-05** | Board Canvas Text Comments, Replies & Mentions | ✅ **Implemented** | 🔴 **Level 4 (4/5)** | Models `CanvasComment` & `CanvasCommentReply`. Stored in Firestore `boards/{boardId}/comments`. Real-time stream in `BoardCommentsRepository`. Rendered pinned badges on canvas viewport with coordinate transformations. Click pin to open `CommentsTray` with threaded replies, author-only deletion, and @mention highlights. |
+| **FR12-04** | Live in-board chat for active participants | ✅ **Implemented** | 🔴 **Level 4 (4/5)** | Floating `BoardChatDrawer` sliding from right edge on canvas. Live bi-directional chat over Socket.IO (`board_chat_message`). Stored in Redis with 7-day TTL (`board_chat:{boardId}:history`) and synced atomically to Firestore `boards/{boardId}/chat_messages` in batches of 30 when accumulated. |
+| **FR12-06**<br>**FR12-07** | Initiate and join/leave in-session Voice Calls | ✅ **Implemented** | 🟣 **Level 5 (5/5)** | In-session voice calling with Agora engine secrets configuration (`AGORA_APP_ID`, `AGORA_APP_CERTIFICATE`). Signaling over Socket.IO (`join_voice_call`, `leave_voice_call`, `voice_speaking_state`, `get_voice_participants`). In-canvas `VoiceCallHud` showing active speaker glow rings, mute/unmute mic toggle, and leave/join controls. |
 
 ---
 
@@ -215,7 +215,7 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 29. [FR14-06/07] Public board search and tag filter chips                      │
 │ 30. [FR14-16] Public board sorting (most popular, most recent)                 │
 │ 31. [FR14-08..10] Preferred tag-based public board recommendations feed        │
-│ 32. [FR15-04] Comment @mention notifications parsing and FCM dispatch         │
+│ 32. [FR15-04] Comment @mention notifications parsing and FCM dispatch (✅ Done) │
 │ 33. [FR16-01/02] AI per-user request usage tracking and daily quota limit      │
 │ 34. [FR08-03] Remote peer active element editing indicator / lock badge        │
 │ 35. [FR17-01/02] Direct Message thread management & friends message button     │
@@ -229,8 +229,8 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 38. [FR05-13..15] Connectors & Flowchart diagram elements (✅ Done)             │
 │ 39. [FR08-02] Real-time live peer cursor broadcasting & canvas painter         │
 │ 40. [FR06-01..07] AI object generation via Gemini API & canvas insertion       │
-│ 41. [FR12-01..03/05] Pin-to-canvas threaded comments with replies              │
-│ 42. [FR12-04] Live in-board session chat drawer over WebSockets                │
+│ 41. [FR12-01..03/05] Pin-to-canvas threaded comments with replies (✅ Done)     │
+│ 42. [FR12-04] Live in-board session chat drawer over WebSockets (✅ Done)       │
 │ 43. [FR17-08/09] DM delivery/read receipts & push notifications on new message │
 │ 44. [FR17-06] DM rich media attachments (images, files via Cloudflare R2)      │
 │ 45. [FR17-05/12] Offline DM message queue with Isar DB & reconnection sync     │
@@ -239,6 +239,6 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │ 🟣 LEVEL 5: MAJOR SUBSYSTEM (1 – 2 WEEKS)                                      │
 ├─────────────────────────────────────────────────────────────────────────────────┤
-│ 46. [FR12-06/07] Live in-session WebRTC Voice Calling system & audio HUD       │
+│ 46. [FR12-06/07] Live in-session WebRTC Voice Calling system & audio HUD (✅ Done) │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```

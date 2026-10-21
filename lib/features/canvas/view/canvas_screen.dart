@@ -23,6 +23,9 @@ import 'trays/canvas_shape_type.dart';
 import 'trays/members_tray.dart';
 import 'trays/shapes_tray.dart';
 import 'trays/tools_tray.dart';
+import 'chat/board_chat_drawer.dart';
+import 'trays/comments_tray.dart';
+import 'voice/voice_call_hud.dart';
 import 'widgets/tray_tips_overlay.dart';
 
 part 'canvas_painter.dart';
@@ -1753,6 +1756,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               );
                               _lastTapWorldPoint = worldPoint;
 
+                              // Pin comment placement flow:
+                              if (state.isPlacingComment) {
+                                _promptNewCommentDialog(worldPoint);
+                                return;
+                              }
+
                               // Arrow 2-element connection flow:
                               if (_isArrowMode(state)) {
                                 final hitShapeId = _hitTestShape(
@@ -1895,9 +1904,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           ),
 
                           ..._buildImageOverlays(state),
+                          ..._buildPinnedCommentPins(state),
 
                           _buildEdgeTriggers(state, isDark),
                           _buildAllTrays(state),
+                          const BoardChatDrawer(),
+                          const CommentsTray(),
+                          const VoiceCallHud(),
                           if (state.selectedShapeId != null)
                             _buildSelectedElementPanel(
                               state,
@@ -3777,6 +3790,151 @@ class _CanvasScreenState extends State<CanvasScreen> {
     return overlays;
   }
 
+  void _promptNewCommentDialog(Offset worldPoint) {
+    final textController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.pin_drop, color: Colors.amber),
+            SizedBox(width: 8),
+            Text('Add Comment Pin'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Pin at (${worldPoint.dx.toInt()}, ${worldPoint.dy.toInt()})',
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: textController,
+              autofocus: true,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: 'Write a comment... (use @name to mention)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogCtx);
+              _canvasBloc.add(
+                const CanvasToggleCommentPlacementMode(enable: false),
+              );
+            },
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final text = textController.text.trim();
+              if (text.isNotEmpty) {
+                _canvasBloc.add(
+                  CanvasAddCommentRequested(
+                    text: text,
+                    canvasPosition: worldPoint,
+                  ),
+                );
+              }
+              Navigator.pop(dialogCtx);
+            },
+            child: const Text('Post Pin'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildPinnedCommentPins(CanvasState state) {
+    final widgets = <Widget>[];
+    for (final comment in state.comments) {
+      if (comment.canvasPosition == null) continue;
+      final screenPos = _toScreen(comment.canvasPosition!);
+      final isSelected = comment.id == state.activeCommentId;
+
+      widgets.add(
+        Positioned(
+          left: screenPos.dx - 16,
+          top: screenPos.dy - 32,
+          child: GestureDetector(
+            onTap: () {
+              _canvasBloc.add(CanvasSetActiveComment(comment.id));
+              if (!state.isCommentsTrayOpen) {
+                _canvasBloc.add(const CanvasToggleCommentsTray());
+              }
+            },
+            child: Tooltip(
+              message: '${comment.authorName}: ${comment.text}',
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? Colors.amber.shade700
+                          : Colors.amber.shade600,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: Colors.white,
+                        width: 1.5,
+                      ),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x33000000),
+                          blurRadius: 4,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.chat_bubble,
+                          size: 11,
+                          color: Colors.white,
+                        ),
+                        if (comment.replies.isNotEmpty) ...[
+                          const SizedBox(width: 3),
+                          Text(
+                            '${comment.replies.length}',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  CustomPaint(
+                    size: const Size(8, 5),
+                    painter: _TrianglePainter(
+                      color: isSelected
+                          ? Colors.amber.shade700
+                          : Colors.amber.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return widgets;
+  }
+
   @override
   void dispose() {
     _shapeEditDebounceTimer?.cancel();
@@ -3854,4 +4012,26 @@ class _ShapeTransformDraft {
       rotation: rotation ?? this.rotation,
     );
   }
+}
+
+class _TrianglePainter extends CustomPainter {
+  final Color color;
+  const _TrianglePainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrianglePainter oldDelegate) =>
+      oldDelegate.color != color;
 }
