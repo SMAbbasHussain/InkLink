@@ -60,6 +60,7 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
           create: (_) => CanvasBloc(
             canvasService: context.read<CanvasService>(),
             boardService: context.read<BoardService>(),
+            boardExportService: context.read<BoardExportService>(),
             boardId: widget.boardId,
           )..add(CanvasInitializeCrdt(widget.boardId)),
           child: CanvasScreen(

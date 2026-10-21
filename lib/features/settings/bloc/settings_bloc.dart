@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/services/settings/settings_service.dart';
@@ -51,6 +53,18 @@ class SettingsPreferredTagsChanged extends SettingsEvent {
   const SettingsPreferredTagsChanged(this.tags);
 }
 
+class SettingsNotificationPreferencesChanged extends SettingsEvent {
+  final bool? pushNotificationsEnabled;
+  final bool? inviteAlertsEnabled;
+  final bool? friendAlertsEnabled;
+
+  const SettingsNotificationPreferencesChanged({
+    this.pushNotificationsEnabled,
+    this.inviteAlertsEnabled,
+    this.friendAlertsEnabled,
+  });
+}
+
 class SettingsConsumeMessage extends SettingsEvent {
   const SettingsConsumeMessage();
 }
@@ -64,6 +78,9 @@ class SettingsState {
   final bool showOnlineStatus;
   final bool showEmail;
   final List<String> preferredTags;
+  final bool pushNotificationsEnabled;
+  final bool inviteAlertsEnabled;
+  final bool friendAlertsEnabled;
   final bool isLoadingProfilePreferences;
   final String? message;
   final bool isError;
@@ -77,6 +94,9 @@ class SettingsState {
     this.showOnlineStatus = true,
     this.showEmail = false,
     this.preferredTags = const [],
+    this.pushNotificationsEnabled = true,
+    this.inviteAlertsEnabled = true,
+    this.friendAlertsEnabled = true,
     this.isLoadingProfilePreferences = true,
     this.message,
     this.isError = false,
@@ -91,6 +111,9 @@ class SettingsState {
     bool? showOnlineStatus,
     bool? showEmail,
     List<String>? preferredTags,
+    bool? pushNotificationsEnabled,
+    bool? inviteAlertsEnabled,
+    bool? friendAlertsEnabled,
     bool? isLoadingProfilePreferences,
     Object? message = _unset,
     bool? isError,
@@ -105,6 +128,10 @@ class SettingsState {
       showOnlineStatus: showOnlineStatus ?? this.showOnlineStatus,
       showEmail: showEmail ?? this.showEmail,
       preferredTags: preferredTags ?? this.preferredTags,
+      pushNotificationsEnabled:
+          pushNotificationsEnabled ?? this.pushNotificationsEnabled,
+      inviteAlertsEnabled: inviteAlertsEnabled ?? this.inviteAlertsEnabled,
+      friendAlertsEnabled: friendAlertsEnabled ?? this.friendAlertsEnabled,
       isLoadingProfilePreferences:
           isLoadingProfilePreferences ?? this.isLoadingProfilePreferences,
       message: message == _unset ? this.message : message as String?,
@@ -134,22 +161,38 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
     );
     on<SettingsPrivacyChanged>(_onPrivacyChanged);
     on<SettingsPreferredTagsChanged>(_onPreferredTagsChanged);
+    on<SettingsNotificationPreferencesChanged>(_onNotificationPreferencesChanged);
     on<SettingsConsumeMessage>(_onConsumeMessage);
   }
+
+  int _preferencesGeneration = 0;
+  Future<void> _preferenceLock = Future.value();
 
   Future<void> _onLoadRequested(
     SettingsLoadRequested event,
     Emitter<SettingsState> emit,
   ) async {
+    final currentGen = _preferencesGeneration;
+    final currentUid = _profileService?.getCurrentUserId();
+
     final value = await _settingsService.getShowTrayTips();
     final quality = await _settingsService.getBoardPreviewQuality();
     final compression =
         await _settingsService.getBoardPreviewCompressionEnabled();
+    final pushEnabled =
+        await _settingsService.getPushNotificationsEnabled(currentUid);
+    final inviteEnabled =
+        await _settingsService.getInviteAlertsEnabled(currentUid);
+    final friendEnabled =
+        await _settingsService.getFriendAlertsEnabled(currentUid);
 
     bool isProfilePublic = state.isProfilePublic;
     bool showOnlineStatus = state.showOnlineStatus;
     bool showEmail = state.showEmail;
     List<String> preferredTags = state.preferredTags;
+    bool pushNotificationsEnabled = pushEnabled;
+    bool inviteAlertsEnabled = inviteEnabled;
+    bool friendAlertsEnabled = friendEnabled;
 
     if (_profileService != null) {
       try {
@@ -162,23 +205,64 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
                   ?.map((e) => e.toString())
                   .toList() ??
               preferredTags;
+
+          final notifPrefs = userData['notificationPreferences'];
+          if (notifPrefs is Map<String, dynamic>) {
+            if (notifPrefs.containsKey('pushNotificationsEnabled')) {
+              pushNotificationsEnabled =
+                  (notifPrefs['pushNotificationsEnabled'] as bool?) ?? pushEnabled;
+              await _settingsService
+                  .setPushNotificationsEnabled(pushNotificationsEnabled, currentUid);
+            }
+            if (notifPrefs.containsKey('inviteAlertsEnabled')) {
+              inviteAlertsEnabled =
+                  (notifPrefs['inviteAlertsEnabled'] as bool?) ?? inviteEnabled;
+              await _settingsService
+                  .setInviteAlertsEnabled(inviteAlertsEnabled, currentUid);
+            }
+            if (notifPrefs.containsKey('friendAlertsEnabled')) {
+              friendAlertsEnabled =
+                  (notifPrefs['friendAlertsEnabled'] as bool?) ?? friendEnabled;
+              await _settingsService
+                  .setFriendAlertsEnabled(friendAlertsEnabled, currentUid);
+            }
+          }
         }
       } catch (_) {}
     }
 
-    emit(
-      state.copyWith(
-        showTrayTips: value,
-        boardPreviewQuality: quality,
-        boardPreviewCompressionEnabled: compression,
-        isLoadingTrayTips: false,
-        isProfilePublic: isProfilePublic,
-        showOnlineStatus: showOnlineStatus,
-        showEmail: showEmail,
-        preferredTags: preferredTags,
-        isLoadingProfilePreferences: false,
-      ),
-    );
+    if (_preferencesGeneration == currentGen) {
+      emit(
+        state.copyWith(
+          showTrayTips: value,
+          boardPreviewQuality: quality,
+          boardPreviewCompressionEnabled: compression,
+          isLoadingTrayTips: false,
+          isProfilePublic: isProfilePublic,
+          showOnlineStatus: showOnlineStatus,
+          showEmail: showEmail,
+          preferredTags: preferredTags,
+          pushNotificationsEnabled: pushNotificationsEnabled,
+          inviteAlertsEnabled: inviteAlertsEnabled,
+          friendAlertsEnabled: friendAlertsEnabled,
+          isLoadingProfilePreferences: false,
+        ),
+      );
+    } else {
+      emit(
+        state.copyWith(
+          showTrayTips: value,
+          boardPreviewQuality: quality,
+          boardPreviewCompressionEnabled: compression,
+          isLoadingTrayTips: false,
+          isProfilePublic: isProfilePublic,
+          showOnlineStatus: showOnlineStatus,
+          showEmail: showEmail,
+          preferredTags: preferredTags,
+          isLoadingProfilePreferences: false,
+        ),
+      );
+    }
   }
 
   Future<void> _onTrayTipsToggled(
@@ -320,6 +404,102 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
           ),
         );
       }
+    }
+  }
+
+  Future<void> _onNotificationPreferencesChanged(
+    SettingsNotificationPreferencesChanged event,
+    Emitter<SettingsState> emit,
+  ) async {
+    final completer = Completer<void>();
+    final prevLock = _preferenceLock;
+    _preferenceLock = completer.future;
+
+    try {
+      await prevLock;
+
+      final initiatingUid = _profileService?.getCurrentUserId();
+      _preferencesGeneration++;
+      final changeGen = _preferencesGeneration;
+
+      final previousPush = state.pushNotificationsEnabled;
+      final previousInvite = state.inviteAlertsEnabled;
+      final previousFriend = state.friendAlertsEnabled;
+
+      final newPush =
+          event.pushNotificationsEnabled ?? state.pushNotificationsEnabled;
+      final newInvite =
+          event.inviteAlertsEnabled ?? state.inviteAlertsEnabled;
+      final newFriend =
+          event.friendAlertsEnabled ?? state.friendAlertsEnabled;
+
+      emit(
+        state.copyWith(
+          pushNotificationsEnabled: newPush,
+          inviteAlertsEnabled: newInvite,
+          friendAlertsEnabled: newFriend,
+          message: null,
+          isError: false,
+        ),
+      );
+
+      if (event.pushNotificationsEnabled != null) {
+        await _settingsService.setPushNotificationsEnabled(newPush, initiatingUid);
+      }
+      if (event.inviteAlertsEnabled != null) {
+        await _settingsService.setInviteAlertsEnabled(newInvite, initiatingUid);
+      }
+      if (event.friendAlertsEnabled != null) {
+        await _settingsService.setFriendAlertsEnabled(newFriend, initiatingUid);
+      }
+
+      if (_profileService != null) {
+        try {
+          await _profileService.updateNotificationPreferences(
+            uid: initiatingUid,
+            pushNotificationsEnabled: event.pushNotificationsEnabled,
+            inviteAlertsEnabled: event.inviteAlertsEnabled,
+            friendAlertsEnabled: event.friendAlertsEnabled,
+          );
+        } catch (e) {
+          if (_preferencesGeneration == changeGen) {
+            if (event.pushNotificationsEnabled != null) {
+              await _settingsService.setPushNotificationsEnabled(
+                  previousPush, initiatingUid);
+            }
+            if (event.inviteAlertsEnabled != null) {
+              await _settingsService.setInviteAlertsEnabled(
+                  previousInvite, initiatingUid);
+            }
+            if (event.friendAlertsEnabled != null) {
+              await _settingsService.setFriendAlertsEnabled(
+                  previousFriend, initiatingUid);
+            }
+            emit(
+              state.copyWith(
+                pushNotificationsEnabled: previousPush,
+                inviteAlertsEnabled: previousInvite,
+                friendAlertsEnabled: previousFriend,
+                message:
+                    'Failed to update notification preferences. Please try again.',
+                isError: true,
+              ),
+            );
+          }
+          return;
+        }
+      }
+
+      if (_preferencesGeneration == changeGen) {
+        emit(
+          state.copyWith(
+            message: 'Notification preferences updated.',
+            isError: false,
+          ),
+        );
+      }
+    } finally {
+      completer.complete();
     }
   }
 

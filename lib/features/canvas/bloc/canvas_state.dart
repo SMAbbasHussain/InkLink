@@ -35,6 +35,9 @@ class CanvasState {
   final bool isDrawingShape;
   final Offset? shapeDrawStart;
   final Offset? shapeDrawCurrent;
+  final bool isExporting;
+  final String? exportSuccessMessage;
+  final String? lastExportedFilePath;
 
   const CanvasState({
     this.boardTitle,
@@ -65,6 +68,9 @@ class CanvasState {
     this.isDrawingShape = false,
     this.shapeDrawStart,
     this.shapeDrawCurrent,
+    this.isExporting = false,
+    this.exportSuccessMessage,
+    this.lastExportedFilePath,
   });
 
   static const Object _unset = Object();
@@ -98,6 +104,9 @@ class CanvasState {
     bool? isDrawingShape,
     Object? shapeDrawStart = _unset,
     Object? shapeDrawCurrent = _unset,
+    bool? isExporting,
+    Object? exportSuccessMessage = _unset,
+    Object? lastExportedFilePath = _unset,
   }) {
     return CanvasState(
       boardTitle: boardTitle == _unset
@@ -148,6 +157,13 @@ class CanvasState {
       shapeDrawCurrent: shapeDrawCurrent == _unset
           ? this.shapeDrawCurrent
           : shapeDrawCurrent as Offset?,
+      isExporting: isExporting ?? this.isExporting,
+      exportSuccessMessage: exportSuccessMessage == _unset
+          ? this.exportSuccessMessage
+          : exportSuccessMessage as String?,
+      lastExportedFilePath: lastExportedFilePath == _unset
+          ? this.lastExportedFilePath
+          : lastExportedFilePath as String?,
     );
   }
 

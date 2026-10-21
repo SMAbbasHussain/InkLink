@@ -146,6 +146,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         child: const Text('Clear Cache'),
                       ),
                     ),
+                    _buildSectionHeader('Notifications'),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.notifications_active_outlined),
+                      title: const Text('Push Notifications'),
+                      subtitle: const Text(
+                        'Receive real-time push notifications on this device',
+                      ),
+                      value: settingsState.pushNotificationsEnabled,
+                      onChanged: (value) {
+                        context.read<SettingsBloc>().add(
+                          SettingsNotificationPreferencesChanged(
+                            pushNotificationsEnabled: value,
+                          ),
+                        );
+                      },
+                    ),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.mail_outline),
+                      title: const Text('Board Invite Alerts'),
+                      subtitle: const Text(
+                        'Get notified when someone invites you to a board',
+                      ),
+                      value: settingsState.inviteAlertsEnabled,
+                      onChanged: settingsState.pushNotificationsEnabled
+                          ? (value) {
+                              context.read<SettingsBloc>().add(
+                                SettingsNotificationPreferencesChanged(
+                                  inviteAlertsEnabled: value,
+                                ),
+                              );
+                            }
+                          : null,
+                    ),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.person_add_outlined),
+                      title: const Text('Friend Request Alerts'),
+                      subtitle: const Text(
+                        'Get notified when you receive or accept friend requests',
+                      ),
+                      value: settingsState.friendAlertsEnabled,
+                      onChanged: settingsState.pushNotificationsEnabled
+                          ? (value) {
+                              context.read<SettingsBloc>().add(
+                                SettingsNotificationPreferencesChanged(
+                                  friendAlertsEnabled: value,
+                                ),
+                              );
+                            }
+                          : null,
+                    ),
                     _buildSectionHeader('Privacy'),
                     SwitchListTile(
                       secondary: const Icon(Icons.public_outlined),

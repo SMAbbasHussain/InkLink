@@ -56,7 +56,8 @@ class _MembersTrayState extends State<MembersTray> {
     return BlocBuilder<CanvasBloc, CanvasState>(
       buildWhen: (prev, curr) =>
           prev.filteredBoardMembers != curr.filteredBoardMembers ||
-          prev.memberSearchQuery != curr.memberSearchQuery,
+          prev.memberSearchQuery != curr.memberSearchQuery ||
+          prev.currentUserRole != curr.currentUserRole,
       builder: (context, state) {
         final filteredMembers = state.filteredBoardMembers;
 
@@ -157,22 +158,28 @@ class _MembersTrayState extends State<MembersTray> {
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         children: [
                           ..._buildMemberSection(
+                            context,
                             'Owner',
                             filteredMembers,
                             Board.roleOwner,
                             Colors.orange,
+                            state,
                           ),
                           ..._buildMemberSection(
+                            context,
                             'Editor',
                             filteredMembers,
                             Board.roleEditor,
                             Colors.blue,
+                            state,
                           ),
                           ..._buildMemberSection(
+                            context,
                             'Viewer',
                             filteredMembers,
                             Board.roleViewer,
                             Colors.green,
+                            state,
                           ),
                         ],
                       ),
@@ -185,10 +192,12 @@ class _MembersTrayState extends State<MembersTray> {
   }
 
   List<Widget> _buildMemberSection(
+    BuildContext context,
     String roleLabel,
     List<BoardMember> allMembers,
     String roleValue,
     Color roleColor,
+    CanvasState state,
   ) {
     final membersInRole = allMembers.where((m) => m.role == roleValue).toList();
     if (membersInRole.isEmpty) return [];
@@ -234,13 +243,20 @@ class _MembersTrayState extends State<MembersTray> {
           ],
         ),
       ),
-      ...membersInRole.map((member) => _buildMemberTile(member)),
+      ...membersInRole.map((member) => _buildMemberTile(context, member, state)),
     ];
   }
 
-  Widget _buildMemberTile(BoardMember member) {
+  Widget _buildMemberTile(
+    BuildContext context,
+    BoardMember member,
+    CanvasState state,
+  ) {
     final displayName = member.displayName ?? member.email ?? 'Unknown';
     final subtitle = member.email ?? 'No email';
+    final isOwner = state.currentUserRole == Board.roleOwner;
+    final isTargetOwner = member.role == Board.roleOwner;
+    final canManage = isOwner && !isTargetOwner;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -250,8 +266,8 @@ class _MembersTrayState extends State<MembersTray> {
           radius: 18,
           backgroundImage:
               member.photoUrl != null && member.photoUrl!.isNotEmpty
-              ? NetworkImage(member.photoUrl!)
-              : null,
+                  ? NetworkImage(member.photoUrl!)
+                  : null,
           child: member.photoUrl == null || member.photoUrl!.isEmpty
               ? Text(
                   displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
@@ -271,7 +287,104 @@ class _MembersTrayState extends State<MembersTray> {
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 12),
         ),
+        trailing: canManage
+            ? PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, size: 20),
+                tooltip: 'Member options',
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                onSelected: (action) {
+                  if (action == 'toggle_role') {
+                    final newRole = member.role == Board.roleEditor
+                        ? Board.roleViewer
+                        : Board.roleEditor;
+                    context.read<CanvasBloc>().add(
+                          CanvasUpdateBoardMemberRole(
+                            targetUid: member.uid,
+                            newRole: newRole,
+                          ),
+                        );
+                  } else if (action == 'revoke') {
+                    _confirmRevokeMember(context, member, displayName);
+                  }
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'toggle_role',
+                    child: Row(
+                      children: [
+                        Icon(
+                          member.role == Board.roleEditor
+                              ? Icons.visibility_outlined
+                              : Icons.edit_outlined,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          member.role == Board.roleEditor
+                              ? 'Change to Viewer'
+                              : 'Change to Editor',
+                        ),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
+                    value: 'revoke',
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.person_remove_outlined,
+                          size: 18,
+                          color: Colors.redAccent,
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          'Revoke Access',
+                          style: TextStyle(color: Colors.redAccent),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              )
+            : null,
       ),
     );
+  }
+
+  Future<void> _confirmRevokeMember(
+    BuildContext context,
+    BoardMember member,
+    String displayName,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Revoke Member Access'),
+        content: Text(
+          'Are you sure you want to remove "$displayName" from this board? They will lose access immediately.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogCtx).colorScheme.error,
+              foregroundColor: Theme.of(dialogCtx).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('Revoke'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      context.read<CanvasBloc>().add(CanvasRemoveBoardMember(member.uid));
+    }
   }
 }

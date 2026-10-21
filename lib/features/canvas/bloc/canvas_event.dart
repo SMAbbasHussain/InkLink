@@ -452,3 +452,37 @@ class CanvasSaveBoardPreviewRequested extends CanvasEvent {
 
   const CanvasSaveBoardPreviewRequested(this.pngBytes);
 }
+
+/// Revoke a member's access from the board (Owner only)
+class CanvasRemoveBoardMember extends CanvasEvent {
+  final String targetUid;
+
+  const CanvasRemoveBoardMember(this.targetUid);
+}
+
+/// Update a member's role (Editor/Viewer) on the board (Owner only)
+class CanvasUpdateBoardMemberRole extends CanvasEvent {
+  final String targetUid;
+  final String newRole;
+
+  const CanvasUpdateBoardMemberRole({
+    required this.targetUid,
+    required this.newRole,
+  });
+}
+
+/// Export canvas board in specified format (PNG, PDF, SVG) and optionally share
+class CanvasExportBoardRequested extends CanvasEvent {
+  final BoardExportFormat format;
+  final bool shareAfterExport;
+
+  const CanvasExportBoardRequested({
+    required this.format,
+    this.shareAfterExport = false,
+  });
+}
+
+/// Reset export message and status
+class CanvasConsumeExportMessage extends CanvasEvent {
+  const CanvasConsumeExportMessage();
+}

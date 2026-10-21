@@ -298,6 +298,7 @@ class _CanvasPainter extends CustomPainter {
   final Offset? shapeDrawStart;
   final Offset? shapeDrawCurrent;
   final CanvasShapeType? pendingShapeType;
+  final String? arrowConnectStartElementId;
 
   const _CanvasPainter({
     required this.elements,
@@ -313,6 +314,7 @@ class _CanvasPainter extends CustomPainter {
     this.shapeDrawStart,
     this.shapeDrawCurrent,
     this.pendingShapeType,
+    this.arrowConnectStartElementId,
   });
 
   @override
@@ -351,6 +353,30 @@ class _CanvasPainter extends CustomPainter {
         case _ElementKind.connector:
           _paintConnector(canvas, element);
           break;
+      }
+    }
+
+    if (arrowConnectStartElementId != null) {
+      final startElem =
+          elements.where((e) => e.id == arrowConnectStartElementId).firstOrNull;
+      if (startElem != null) {
+        final ringPaint = Paint()
+          ..color = const Color(0xFF2563EB)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.5;
+        final glowPaint = Paint()
+          ..color = const Color(0xFF3B82F6).withOpacity(0.18)
+          ..style = PaintingStyle.fill;
+        final radius = (startElem.kind == _ElementKind.shape
+                ? startElem.size
+                : (startElem.kind == _ElementKind.stickyNote ||
+                        startElem.kind == _ElementKind.image)
+                    ? math.max(startElem.width, startElem.height)
+                    : 80.0) /
+            2 +
+            10;
+        canvas.drawCircle(startElem.center, radius, glowPaint);
+        canvas.drawCircle(startElem.center, radius, ringPaint);
       }
     }
 
@@ -566,26 +592,38 @@ class _CanvasPainter extends CustomPainter {
         canvas.drawArc(rect, math.pi, math.pi, true, paint);
         break;
       case CanvasShapeType.arrow:
-        final p = Path();
         final halfW = s * 0.65;
-        final halfH = s * 0.35;
-        final headLen = s * 0.42;
-        final shaftThickness = halfH * 0.45;
+        final startPt = Offset(c.dx - halfW, c.dy);
+        final endPt = Offset(c.dx + halfW, c.dy);
 
-        final left = c.dx - halfW;
-        final right = c.dx + halfW;
-        final headStart = right - headLen;
+        final strokePaint = Paint()
+          ..color = paint.color
+          ..strokeWidth = math.max(paint.strokeWidth, 2.5)
+          ..strokeCap = StrokeCap.round
+          ..style = PaintingStyle.stroke;
 
-        p.moveTo(left, c.dy - shaftThickness / 2);
-        p.lineTo(headStart, c.dy - shaftThickness / 2);
-        p.lineTo(headStart, c.dy - halfH);
-        p.lineTo(right, c.dy);
-        p.lineTo(headStart, c.dy + halfH);
-        p.lineTo(headStart, c.dy + shaftThickness / 2);
-        p.lineTo(left, c.dy + shaftThickness / 2);
-        p.close();
+        // Draw simple line shaft without space in between
+        canvas.drawLine(startPt, endPt, strokePaint);
 
-        canvas.drawPath(p, paint);
+        // Draw clean arrowhead at endPt pointing forward
+        const arrowAngle = 0.45;
+        final headLen = math.min(18.0, halfW * 0.45).clamp(10.0, 24.0);
+        final headPath = Path()
+          ..moveTo(endPt.dx, endPt.dy)
+          ..lineTo(
+            endPt.dx - headLen * math.cos(-arrowAngle),
+            endPt.dy - headLen * math.sin(-arrowAngle),
+          )
+          ..lineTo(
+            endPt.dx - headLen * math.cos(arrowAngle),
+            endPt.dy - headLen * math.sin(arrowAngle),
+          )
+          ..close();
+
+        final headPaint = Paint()
+          ..color = paint.color
+          ..style = PaintingStyle.fill;
+        canvas.drawPath(headPath, headPaint);
         break;
     }
 
@@ -601,17 +639,15 @@ class _CanvasPainter extends CustomPainter {
   }
 
   void _paintShapeDrawPreview(Canvas canvas, Offset start, Offset current) {
-    final rect = Rect.fromPoints(start, current);
-    final dashPaint = Paint()
-      ..color = Colors.blueAccent.withOpacity(0.6)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawRect(rect, dashPaint);
-
     if (pendingShapeType == CanvasShapeType.arrow) {
+      final linePaint = Paint()
+        ..color = Colors.blueAccent
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5
+        ..strokeCap = StrokeCap.round;
+      canvas.drawLine(start, current, linePaint);
       final angle = math.atan2(current.dy - start.dy, current.dx - start.dx);
-      canvas.drawLine(start, current, dashPaint);
-      const headLen = 14.0;
+      const headLen = 16.0;
       final arrowPath = Path()
         ..moveTo(current.dx, current.dy)
         ..lineTo(
@@ -624,10 +660,18 @@ class _CanvasPainter extends CustomPainter {
         )
         ..close();
       final fillPaint = Paint()
-        ..color = Colors.blueAccent.withOpacity(0.7)
+        ..color = Colors.blueAccent
         ..style = PaintingStyle.fill;
       canvas.drawPath(arrowPath, fillPaint);
+      return;
     }
+
+    final rect = Rect.fromPoints(start, current);
+    final dashPaint = Paint()
+      ..color = Colors.blueAccent.withOpacity(0.6)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawRect(rect, dashPaint);
 
     // Draw size label near the center
     final size = math.max((current.dx - start.dx).abs(), (current.dy - start.dy).abs());
@@ -709,23 +753,35 @@ class _CanvasPainter extends CustomPainter {
     );
   }
 
-  Offset _resolveAnchor(String? elementId, String anchor, Offset fallback) {
+  Offset _resolveAnchor(
+    String? elementId,
+    String anchor,
+    Offset fallback, {
+    Offset? towards,
+  }) {
     if (elementId == null) return fallback;
     final target = elements.where((e) => e.id == elementId).firstOrNull;
     if (target == null) return fallback;
 
     Rect targetBounds;
     if (target.kind == _ElementKind.shape) {
+      final w = target.shapeType == CanvasShapeType.rectangle
+          ? target.size * 1.35
+          : target.size * 1.1;
+      final h = target.shapeType == CanvasShapeType.rectangle
+          ? target.size * 0.8
+          : target.size * 1.1;
       targetBounds = Rect.fromCenter(
         center: target.center,
-        width: target.size * 1.2,
-        height: target.size * 1.2,
+        width: w,
+        height: h,
       );
-    } else if (target.kind == _ElementKind.stickyNote || target.kind == _ElementKind.image) {
+    } else if (target.kind == _ElementKind.stickyNote ||
+        target.kind == _ElementKind.image) {
       targetBounds = Rect.fromCenter(
         center: target.center,
-        width: target.width,
-        height: target.height,
+        width: target.width > 0 ? target.width : target.size,
+        height: target.height > 0 ? target.height : target.size,
       );
     } else if (target.bounds != null) {
       targetBounds = target.bounds!;
@@ -733,7 +789,18 @@ class _CanvasPainter extends CustomPainter {
       return target.center;
     }
 
-    switch (anchor) {
+    String effectiveAnchor = anchor;
+    if (effectiveAnchor == 'auto' && towards != null) {
+      final dx = towards.dx - targetBounds.center.dx;
+      final dy = towards.dy - targetBounds.center.dy;
+      if (dx.abs() > dy.abs()) {
+        effectiveAnchor = dx > 0 ? 'right' : 'left';
+      } else {
+        effectiveAnchor = dy > 0 ? 'bottom' : 'top';
+      }
+    }
+
+    switch (effectiveAnchor) {
       case 'top':
         return Offset(targetBounds.center.dx, targetBounds.top);
       case 'bottom':
@@ -865,8 +932,22 @@ class _CanvasPainter extends CustomPainter {
   }
 
   void _paintConnector(Canvas canvas, _CanvasElement element) {
-    final start = _resolveAnchor(element.startElementId, element.startAnchor, element.startPoint);
-    final end = _resolveAnchor(element.endElementId, element.endAnchor, element.endPoint);
+    final startRaw =
+        _resolveAnchor(element.startElementId, 'center', element.startPoint);
+    final endRaw =
+        _resolveAnchor(element.endElementId, 'center', element.endPoint);
+    final start = _resolveAnchor(
+      element.startElementId,
+      element.startAnchor,
+      element.startPoint,
+      towards: endRaw,
+    );
+    final end = _resolveAnchor(
+      element.endElementId,
+      element.endAnchor,
+      element.endPoint,
+      towards: startRaw,
+    );
 
     final linePaint = Paint()
       ..color = element.color
@@ -940,6 +1021,7 @@ class _CanvasPainter extends CustomPainter {
         oldDelegate.viewportOffset != viewportOffset ||
         oldDelegate.isDrawingShape != isDrawingShape ||
         oldDelegate.shapeDrawStart != shapeDrawStart ||
-        oldDelegate.shapeDrawCurrent != shapeDrawCurrent;
+        oldDelegate.shapeDrawCurrent != shapeDrawCurrent ||
+        oldDelegate.arrowConnectStartElementId != arrowConnectStartElementId;
   }
 }

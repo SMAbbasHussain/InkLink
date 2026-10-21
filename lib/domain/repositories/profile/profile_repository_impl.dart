@@ -238,18 +238,22 @@ class ProfileRepositoryImpl implements ProfileRepository {
       model.email = email;
     }
 
-    final bio = data['bio']?.toString();
-    if (bio != null) {
-      model.bio = bio.isEmpty ? null : bio;
+    if (data.containsKey('bio')) {
+      final bio = data['bio']?.toString();
+      model.bio = (bio == null || bio.isEmpty) ? null : bio;
     }
 
-    final photoUrl = data['photoURL']?.toString();
-    if (photoUrl != null) {
-      model.photoURL = photoUrl.isEmpty ? null : photoUrl;
+    if (data.containsKey('photoURL')) {
+      final photoUrl = data['photoURL']?.toString();
+      model.photoURL = (photoUrl == null || photoUrl.isEmpty) ? null : photoUrl;
     }
 
-    model.friendCount = _toInt(data['friendCount']);
-    model.boardCount = _toInt(data['boardCount']);
+    if (data.containsKey('friendCount')) {
+      model.friendCount = _toInt(data['friendCount']);
+    }
+    if (data.containsKey('boardCount')) {
+      model.boardCount = _toInt(data['boardCount']);
+    }
 
     model.lastSource = source;
     model.lastSeenAt = timestamp;

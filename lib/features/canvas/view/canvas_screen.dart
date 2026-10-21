@@ -83,6 +83,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Timer? _shapeEditDebounceTimer;
   final Map<String, dynamic> _pendingShapeEdits = <String, dynamic>{};
   Offset? _lastTapWorldPoint;
+  String? _arrowConnectStartElementId;
 
   static const double _viewportComparisonEpsilon = 0.01;
 
@@ -120,6 +121,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
       (localPoint.dx - _viewportOffset.dx) / _viewportScale,
       (localPoint.dy - _viewportOffset.dy) / _viewportScale,
     );
+  }
+
+  bool _isArrowMode(CanvasState state) {
+    return (state.currentToolMode == CanvasToolMode.shape &&
+            state.pendingShapeType == CanvasShapeType.arrow) ||
+        state.currentToolMode == CanvasToolMode.arrow;
   }
 
   Offset _toScreen(Offset worldPoint) {
@@ -1078,6 +1085,201 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
+  void _showExportOptionsSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Export & Share Board',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(sheetContext),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Export your canvas elements with full layout integrity:',
+                  style: TextStyle(color: Colors.grey, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                _buildExportTile(
+                  sheetContext,
+                  icon: Icons.image_outlined,
+                  iconColor: Colors.blue,
+                  title: 'PNG Image',
+                  subtitle: 'High-resolution lossless raster export (2x scale)',
+                  format: BoardExportFormat.png,
+                ),
+                const SizedBox(height: 10),
+                _buildExportTile(
+                  sheetContext,
+                  icon: Icons.picture_as_pdf_outlined,
+                  iconColor: Colors.redAccent,
+                  title: 'PDF Document',
+                  subtitle: 'Printable formatted document with metadata header',
+                  format: BoardExportFormat.pdf,
+                ),
+                const SizedBox(height: 10),
+                _buildExportTile(
+                  sheetContext,
+                  icon: Icons.code_outlined,
+                  iconColor: Colors.teal,
+                  title: 'SVG Vector File',
+                  subtitle: 'Scalable vector graphics compatible with Figma & Illustrator',
+                  format: BoardExportFormat.svg,
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.share_outlined, size: 20),
+                    label: const Text(
+                      'Share Board File (Native Sheet)',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      _canvasBloc.add(
+                        const CanvasExportBoardRequested(
+                          format: BoardExportFormat.png,
+                          shareAfterExport: true,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildExportTile(
+    BuildContext sheetContext, {
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required BoardExportFormat format,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.withOpacity(0.2)),
+      ),
+      child: ListTile(
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: iconColor),
+        ),
+        title: Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.file_download_outlined, size: 22),
+              tooltip: 'Save to Device Storage',
+              onPressed: () {
+                Navigator.pop(sheetContext);
+                ScaffoldMessenger.of(context).removeCurrentSnackBar();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Saving ${format.name.toUpperCase()} to device storage...'),
+                    duration: const Duration(seconds: 1),
+                  ),
+                );
+                _canvasBloc.add(
+                  CanvasExportBoardRequested(
+                    format: format,
+                    shareAfterExport: false,
+                  ),
+                );
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.share_outlined, size: 20),
+              tooltip: 'Share via...',
+              onPressed: () {
+                Navigator.pop(sheetContext);
+                ScaffoldMessenger.of(context).removeCurrentSnackBar();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Preparing ${format.name.toUpperCase()} for sharing...'),
+                    duration: const Duration(seconds: 1),
+                  ),
+                );
+                _canvasBloc.add(
+                  CanvasExportBoardRequested(
+                    format: format,
+                    shareAfterExport: true,
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+        onTap: () {
+          Navigator.pop(sheetContext);
+          ScaffoldMessenger.of(context).removeCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Saving ${format.name.toUpperCase()} to device storage...'),
+              duration: const Duration(seconds: 1),
+            ),
+          );
+          _canvasBloc.add(
+            CanvasExportBoardRequested(
+              format: format,
+              shareAfterExport: false,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -1085,8 +1287,43 @@ class _CanvasScreenState extends State<CanvasScreen> {
     return BlocProvider.value(
       value: _canvasBloc,
       child: BlocListener<CanvasBloc, CanvasState>(
-        listenWhen: (previous, current) => previous.error != current.error,
+        listenWhen: (previous, current) =>
+            previous.error != current.error ||
+            (current.exportSuccessMessage != null &&
+                current.exportSuccessMessage != previous.exportSuccessMessage),
         listener: (context, state) async {
+          if (state.exportSuccessMessage != null) {
+            final msg = state.exportSuccessMessage!;
+            final path = state.lastExportedFilePath;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(msg),
+                backgroundColor: Colors.teal.shade700,
+                duration: const Duration(seconds: 4),
+                action: path != null
+                    ? SnackBarAction(
+                        label: 'Share',
+                        textColor: Colors.white,
+                        onPressed: () {
+                          final format = path.endsWith('.pdf')
+                              ? BoardExportFormat.pdf
+                              : path.endsWith('.svg')
+                                  ? BoardExportFormat.svg
+                                  : BoardExportFormat.png;
+                          context.read<CanvasBloc>().add(
+                            CanvasExportBoardRequested(
+                              format: format,
+                              shareAfterExport: true,
+                            ),
+                          );
+                        },
+                      )
+                    : null,
+              ),
+            );
+            context.read<CanvasBloc>().add(const CanvasConsumeExportMessage());
+          }
+
           final message = state.error;
           if (message == null || message.isEmpty) return;
 
@@ -1182,11 +1419,36 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       tooltip: 'Reset View',
                       onPressed: _toggleResetView,
                     ),
+                    state.isExporting
+                        ? const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 12),
+                            child: Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            ),
+                          )
+                        : IconButton(
+                            icon: const Icon(Icons.file_download_outlined),
+                            tooltip: 'Export & Share Board',
+                            onPressed: () => _showExportOptionsSheet(context),
+                          ),
                     PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert),
                       onSelected: (value) {
                         if (value == 'settings') {
                           _openSettings(state.boardTitle ?? 'Board');
+                        } else if (value == 'export') {
+                          _showExportOptionsSheet(context);
+                        } else if (value == 'share') {
+                          _canvasBloc.add(
+                            const CanvasExportBoardRequested(
+                              format: BoardExportFormat.png,
+                              shareAfterExport: true,
+                            ),
+                          );
                         } else if (value == 'copy') {
                           Clipboard.setData(
                             ClipboardData(text: widget.boardId),
@@ -1220,6 +1482,26 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         const PopupMenuItem(
                           value: 'settings',
                           child: Text('Board Settings'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'export',
+                          child: Row(
+                            children: [
+                              Icon(Icons.file_download_outlined, size: 18),
+                              SizedBox(width: 8),
+                              Text('Export Board...'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'share',
+                          child: Row(
+                            children: [
+                              Icon(Icons.share_outlined, size: 18),
+                              SizedBox(width: 8),
+                              Text('Share Board'),
+                            ],
+                          ),
                         ),
                         const PopupMenuItem(
                           value: 'copy',
@@ -1277,6 +1559,20 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               final worldPoint = _toWorld(
                                 details.localFocalPoint,
                               );
+
+                              // In arrow mode, touching an existing element should connect, not draw a freehand shape
+                              if (_isArrowMode(state)) {
+                                final hitShapeId = _hitTestShape(
+                                  mappedElements,
+                                  worldPoint,
+                                );
+                                if (hitShapeId != null) {
+                                  return;
+                                }
+                                // Empty canvas drag in arrow mode: start drawing an arrow shape
+                                _canvasBloc.add(CanvasStartShapeDraw(worldPoint));
+                                return;
+                              }
 
                               // Handle shape drawing mode
                               if (state.currentToolMode == CanvasToolMode.shape &&
@@ -1456,6 +1752,70 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 details.localPosition,
                               );
                               _lastTapWorldPoint = worldPoint;
+
+                              // Arrow 2-element connection flow:
+                              if (_isArrowMode(state)) {
+                                final hitShapeId = _hitTestShape(
+                                  mappedElements,
+                                  worldPoint,
+                                );
+                                if (hitShapeId != null) {
+                                  if (_arrowConnectStartElementId == null) {
+                                    setState(() {
+                                      _arrowConnectStartElementId = hitShapeId;
+                                    });
+                                    return;
+                                  } else {
+                                    final startId = _arrowConnectStartElementId!;
+                                    final endId = hitShapeId;
+                                    if (startId != endId) {
+                                      final startElem = mappedElements
+                                          .where((e) => e.id == startId)
+                                          .firstOrNull;
+                                      final endElem = mappedElements
+                                          .where((e) => e.id == endId)
+                                          .firstOrNull;
+                                      final startPt =
+                                          startElem?.center ?? worldPoint;
+                                      final endPt =
+                                          endElem?.center ?? worldPoint;
+
+                                      _canvasBloc.add(CanvasAddConnector(
+                                        startElementId: startId,
+                                        startAnchor: 'auto',
+                                        startPoint: startPt,
+                                        endElementId: endId,
+                                        endAnchor: 'auto',
+                                        endPoint: endPt,
+                                        lineStyle: 'straight',
+                                        hasArrowhead: true,
+                                        color: state.selectedColor,
+                                        strokeWidth:
+                                            math.max(state.strokeWidth, 2.5),
+                                      ));
+
+                                      setState(() {
+                                        _arrowConnectStartElementId = null;
+                                      });
+                                      return;
+                                    } else {
+                                      // Tapped same element again: cancel
+                                      setState(() {
+                                        _arrowConnectStartElementId = null;
+                                      });
+                                      return;
+                                    }
+                                  }
+                                } else {
+                                  // Tapped empty canvas: clear start element
+                                  if (_arrowConnectStartElementId != null) {
+                                    setState(() {
+                                      _arrowConnectStartElementId = null;
+                                    });
+                                  }
+                                }
+                              }
+
                               final hitShapeId = _hitTestShape(
                                 mappedElements,
                                 worldPoint,
@@ -1489,8 +1849,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               }
                             },
                             onTap: () {
-                              // If in shape draw mode, tap switches back to doodle
-                              if (state.currentToolMode == CanvasToolMode.shape) {
+                              // If in shape draw mode, tap switches back to doodle unless waiting for 2nd arrow connection
+                              if (state.currentToolMode == CanvasToolMode.shape ||
+                                  _isArrowMode(state)) {
+                                if (state.pendingShapeType ==
+                                        CanvasShapeType.arrow &&
+                                    _arrowConnectStartElementId != null) {
+                                  return;
+                                }
                                 _canvasBloc.add(const CanvasCancelShapeDraw());
                                 return;
                               }
@@ -1519,6 +1885,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   shapeDrawStart: state.shapeDrawStart,
                                   shapeDrawCurrent: state.shapeDrawCurrent,
                                   pendingShapeType: state.pendingShapeType,
+                                  arrowConnectStartElementId:
+                                      _isArrowMode(state)
+                                          ? _arrowConnectStartElementId
+                                          : null,
                                 ),
                               ),
                             ),
@@ -1749,6 +2119,24 @@ class _CanvasScreenState extends State<CanvasScreen> {
         }
         final dist = _pointToSegmentDistance(position, start, end);
         if (dist <= element.strokeWidth / 2 + 14.0) {
+          return element.id;
+        }
+      } else if (element.kind == _ElementKind.shape &&
+          element.shapeType == CanvasShapeType.arrow) {
+        final rot = (element.data['rotation'] as num?)?.toDouble() ?? 0.0;
+        final halfW = element.size * 0.65;
+        final cosR = math.cos(rot);
+        final sinR = math.sin(rot);
+        final start = Offset(
+          element.center.dx - halfW * cosR,
+          element.center.dy - halfW * sinR,
+        );
+        final end = Offset(
+          element.center.dx + halfW * cosR,
+          element.center.dy + halfW * sinR,
+        );
+        final dist = _pointToSegmentDistance(position, start, end);
+        if (dist <= 18.0) {
           return element.id;
         }
       } else {
@@ -2770,6 +3158,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           onClearAll: _clearAll,
           onAddStickyNote: _addStickyNoteDialog,
           onAddConnector: _addConnectorDialog,
+          onExport: () => _showExportOptionsSheet(context),
           onClose: () => _toggleTray('tools'),
         ),
         ShapesTray(
@@ -3098,28 +3487,40 @@ class _CanvasScreenState extends State<CanvasScreen> {
       return const SizedBox.shrink();
     }
 
-    final (IconData icon, String label) = switch (state.currentToolMode) {
-      CanvasToolMode.shape => (
-        Icons.category_outlined,
-        state.pendingShapeType != null
-            ? 'Shape: ${state.pendingShapeType!.name}'
-            : 'Shape',
-      ),
-      CanvasToolMode.eraser => (Icons.auto_fix_high_outlined, 'Eraser'),
-      CanvasToolMode.text => (Icons.text_fields, 'Text'),
-      CanvasToolMode.arrow => (Icons.arrow_forward_outlined, 'Arrow'),
-      CanvasToolMode.image => (Icons.image_outlined, 'Image'),
-      CanvasToolMode.highlight => (Icons.highlight_outlined, 'Highlight'),
-      CanvasToolMode.doodle => (Icons.brush, 'Doodle'),
-    };
+    final (IconData icon, String label) = _isArrowMode(state)
+        ? (
+            Icons.arrow_forward_outlined,
+            _arrowConnectStartElementId != null
+                ? 'Arrow: Tap 2nd shape to point to'
+                : 'Arrow: Tap 2 shapes to connect, or drag',
+          )
+        : switch (state.currentToolMode) {
+            CanvasToolMode.shape => (
+              Icons.category_outlined,
+              state.pendingShapeType != null
+                  ? 'Shape: ${state.pendingShapeType!.name}'
+                  : 'Shape',
+            ),
+            CanvasToolMode.eraser => (Icons.auto_fix_high_outlined, 'Eraser'),
+            CanvasToolMode.text => (Icons.text_fields, 'Text'),
+            CanvasToolMode.arrow => (Icons.arrow_forward_outlined, 'Arrow'),
+            CanvasToolMode.image => (Icons.image_outlined, 'Image'),
+            CanvasToolMode.highlight => (Icons.highlight_outlined, 'Highlight'),
+            CanvasToolMode.doodle => (Icons.brush, 'Doodle'),
+          };
 
     return Positioned(
       left: 48,
       bottom: 48,
       child: GestureDetector(
-        onTap: () => _canvasBloc.add(
-          const CanvasSetToolMode(CanvasToolMode.doodle),
-        ),
+        onTap: () {
+          setState(() {
+            _arrowConnectStartElementId = null;
+          });
+          _canvasBloc.add(
+            const CanvasSetToolMode(CanvasToolMode.doodle),
+          );
+        },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(

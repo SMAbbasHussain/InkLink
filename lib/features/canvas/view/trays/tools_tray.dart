@@ -9,6 +9,7 @@ class ToolsTray extends StatelessWidget {
   final VoidCallback onClearAll;
   final VoidCallback? onAddStickyNote;
   final VoidCallback? onAddConnector;
+  final VoidCallback? onExport;
   final VoidCallback? onClose;
 
   const ToolsTray({
@@ -19,6 +20,7 @@ class ToolsTray extends StatelessWidget {
     required this.onClearAll,
     this.onAddStickyNote,
     this.onAddConnector,
+    this.onExport,
     this.onClose,
   });
 
@@ -28,7 +30,7 @@ class ToolsTray extends StatelessWidget {
       isOpen: isOpen,
       direction: TrayDirection.left,
       title: 'Editing Tools',
-      height: 380,
+      height: 440,
       width: 230,
       bottomOffset: 60,
       onClose: onClose,
@@ -74,6 +76,15 @@ class ToolsTray extends StatelessWidget {
               color: Colors.red,
               onTap: onClearAll,
             ),
+            if (onExport != null) ...[
+              const SizedBox(height: 10),
+              _ToolButton(
+                icon: Icons.ios_share_rounded,
+                label: 'Export & Share',
+                color: Colors.deepPurple,
+                onTap: onExport!,
+              ),
+            ],
           ],
         ),
       ),
