@@ -7,7 +7,6 @@ import '../../../domain/services/canvas/board_chat_service.dart';
 import '../../../domain/services/canvas/board_comments_service.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
 import '../../../domain/services/settings/settings_service.dart';
-import '../../../domain/services/voice/voice_service.dart';
 import '../bloc/canvas_bloc.dart';
 import 'canvas_screen.dart';
 
