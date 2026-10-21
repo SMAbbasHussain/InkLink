@@ -194,13 +194,13 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 
 | Req ID | Specification | Status | Implementation Evidence & Gap Details |
 | :--- | :--- | :---: | :--- |
-| **FR12-01** | Add text comments on board | ❌ **Missing** | No comment data models, Firestore collections, or canvas pins exist. |
-| **FR12-02** | Reply to comments | ❌ **Missing** | Not implemented. |
-| **FR12-03** | Delete own comments | ❌ **Missing** | Not implemented. |
-| **FR12-04** | Live chat feature for active board participants | ❌ **Missing** | Chat button in [`members_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/members_tray.dart#L85-L92) has an empty placeholder callback: `"Chat (Coming soon)"`. |
-| **FR12-05** | Notify Users of new comments | ❌ **Missing** | Not implemented. |
-| **FR12-06** | Initiate voice calls within board session | ❌ **Missing** | Call button in [`members_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/members_tray.dart#L77-L84) has an empty placeholder callback: `"Call (Coming soon)"`. No WebRTC or audio provider integrated. |
-| **FR12-07** | Join or leave active voice call | ❌ **Missing** | Not implemented. |
+| **FR12-01** | Add text comments on board | ✅ **Fully Implemented** | Added `CanvasComment` model and Firestore collection `boards/{boardId}/comments`. Tap-to-place comment pins rendered on canvas with viewport matrix transforms. Dialog opens to enter comment text. |
+| **FR12-02** | Reply to comments | ✅ **Fully Implemented** | Implemented `CanvasCommentReply` threaded replies in [`board_comments_service_impl.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/services/canvas/board_comments_service_impl.dart) and [`comments_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/comments_tray.dart). |
+| **FR12-03** | Delete own comments | ✅ **Fully Implemented** | Users can delete comments they created via `deleteComment()` in service and delete icon in `CommentsTray`. |
+| **FR12-04** | Live chat feature for active board participants | ✅ **Fully Implemented** | Integrated slide-out `BoardChatDrawer` on canvas. Socket.IO `board_chat_message` broadcasting with Redis storage (7-day TTL) and automatic batch synchronization of 30 accumulated messages to Firestore `boards/{boardId}/chat_messages`. |
+| **FR12-05** | Notify Users of new comments | ✅ **Fully Implemented** | Dispatches real-time comment additions across board peers via Firestore snapshot stream in `BoardCommentsRepositoryImpl`. |
+| **FR12-06** | Initiate voice calls within board session | ✅ **Fully Implemented** | In-session Agora voice call setup via `VoiceService`, Socket.IO signaling (`join_voice_call`, `voice_speaking_state`), and secrets configuration (`AGORA_APP_ID`, `AGORA_APP_CERTIFICATE`). |
+| **FR12-07** | Join or leave active voice call | ✅ **Fully Implemented** | `VoiceCallHud` widget on canvas stack providing participant avatars, speaking glow rings, mic mute/unmute toggle, and leave/join actions. |
 
 ---
 
@@ -246,7 +246,7 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 | **FR15-01** | Notify users when receiving board invitation | ✅ **Fully Implemented** | Dispatched via FCM in [`send_board_invite.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/notifications/send_board_invite.js). |
 | **FR15-02** | Notify users when friend request received | ✅ **Fully Implemented** | Dispatched via FCM in [`send_friend_request.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/friends/send_friend_request.js). |
 | **FR15-03** | Notify users when friend request accepted | ✅ **Fully Implemented** | Dispatched via FCM in [`accept_friend_request.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/friends/accept_friend_request.js). |
-| **FR15-04** | Notify users when mentioned in comment | ❌ **Missing** | Comment system and comment notifications do not exist. |
+| **FR15-04** | Notify users when mentioned in comment | ✅ **Fully Implemented** | Extracted `@username` / `@displayName` mentions in `BoardCommentsServiceImpl`. Dispatches callable Cloud Function [`send_comment_mention.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/notifications/send_comment_mention.js) which resolves recipient users and sends FCM push notification & in-app alert. |
 | **FR15-05** | Allow users to enable or disable notifications | ✅ **Fully Implemented** | Added Notifications settings section in [`settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/settings/view/settings_screen.dart) with toggles for Push Notifications, Board Invite Alerts, and Friend Request Alerts, backed by [`notification_preferences.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/core/utils/notification_preferences.dart), [`settings_bloc.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/settings/bloc/settings_bloc.dart), Firestore user preferences, and checked in [`notification_sender.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/utils/notification_sender.js). |
 
 ---
@@ -302,10 +302,10 @@ Here is the categorized summary of all features required by the specification th
 * All 12 DM requirements (FR17-01 through FR17-12) are completely missing.
 * Needs: Conversation thread data models, chat UI screen, socket/Firestore real-time message stream, read receipts, offline message queue, attachments, and push notifications.
 
-### 2. Canvas Communication: Comments & Voice Calling (FR12) — *0% Implemented*
-* **Board Comments (FR12-01 to FR12-03, FR12-05, FR15-04):** No pin-to-canvas comment threads, replies, mention notifications, or deletion.
-* **In-Session Voice Calls (FR12-06, FR12-07):** Only a UI placeholder button in `MembersTray`; lacks WebRTC / Agora integration.
-* **Live In-Board Chat (FR12-04):** Only a UI placeholder button in `MembersTray`.
+### 2. Canvas Communication: Comments & Voice Calling (FR12) — *100% Implemented*
+* **Board Comments (FR12-01 to FR12-03, FR12-05, FR15-04):** Pinned canvas comment badges, threaded replies, author-only deletion, and mention notifications via Cloud Function.
+* **In-Session Voice Calls (FR12-06, FR12-07):** Agora-backed voice call session with Socket.IO signaling, speaking detection, mic mute/unmute, and floating voice HUD.
+* **Live In-Board Chat (FR12-04):** Real-time chat drawer over WebSockets, cached in Redis (7-day TTL), synced to Firestore in batches of 30 messages.
 
 ### 3. AI-Assisted Object Generation & Limits (FR06 & FR16) — *5% Implemented*
 * Only a text box and a button that displays `"AI image generation is coming soon."` exist in [`ai_tray.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/canvas/view/trays/ai_tray.dart).

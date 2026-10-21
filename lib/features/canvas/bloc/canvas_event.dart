@@ -486,3 +486,121 @@ class CanvasExportBoardRequested extends CanvasEvent {
 class CanvasConsumeExportMessage extends CanvasEvent {
   const CanvasConsumeExportMessage();
 }
+
+// ============================================================
+// Module 11: In-App Communication & Audio Events
+// ============================================================
+
+/// Comments stream updated
+class CanvasCommentsUpdated extends CanvasEvent {
+  final List<CanvasComment> comments;
+  const CanvasCommentsUpdated(this.comments);
+}
+
+/// Chat history / message list updated
+class CanvasChatMessagesUpdated extends CanvasEvent {
+  final List<BoardChatMessage> messages;
+  const CanvasChatMessagesUpdated(this.messages);
+}
+
+/// Single new chat message received
+class CanvasChatMessageReceived extends CanvasEvent {
+  final BoardChatMessage message;
+  const CanvasChatMessageReceived(this.message);
+}
+
+/// Voice participants updated
+class CanvasVoiceParticipantsUpdated extends CanvasEvent {
+  final List<VoiceParticipant> participants;
+  const CanvasVoiceParticipantsUpdated(this.participants);
+}
+
+/// Voice call active status changed
+class CanvasVoiceCallStatusChanged extends CanvasEvent {
+  final bool isInCall;
+  const CanvasVoiceCallStatusChanged(this.isInCall);
+}
+
+/// Voice call mute status changed
+class CanvasVoiceMuteStatusChanged extends CanvasEvent {
+  final bool isMuted;
+  const CanvasVoiceMuteStatusChanged(this.isMuted);
+}
+
+/// Toggle chat drawer open/close
+class CanvasToggleChatDrawer extends CanvasEvent {
+  const CanvasToggleChatDrawer();
+}
+
+/// Toggle comments tray open/close
+class CanvasToggleCommentsTray extends CanvasEvent {
+  const CanvasToggleCommentsTray();
+}
+
+/// Toggle placing comment mode (pin drop on canvas)
+class CanvasToggleCommentPlacementMode extends CanvasEvent {
+  final bool? enable;
+  const CanvasToggleCommentPlacementMode({this.enable});
+}
+
+/// Set active comment thread for viewing / replying
+class CanvasSetActiveComment extends CanvasEvent {
+  final String? commentId;
+  const CanvasSetActiveComment(this.commentId);
+}
+
+/// Add new comment (pinned or board-level)
+class CanvasAddCommentRequested extends CanvasEvent {
+  final String text;
+  final Offset? canvasPosition;
+
+  const CanvasAddCommentRequested({
+    required this.text,
+    this.canvasPosition,
+  });
+}
+
+/// Add reply to comment thread
+class CanvasAddCommentReplyRequested extends CanvasEvent {
+  final String commentId;
+  final String text;
+
+  const CanvasAddCommentReplyRequested({
+    required this.commentId,
+    required this.text,
+  });
+}
+
+/// Delete comment (author or board owner)
+class CanvasDeleteCommentRequested extends CanvasEvent {
+  final String commentId;
+  const CanvasDeleteCommentRequested(this.commentId);
+}
+
+/// Send chat message via WebSocket
+class CanvasSendChatMessageRequested extends CanvasEvent {
+  final String text;
+  const CanvasSendChatMessageRequested(this.text);
+}
+
+/// Join voice call
+class CanvasJoinVoiceCallRequested extends CanvasEvent {
+  const CanvasJoinVoiceCallRequested();
+}
+
+/// Leave voice call
+class CanvasLeaveVoiceCallRequested extends CanvasEvent {
+  const CanvasLeaveVoiceCallRequested();
+}
+
+/// Toggle mic mute
+class CanvasToggleVoiceMuteRequested extends CanvasEvent {
+  const CanvasToggleVoiceMuteRequested();
+}
+
+/// Report speaking activity
+class CanvasVoiceSpeakingChanged extends CanvasEvent {
+  final bool isSpeaking;
+  const CanvasVoiceSpeakingChanged(this.isSpeaking);
+}
+

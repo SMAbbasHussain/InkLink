@@ -11,15 +11,24 @@ import '../../../core/crdt/canvas_crdt_adapter.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../domain/models/board.dart';
 import '../../../domain/services/board/board_service.dart';
+import '../../../domain/services/canvas/board_chat_service.dart';
+import '../../../domain/services/canvas/board_comments_service.dart';
 import '../../../domain/services/canvas/board_export_service.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
+import '../../../domain/services/voice/voice_service.dart';
+import '../models/board_chat_message.dart';
+import '../models/canvas_comment.dart';
 import '../models/canvas_element.dart';
 import '../models/canvas_tool_mode.dart';
+import '../models/voice_participant.dart';
 import '../view/trays/canvas_shape_type.dart';
 import 'canvas_state.dart';
 
 export '../../../domain/services/canvas/board_export_service.dart';
+export '../models/board_chat_message.dart';
+export '../models/canvas_comment.dart';
 export '../models/canvas_element.dart';
+export '../models/voice_participant.dart';
 export 'canvas_state.dart';
 
 part 'canvas_event.dart';
@@ -28,6 +37,9 @@ part 'canvas_helpers.dart';
 class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final CanvasService? _canvasService;
   final BoardService? _boardService;
+  final BoardCommentsService? _boardCommentsService;
+  final BoardChatService? _boardChatService;
+  final VoiceService? _voiceService;
   final Uuid _uuid = const Uuid();
   final math.Random _random = math.Random();
   static const Duration _previewPublishThrottle = Duration(milliseconds: 60);
@@ -36,6 +48,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   StreamSubscription<List<LocalCrdtUpdate>>? _previewUpdatesSub;
   StreamSubscription<Board?>? _boardMetaSub;
   StreamSubscription<List<BoardMember>>? _membersSub;
+  StreamSubscription<List<CanvasComment>>? _commentsSub;
+  StreamSubscription<BoardChatMessage>? _chatSub;
+  StreamSubscription<List<VoiceParticipant>>? _voiceParticipantsSub;
+  StreamSubscription<bool>? _voiceCallStatusSub;
+  StreamSubscription<bool>? _voiceMuteStatusSub;
   CanvasDocAdapter? _crdtAdapter;
   Future<void>? _crdtInitFuture;
   Timer? _boardUnavailableTimer;
@@ -61,10 +78,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasService? canvasService,
     BoardService? boardService,
     BoardExportService? boardExportService,
+    BoardCommentsService? boardCommentsService,
+    BoardChatService? boardChatService,
+    VoiceService? voiceService,
     String boardId = '',
   }) : _canvasService = canvasService,
        _boardService = boardService,
        _boardExportService = boardExportService ?? const BoardExportServiceImpl(),
+       _boardCommentsService = boardCommentsService,
+       _boardChatService = boardChatService,
+       _voiceService = voiceService,
        _boardId = boardId,
        super(CanvasInitial()) {
     on<CanvasRenameBoardRequested>(_onCanvasRenameBoardRequested);
@@ -128,6 +151,25 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasCancelShapeDraw>(_onCancelShapeDraw);
     on<CanvasExportBoardRequested>(_onExportBoardRequested);
     on<CanvasConsumeExportMessage>(_onConsumeExportMessage);
+    // Module 11 Event Handlers
+    on<CanvasCommentsUpdated>(_onCanvasCommentsUpdated);
+    on<CanvasChatMessagesUpdated>(_onCanvasChatMessagesUpdated);
+    on<CanvasChatMessageReceived>(_onCanvasChatMessageReceived);
+    on<CanvasVoiceParticipantsUpdated>(_onCanvasVoiceParticipantsUpdated);
+    on<CanvasVoiceCallStatusChanged>(_onCanvasVoiceCallStatusChanged);
+    on<CanvasVoiceMuteStatusChanged>(_onCanvasVoiceMuteStatusChanged);
+    on<CanvasToggleChatDrawer>(_onCanvasToggleChatDrawer);
+    on<CanvasToggleCommentsTray>(_onCanvasToggleCommentsTray);
+    on<CanvasToggleCommentPlacementMode>(_onCanvasToggleCommentPlacementMode);
+    on<CanvasSetActiveComment>(_onCanvasSetActiveComment);
+    on<CanvasAddCommentRequested>(_onCanvasAddCommentRequested);
+    on<CanvasAddCommentReplyRequested>(_onCanvasAddCommentReplyRequested);
+    on<CanvasDeleteCommentRequested>(_onCanvasDeleteCommentRequested);
+    on<CanvasSendChatMessageRequested>(_onCanvasSendChatMessageRequested);
+    on<CanvasJoinVoiceCallRequested>(_onCanvasJoinVoiceCallRequested);
+    on<CanvasLeaveVoiceCallRequested>(_onCanvasLeaveVoiceCallRequested);
+    on<CanvasToggleVoiceMuteRequested>(_onCanvasToggleVoiceMuteRequested);
+    on<CanvasVoiceSpeakingChanged>(_onCanvasVoiceSpeakingChanged);
   }
 
   bool get _canSync => _canvasService != null && _boardId.isNotEmpty;
@@ -189,6 +231,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       await _ensureCrdtReady();
       _startCrdtUpdatesListener();
       _startPreviewUpdatesListener();
+      _startCommunicationListeners(event.boardId);
       _refreshFromCrdtAdapter(emit);
       emit(state.copyWith(isLoading: false, error: null));
     } catch (e) {
@@ -2168,6 +2211,271 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   Offset randomTextCenter() =>
       Offset(200 + _random.nextDouble() * 40, 240 + _random.nextDouble() * 60);
 
+  // ──────────────────────────────────────────────
+  // Module 11: In-App Communication & Voice Listeners & Handlers
+  // ──────────────────────────────────────────────
+
+  void _startCommunicationListeners(String boardId) {
+    _commentsSub?.cancel();
+    _chatSub?.cancel();
+    _voiceParticipantsSub?.cancel();
+    _voiceCallStatusSub?.cancel();
+    _voiceMuteStatusSub?.cancel();
+
+    final commentsService = _boardCommentsService;
+    if (commentsService != null) {
+      _commentsSub = commentsService
+          .watchComments(boardId)
+          .listen((comments) {
+        if (!isClosed) add(CanvasCommentsUpdated(comments));
+      });
+    }
+
+    final chatService = _boardChatService;
+    if (chatService != null) {
+      chatService.connect(boardId);
+      _chatSub = chatService
+          .watchChatMessages(boardId)
+          .listen((msg) {
+        if (!isClosed) add(CanvasChatMessageReceived(msg));
+      });
+      chatService.getChatHistory(boardId).then((history) {
+        if (!isClosed && history.isNotEmpty) {
+          add(CanvasChatMessagesUpdated(history));
+        }
+      });
+    }
+
+    final voiceService = _voiceService;
+    if (voiceService != null) {
+      _voiceParticipantsSub = voiceService
+          .watchParticipants(boardId)
+          .listen((participants) {
+        if (!isClosed) add(CanvasVoiceParticipantsUpdated(participants));
+      });
+      _voiceCallStatusSub = voiceService
+          .watchIsInCall()
+          .listen((isInCall) {
+        if (!isClosed) add(CanvasVoiceCallStatusChanged(isInCall));
+      });
+      _voiceMuteStatusSub = voiceService
+          .watchIsMuted()
+          .listen((isMuted) {
+        if (!isClosed) add(CanvasVoiceMuteStatusChanged(isMuted));
+      });
+    }
+  }
+
+  void _onCanvasCommentsUpdated(
+    CanvasCommentsUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(comments: event.comments));
+  }
+
+  void _onCanvasChatMessagesUpdated(
+    CanvasChatMessagesUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(chatMessages: event.messages));
+  }
+
+  void _onCanvasChatMessageReceived(
+    CanvasChatMessageReceived event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (state.chatMessages.any((m) => m.id == event.message.id)) return;
+    final updated = List<BoardChatMessage>.from(state.chatMessages)..add(event.message);
+    emit(state.copyWith(chatMessages: updated));
+  }
+
+  void _onCanvasVoiceParticipantsUpdated(
+    CanvasVoiceParticipantsUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(voiceParticipants: event.participants));
+  }
+
+  void _onCanvasVoiceCallStatusChanged(
+    CanvasVoiceCallStatusChanged event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(isVoiceCallActive: event.isInCall));
+  }
+
+  void _onCanvasVoiceMuteStatusChanged(
+    CanvasVoiceMuteStatusChanged event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(isMicMuted: event.isMuted));
+  }
+
+  void _onCanvasToggleChatDrawer(
+    CanvasToggleChatDrawer event,
+    Emitter<CanvasState> emit,
+  ) {
+    final nextOpen = !state.isChatDrawerOpen;
+    emit(state.copyWith(
+      isChatDrawerOpen: nextOpen,
+      isCommentsTrayOpen: nextOpen ? false : state.isCommentsTrayOpen,
+    ));
+  }
+
+  void _onCanvasToggleCommentsTray(
+    CanvasToggleCommentsTray event,
+    Emitter<CanvasState> emit,
+  ) {
+    final nextOpen = !state.isCommentsTrayOpen;
+    emit(state.copyWith(
+      isCommentsTrayOpen: nextOpen,
+      isChatDrawerOpen: nextOpen ? false : state.isChatDrawerOpen,
+    ));
+  }
+
+  void _onCanvasToggleCommentPlacementMode(
+    CanvasToggleCommentPlacementMode event,
+    Emitter<CanvasState> emit,
+  ) {
+    final nextVal = event.enable ?? !state.isPlacingComment;
+    emit(state.copyWith(isPlacingComment: nextVal));
+  }
+
+  void _onCanvasSetActiveComment(
+    CanvasSetActiveComment event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(activeCommentId: event.commentId));
+  }
+
+  Future<void> _onCanvasAddCommentRequested(
+    CanvasAddCommentRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final commentsService = _boardCommentsService;
+    if (commentsService == null || _boardId.isEmpty) return;
+    try {
+      await commentsService.addComment(
+        boardId: _boardId,
+        text: event.text,
+        canvasPosition: event.canvasPosition,
+        boardTitle: state.boardTitle,
+      );
+      emit(state.copyWith(isPlacingComment: false));
+    } catch (e) {
+      emit(state.copyWith(error: 'Failed to add comment: $e'));
+    }
+  }
+
+  Future<void> _onCanvasAddCommentReplyRequested(
+    CanvasAddCommentReplyRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final commentsService = _boardCommentsService;
+    if (commentsService == null || _boardId.isEmpty) return;
+    try {
+      await commentsService.addReply(
+        boardId: _boardId,
+        commentId: event.commentId,
+        text: event.text,
+        boardTitle: state.boardTitle,
+      );
+    } catch (e) {
+      emit(state.copyWith(error: 'Failed to add reply: $e'));
+    }
+  }
+
+  Future<void> _onCanvasDeleteCommentRequested(
+    CanvasDeleteCommentRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final commentsService = _boardCommentsService;
+    if (commentsService == null || _boardId.isEmpty) return;
+    try {
+      await commentsService.deleteComment(
+        boardId: _boardId,
+        commentId: event.commentId,
+      );
+      if (state.activeCommentId == event.commentId) {
+        emit(state.copyWith(activeCommentId: null));
+      }
+    } catch (e) {
+      emit(state.copyWith(error: 'Failed to delete comment: $e'));
+    }
+  }
+
+  Future<void> _onCanvasSendChatMessageRequested(
+    CanvasSendChatMessageRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final chatService = _boardChatService;
+    if (chatService == null || _boardId.isEmpty || event.text.trim().isEmpty) return;
+    try {
+      final msg = await chatService.sendMessage(
+        boardId: _boardId,
+        text: event.text.trim(),
+      );
+      if (!state.chatMessages.any((m) => m.id == msg.id)) {
+        final updated = List<BoardChatMessage>.from(state.chatMessages)..add(msg);
+        emit(state.copyWith(chatMessages: updated));
+      }
+    } catch (e) {
+      emit(state.copyWith(error: 'Failed to send message: $e'));
+    }
+  }
+
+  Future<void> _onCanvasJoinVoiceCallRequested(
+    CanvasJoinVoiceCallRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final voiceService = _voiceService;
+    if (voiceService == null || _boardId.isEmpty) return;
+    try {
+      await voiceService.joinCall(_boardId);
+      emit(state.copyWith(isVoiceCallActive: true));
+    } catch (e) {
+      emit(state.copyWith(error: 'Failed to join voice call: $e'));
+    }
+  }
+
+  Future<void> _onCanvasLeaveVoiceCallRequested(
+    CanvasLeaveVoiceCallRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final voiceService = _voiceService;
+    if (voiceService == null || _boardId.isEmpty) return;
+    try {
+      await voiceService.leaveCall(_boardId);
+      emit(state.copyWith(isVoiceCallActive: false));
+    } catch (e) {
+      emit(state.copyWith(error: 'Failed to leave voice call: $e'));
+    }
+  }
+
+  Future<void> _onCanvasToggleVoiceMuteRequested(
+    CanvasToggleVoiceMuteRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final voiceService = _voiceService;
+    if (voiceService == null || _boardId.isEmpty) return;
+    try {
+      await voiceService.toggleMute(_boardId);
+    } catch (_) {}
+  }
+
+  Future<void> _onCanvasVoiceSpeakingChanged(
+    CanvasVoiceSpeakingChanged event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final voiceService = _voiceService;
+    if (voiceService == null || _boardId.isEmpty) return;
+    try {
+      await voiceService.setSpeaking(
+        boardId: _boardId,
+        isSpeaking: event.isSpeaking,
+      );
+    } catch (_) {}
+  }
+
   @override
   Future<void> close() async {
     _boardUnavailableTimer?.cancel();
@@ -2176,6 +2484,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       preview.timer?.cancel();
     }
     _pendingPreviewPublishes.clear();
+    await _commentsSub?.cancel();
+    await _chatSub?.cancel();
+    await _voiceParticipantsSub?.cancel();
+    await _voiceCallStatusSub?.cancel();
+    await _voiceMuteStatusSub?.cancel();
+    if (_boardId.isNotEmpty && state.isVoiceCallActive) {
+      _voiceService?.leaveCall(_boardId);
+    }
     await _boardMetaSub?.cancel();
     await _membersSub?.cancel();
     await _crdtUpdatesSub?.cancel();

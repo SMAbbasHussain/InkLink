@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/services/board/board_service.dart';
+import '../../../domain/services/canvas/board_chat_service.dart';
+import '../../../domain/services/canvas/board_comments_service.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
 import '../../../domain/services/settings/settings_service.dart';
+import '../../../domain/services/voice/voice_service.dart';
 import '../bloc/canvas_bloc.dart';
 import 'canvas_screen.dart';
 
@@ -61,6 +64,9 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
             canvasService: context.read<CanvasService>(),
             boardService: context.read<BoardService>(),
             boardExportService: context.read<BoardExportService>(),
+            boardCommentsService: context.read<BoardCommentsService>(),
+            boardChatService: context.read<BoardChatService>(),
+            voiceService: context.read<VoiceService>(),
             boardId: widget.boardId,
           )..add(CanvasInitializeCrdt(widget.boardId)),
           child: CanvasScreen(
