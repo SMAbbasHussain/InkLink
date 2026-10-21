@@ -217,5 +217,88 @@ void main() {
       expect(pdfBytes[2], 0x44); // D
       expect(pdfBytes[3], 0x46); // F
     });
+
+    test('renders embedded base64 images in PNG, PDF and SVG exports', () async {
+      // 1x1 transparent PNG in base64
+      const validPngBase64 =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+      final elements = <CanvasElement>[
+        const ImageElement(
+          id: 'img-1',
+          z: 0,
+          center: Offset(100, 100),
+          width: 80,
+          height: 60,
+          imageBase64: validPngBase64,
+        ),
+      ];
+
+      final pngBytes = await exportService.renderToPng(elements);
+      expect(pngBytes, isNotEmpty);
+      expect(pngBytes[0], 0x89); // PNG signature
+
+      final pdfBytes = await exportService.renderToPdf('Image Board', elements);
+      expect(pdfBytes, isNotEmpty);
+      expect(pdfBytes[0], 0x25); // %PDF
+
+      final svg = exportService.renderToSvg('Image Board', elements);
+      expect(svg, contains('<image '));
+      expect(svg, contains('href="data:image/png;base64,$validPngBase64"'));
+    });
+
+    test('converts radian rotation to degrees in SVG and uses vertical cy coordinate', () {
+      final elements = <CanvasElement>[
+        const ShapeElement(
+          id: 'rect-1',
+          z: 0,
+          shapeType: CanvasShapeType.rectangle,
+          center: Offset(150, 300),
+          size: 100,
+          color: Colors.blue,
+          rotation: 1.5707963267948966, // pi / 2 radians = 90 degrees
+        ),
+      ];
+
+      final svg = exportService.renderToSvg('Rotated Rectangle', elements);
+
+      // Verify rotation converted from radians to 90 degrees
+      expect(svg, contains('transform="rotate(90.0 150.0 300.0)"'));
+      // Verify y derived from cy (300 - (100 * 0.8) / 2 = 260.0), NOT cx (which would give 110.0)
+      expect(svg, contains('y="260.0"'));
+    });
+
+    test('recognizes canvas curved and orthogonal connector styles in SVG and raster', () async {
+      final elements = <CanvasElement>[
+        const ConnectorElement(
+          id: 'conn-curved',
+          z: 0,
+          startPoint: Offset(20, 20),
+          endPoint: Offset(150, 150),
+          lineStyle: 'curved',
+          color: Colors.teal,
+          strokeWidth: 2,
+        ),
+        const ConnectorElement(
+          id: 'conn-ortho',
+          z: 1,
+          startPoint: Offset(30, 30),
+          endPoint: Offset(200, 200),
+          lineStyle: 'orthogonal',
+          color: Colors.indigo,
+          strokeWidth: 2,
+        ),
+      ];
+
+      final svg = exportService.renderToSvg('Styled Connectors', elements);
+      // Curved uses cubic bezier (C)
+      expect(svg, contains(' C '));
+      // Orthogonal uses step path (L ... L ... L)
+      expect(svg, contains(' L '));
+
+      // Also renders in PNG without throwing
+      final pngBytes = await exportService.renderToPng(elements);
+      expect(pngBytes, isNotEmpty);
+    });
   });
 }
