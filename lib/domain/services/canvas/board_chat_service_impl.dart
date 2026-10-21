@@ -28,38 +28,48 @@ class BoardChatServiceImpl implements BoardChatService {
     final token = await _authService.getIdToken();
     if (token == null) return false;
 
-    final serverUrl = dotenv.env['WEBSOCKET_URL'] ?? 'http://10.0.2.2:3000';
-    _socket = io.io(
-      serverUrl,
-      io.OptionBuilder()
-          .setTransports(['websocket'])
-          .setAuth({'token': token})
-          .disableAutoConnect()
-          .build(),
-    );
-
-    _socket!.on('board_chat_message', (data) {
-      try {
-        if (data is Map) {
-          final message =
-              BoardChatMessage.fromMap(Map<String, dynamic>.from(data));
-          _chatMessageController.add(message);
-        }
-      } catch (e) {
-        developer.log('Error parsing chat message: $e', name: 'BoardChatService');
+    if (_socket != null) {
+      if (!_socket!.connected) {
+        _socket!.connect();
       }
-    });
+    } else {
+      final serverUrl = dotenv.env['WEBSOCKET_URL'] ?? 'http://10.0.2.2:3000';
+      _socket = io.io(
+        serverUrl,
+        io.OptionBuilder()
+            .setTransports(['websocket'])
+            .setAuth({'token': token})
+            .disableAutoConnect()
+            .build(),
+      );
 
-    _socket!.connect();
+      _socket!.on('board_chat_message', (data) {
+        try {
+          if (data is Map) {
+            final message =
+                BoardChatMessage.fromMap(Map<String, dynamic>.from(data));
+            _chatMessageController.add(message);
+          }
+        } catch (e) {
+          developer.log('Error parsing chat message: $e', name: 'BoardChatService');
+        }
+      });
+
+      _socket!.connect();
+    }
+
+    if (_socket!.connected) return true;
 
     final completer = Completer<void>();
-    _socket!.onConnect((_) {
+    void onConnectHandler(_) {
       if (!completer.isCompleted) completer.complete();
-    });
+    }
+
+    _socket!.once('connect', onConnectHandler);
 
     await Future.any([
       completer.future,
-      Future.delayed(const Duration(seconds: 3)),
+      Future.delayed(const Duration(seconds: 5)),
     ]);
 
     return _socket != null && _socket!.connected;
@@ -78,8 +88,8 @@ class BoardChatServiceImpl implements BoardChatService {
     String boardId, {
     int limit = 50,
   }) async {
-    await _ensureConnected();
-    if (_socket == null || !_socket!.connected) return [];
+    final connected = await _ensureConnected();
+    if (!connected || _socket == null || !_socket!.connected) return [];
 
     final completer = Completer<List<BoardChatMessage>>();
     _socket!.emitWithAck(
@@ -114,21 +124,34 @@ class BoardChatServiceImpl implements BoardChatService {
     required String boardId,
     required String text,
   }) async {
-    await _ensureConnected();
+    final connected = await _ensureConnected();
+    if (!connected || _socket == null || !_socket!.connected) {
+      throw StateError(
+        'Chat server is unreachable. Please verify your connection or check that the server is online.',
+      );
+    }
+
     final user = _authService.getCurrentUser();
     final senderName = user?.displayName ?? 'Anonymous';
     final senderPhotoUrl = user?.photoURL;
 
     final completer = Completer<BoardChatMessage>();
 
-    _socket!.emitWithAck(
-      'board_chat_message',
-      {
-        'boardId': boardId,
+    final payload = {
+      'boardId': boardId,
+      'text': text,
+      'senderName': senderName,
+      'senderPhotoUrl': senderPhotoUrl,
+      'message': {
         'text': text,
         'senderName': senderName,
         'senderPhotoUrl': senderPhotoUrl,
       },
+    };
+
+    _socket!.emitWithAck(
+      'board_chat_message',
+      payload,
       ack: (dynamic res) {
         try {
           if (res is Map && res['status'] == 'success') {
@@ -149,8 +172,8 @@ class BoardChatServiceImpl implements BoardChatService {
     );
 
     return completer.future.timeout(
-      const Duration(seconds: 5),
-      onTimeout: () => throw TimeoutException('Chat send timed out'),
+      const Duration(seconds: 10),
+      onTimeout: () => throw TimeoutException('Chat send timed out. The server did not acknowledge the message.'),
     );
   }
 

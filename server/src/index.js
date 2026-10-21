@@ -963,8 +963,12 @@ io.on('connection', (socket) => {
   // ============================================================
   socket.on('board_chat_message', async (data, ack) => {
     try {
-      const { boardId, message } = data || {};
-      if (!isValidBoardId(boardId) || !message || !message.text) {
+      const boardId = data?.boardId;
+      const messageObj = (data?.message && typeof data.message === 'object') ? data.message : (data || {});
+      const rawText = messageObj?.text || data?.text || '';
+      const text = String(rawText).trim();
+
+      if (!isValidBoardId(boardId) || !text) {
         if (typeof ack === 'function') ack({ status: 'error', message: 'invalid_payload' });
         return;
       }
@@ -976,13 +980,13 @@ io.on('connection', (socket) => {
       }
 
       const chatMessage = {
-        id: message.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        id: messageObj.id || data?.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
         boardId,
         senderUid: uid,
-        senderName: message.senderName || 'Anonymous',
-        senderPhotoUrl: message.senderPhotoUrl || null,
-        text: String(message.text).trim().substring(0, 2000),
-        timestamp: message.timestamp || Date.now(),
+        senderName: messageObj.senderName || data?.senderName || 'Anonymous',
+        senderPhotoUrl: messageObj.senderPhotoUrl || data?.senderPhotoUrl || null,
+        text: text.substring(0, 2000),
+        timestamp: messageObj.timestamp || data?.timestamp || Date.now(),
       };
 
       // 1. Broadcast immediately to all active board viewers in real-time
