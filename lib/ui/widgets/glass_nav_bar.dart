@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 
 import '../theme/ink_theme.dart';
-import '../theme/ink_tokens.dart';
-import '../theme/ink_type.dart';
 import 'glass_panel.dart';
 
 class GlassNavItem {
@@ -19,7 +18,10 @@ class GlassNavItem {
 
 /// A floating glass bottom nav. Takes the same `currentIndex`/`onTap`
 /// contract the existing nav uses — only the visual layer changes.
-class GlassNavBar extends StatelessWidget {
+///
+/// The selection pill is driven by an under-damped spring so it overshoots
+/// the target tab, then wobbles back and settles (Apple-style jiggle).
+class GlassNavBar extends StatefulWidget {
   final List<GlassNavItem> items;
   final int currentIndex;
   final ValueChanged<int> onTap;
@@ -32,74 +34,118 @@ class GlassNavBar extends StatelessWidget {
   });
 
   @override
+  State<GlassNavBar> createState() => _GlassNavBarState();
+}
+
+class _GlassNavBarState extends State<GlassNavBar>
+    with SingleTickerProviderStateMixin {
+  // Low damping ratio => visible overshoot and a few back-and-forth swings.
+  static const _spring = SpringDescription(
+    mass: 1,
+    stiffness: 260,
+    damping: 11,
+  );
+
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController.unbounded(
+      vsync: this,
+      value: widget.currentIndex.toDouble(),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant GlassNavBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentIndex != widget.currentIndex) {
+      _controller.animateWith(
+        SpringSimulation(
+          _spring,
+          _controller.value,
+          widget.currentIndex.toDouble(),
+          _controller.velocity,
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final items = widget.items;
+    final n = items.length;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
       child: SizedBox(
         height: 64,
         child: GlassPanel(
-          radius: 22,
+          radius: 32,
           child: Padding(
             padding: const EdgeInsets.all(6),
             child: Stack(
               children: [
-                // Sliding selection pill (Apple-style).
-                AnimatedAlign(
-                  duration: const Duration(milliseconds: 380),
-                  curve: Curves.easeOutCubic,
-                  alignment: Alignment(
-                    items.length <= 1
-                        ? 0
-                        : -1 + 2 * currentIndex / (items.length - 1),
-                    0,
-                  ),
-                  child: FractionallySizedBox(
-                    widthFactor: 1 / items.length,
-                    heightFactor: 1,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: tokens.accentSoft,
-                        borderRadius: BorderRadius.circular(InkRadii.glassBar - 6),
+                // Sliding, fully rounded selection pill.
+                AnimatedBuilder(
+                  animation: _controller,
+                  builder: (context, _) {
+                    final x = n <= 1 ? 0.0 : -1 + 2 * _controller.value / (n - 1);
+                    return Align(
+                      alignment: Alignment(x, 0),
+                      child: FractionallySizedBox(
+                        widthFactor: 1 / n,
+                        heightFactor: 1,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: tokens.accentSoft,
+                              borderRadius: BorderRadius.circular(26),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
                 Row(
                   children: [
-                    for (var i = 0; i < items.length; i++)
+                    for (var i = 0; i < n; i++)
                       Expanded(
-                        child: InkWell(
-                          onTap: () => onTap(i),
-                          borderRadius: BorderRadius.circular(InkRadii.glassBar - 6),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 200),
-                                child: Icon(
-                                  i == currentIndex
-                                      ? items[i].activeIcon
-                                      : items[i].inactiveIcon,
-                                  key: ValueKey('_'),
-                                  color: i == currentIndex
-                                      ? tokens.accentText
-                                      : tokens.inkMuted,
-                                  size: 22,
+                        child: Semantics(
+                          button: true,
+                          selected: i == widget.currentIndex,
+                          label: items[i].label,
+                          child: Tooltip(
+                            message: items[i].label,
+                            child: InkWell(
+                              onTap: () => widget.onTap(i),
+                              customBorder: const StadiumBorder(),
+                              child: Center(
+                                child: AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 200),
+                                  child: Icon(
+                                    i == widget.currentIndex
+                                        ? items[i].activeIcon
+                                        : items[i].inactiveIcon,
+                                    key: ValueKey('${i}_${i == widget.currentIndex}'),
+                                    color: i == widget.currentIndex
+                                        ? tokens.accentText
+                                        : tokens.inkMuted,
+                                    size: 24,
+                                  ),
                                 ),
                               ),
-                              const SizedBox(height: 4),
-                              AnimatedDefaultTextStyle(
-                                duration: const Duration(milliseconds: 200),
-                                style: InkType.caption(
-                                  i == currentIndex
-                                      ? tokens.accentText
-                                      : tokens.inkMuted,
-                                ),
-                                child: Text(items[i].label),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
                       ),
@@ -107,7 +153,8 @@ class GlassNavBar extends StatelessWidget {
                 ),
               ],
             ),
-          ),        ),
+          ),
+        ),
       ),
     );
   }
