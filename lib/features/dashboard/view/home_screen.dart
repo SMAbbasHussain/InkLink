@@ -40,6 +40,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   late TabController _tabController;
+  int _selectedTabIndex = 0;
   String? _watchedProfileUserId;
   bool _isNavigatingToCanvas = false;
 
@@ -52,7 +53,11 @@ class _HomeScreenState extends State<HomeScreen>
     _tabController = TabController(length: 3, vsync: this);
     // Keeps the InkSegmented selector in sync when the TabBarView is swiped.
     _tabController.addListener(() {
-      if (!_tabController.indexIsChanging) setState(() {});
+      if (!_tabController.indexIsChanging && _tabController.index != _selectedTabIndex) {
+        setState(() {
+          _selectedTabIndex = _tabController.index;
+        });
+      }
     });
     context.read<BoardInvitationsBloc>().add(
       const BoardInvitationsLoadRequested(),
@@ -202,7 +207,8 @@ class _HomeScreenState extends State<HomeScreen>
             }
 
             if (!mounted) return;
-            _tabController.animateTo(1);
+            setState(() => _selectedTabIndex = 1);
+            _tabController.animateTo(1, duration: const Duration(milliseconds: 240));
           },
         ),
       ],
@@ -254,8 +260,16 @@ class _HomeScreenState extends State<HomeScreen>
                               ),
                               child: InkSegmented(
                                 labels: const ['My Boards', 'Joined', 'Archived'],
-                                selectedIndex: _tabController.index,
-                                onChanged: (i) => _tabController.animateTo(i),
+                                selectedIndex: _selectedTabIndex,
+                                onChanged: (i) {
+                                  setState(() {
+                                    _selectedTabIndex = i;
+                                  });
+                                  _tabController.animateTo(
+                                    i,
+                                    duration: const Duration(milliseconds: 240),
+                                  );
+                                },
                               ),
                             ),
                           ),

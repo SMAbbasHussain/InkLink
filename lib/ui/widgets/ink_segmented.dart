@@ -25,35 +25,58 @@ class InkSegmented extends StatefulWidget {
 
 class _InkSegmentedState extends State<InkSegmented>
     with SingleTickerProviderStateMixin {
+  // Snappy spring with low damping ratio => fast transition with crisp elastic jiggle.
   static const _spring = SpringDescription(
-    mass: 1.5,
-    stiffness: 300,
-    damping: 25,
+    mass: 0.6,
+    stiffness: 700,
+    damping: 22,
   );
 
   late final AnimationController _controller;
+  late int _currentSelectedIndex;
 
   @override
   void initState() {
     super.initState();
+    _currentSelectedIndex = widget.selectedIndex;
     _controller = AnimationController.unbounded(
       vsync: this,
       value: widget.selectedIndex.toDouble(),
     );
   }
 
-  @override
-  void didUpdateWidget(covariant InkSegmented oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedIndex != widget.selectedIndex) {
+  void _onTap(int index) {
+    if (_currentSelectedIndex != index) {
+      setState(() {
+        _currentSelectedIndex = index;
+      });
       _controller.animateWith(
         SpringSimulation(
           _spring,
           _controller.value,
-          widget.selectedIndex.toDouble(),
+          index.toDouble(),
           _controller.velocity,
         ),
       );
+    }
+    widget.onChanged(index);
+  }
+
+  @override
+  void didUpdateWidget(covariant InkSegmented oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedIndex != widget.selectedIndex) {
+      _currentSelectedIndex = widget.selectedIndex;
+      if ((_controller.value - widget.selectedIndex.toDouble()).abs() > 0.001) {
+        _controller.animateWith(
+          SpringSimulation(
+            _spring,
+            _controller.value,
+            widget.selectedIndex.toDouble(),
+            _controller.velocity,
+          ),
+        );
+      }
     }
   }
 
@@ -105,13 +128,13 @@ class _InkSegmentedState extends State<InkSegmented>
                 for (var i = 0; i < n; i++)
                   Expanded(
                     child: InkWell(
-                      onTap: () => widget.onChanged(i),
+                      onTap: () => _onTap(i),
                       borderRadius: BorderRadius.circular(InkRadii.segmentedTab + 4),
                       child: Center(
                         child: AnimatedDefaultTextStyle(
-                          duration: const Duration(milliseconds: 200),
+                          duration: const Duration(milliseconds: 140),
                           style: InkType.label(
-                            i == widget.selectedIndex ? inverse : tokens.inkMuted,
+                            i == _currentSelectedIndex ? inverse : tokens.inkMuted,
                           ),
                           child: Text(
                             labels[i],

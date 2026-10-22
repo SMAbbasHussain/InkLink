@@ -39,11 +39,11 @@ class GlassNavBar extends StatefulWidget {
 
 class _GlassNavBarState extends State<GlassNavBar>
     with SingleTickerProviderStateMixin {
-  // Low damping ratio => visible overshoot and a few back-and-forth swings.
+  // Snappy spring with low damping ratio => fast transition with crisp elastic jiggle.
   static const _spring = SpringDescription(
-    mass: 1.5,
-    stiffness: 300,
-    damping: 25,
+    mass: 0.6,
+    stiffness: 700,
+    damping: 22,
   );
 
   late final AnimationController _controller;
