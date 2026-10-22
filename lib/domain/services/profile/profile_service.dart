@@ -41,6 +41,20 @@ abstract class ProfileService {
     String? imageData,
     String? filename,
   });
+  Future<void> updatePrivacySettings({
+    required bool isProfilePublic,
+    required bool showOnlineStatus,
+    required bool showEmail,
+  });
+    Future<void> updateNotificationPreferences({
+    String? uid,
+    bool? pushNotificationsEnabled,
+    bool? inviteAlertsEnabled,
+    bool? friendAlertsEnabled,
+  });
+  Future<void> updatePreferredTags(List<String> tags);
+  Future<Map<String, dynamic>?> getCurrentUserData();
+  String? getCurrentUserId();
 }
 
 class ProfileServiceImpl implements ProfileService {
@@ -78,18 +92,31 @@ class ProfileServiceImpl implements ProfileService {
       isBlocked = results[1];
     }
 
-    final userData = await _profileRepository.getUserById(userId);
-    if (userData == null) {
+    final rawUserData = await _profileRepository.getUserById(userId);
+    if (rawUserData == null) {
       throw Exception('User not found');
     }
 
     await _profileRepository.cacheUserProfile(
       userId,
-      userData,
+      rawUserData,
       isFriend: isFriend,
       isSelf: isSelf,
       source: 'profile_open',
     );
+
+    final userData = Map<String, dynamic>.from(rawUserData);
+    if (!isSelf) {
+      final showEmail = (userData['showEmail'] as bool?) ?? false;
+      if (!showEmail) {
+        userData.remove('email');
+      }
+
+      final isProfilePublic = (userData['isProfilePublic'] as bool?) ?? true;
+      if (!isProfilePublic && !isFriend) {
+        userData['bio'] = null;
+      }
+    }
 
     final friendCount = _toInt(userData['friendCount']);
     final boardCount = _toInt(userData['boardCount']);
@@ -182,6 +209,78 @@ class ProfileServiceImpl implements ProfileService {
     );
 
     return photoUrl;
+  }
+
+  @override
+  Future<void> updatePrivacySettings({
+    required bool isProfilePublic,
+    required bool showOnlineStatus,
+    required bool showEmail,
+  }) {
+    final user = _authService.getCurrentUser();
+    if (user == null) {
+      throw Exception('User not authenticated');
+    }
+    return _profileRepository.updateUserFields(user.uid, {
+      'isProfilePublic': isProfilePublic,
+      'showOnlineStatus': showOnlineStatus,
+      'showEmail': showEmail,
+    });
+  }
+
+  @override
+  String? getCurrentUserId() => _authService.getCurrentUserId();
+
+  @override
+  Future<void> updateNotificationPreferences({
+    String? uid,
+    bool? pushNotificationsEnabled,
+    bool? inviteAlertsEnabled,
+    bool? friendAlertsEnabled,
+  }) async {
+    final user = _authService.getCurrentUser();
+    if (user == null) {
+      throw Exception('User not authenticated');
+    }
+    // If initiating account changed while awaiting, discard the update
+    if (uid != null && uid != user.uid) {
+      return;
+    }
+    final targetUid = uid ?? user.uid;
+    final updates = <String, dynamic>{};
+    if (pushNotificationsEnabled != null) {
+      updates['notificationPreferences.pushNotificationsEnabled'] =
+          pushNotificationsEnabled;
+    }
+    if (inviteAlertsEnabled != null) {
+      updates['notificationPreferences.inviteAlertsEnabled'] =
+          inviteAlertsEnabled;
+    }
+    if (friendAlertsEnabled != null) {
+      updates['notificationPreferences.friendAlertsEnabled'] =
+          friendAlertsEnabled;
+    }
+    if (updates.isNotEmpty) {
+      await _profileRepository.updateUserFields(targetUid, updates);
+    }
+  }
+
+  @override
+  Future<void> updatePreferredTags(List<String> tags) {
+    final user = _authService.getCurrentUser();
+    if (user == null) {
+      throw Exception('User not authenticated');
+    }
+    return _profileRepository.updateUserFields(user.uid, {
+      'preferredTags': tags,
+    });
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getCurrentUserData() async {
+    final user = _authService.getCurrentUser();
+    if (user == null) return null;
+    return _profileRepository.getUserById(user.uid);
   }
 
   int _toInt(dynamic value) {

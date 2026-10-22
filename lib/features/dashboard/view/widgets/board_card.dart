@@ -11,6 +11,9 @@ class BoardCard extends StatelessWidget {
   final bool isOwner;
   final Function(String) onDelete;
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onDuplicate;
+  final VoidCallback? onArchive;
+  final VoidCallback? onUnarchive;
 
   const BoardCard({
     super.key,
@@ -18,16 +21,23 @@ class BoardCard extends StatelessWidget {
     required this.isOwner,
     required this.onDelete,
     this.onOpenSettings,
+    this.onDuplicate,
+    this.onArchive,
+    this.onUnarchive,
   });
 
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
 
+    final String captionText = board.tags.isNotEmpty
+        ? "${board.tags.map((t) => '#$t').join(' ')} • Edited ${_timeAgo(board.updatedAt)}"
+        : "Edited ${_timeAgo(board.updatedAt)}";
+
     return BoardCardFrame(
       previewPath: board.previewPath,
       title: board.title,
-      caption: "Edited ${_timeAgo(board.updatedAt)}",
+      caption: captionText,
       onTap: () {
         Navigator.push(context, buildCanvasRoute(context, boardId: board.id));
       },
@@ -42,6 +52,12 @@ class BoardCard extends StatelessWidget {
                 content: Text('Join Code (Board ID) copied to clipboard!'),
               ),
             );
+          } else if (value == 'duplicate') {
+            onDuplicate?.call();
+          } else if (value == 'archive') {
+            onArchive?.call();
+          } else if (value == 'unarchive') {
+            onUnarchive?.call();
           } else if (value == 'delete') {
             onDelete(board.id);
           } else if (value == 'settings') {
@@ -57,6 +73,25 @@ class BoardCard extends StatelessWidget {
             value: 'copy',
             child: _menuRow(LucideIcons.copy, 'Copy Join Code', tokens.ink),
           ),
+          if (onDuplicate != null)
+            PopupMenuItem(
+              value: 'duplicate',
+              child: _menuRow(
+                LucideIcons.copyPlus,
+                isOwner ? 'Duplicate' : 'Make a Copy',
+                tokens.ink,
+              ),
+            ),
+          if (isOwner && onArchive != null && !board.isArchived)
+            PopupMenuItem(
+              value: 'archive',
+              child: _menuRow(LucideIcons.archive, 'Archive', tokens.ink),
+            ),
+          if (isOwner && onUnarchive != null && board.isArchived)
+            PopupMenuItem(
+              value: 'unarchive',
+              child: _menuRow(LucideIcons.archiveRestore, 'Unarchive', tokens.ink),
+            ),
           if (isOwner)
             PopupMenuItem(
               value: 'delete',

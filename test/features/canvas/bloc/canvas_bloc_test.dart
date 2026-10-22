@@ -2,6 +2,7 @@ import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/domain/models/board.dart';
+import 'package:inklink/domain/services/board/board_service.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
 import 'package:inklink/features/canvas/models/canvas_tool_mode.dart';
 import 'package:inklink/features/canvas/view/trays/canvas_shape_type.dart';
@@ -492,4 +493,153 @@ void main() {
       },
     );
   });
+
+  group('CanvasBloc — visual elements (sticky notes & connectors)', () {
+    test('CanvasAddStickyNote adds a StickyNoteElement to state', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddStickyNote(
+        center: Offset(100, 100),
+        text: 'Important task',
+        color: Color(0xFFFFF9A6),
+      ));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.elements, hasLength(1));
+      expect(bloc.state.elements.first, isA<StickyNoteElement>());
+      final note = bloc.state.elements.first as StickyNoteElement;
+      expect(note.text, 'Important task');
+      expect(note.center, const Offset(100, 100));
+      await bloc.close();
+    });
+
+    test('CanvasAddConnector adds a ConnectorElement to state', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddConnector(
+        startPoint: Offset(10, 10),
+        endPoint: Offset(100, 100),
+        lineStyle: 'curved',
+        hasArrowhead: true,
+      ));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.elements, hasLength(1));
+      expect(bloc.state.elements.first, isA<ConnectorElement>());
+      final conn = bloc.state.elements.first as ConnectorElement;
+      expect(conn.lineStyle, 'curved');
+      expect(conn.hasArrowhead, isTrue);
+      await bloc.close();
+    });
+  });
+
+  group('CanvasBloc — member management & search', () {
+    test('CanvasBoardMembersUpdated updates members list', () async {
+      final bloc = CanvasBloc();
+      const member1 = BoardMember(
+        uid: 'user-1',
+        role: Board.roleOwner,
+        status: 'active',
+        displayName: 'Alice',
+      );
+      const member2 = BoardMember(
+        uid: 'user-2',
+        role: Board.roleViewer,
+        status: 'active',
+        displayName: 'Bob',
+      );
+
+      bloc.add(const CanvasBoardMembersUpdated([member1, member2]));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bloc.state.boardMembers, hasLength(2));
+      expect(bloc.state.filteredBoardMembers, hasLength(2));
+      await bloc.close();
+    });
+
+    test('CanvasMemberSearchQueryChanged filters members by query', () async {
+      final bloc = CanvasBloc();
+      const member1 = BoardMember(
+        uid: 'user-1',
+        role: Board.roleOwner,
+        status: 'active',
+        displayName: 'Alice',
+      );
+      const member2 = BoardMember(
+        uid: 'user-2',
+        role: Board.roleViewer,
+        status: 'active',
+        displayName: 'Bob',
+      );
+
+      bloc.add(const CanvasBoardMembersUpdated([member1, member2]));
+      bloc.add(const CanvasMemberSearchQueryChanged('alice'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bloc.state.filteredBoardMembers, hasLength(1));
+      expect(bloc.state.filteredBoardMembers.first.displayName, 'Alice');
+      await bloc.close();
+    });
+
+    test('CanvasRemoveBoardMember delegates to BoardService', () async {
+      final fakeBoardService = _FakeBoardService();
+      final bloc = CanvasBloc(
+        boardService: fakeBoardService,
+        boardId: 'test-board-123',
+      );
+
+      bloc.add(const CanvasRemoveBoardMember('user-2'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fakeBoardService.removedBoardId, 'test-board-123');
+      expect(fakeBoardService.removedTargetUid, 'user-2');
+      expect(bloc.state.error, isNull);
+      await bloc.close();
+    });
+
+    test('CanvasUpdateBoardMemberRole delegates to BoardService', () async {
+      final fakeBoardService = _FakeBoardService();
+      final bloc = CanvasBloc(
+        boardService: fakeBoardService,
+        boardId: 'test-board-123',
+      );
+
+      bloc.add(const CanvasUpdateBoardMemberRole(
+        targetUid: 'user-2',
+        newRole: Board.roleEditor,
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fakeBoardService.updatedBoardId, 'test-board-123');
+      expect(fakeBoardService.updatedTargetUid, 'user-2');
+      expect(fakeBoardService.updatedRole, Board.roleEditor);
+      expect(bloc.state.error, isNull);
+      await bloc.close();
+    });
+  });
+}
+
+class _FakeBoardService extends Fake implements BoardService {
+  String? removedBoardId;
+  String? removedTargetUid;
+  String? updatedBoardId;
+  String? updatedTargetUid;
+  String? updatedRole;
+
+  @override
+  Future<void> removeBoardMember(String boardId, String targetUid) async {
+    removedBoardId = boardId;
+    removedTargetUid = targetUid;
+  }
+
+  @override
+  Future<void> updateBoardMemberRole(
+    String boardId,
+    String targetUid,
+    String role,
+  ) async {
+    updatedBoardId = boardId;
+    updatedTargetUid = targetUid;
+    updatedRole = role;
+  }
 }

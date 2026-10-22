@@ -129,6 +129,9 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
                           buildCanvasRoute(context, boardId: board.id),
                         );
                       },
+                      onMoveToWorkspace: isOwner
+                          ? () => _showMoveBoardDialog(context, state, board)
+                          : null,
                       onRemoveFromWorkspace: isOwner
                           ? () => context.read<WorkspaceBloc>().add(
                               RemoveBoardFromWorkspaceRequested(
@@ -142,6 +145,75 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
                 ),
         );
       },
+    );
+  }
+
+  void _showMoveBoardDialog(
+    BuildContext context,
+    WorkspaceLoaded state,
+    Board board,
+  ) {
+    final currentWorkspaceId = widget.workspaceId;
+    final otherWorkspaces = [
+      ...state.ownedWorkspaces,
+      ...state.memberWorkspaces.where(
+        (w) => w.currentUserRole == 'owner' || w.currentUserRole == 'editor',
+      ),
+    ].where((w) => w.id != currentWorkspaceId).toList();
+
+    if (otherWorkspaces.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No other workspaces available to move this board to.'),
+        ),
+      );
+      return;
+    }
+
+    final tokens = context.ink;
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => InkDialog(
+        title: 'Move "${board.title}"',
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: otherWorkspaces.length,
+            separatorBuilder: (_, _) => Divider(height: 1, color: tokens.glassStroke),
+            itemBuilder: (ctx, index) {
+              final target = otherWorkspaces[index];
+              return ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(LucideIcons.folder, color: tokens.accent),
+                title: Text(target.name, style: InkType.bodyStrong(tokens.ink)),
+                subtitle: Text('${target.boardCount} boards', style: InkType.caption(tokens.inkMuted)),
+                onTap: () {
+                  Navigator.pop(dialogCtx);
+                  context.read<WorkspaceBloc>().add(
+                    MoveBoardBetweenWorkspacesRequested(
+                      sourceWorkspaceId: currentWorkspaceId,
+                      targetWorkspaceId: target.id,
+                      boardId: board.id,
+                    ),
+                  );
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Board moved to "${target.name}".')),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          InkButton.secondary(
+            label: 'Cancel',
+            compact: true,
+            expand: false,
+            onPressed: () => Navigator.pop(dialogCtx),
+          ),
+        ],
+      ),
     );
   }
 
@@ -412,43 +484,60 @@ class _WorkspaceBoardCard extends StatelessWidget {
   final bool isOwner;
   final VoidCallback onTap;
   final VoidCallback? onRemoveFromWorkspace;
+  final VoidCallback? onMoveToWorkspace;
 
   const _WorkspaceBoardCard({
     required this.board,
     required this.isOwner,
     required this.onTap,
     this.onRemoveFromWorkspace,
+    this.onMoveToWorkspace,
   });
 
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final hasMenu = isOwner && (onRemoveFromWorkspace != null || onMoveToWorkspace != null);
 
     return BoardCardFrame(
       previewPath: board.previewPath,
       title: board.title,
       caption: 'Edited ${_timeAgo(board.updatedAt)}',
       onTap: onTap,
-      menuButton: (isOwner && onRemoveFromWorkspace != null)
+      menuButton: hasMenu
           ? PopupMenuButton<String>(
               tooltip: 'Board options',
               icon: Icon(LucideIcons.ellipsisVertical, size: 18, color: tokens.ink),
               onSelected: (value) {
                 if (value == 'remove') {
                   onRemoveFromWorkspace?.call();
+                } else if (value == 'move') {
+                  onMoveToWorkspace?.call();
                 }
               },
               itemBuilder: (context) => [
-                PopupMenuItem(
-                  value: 'remove',
-                  child: Row(
-                    children: [
-                      Icon(LucideIcons.folderMinus, size: 18, color: tokens.danger),
-                      const SizedBox(width: 10),
-                      Text('Remove from workspace', style: TextStyle(color: tokens.danger)),
-                    ],
+                if (onMoveToWorkspace != null)
+                  PopupMenuItem(
+                    value: 'move',
+                    child: Row(
+                      children: [
+                        Icon(LucideIcons.folderInput, size: 18, color: tokens.ink),
+                        const SizedBox(width: 10),
+                        Text('Move to workspace', style: TextStyle(color: tokens.ink)),
+                      ],
+                    ),
                   ),
-                ),
+                if (onRemoveFromWorkspace != null)
+                  PopupMenuItem(
+                    value: 'remove',
+                    child: Row(
+                      children: [
+                        Icon(LucideIcons.folderMinus, size: 18, color: tokens.danger),
+                        const SizedBox(width: 10),
+                        Text('Remove from workspace', style: TextStyle(color: tokens.danger)),
+                      ],
+                    ),
+                  ),
               ],
             )
           : null,

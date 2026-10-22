@@ -145,9 +145,9 @@ class ProfileScreen extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _buildHeader(context, user),
+                    _buildHeader(context, user, isSelf: state.isSelf),
                     const SizedBox(height: InkSpacing.s12),
-                    _buildNameEmail(context, user),
+                    _buildNameEmail(context, user, isSelf: state.isSelf),
                     const SizedBox(height: InkSpacing.s24),
                     _buildBioSection(context, user),
                     const SizedBox(height: InkSpacing.s32),
@@ -158,21 +158,30 @@ class ProfileScreen extends StatelessWidget {
 
             if (state is ProfileLoaded) {
               final user = state.userData;
+              final isProfilePublic = (user['isProfilePublic'] as bool?) ?? true;
+              final isPrivateToViewer =
+                  !state.isSelf && !state.isFriend && !isProfilePublic;
+
               return SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _buildHeader(context, user),
+                    _buildHeader(context, user, isSelf: state.isSelf),
                     const SizedBox(height: InkSpacing.s12),
-                    _buildNameEmail(context, user),
+                    _buildNameEmail(context, user, isSelf: state.isSelf),
                     const SizedBox(height: InkSpacing.s12),
-                    _buildProfileStats(context, state),
-                    const SizedBox(height: InkSpacing.s12),
-                    _buildJoinDate(context, _asDateTime(user['createdAt']), state.isSelf),
+                    if (!isPrivateToViewer) ...[
+                      _buildProfileStats(context, state),
+                      const SizedBox(height: InkSpacing.s12),
+                      _buildJoinDate(context, _asDateTime(user['createdAt']), state.isSelf),
+                    ],
                     if (state.isBlocked) const SizedBox(height: InkSpacing.s12),
                     if (state.isBlocked) _buildBlockedBanner(context),
                     const SizedBox(height: InkSpacing.s12),
-                    _buildBioSection(context, user),
+                    if (isPrivateToViewer)
+                      _buildPrivateProfileBanner(context)
+                    else
+                      _buildBioSection(context, user),
                     const SizedBox(height: InkSpacing.s32),
                     _buildActionButtons(context, state),
                     const SizedBox(height: InkSpacing.s32 + 8),
@@ -201,7 +210,7 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context, Map<String, dynamic> user) {
+  Widget _buildHeader(BuildContext context, Map<String, dynamic> user, {bool isSelf = false}) {
     final name = (user['displayName'] ?? 'User').toString();
     final photoUrl = user['photoURL']?.toString();
 
@@ -233,19 +242,23 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildNameEmail(BuildContext context, Map<String, dynamic> user) {
+  Widget _buildNameEmail(BuildContext context, Map<String, dynamic> user, {bool isSelf = false}) {
     final tokens = context.ink;
     final name = (user['displayName'] ?? 'User').toString();
+    final showEmail = isSelf || ((user['showEmail'] as bool?) ?? false);
+    final email = user['email']?.toString() ?? '';
 
     return Column(
       children: [
         Text(name, style: InkType.headline(tokens.ink), textAlign: TextAlign.center),
-        const SizedBox(height: InkSpacing.s4),
-        Text(
-          user['email'] ?? '',
-          style: InkType.body(tokens.inkSecondary),
-          textAlign: TextAlign.center,
-        ),
+        if (showEmail && email.isNotEmpty) ...[
+          const SizedBox(height: InkSpacing.s4),
+          Text(
+            email,
+            style: InkType.body(tokens.inkSecondary),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ],
     );
   }
@@ -297,6 +310,21 @@ class ProfileScreen extends StatelessWidget {
   Widget _buildProfileStats(BuildContext context, ProfileLoaded state) {
     if (state.isSelf) return const SizedBox.shrink();
 
+    final showOnlineStatus = state.isSelf ||
+        ((state.userData['showOnlineStatus'] as bool?) ?? true);
+    final String statusText;
+    final bool statusOnline;
+    if (!showOnlineStatus) {
+      statusText = 'Hidden';
+      statusOnline = false;
+    } else if (state.isOnline) {
+      statusText = 'Online';
+      statusOnline = true;
+    } else {
+      statusText = _formatLastActive(state.lastActive);
+      statusOnline = false;
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s16),
       child: Row(
@@ -310,8 +338,8 @@ class ProfileScreen extends StatelessWidget {
               context,
               null,
               'Status',
-              statusOnline: state.isOnline,
-              statusText: state.isOnline ? 'Online' : _formatLastActive(state.lastActive),
+              statusOnline: statusOnline,
+              statusText: statusText,
             ),
           ),
         ],
@@ -422,6 +450,32 @@ class ProfileScreen extends StatelessWidget {
                 'You blocked this user. Unblock from the menu to collaborate again.',
                 style: InkType.caption(tokens.danger).copyWith(fontWeight: FontWeight.w600),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPrivateProfileBanner(BuildContext context) {
+    final tokens = context.ink;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s24),
+      child: PaperCard(
+        padding: const EdgeInsets.all(InkSpacing.s24),
+        child: Column(
+          children: [
+            Icon(LucideIcons.lock, size: 40, color: tokens.inkMuted),
+            const SizedBox(height: InkSpacing.s12),
+            Text(
+              'This Account is Private',
+              style: InkType.title(tokens.ink),
+            ),
+            const SizedBox(height: InkSpacing.s8),
+            Text(
+              'Add this user as a friend to view their boards, bio, and activity.',
+              textAlign: TextAlign.center,
+              style: InkType.body(tokens.inkSecondary),
             ),
           ],
         ),

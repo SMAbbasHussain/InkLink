@@ -350,26 +350,7 @@ class FirestoreBoardRepository implements BoardRepository {
             );
 
             controller.add(
-              localBoards
-                  .map(
-                    (lb) => Board(
-                      id: lb.boardId,
-                      title: lb.title,
-                      ownerId: lb.ownerId,
-                      members: lb.members,
-                      previewPath: lb.previewPath,
-                      visibility: lb.visibility,
-                      privateJoinPolicy: lb.privateJoinPolicy,
-                      tags: lb.tags,
-                      joinViaCodeEnabled: lb.joinViaCodeEnabled,
-                      whoCanInvite: lb.whoCanInvite,
-                      defaultLinkJoinRole: lb.defaultLinkJoinRole,
-                      currentUserRole: lb.currentUserRole,
-                      createdAt: lb.createdAt,
-                      updatedAt: lb.updatedAt,
-                    ),
-                  )
-                  .toList(),
+              localBoards.map(_mapLocalBoard).toList(),
             );
           }, onError: controller.addError);
 
@@ -540,23 +521,7 @@ class FirestoreBoardRepository implements BoardRepository {
         .watch(fireImmediately: true)
         .map((boards) {
           if (boards.isEmpty) return null;
-          final lb = boards.first;
-          return Board(
-            id: lb.boardId,
-            title: lb.title,
-            ownerId: lb.ownerId,
-            members: lb.members,
-            previewPath: lb.previewPath,
-            visibility: lb.visibility,
-            privateJoinPolicy: lb.privateJoinPolicy,
-            tags: lb.tags,
-            joinViaCodeEnabled: lb.joinViaCodeEnabled,
-            whoCanInvite: lb.whoCanInvite,
-            defaultLinkJoinRole: lb.defaultLinkJoinRole,
-            currentUserRole: lb.currentUserRole,
-            createdAt: lb.createdAt,
-            updatedAt: lb.updatedAt,
-          );
+          return _mapLocalBoard(boards.first);
         })
         .asBroadcastStream();
   }
@@ -758,6 +723,9 @@ class FirestoreBoardRepository implements BoardRepository {
   }
 
   Board _mapLocalBoard(LocalBoard lb) {
+    final docData = _ownedBoardDocs[lb.boardId] ?? _joinedBoardDocs[lb.boardId];
+    final isArchived = (docData?['isArchived'] as bool?) ?? false;
+    final allowMembersToCopy = (docData?['allowMembersToCopy'] as bool?) ?? false;
     return Board(
       id: lb.boardId,
       title: lb.title,
@@ -771,6 +739,8 @@ class FirestoreBoardRepository implements BoardRepository {
       whoCanInvite: lb.whoCanInvite,
       defaultLinkJoinRole: lb.defaultLinkJoinRole,
       currentUserRole: lb.currentUserRole,
+      isArchived: isArchived,
+      allowMembersToCopy: allowMembersToCopy,
       createdAt: lb.createdAt,
       updatedAt: lb.updatedAt,
     );
@@ -784,6 +754,7 @@ class FirestoreBoardRepository implements BoardRepository {
     required String whoCanInvite,
     required String defaultLinkJoinRole,
     required List<String> tags,
+    bool allowMembersToCopy = false,
     List<String> invitedUserIds = const [],
     int inviteExpiryHours = 72,
   }) async {
@@ -832,6 +803,8 @@ class FirestoreBoardRepository implements BoardRepository {
       'tags': normalizedTags,
       'joinViaCodeEnabled': joinViaCodeEnabled,
       'joinCode': docRef.id,
+      'isArchived': false,
+      'allowMembersToCopy': allowMembersToCopy,
       'invitePolicy': {
         'whoCanInvite': normalizedWhoCanInvite,
         'defaultLinkJoinRole': normalizedDefaultLinkJoinRole,
@@ -1046,6 +1019,295 @@ class FirestoreBoardRepository implements BoardRepository {
       await isar.localBoards.deleteByBoardId(boardId);
       await isar.localCrdtUpdates.filter().boardIdEqualTo(boardId).deleteAll();
     });
+  }
+
+  @override
+  Future<void> archiveBoard(String boardId) async {
+    final uid = currentUserId;
+    if (uid == null) throw Exception('User not authenticated');
+
+    await _firestoreService.collection('boards').doc(boardId).update({
+      'isArchived': true,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    final docData = _ownedBoardDocs[boardId] ?? _joinedBoardDocs[boardId];
+    if (docData != null) {
+      docData['isArchived'] = true;
+    } else {
+      if (_ownedBoardIds.contains(boardId)) {
+        _ownedBoardDocs[boardId] = <String, dynamic>{'isArchived': true};
+      } else {
+        _joinedBoardDocs[boardId] = <String, dynamic>{'isArchived': true};
+      }
+    }
+
+    try {
+      final isar = await _localDatabaseService.database;
+      final localBoard = await isar.localBoards.getByBoardId(boardId);
+      if (localBoard != null) {
+        localBoard.updatedAt = DateTime.now();
+        await isar.writeTxn(() async {
+          await isar.localBoards.putByBoardId(localBoard);
+        });
+      }
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> unarchiveBoard(String boardId) async {
+    final uid = currentUserId;
+    if (uid == null) throw Exception('User not authenticated');
+
+    await _firestoreService.collection('boards').doc(boardId).update({
+      'isArchived': false,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    final docData = _ownedBoardDocs[boardId] ?? _joinedBoardDocs[boardId];
+    if (docData != null) {
+      docData['isArchived'] = false;
+    } else {
+      if (_ownedBoardIds.contains(boardId)) {
+        _ownedBoardDocs[boardId] = <String, dynamic>{'isArchived': false};
+      } else {
+        _joinedBoardDocs[boardId] = <String, dynamic>{'isArchived': false};
+      }
+    }
+
+    try {
+      final isar = await _localDatabaseService.database;
+      final localBoard = await isar.localBoards.getByBoardId(boardId);
+      if (localBoard != null) {
+        localBoard.updatedAt = DateTime.now();
+        await isar.writeTxn(() async {
+          await isar.localBoards.putByBoardId(localBoard);
+        });
+      }
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> updateBoardTags(String boardId, List<String> tags) async {
+    final uid = currentUserId;
+    if (uid == null) throw Exception('User not authenticated');
+
+    final normalizedTags = tags
+        .map((tag) => tag.trim().toLowerCase())
+        .where((tag) => tag.isNotEmpty)
+        .toSet()
+        .take(5)
+        .toList(growable: false);
+
+    await _firestoreService.collection('boards').doc(boardId).update({
+      'tags': normalizedTags,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  @override
+  Future<String> duplicateBoard(String boardId, {String? customTitle}) async {
+    final uid = currentUserId;
+    if (uid == null) throw Exception('User not authenticated');
+
+    final firestore = _firestoreService.getInstance();
+    final sourceDocRef = _firestoreService.collection('boards').doc(boardId);
+    final newDocRef = _firestoreService.collection('boards').doc();
+    final userRef = firestore.collection('users').doc(uid);
+
+    final sourceDoc = await sourceDocRef.get();
+    if (!sourceDoc.exists) {
+      throw Exception('Source board not found');
+    }
+
+    final sourceData = sourceDoc.data() ?? <String, dynamic>{};
+    final isOwner = sourceData['ownerId'] == uid;
+    final allowMembersToCopy = (sourceData['allowMembersToCopy'] as bool?) ?? false;
+
+    if (!isOwner && !allowMembersToCopy) {
+      throw Exception('You do not have permission to copy this board.');
+    }
+
+    final originalTitle = (sourceData['title'] as String?) ??
+        (sourceData['name'] as String?) ??
+        'Untitled Board';
+    final duplicateTitle = customTitle?.trim().isNotEmpty == true
+        ? customTitle!.trim()
+        : '$originalTitle (Copy)';
+
+    final newBoardData = Map<String, dynamic>.from(sourceData);
+    newBoardData['boardId'] = newDocRef.id;
+    newBoardData['title'] = duplicateTitle;
+    newBoardData['name'] = duplicateTitle;
+    newBoardData['ownerId'] = uid;
+    newBoardData['members'] = [uid];
+    newBoardData['memberCount'] = 1;
+    newBoardData['joinCode'] = newDocRef.id;
+    newBoardData['isArchived'] = false;
+    newBoardData['allowMembersToCopy'] = false;
+    newBoardData['createdAt'] = FieldValue.serverTimestamp();
+    newBoardData['updatedAt'] = FieldValue.serverTimestamp();
+    newBoardData['lastEditedBy'] = uid;
+    newBoardData.remove('previewPath');
+
+    // Check if source board has a CRDT snapshot
+    DocumentSnapshot<Map<String, dynamic>>? snapshotDoc;
+    try {
+      snapshotDoc =
+          await sourceDocRef.collection('snapshot').doc('latest').get();
+    } catch (_) {}
+
+    await firestore.runTransaction((transaction) async {
+      transaction.set(newDocRef, newBoardData);
+      transaction.set(newDocRef.collection(_membersSubcollection).doc(uid), {
+        'uid': uid,
+        'role': Board.roleOwner,
+        'status': 'active',
+        'joinedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(userRef, {
+        'boardCount': FieldValue.increment(1),
+      }, SetOptions(merge: true));
+      transaction.set(userRef.collection('boards').doc(newDocRef.id), {
+        'boardId': newDocRef.id,
+        'relation': 'owned',
+        'addedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (snapshotDoc != null && snapshotDoc.exists && snapshotDoc.data() != null) {
+        final snapData = Map<String, dynamic>.from(snapshotDoc.data()!);
+        snapData['boardId'] = newDocRef.id;
+        snapData['updatedAt'] = FieldValue.serverTimestamp();
+        transaction.set(newDocRef.collection('snapshot').doc('latest'), snapData);
+      }
+    });
+
+    final isar = await _localDatabaseService.database;
+
+    // 1. Copy local CRDT updates from source board to duplicated board
+    final sourceCrdtUpdates = await isar.localCrdtUpdates
+        .filter()
+        .boardIdEqualTo(boardId)
+        .findAll();
+
+    final duplicatedCrdtUpdates = <LocalCrdtUpdate>[];
+
+    if (snapshotDoc != null && snapshotDoc.exists && snapshotDoc.data() != null) {
+      final snapData = Map<String, dynamic>.from(snapshotDoc.data()!);
+      final stateUpdate = snapData['stateUpdate'] as String?;
+      if (stateUpdate != null && stateUpdate.isNotEmpty) {
+        duplicatedCrdtUpdates.add(
+          LocalCrdtUpdate()
+            ..updateId = '__snapshot__${newDocRef.id}_${snapData['lastAppliedVersion'] ?? 0}'
+            ..boardId = newDocRef.id
+            ..elementId = null
+            ..payloadBase64 = stateUpdate
+            ..sourceClientId = uid
+            ..appliedAt = DateTime.now()
+            ..version = (snapData['lastAppliedVersion'] as int?) ?? 0
+            ..isSynced = false
+            ..isDeleted = false,
+        );
+      }
+    }
+
+    for (final u in sourceCrdtUpdates) {
+      if (u.updateId.startsWith('__snapshot__') && duplicatedCrdtUpdates.isNotEmpty) {
+        continue;
+      }
+      final newUpdateId = u.updateId.startsWith('__snapshot__')
+          ? '__snapshot__${newDocRef.id}_${u.version}'
+          : '${newDocRef.id}_${u.updateId}';
+
+      final dup = LocalCrdtUpdate()
+        ..updateId = newUpdateId
+        ..boardId = newDocRef.id
+        ..elementId = u.elementId
+        ..payloadBase64 = u.payloadBase64
+        ..sourceClientId = uid
+        ..appliedAt = DateTime.now()
+        ..version = u.version
+        ..isSynced = false
+        ..isDeleted = u.isDeleted;
+      duplicatedCrdtUpdates.add(dup);
+    }
+
+    if (duplicatedCrdtUpdates.isNotEmpty) {
+      await isar.writeTxn(() async {
+        await isar.localCrdtUpdates.putAll(duplicatedCrdtUpdates);
+      });
+    }
+
+    // 2. Copy preview thumbnail if present
+    String? newPreviewPath;
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final sourcePreview = File(
+        '${directory.path}${Platform.pathSeparator}inklink${Platform.pathSeparator}board_previews${Platform.pathSeparator}$boardId.png',
+      );
+      if (await sourcePreview.exists()) {
+        final targetPreview = File(
+          '${directory.path}${Platform.pathSeparator}inklink${Platform.pathSeparator}board_previews${Platform.pathSeparator}${newDocRef.id}.png',
+        );
+        await sourcePreview.copy(targetPreview.path);
+        newPreviewPath = targetPreview.path;
+      }
+    } catch (_) {}
+
+    final now = DateTime.now();
+    final newLocalBoard = LocalBoard()
+      ..boardId = newDocRef.id
+      ..title = duplicateTitle
+      ..ownerId = uid
+      ..members = [uid]
+      ..engine = crdtEngine
+      ..visibility = (sourceData['visibility'] as String?) ?? Board.visibilityPrivate
+      ..privateJoinPolicy = (sourceData['privateJoinPolicy'] as String?) ?? Board.policyOwnerOnlyInvite
+      ..tags = List<String>.from(sourceData['tags'] ?? const <String>[])
+      ..joinViaCodeEnabled = (sourceData['joinViaCodeEnabled'] as bool?) ?? false
+      ..whoCanInvite = Board.inviteOwnerOnly
+      ..defaultLinkJoinRole = Board.roleViewer
+      ..currentUserRole = Board.roleOwner
+      ..previewPath = newPreviewPath
+      ..createdAt = now
+      ..updatedAt = now
+      ..isSynced = true;
+
+    await isar.writeTxn(() async {
+      await isar.localBoards.putByBoardId(newLocalBoard);
+    });
+
+    _ownedBoardDocs[newDocRef.id] = newBoardData;
+    _ownedBoardIds.add(newDocRef.id);
+
+    return newDocRef.id;
+  }
+
+  @override
+  Future<void> updateBoardSettings({
+    required String boardId,
+    required String visibility,
+    required String privateJoinPolicy,
+    required String whoCanInvite,
+    required String defaultLinkJoinRole,
+    bool? allowMembersToCopy,
+  }) async {
+    final updateData = <String, dynamic>{
+      'visibility': visibility,
+      'privateJoinPolicy': privateJoinPolicy,
+      'whoCanInvite': whoCanInvite,
+      'defaultLinkJoinRole': defaultLinkJoinRole,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    if (allowMembersToCopy != null) {
+      updateData['allowMembersToCopy'] = allowMembersToCopy;
+    }
+    await _firestoreService.collection('boards').doc(boardId).update(updateData);
+    if (_ownedBoardDocs.containsKey(boardId)) {
+      _ownedBoardDocs[boardId]!.addAll(updateData);
+    }
   }
 
   @override

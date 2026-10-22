@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_tokens.dart';
@@ -17,6 +18,7 @@ class SlidingTray extends StatelessWidget {
   final Widget? headerActions;
   final double? topOffset;
   final double? bottomOffset;
+  final VoidCallback? onClose;
 
   const SlidingTray({
     super.key,
@@ -29,6 +31,7 @@ class SlidingTray extends StatelessWidget {
     this.headerActions,
     this.topOffset,
     this.bottomOffset,
+    this.onClose,
   });
 
   @override
@@ -63,46 +66,98 @@ class SlidingTray extends StatelessWidget {
 
     return AnimatedPositioned(
       duration: const Duration(milliseconds: 400),
-      // FIX: Changed from non-existent offsetToVector to easeOutBack
       curve: Curves.easeOutBack,
       top: top,
       bottom: bottom,
       left: left,
       right: right,
-      child: SizedBox(
-        width: width,
-        height: height,
-        child: GlassPanel(
-          radius: InkRadii.glassBar,
-          child: Column(
-            children: [
-              // Header Handle (UX cue for swiping)
-              Container(
-                margin: const EdgeInsets.only(top: 8),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: tokens.inkMuted.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: InkSpacing.s12,
-                  horizontal: InkSpacing.s16,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(title, style: InkType.bodyStrong(tokens.ink)),
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragUpdate: (d) {
+          if (direction == TrayDirection.left && d.delta.dx < -8) {
+            onClose?.call();
+          } else if (direction == TrayDirection.right && d.delta.dx > 8) {
+            onClose?.call();
+          }
+        },
+        onVerticalDragUpdate: (d) {
+          if (direction == TrayDirection.bottom && d.delta.dy > 8) {
+            onClose?.call();
+          } else if (direction == TrayDirection.top && d.delta.dy < -8) {
+            onClose?.call();
+          }
+        },
+        child: SizedBox(
+          width: width,
+          height: height,
+          child: GlassPanel(
+            radius: InkRadii.glassBar,
+            child: Column(
+              children: [
+                // Header Handle (UX cue for swiping)
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onVerticalDragUpdate: (d) {
+                    if (direction == TrayDirection.bottom && d.delta.dy > 6) {
+                      onClose?.call();
+                    } else if (direction == TrayDirection.top && d.delta.dy < -6) {
+                      onClose?.call();
+                    }
+                  },
+                  onHorizontalDragUpdate: (d) {
+                    if (direction == TrayDirection.left && d.delta.dx < -6) {
+                      onClose?.call();
+                    } else if (direction == TrayDirection.right && d.delta.dx > 6) {
+                      onClose?.call();
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    width: double.infinity,
+                    alignment: Alignment.center,
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: tokens.inkMuted.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
-                    ?headerActions,
-                  ],
+                  ),
                 ),
-              ),
-              Divider(height: 1, color: tokens.glassStroke),
-              Expanded(child: child),
-            ],
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: InkSpacing.s8,
+                    horizontal: InkSpacing.s16,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(title, style: InkType.bodyStrong(tokens.ink)),
+                      ),
+                      ?headerActions,
+                      if (onClose != null) ...[
+                        const SizedBox(width: InkSpacing.s8),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(InkRadii.chip),
+                          onTap: onClose,
+                          child: Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Icon(
+                              LucideIcons.x,
+                              size: 18,
+                              color: tokens.inkSecondary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Divider(height: 1, color: tokens.glassStroke),
+                Expanded(child: child),
+              ],
+            ),
           ),
         ),
       ),

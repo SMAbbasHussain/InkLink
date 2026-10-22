@@ -46,9 +46,11 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
   late String _whoCanInvite;
   late String _defaultLinkJoinRole;
   late String _inviteTargetRole;
+  late bool _allowMembersToCopy;
   bool _formInitialized = false;
   bool _showMembersSearch = false;
   final RegExp _emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+  final RegExp _tagRegex = RegExp(r'^[a-z0-9\-]+$');
 
   @override
   void dispose() {
@@ -63,6 +65,7 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
     _privateJoinPolicy = board.privateJoinPolicy;
     _whoCanInvite = board.whoCanInvite;
     _defaultLinkJoinRole = board.defaultLinkJoinRole;
+    _allowMembersToCopy = board.allowMembersToCopy;
     _inviteTargetRole = Board.roleViewer;
     _formInitialized = true;
   }
@@ -112,6 +115,7 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
         privateJoinPolicy: _privateJoinPolicy,
         whoCanInvite: _whoCanInvite,
         defaultLinkJoinRole: _defaultLinkJoinRole,
+        allowMembersToCopy: _allowMembersToCopy,
       ),
     );
     ScaffoldMessenger.of(context).showSnackBar(
@@ -167,6 +171,140 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
         ],
       ),
     );
+  }
+
+  void _addTagDialog(BuildContext context, Board board) {
+    final controller = TextEditingController();
+    String? errorText;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => InkDialog(
+          title: 'Add Tag',
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              InkTextField(
+                controller: controller,
+                autofocus: true,
+                hintText: 'e.g. project-alpha',
+                errorText: errorText,
+                onChanged: (_) {
+                  if (errorText != null) {
+                    setDialogState(() => errorText = null);
+                  }
+                },
+              ),
+              const SizedBox(height: InkSpacing.s4),
+              Text(
+                'Max 20 chars, lowercase alphanumeric and hyphens',
+                style: InkType.caption(ctx.ink.inkMuted),
+              ),
+            ],
+          ),
+          actions: [
+            InkButton.secondary(
+              label: 'Cancel',
+              expand: false,
+              compact: true,
+              onPressed: () => Navigator.pop(ctx),
+            ),
+            InkButton.primary(
+              label: 'Add',
+              expand: false,
+              compact: true,
+              onPressed: () {
+                final tag = controller.text.trim().toLowerCase();
+                if (tag.isEmpty) {
+                  setDialogState(() => errorText = 'Tag cannot be empty');
+                  return;
+                }
+                if (tag.length > 20) {
+                  setDialogState(() => errorText = 'Tag must be 20 characters or less');
+                  return;
+                }
+                if (!_tagRegex.hasMatch(tag)) {
+                  setDialogState(
+                    () => errorText = 'Only lowercase letters, numbers, and hyphens allowed',
+                  );
+                  return;
+                }
+                if (board.tags.contains(tag)) {
+                  setDialogState(() => errorText = 'Tag already exists');
+                  return;
+                }
+                Navigator.pop(ctx);
+                final updatedTags = [...board.tags, tag];
+                context.read<DashboardBloc>().add(
+                  DashboardUpdateBoardTagsRequested(
+                    boardId: board.id,
+                    tags: updatedTags,
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _removeTag(BuildContext context, Board board, String tag) {
+    final updatedTags = board.tags.where((t) => t != tag).toList();
+    context.read<DashboardBloc>().add(
+      DashboardUpdateBoardTagsRequested(
+        boardId: board.id,
+        tags: updatedTags,
+      ),
+    );
+  }
+
+  Future<void> _confirmDuplicate(BuildContext context, String boardId) async {
+    final confirmed = await showInkConfirmDialog(
+      context,
+      title: 'Duplicate Board',
+      message: 'Create a copy of this board and all of its drawing contents?',
+      confirmLabel: 'Duplicate',
+    );
+    if (!confirmed || !context.mounted) return;
+    context.read<DashboardBloc>().add(
+      DashboardDuplicateBoardRequested(boardId),
+    );
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Board duplicate created!')),
+    );
+    Navigator.pop(context);
+  }
+
+  Future<void> _confirmArchiveToggle(BuildContext context, Board board) async {
+    final isArchiving = !board.isArchived;
+    final confirmed = await showInkConfirmDialog(
+      context,
+      title: isArchiving ? 'Archive Board' : 'Unarchive Board',
+      message: isArchiving
+          ? 'Archive this board? It will be moved to the Archived tab.'
+          : 'Restore this board to your active boards list?',
+      confirmLabel: isArchiving ? 'Archive' : 'Unarchive',
+    );
+    if (!confirmed || !context.mounted) return;
+    if (isArchiving) {
+      context.read<DashboardBloc>().add(
+        DashboardArchiveBoardRequested(board.id),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Board archived.')),
+      );
+      Navigator.pop(context);
+    } else {
+      context.read<DashboardBloc>().add(
+        DashboardUnarchiveBoardRequested(board.id),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Board unarchived.')),
+      );
+    }
   }
 
   @override
@@ -225,8 +363,9 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
               _sectionLabel(tokens, 'General'),
               const SizedBox(height: InkSpacing.s8),
               PaperCard(
-                padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s12),
+                padding: const EdgeInsets.all(InkSpacing.s16),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     ListTile(
                       contentPadding: EdgeInsets.zero,
@@ -256,6 +395,39 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                         },
                       ),
                     ),
+                    Divider(height: 1, color: tokens.glassStroke),
+                    const SizedBox(height: InkSpacing.s12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Tags', style: InkType.bodyStrong(tokens.ink)),
+                        if (isOwner)
+                          InkButton.secondary(
+                            label: 'Add Tag',
+                            icon: const Icon(LucideIcons.plus),
+                            compact: true,
+                            expand: false,
+                            onPressed: () => _addTagDialog(context, board),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: InkSpacing.s8),
+                    if (board.tags.isEmpty)
+                      Text(
+                        'No tags added.',
+                        style: InkType.caption(tokens.inkMuted),
+                      )
+                    else
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: board.tags.map((tag) {
+                          return InkChip(
+                            label: '#$tag',
+                            onDeleted: isOwner ? () => _removeTag(context, board, tag) : null,
+                          );
+                        }).toList(),
+                      ),
                   ],
                 ),
               ),
@@ -338,6 +510,25 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                         ],
                         onChanged: (value) {
                           if (value != null) setState(() => _defaultLinkJoinRole = value);
+                        },
+                      ),
+                      const SizedBox(height: InkSpacing.s16),
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          'Allow members to copy this board',
+                          style: InkType.subhead(tokens.ink),
+                        ),
+                        subtitle: Text(
+                          'Members can get their own independent copy with all edits',
+                          style: InkType.caption(tokens.inkMuted),
+                        ),
+                        value: _allowMembersToCopy,
+                        activeColor: tokens.accent,
+                        onChanged: (value) {
+                          setState(() {
+                            _allowMembersToCopy = value;
+                          });
                         },
                       ),
                       const SizedBox(height: InkSpacing.s20),
@@ -531,6 +722,32 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                   ],
                 ),
               ),
+              if (isOwner || board.allowMembersToCopy) ...[
+                const SizedBox(height: InkSpacing.s24),
+                _sectionLabel(tokens, 'Board Actions'),
+                const SizedBox(height: InkSpacing.s8),
+                PaperCard(
+                  padding: const EdgeInsets.all(InkSpacing.s16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      InkButton.secondary(
+                        label: isOwner ? 'Duplicate Board' : 'Make a Copy (You Own)',
+                        icon: const Icon(LucideIcons.copy),
+                        onPressed: () => _confirmDuplicate(context, board.id),
+                      ),
+                      if (isOwner) ...[
+                        const SizedBox(height: InkSpacing.s12),
+                        InkButton.secondary(
+                          label: board.isArchived ? 'Unarchive Board' : 'Archive Board',
+                          icon: Icon(board.isArchived ? LucideIcons.archiveRestore : LucideIcons.archive),
+                          onPressed: () => _confirmArchiveToggle(context, board),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
               if (isOwner) ...[
                 const SizedBox(height: InkSpacing.s24),
                 _sectionLabel(tokens, 'Danger Zone', color: tokens.danger),

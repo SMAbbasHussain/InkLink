@@ -1,13 +1,1 @@
-enum CanvasShapeType {
-  square,
-  rectangle,
-  circle,
-  ellipse,
-  triangle,
-  diamond,
-  star,
-  pentagon,
-  hexagon,
-  line,
-  semicircle,
-}
+export '../../../../domain/models/canvas/canvas_shape_type.dart';

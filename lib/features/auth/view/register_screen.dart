@@ -23,7 +23,6 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  // 1. Define Controllers
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
@@ -51,8 +50,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // 2. Wrap with BlocListener for Navigation/Errors
       body: BlocListener<AuthBloc, AuthState>(
         listener: (context, state) {
-          // AppView handles the authenticated → MainWrapper transition declaratively
-          if (state is AuthError) {
+          if (state is AuthEmailUnverified) {
+            // Dismiss RegisterScreen so AppView reveals EmailVerificationScreen
+            if (Navigator.of(context).canPop()) {
+              Navigator.of(context).pop();
+            }
+          } else if (state is AuthError) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Row(
@@ -78,7 +81,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     top: 0,
                     left: 0,
                     right: 0,
-                    height: sheetTop,
+                    height: sheetTop + 40,
                     child: const ExcludeSemantics(child: AuthHero()),
                   ),
                   Positioned(
@@ -128,6 +131,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               hintText: "Confirm Password",
                               icon: LucideIcons.lock,
                               isPassword: true,
+                            ),
+                            const SizedBox(height: InkSpacing.s8),
+                            Text(
+                              "Password must be at least 8 characters and include uppercase, lowercase, number, and special character.",
+                              style: InkType.caption(tokens.inkMuted),
                             ),
                             const SizedBox(height: InkSpacing.s24),
                             isLoading
@@ -223,10 +231,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    // 4. Validate password strength
-    if (!isValidPassword(password)) {
+    // 4. Validate password strength (FR01-04)
+    final passwordError = getPasswordStrengthError(password);
+    if (passwordError != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Password must be at least 6 characters")),
+        SnackBar(
+          content: Text(passwordError),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }

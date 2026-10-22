@@ -29,6 +29,8 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
   final Set<String> _selectedFriendIds = <String>{};
   final List<String> _tags = <String>[];
 
+  String? _selectedSourceBoardId;
+  bool _allowMembersToCopy = false;
   int _inviteExpiryHours = 72;
   String _visibility = Board.visibilityPrivate;
   String _privateJoinPolicy = Board.policyOwnerOnlyInvite;
@@ -72,6 +74,16 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
       return;
     }
 
+    final validTagRegex = RegExp(r'^[a-z0-9\-]+$');
+    if (!validTagRegex.hasMatch(normalized)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tags can only contain lowercase letters, numbers, and hyphens.'),
+        ),
+      );
+      return;
+    }
+
     if (_tags.contains(normalized)) {
       _tagController.clear();
       return;
@@ -99,6 +111,17 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
       return;
     }
 
+    if (_selectedSourceBoardId != null) {
+      context.read<DashboardBloc>().add(
+        DashboardDuplicateBoardRequested(
+          _selectedSourceBoardId!,
+          customTitle: title,
+        ),
+      );
+      Navigator.pop(context);
+      return;
+    }
+
     final invitees = _inviteesController.text
         .split(',')
         .map((e) => e.trim())
@@ -117,6 +140,7 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
         defaultLinkJoinRole: _defaultLinkJoinRole,
         inviteTargetRole: _inviteTargetRole,
         tags: _tags,
+        allowMembersToCopy: _allowMembersToCopy,
         invitedUserIds: invitees,
         inviteExpiryHours: _inviteExpiryHours,
       ),
@@ -249,6 +273,16 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final dashboardState = context.watch<DashboardBloc>().state;
+    List<Board> copyableBoards = [];
+    if (dashboardState is DashboardLoaded) {
+      copyableBoards = [
+        ...dashboardState.ownedBoards.where((b) => !b.isArchived),
+        ...dashboardState.joinedBoards.where(
+          (b) => !b.isArchived && b.allowMembersToCopy,
+        ),
+      ];
+    }
 
     return Scaffold(
       backgroundColor: tokens.paper,
@@ -262,6 +296,88 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (copyableBoards.isNotEmpty) ...[
+                PaperCard(
+                  padding: const EdgeInsets.all(InkSpacing.s16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Copy from existing board (optional)',
+                        style: InkType.title(tokens.ink),
+                      ),
+                      const SizedBox(height: InkSpacing.s8),
+                      DropdownButtonFormField<String?>(
+                        value: _selectedSourceBoardId,
+                        icon: const Icon(LucideIcons.chevronDown, size: 18),
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(LucideIcons.copy, size: 18),
+                          isDense: true,
+                        ),
+                        items: [
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('Start with blank board'),
+                          ),
+                          ...copyableBoards.map((b) {
+                            final isOwner = b.currentUserRole == Board.roleOwner;
+                            final label =
+                                '${b.title} (${isOwner ? "My Board" : "Shared"})';
+                            return DropdownMenuItem<String?>(
+                              value: b.id,
+                              child: Text(label, overflow: TextOverflow.ellipsis),
+                            );
+                          }),
+                        ],
+                        onChanged: (val) {
+                          setState(() {
+                            _selectedSourceBoardId = val;
+                            if (val != null) {
+                              final chosen = copyableBoards.firstWhere(
+                                (b) => b.id == val,
+                              );
+                              if (_titleController.text.trim().isEmpty ||
+                                  _titleController.text.endsWith('(Copy)')) {
+                                _titleController.text = '${chosen.title} (Copy)';
+                              }
+                            }
+                          });
+                        },
+                      ),
+                      if (_selectedSourceBoardId != null) ...[
+                        const SizedBox(height: InkSpacing.s12),
+                        Container(
+                          padding: const EdgeInsets.all(InkSpacing.s12),
+                          decoration: BoxDecoration(
+                            color: tokens.accent.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(InkRadii.card),
+                            border: Border.all(
+                              color: tokens.accent.withValues(alpha: 0.3),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                LucideIcons.info,
+                                size: 18,
+                                color: tokens.accent,
+                              ),
+                              const SizedBox(width: InkSpacing.s8),
+                              Expanded(
+                                child: Text(
+                                  'All drawings and shapes will be copied into your new board. The members list will not be copied; you will be the sole member.',
+                                  style: InkType.caption(tokens.ink),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: InkSpacing.s16),
+              ],
               PaperCard(
                 padding: const EdgeInsets.all(InkSpacing.s16),
                 child: Column(
@@ -311,6 +427,25 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                         },
                       ),
                     ],
+                    const SizedBox(height: InkSpacing.s16),
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        'Allow members to copy this board',
+                        style: InkType.subhead(tokens.ink),
+                      ),
+                      subtitle: Text(
+                        'Members can get their own independent copy with all edits',
+                        style: InkType.caption(tokens.inkMuted),
+                      ),
+                      value: _allowMembersToCopy,
+                      activeColor: tokens.accent,
+                      onChanged: (val) {
+                        setState(() {
+                          _allowMembersToCopy = val;
+                        });
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -479,7 +614,9 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
               ),
               const SizedBox(height: InkSpacing.s24),
               InkButton.primary(
-                label: 'Create Board',
+                label: _selectedSourceBoardId != null
+                    ? 'Copy & Create Board'
+                    : 'Create Board',
                 onPressed: _canSubmit ? _submit : null,
               ),
             ],

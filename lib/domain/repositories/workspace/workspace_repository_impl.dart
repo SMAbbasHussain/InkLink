@@ -809,6 +809,63 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
   }
 
   @override
+  Future<void> moveBoardBetweenWorkspaces({
+    required String boardId,
+    required String sourceWorkspaceId,
+    required String targetWorkspaceId,
+  }) async {
+    if (sourceWorkspaceId == targetWorkspaceId) return;
+    final firestore = _firestoreService.getInstance();
+    final sourceWorkspaceRef = _firestoreService
+        .collection(FirestorePaths.workspaces)
+        .doc(sourceWorkspaceId);
+    final targetWorkspaceRef = _firestoreService
+        .collection(FirestorePaths.workspaces)
+        .doc(targetWorkspaceId);
+
+    final sourceBoardRef = sourceWorkspaceRef
+        .collection(FirestorePaths.workspaceBoardsSubcollection)
+        .doc(boardId);
+    final targetBoardRef = targetWorkspaceRef
+        .collection(FirestorePaths.workspaceBoardsSubcollection)
+        .doc(boardId);
+
+    await firestore.runTransaction((transaction) async {
+      final sourceBoardDoc = await transaction.get(sourceBoardRef);
+      final targetBoardDoc = await transaction.get(targetBoardRef);
+
+      final linkData = sourceBoardDoc.exists && sourceBoardDoc.data() != null
+          ? Map<String, dynamic>.from(sourceBoardDoc.data()!)
+          : <String, dynamic>{
+              FirestorePaths.boardId: boardId,
+              'visible': true,
+              'addedAt': FieldValue.serverTimestamp(),
+            };
+
+      linkData['movedAt'] = FieldValue.serverTimestamp();
+
+      transaction.set(targetBoardRef, linkData, SetOptions(merge: true));
+      transaction.delete(sourceBoardRef);
+
+      transaction.update(sourceWorkspaceRef, {
+        FirestorePaths.boardCount: FieldValue.increment(-1),
+        FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      if (!targetBoardDoc.exists) {
+        transaction.update(targetWorkspaceRef, {
+          FirestorePaths.boardCount: FieldValue.increment(1),
+          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+        });
+      } else {
+        transaction.update(targetWorkspaceRef, {
+          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    });
+  }
+
+  @override
   Future<void> setWorkspaceBoardVisibility({
     required String workspaceId,
     required String boardId,

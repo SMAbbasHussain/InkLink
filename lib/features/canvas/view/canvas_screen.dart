@@ -28,6 +28,9 @@ import 'trays/canvas_shape_type.dart';
 import 'trays/members_tray.dart';
 import 'trays/shapes_tray.dart';
 import 'trays/tools_tray.dart';
+import 'chat/board_chat_drawer.dart';
+import 'trays/comments_tray.dart';
+import 'voice/voice_call_hud.dart';
 import 'widgets/tray_tips_overlay.dart';
 
 part 'canvas_painter.dart';
@@ -88,10 +91,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Timer? _shapeEditDebounceTimer;
   final Map<String, dynamic> _pendingShapeEdits = <String, dynamic>{};
   Offset? _lastTapWorldPoint;
+  String? _arrowConnectStartElementId;
 
   static const double _viewportComparisonEpsilon = 0.01;
 
   InkTokens get _tokens => context.ink;
+  bool _preventGestureBack = true;
+  bool _showEdgeTrayButtons = true;
+  DateTime? _lastEdgeDragTime;
+  DateTime? _lastBackSnackbarTime;
 
   @override
   void initState() {
@@ -113,11 +121,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
     _canvasBloc.add(CanvasToggleTray(tray));
   }
 
+  void _toggleTray(String tray) {
+    _canvasBloc.add(CanvasToggleTray(tray));
+  }
+
   Offset _toWorld(Offset localPoint) {
     return Offset(
       (localPoint.dx - _viewportOffset.dx) / _viewportScale,
       (localPoint.dy - _viewportOffset.dy) / _viewportScale,
     );
+  }
+
+  bool _isArrowMode(CanvasState state) {
+    return (state.currentToolMode == CanvasToolMode.shape &&
+            state.pendingShapeType == CanvasShapeType.arrow) ||
+        state.currentToolMode == CanvasToolMode.arrow;
   }
 
   Offset _toScreen(Offset worldPoint) {
@@ -160,6 +178,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
       ShapeElement e => e.center,
       TextElement e => e.center,
       ImageElement e => e.center,
+      StickyNoteElement e => e.center,
+      ConnectorElement e => Offset(
+          (e.startPoint.dx + e.endPoint.dx) / 2,
+          (e.startPoint.dy + e.endPoint.dy) / 2,
+        ),
     };
   }
 
@@ -329,12 +352,109 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
-  Future<void> _uploadImageToCanvas() async {
+  Future<void> _uploadImageToCanvas([ImageSource? directSource]) async {
+    final ImageSource? source;
+    if (directSource != null) {
+      source = directSource;
+    } else {
+      source = await showModalBottomSheet<ImageSource>(
+        context: context,
+        backgroundColor: Theme.of(context).cardColor,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Insert Image',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+                ListTile(
+                  leading: const CircleAvatar(
+                    backgroundColor: AppColors.primary,
+                    child: Icon(Icons.camera_alt_rounded, color: Colors.white),
+                  ),
+                  title: const Text('Take Photo with Camera'),
+                  subtitle: const Text('Capture a picture and place onto canvas'),
+                  onTap: () => Navigator.pop(ctx, ImageSource.camera),
+                ),
+                ListTile(
+                  leading: const CircleAvatar(
+                    backgroundColor: Colors.blueAccent,
+                    child: Icon(Icons.photo_library_rounded, color: Colors.white),
+                  ),
+                  title: const Text('Choose from Gallery'),
+                  subtitle: const Text('Pick an existing photo or graphic'),
+                  onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (source == null || !mounted) return;
+
     final picker = ImagePicker();
-    final picked = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 95,
-    );
+    final XFile? picked;
+    try {
+      picked = await picker.pickImage(
+        source: source,
+        imageQuality: 95,
+      );
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      final isNoCamera = e.code == 'no_available_camera' ||
+          (e.message?.toLowerCase().contains('no camera') ?? false);
+      final isDenied = e.code == 'camera_access_denied' ||
+          (e.message?.toLowerCase().contains('denied') ?? false);
+
+      final message = isNoCamera
+          ? 'No camera available on this device.'
+          : isDenied
+              ? 'Camera permission was denied.'
+              : 'Failed to access camera: ${e.message ?? e.code}';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          action: isNoCamera
+              ? SnackBarAction(
+                  label: 'Choose Gallery',
+                  onPressed: () => _uploadImageToCanvas(ImageSource.gallery),
+                )
+              : null,
+        ),
+      );
+      return;
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to pick image: $e')),
+      );
+      return;
+    }
+
     if (picked == null || !mounted) return;
 
     try {
@@ -567,6 +687,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
             width: e.width,
             height: e.height,
           );
+        case StickyNoteElement e:
+          candidate = Rect.fromCenter(
+            center: e.center,
+            width: e.width,
+            height: e.height,
+          );
+        case ConnectorElement e:
+          candidate = Rect.fromPoints(e.startPoint, e.endPoint).inflate(16);
       }
 
       bounds = bounds == null ? candidate : bounds.expandToInclude(candidate);
@@ -585,6 +713,302 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   void _clearAll() {
     _canvasBloc.add(const CanvasClearAll());
+  }
+
+  Future<void> _addStickyNoteDialog() async {
+    final textController = TextEditingController();
+    Color selectedColor = const Color(0xFFFFF9A6);
+    final colors = [
+      const Color(0xFFFFF9A6), // Yellow
+      const Color(0xFFD4F8D3), // Mint / Lime
+      const Color(0xFFC7F0FF), // Sky / Cyan
+      const Color(0xFFFFD1DC), // Rose / Pink
+      const Color(0xFFE2D4F8), // Lavender
+    ];
+
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Add Sticky Note'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: textController,
+                maxLines: 4,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'Write note content here...',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Color', style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: colors.map((c) {
+                  final isSelected = c.value == selectedColor.value;
+                  return GestureDetector(
+                    onTap: () => setDialogState(() => selectedColor = c),
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: c,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: isSelected ? Colors.blueAccent : Colors.grey.withOpacity(0.4),
+                          width: isSelected ? 2.5 : 1,
+                        ),
+                        boxShadow: isSelected
+                            ? [const BoxShadow(color: Colors.black26, blurRadius: 4)]
+                            : null,
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Add to Canvas'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (created == true && mounted) {
+      final size = MediaQuery.of(context).size;
+      final centerWorld = _toWorld(Offset(size.width / 2, size.height / 2));
+      _canvasBloc.add(CanvasAddStickyNote(
+        center: centerWorld,
+        text: textController.text.trim(),
+        color: selectedColor,
+      ));
+    }
+  }
+
+  Future<void> _editStickyNote(_CanvasElement element) async {
+    final textController = TextEditingController(text: element.text);
+    Color selectedColor = element.color;
+    final colors = [
+      const Color(0xFFFFF9A6),
+      const Color(0xFFD4F8D3),
+      const Color(0xFFC7F0FF),
+      const Color(0xFFFFD1DC),
+      const Color(0xFFE2D4F8),
+    ];
+
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Edit Sticky Note'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: textController,
+                maxLines: 4,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'Note content...',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Color', style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: colors.map((c) {
+                  final isSelected = c.value == selectedColor.value;
+                  return GestureDetector(
+                    onTap: () => setDialogState(() => selectedColor = c),
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: c,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: isSelected ? Colors.blueAccent : Colors.grey.withOpacity(0.4),
+                          width: isSelected ? 2.5 : 1,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (updated == true && mounted) {
+      _canvasBloc.add(CanvasUpdateStickyNote(
+        elementId: element.id,
+        text: textController.text.trim(),
+        color: selectedColor,
+      ));
+    }
+  }
+
+  Future<void> _addConnectorDialog() async {
+    String selectedStyle = 'straight';
+    bool hasArrowhead = true;
+    Color selectedColor = const Color(0xFF2D3748);
+
+    final elements = _canvasBloc.state.elements;
+    final linkable = elements
+        .where((e) => e is ShapeElement || e is StickyNoteElement)
+        .toList();
+
+    String? startId = linkable.isNotEmpty ? linkable.first.id : null;
+    String? endId = linkable.length > 1 ? linkable[1].id : null;
+    String startAnchor = 'right';
+    String endAnchor = 'left';
+
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Add Connector / Diagram Link'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Line Style',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                DropdownButton<String>(
+                  value: selectedStyle,
+                  isExpanded: true,
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'straight', child: Text('Straight Line')),
+                    DropdownMenuItem(
+                        value: 'curved', child: Text('Curved Bezier')),
+                    DropdownMenuItem(
+                        value: 'orthogonal', child: Text('Orthogonal / Step')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setDialogState(() => selectedStyle = v);
+                  },
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  title: const Text('Arrowhead End'),
+                  value: hasArrowhead,
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (v) => setDialogState(() => hasArrowhead = v),
+                ),
+                if (linkable.length >= 2) ...[
+                  const SizedBox(height: 12),
+                  const Text('Connect Shapes',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButton<String>(
+                          value: startId,
+                          isExpanded: true,
+                          hint: const Text('From Element'),
+                          items: linkable.map((e) {
+                            final label = e is ShapeElement
+                                ? '${e.shapeType.name} (${e.id.substring(0, 4)})'
+                                : 'Note (${e.id.substring(0, 4)})';
+                            return DropdownMenuItem(
+                                value: e.id,
+                                child: Text(label,
+                                    overflow: TextOverflow.ellipsis));
+                          }).toList(),
+                          onChanged: (v) => setDialogState(() => startId = v),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(Icons.arrow_forward, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: DropdownButton<String>(
+                          value: endId,
+                          isExpanded: true,
+                          hint: const Text('To Element'),
+                          items: linkable.map((e) {
+                            final label = e is ShapeElement
+                                ? '${e.shapeType.name} (${e.id.substring(0, 4)})'
+                                : 'Note (${e.id.substring(0, 4)})';
+                            return DropdownMenuItem(
+                                value: e.id,
+                                child: Text(label,
+                                    overflow: TextOverflow.ellipsis));
+                          }).toList(),
+                          onChanged: (v) => setDialogState(() => endId = v),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Add Connector'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (created == true && mounted) {
+      final size = MediaQuery.of(context).size;
+      final centerWorld = _toWorld(Offset(size.width / 2, size.height / 2));
+      _canvasBloc.add(CanvasAddConnector(
+        startElementId: startId,
+        startPoint: Offset(centerWorld.dx - 80, centerWorld.dy),
+        startAnchor: startAnchor,
+        endElementId: endId,
+        endPoint: Offset(centerWorld.dx + 80, centerWorld.dy),
+        endAnchor: endAnchor,
+        lineStyle: selectedStyle,
+        hasArrowhead: hasArrowhead,
+        color: selectedColor,
+      ));
+    }
   }
 
   Future<void> _savePreview() async {
@@ -670,6 +1094,201 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
+  void _showExportOptionsSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Export & Share Board',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(sheetContext),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Export your canvas elements with full layout integrity:',
+                  style: TextStyle(color: Colors.grey, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                _buildExportTile(
+                  sheetContext,
+                  icon: Icons.image_outlined,
+                  iconColor: Colors.blue,
+                  title: 'PNG Image',
+                  subtitle: 'High-resolution lossless raster export (2x scale)',
+                  format: BoardExportFormat.png,
+                ),
+                const SizedBox(height: 10),
+                _buildExportTile(
+                  sheetContext,
+                  icon: Icons.picture_as_pdf_outlined,
+                  iconColor: Colors.redAccent,
+                  title: 'PDF Document',
+                  subtitle: 'Printable formatted document with metadata header',
+                  format: BoardExportFormat.pdf,
+                ),
+                const SizedBox(height: 10),
+                _buildExportTile(
+                  sheetContext,
+                  icon: Icons.code_outlined,
+                  iconColor: Colors.teal,
+                  title: 'SVG Vector File',
+                  subtitle: 'Scalable vector graphics compatible with Figma & Illustrator',
+                  format: BoardExportFormat.svg,
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.share_outlined, size: 20),
+                    label: const Text(
+                      'Share Board File (Native Sheet)',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      _canvasBloc.add(
+                        const CanvasExportBoardRequested(
+                          format: BoardExportFormat.png,
+                          shareAfterExport: true,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildExportTile(
+    BuildContext sheetContext, {
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required BoardExportFormat format,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.withOpacity(0.2)),
+      ),
+      child: ListTile(
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: iconColor),
+        ),
+        title: Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.file_download_outlined, size: 22),
+              tooltip: 'Save to Device Storage',
+              onPressed: () {
+                Navigator.pop(sheetContext);
+                ScaffoldMessenger.of(context).removeCurrentSnackBar();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Saving ${format.name.toUpperCase()} to device storage...'),
+                    duration: const Duration(seconds: 1),
+                  ),
+                );
+                _canvasBloc.add(
+                  CanvasExportBoardRequested(
+                    format: format,
+                    shareAfterExport: false,
+                  ),
+                );
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.share_outlined, size: 20),
+              tooltip: 'Share via...',
+              onPressed: () {
+                Navigator.pop(sheetContext);
+                ScaffoldMessenger.of(context).removeCurrentSnackBar();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Preparing ${format.name.toUpperCase()} for sharing...'),
+                    duration: const Duration(seconds: 1),
+                  ),
+                );
+                _canvasBloc.add(
+                  CanvasExportBoardRequested(
+                    format: format,
+                    shareAfterExport: true,
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+        onTap: () {
+          Navigator.pop(sheetContext);
+          ScaffoldMessenger.of(context).removeCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Saving ${format.name.toUpperCase()} to device storage...'),
+              duration: const Duration(seconds: 1),
+            ),
+          );
+          _canvasBloc.add(
+            CanvasExportBoardRequested(
+              format: format,
+              shareAfterExport: false,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -677,8 +1296,43 @@ class _CanvasScreenState extends State<CanvasScreen> {
     return BlocProvider.value(
       value: _canvasBloc,
       child: BlocListener<CanvasBloc, CanvasState>(
-        listenWhen: (previous, current) => previous.error != current.error,
+        listenWhen: (previous, current) =>
+            previous.error != current.error ||
+            (current.exportSuccessMessage != null &&
+                current.exportSuccessMessage != previous.exportSuccessMessage),
         listener: (context, state) async {
+          if (state.exportSuccessMessage != null) {
+            final msg = state.exportSuccessMessage!;
+            final path = state.lastExportedFilePath;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(msg),
+                backgroundColor: Colors.teal.shade700,
+                duration: const Duration(seconds: 4),
+                action: path != null
+                    ? SnackBarAction(
+                        label: 'Share',
+                        textColor: Colors.white,
+                        onPressed: () {
+                          final format = path.endsWith('.pdf')
+                              ? BoardExportFormat.pdf
+                              : path.endsWith('.svg')
+                                  ? BoardExportFormat.svg
+                                  : BoardExportFormat.png;
+                          context.read<CanvasBloc>().add(
+                            CanvasExportBoardRequested(
+                              format: format,
+                              shareAfterExport: true,
+                            ),
+                          );
+                        },
+                      )
+                    : null,
+              ),
+            );
+            context.read<CanvasBloc>().add(const CanvasConsumeExportMessage());
+          }
+
           final message = state.error;
           if (message == null || message.isEmpty) return;
 
@@ -721,6 +1375,36 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
             return WillPopScope(
               onWillPop: () async {
+                if (_preventGestureBack) {
+                  // If back gesture is locked:
+                  // 1) NEVER close the active tray here. When a user swipes inward from the edge,
+                  //    Android OS fires a back gesture concurrently with the edge drag. Closing
+                  //    the tray here would instantly snap it shut right after opening!
+                  // 2) Suppress the exit snackbar if the user was recently interacting with edge triggers.
+                  final now = DateTime.now();
+                  final isRecentEdgeDrag = _lastEdgeDragTime != null &&
+                      now.difference(_lastEdgeDragTime!) <
+                          const Duration(milliseconds: 1500);
+
+                  if (isRecentEdgeDrag) {
+                    return false;
+                  }
+
+                  if (_lastBackSnackbarTime == null ||
+                      now.difference(_lastBackSnackbarTime!) >
+                          const Duration(seconds: 3)) {
+                    _lastBackSnackbarTime = now;
+                    ScaffoldMessenger.of(context).removeCurrentSnackBar();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Tap top-left back arrow to exit board'),
+                        duration: Duration(seconds: 2),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                  return false;
+                }
                 await _savePreview();
                 return true;
               },
@@ -729,6 +1413,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     ? const Color(0xFF121418)
                     : _tokens.surfaceDesk,
                 resizeToAvoidBottomInset: false,
+
                 body: LayoutBuilder(
                   builder: (context, constraints) {
                     _lastCanvasSize = Size(
@@ -758,6 +1443,20 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               final worldPoint = _toWorld(
                                 details.localFocalPoint,
                               );
+
+                              // In arrow mode, touching an existing element should connect, not draw a freehand shape
+                              if (_isArrowMode(state)) {
+                                final hitShapeId = _hitTestShape(
+                                  mappedElements,
+                                  worldPoint,
+                                );
+                                if (hitShapeId != null) {
+                                  return;
+                                }
+                                // Empty canvas drag in arrow mode: start drawing an arrow shape
+                                _canvasBloc.add(CanvasStartShapeDraw(worldPoint));
+                                return;
+                              }
 
                               // Handle shape drawing mode
                               if (state.currentToolMode == CanvasToolMode.shape &&
@@ -937,6 +1636,76 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 details.localPosition,
                               );
                               _lastTapWorldPoint = worldPoint;
+
+                              // Pin comment placement flow:
+                              if (state.isPlacingComment) {
+                                _promptNewCommentDialog(worldPoint);
+                                return;
+                              }
+
+                              // Arrow 2-element connection flow:
+                              if (_isArrowMode(state)) {
+                                final hitShapeId = _hitTestShape(
+                                  mappedElements,
+                                  worldPoint,
+                                );
+                                if (hitShapeId != null) {
+                                  if (_arrowConnectStartElementId == null) {
+                                    setState(() {
+                                      _arrowConnectStartElementId = hitShapeId;
+                                    });
+                                    return;
+                                  } else {
+                                    final startId = _arrowConnectStartElementId!;
+                                    final endId = hitShapeId;
+                                    if (startId != endId) {
+                                      final startElem = mappedElements
+                                          .where((e) => e.id == startId)
+                                          .firstOrNull;
+                                      final endElem = mappedElements
+                                          .where((e) => e.id == endId)
+                                          .firstOrNull;
+                                      final startPt =
+                                          startElem?.center ?? worldPoint;
+                                      final endPt =
+                                          endElem?.center ?? worldPoint;
+
+                                      _canvasBloc.add(CanvasAddConnector(
+                                        startElementId: startId,
+                                        startAnchor: 'auto',
+                                        startPoint: startPt,
+                                        endElementId: endId,
+                                        endAnchor: 'auto',
+                                        endPoint: endPt,
+                                        lineStyle: 'straight',
+                                        hasArrowhead: true,
+                                        color: state.selectedColor,
+                                        strokeWidth:
+                                            math.max(state.strokeWidth, 2.5),
+                                      ));
+
+                                      setState(() {
+                                        _arrowConnectStartElementId = null;
+                                      });
+                                      return;
+                                    } else {
+                                      // Tapped same element again: cancel
+                                      setState(() {
+                                        _arrowConnectStartElementId = null;
+                                      });
+                                      return;
+                                    }
+                                  }
+                                } else {
+                                  // Tapped empty canvas: clear start element
+                                  if (_arrowConnectStartElementId != null) {
+                                    setState(() {
+                                      _arrowConnectStartElementId = null;
+                                    });
+                                  }
+                                }
+                              }
+
                               final hitShapeId = _hitTestShape(
                                 mappedElements,
                                 worldPoint,
@@ -965,11 +1734,19 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               );
                               if (hit.kind == _ElementKind.stroke) {
                                 _selectShape(hitShapeId, expandEditor: false);
+                              } else if (hit.kind == _ElementKind.stickyNote) {
+                                _editStickyNote(hit);
                               }
                             },
                             onTap: () {
-                              // If in shape draw mode, tap switches back to doodle
-                              if (state.currentToolMode == CanvasToolMode.shape) {
+                              // If in shape draw mode, tap switches back to doodle unless waiting for 2nd arrow connection
+                              if (state.currentToolMode == CanvasToolMode.shape ||
+                                  _isArrowMode(state)) {
+                                if (state.pendingShapeType ==
+                                        CanvasShapeType.arrow &&
+                                    _arrowConnectStartElementId != null) {
+                                  return;
+                                }
                                 _canvasBloc.add(const CanvasCancelShapeDraw());
                                 return;
                               }
@@ -999,20 +1776,28 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   shapeDrawCurrent: state.shapeDrawCurrent,
                                   pendingShapeType: state.pendingShapeType,
                                   accentColor: _tokens.accent,
+                                  arrowConnectStartElementId:
+                                      _isArrowMode(state)
+                                          ? _arrowConnectStartElementId
+                                          : null,
                                 ),
                               ),
                             ),
                           ),
 
                           ..._buildImageOverlays(state),
+                          ..._buildPinnedCommentPins(state),
 
+                          _buildEdgeTriggers(state, isDark),
                           _buildAllTrays(state),
+                          const BoardChatDrawer(),
+                          const CommentsTray(),
+                          const VoiceCallHud(),
                           if (state.selectedShapeId != null)
                             _buildSelectedElementPanel(
                               state,
                               mappedElements,
                             ),
-                          _buildEdgeTriggers(),
                           _buildTopPills(state, title),
 
                           _buildToolModeIndicator(state),
@@ -1042,6 +1827,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           return switch (element) {
             StrokeElement e => _CanvasElement.stroke(
                 id: e.id,
+                z: e.z,
                 points: e.points,
                 color: e.color,
                 strokeWidth: e.strokeWidth,
@@ -1050,6 +1836,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               ),
             ShapeElement e => _CanvasElement.shape(
                 id: e.id,
+                z: e.z,
                 shapeType: e.shapeType,
                 center: e.center,
                 size: e.size,
@@ -1063,73 +1850,120 @@ class _CanvasScreenState extends State<CanvasScreen> {
               ),
             TextElement e => _CanvasElement.text(
                 id: e.id,
+                z: e.z,
                 center: e.center,
                 text: e.text,
                 color: e.color,
               ),
             ImageElement e => _CanvasElement.image(
                 id: e.id,
+                z: e.z,
                 center: e.center,
                 width: e.width,
                 height: e.height,
                 imageBase64: e.imageBase64,
                 data: e.toMap(),
               ),
+            StickyNoteElement e => _CanvasElement.stickyNote(
+                id: e.id,
+                z: e.z,
+                center: e.center,
+                width: e.width,
+                height: e.height,
+                text: e.text,
+                color: e.color,
+                rotation: e.rotation,
+                data: e.toMap(),
+              ),
+            ConnectorElement e => _CanvasElement.connector(
+                id: e.id,
+                z: e.z,
+                startElementId: e.startElementId,
+                startPoint: e.startPoint,
+                startAnchor: e.startAnchor,
+                endElementId: e.endElementId,
+                endPoint: e.endPoint,
+                endAnchor: e.endAnchor,
+                lineStyle: e.lineStyle,
+                color: e.color,
+                strokeWidth: e.strokeWidth,
+                hasArrowhead: e.hasArrowhead,
+                data: e.toMap(),
+              ),
           };
         })
-        .toList(growable: false);
+        .toList();
 
     final draft = _shapeTransformDraft;
 
-    if (draft == null && _pendingShapeEdits.isEmpty) {
-      return mapped;
-    }
+    final processed = mapped.map((element) {
+      _CanvasElement result = element;
 
-    return mapped
-        .map((element) {
-          _CanvasElement result = element;
+      // 1. Apply slider pending edits if this element is selected
+      if (_pendingShapeEdits.isNotEmpty &&
+          element.id == _canvasBloc.state.selectedShapeId) {
+        Map<String, dynamic> updatedData = Map.from(result.data);
+        _pendingShapeEdits.forEach((key, value) {
+          updatedData[key] = value;
+        });
+        // Re-bind properties from updatedData
+        if (result.kind == _ElementKind.shape) {
+          result = result.copyWith(
+            data: updatedData,
+            size: updatedData['size'] ?? result.size,
+            isFilled: updatedData['isFilled'] ?? result.isFilled,
+          );
+        }
+      }
 
-          // 1. Apply slider pending edits if this element is selected
-          if (_pendingShapeEdits.isNotEmpty &&
-              element.id == _canvasBloc.state.selectedShapeId) {
-            Map<String, dynamic> updatedData = Map.from(result.data);
-            _pendingShapeEdits.forEach((key, value) {
-              updatedData[key] = value;
-            });
-            // Re-bind properties from updatedData
-            if (result.kind == _ElementKind.shape) {
-              result = result.copyWith(
-                data: updatedData,
-                size: updatedData['size'] ?? result.size,
-                isFilled: updatedData['isFilled'] ?? result.isFilled,
-              );
-            }
-          }
+      // 2. Apply drag/scale draft overlay edits
+      if (draft != null && result.id == draft.shapeId) {
+        result = result.copyWith(
+          center: draft.center,
+          size: draft.size,
+          width: (draft.width != null && draft.width! > 0)
+              ? draft.width!
+              : (result.width > 0 ? result.width : draft.size),
+          height: (draft.height != null && draft.height! > 0)
+              ? draft.height!
+              : (result.height > 0 ? result.height : draft.size),
+          data: {...result.data, 'rotation': draft.rotation},
+        );
+      } else if (_isDraggingShape &&
+          _shapeDragPreviewCenter != null &&
+          result.id == _canvasBloc.state.selectedShapeId) {
+        result = result.copyWith(center: _shapeDragPreviewCenter!);
+      } else if (_isDraggingStroke &&
+          _strokeDragDelta != null &&
+          _strokeDragOriginalPoints != null &&
+          result.id == _canvasBloc.state.selectedShapeId) {
+        final original = _strokeDragOriginalPoints!;
+        result = result.copyWith(
+          points: original.map((p) => p + _strokeDragDelta!).toList(),
+        );
+      }
 
-          // 2. Apply drag/scale draft overlay edits
-          if (draft != null && result.id == draft.shapeId) {
-            result = result.copyWith(
-              center: draft.center,
-              size: draft.size,
-              data: {...result.data, 'rotation': draft.rotation},
-            );
-          } else if (_isDraggingShape &&
-              _shapeDragPreviewCenter != null &&
-              result.id == _canvasBloc.state.selectedShapeId) {
-            result = result.copyWith(center: _shapeDragPreviewCenter!);
-          } else if (_isDraggingStroke &&
-              _strokeDragDelta != null &&
-              _strokeDragOriginalPoints != null &&
-              result.id == _canvasBloc.state.selectedShapeId) {
-            final original = _strokeDragOriginalPoints!;
-            result = result.copyWith(
-              points: original.map((p) => p + _strokeDragDelta!).toList(),
-            );
-          }
+      return result;
+    }).toList();
 
-          return result;
-        })
-        .toList(growable: false);
+    processed.sort((a, b) {
+      if (draft != null) {
+        if (a.id == draft.shapeId) return 1;
+        if (b.id == draft.shapeId) return -1;
+      }
+      if (_isDraggingShape && _canvasBloc.state.selectedShapeId != null) {
+        if (a.id == _canvasBloc.state.selectedShapeId) return 1;
+        if (b.id == _canvasBloc.state.selectedShapeId) return -1;
+      }
+      if (_isDraggingStroke && _canvasBloc.state.selectedShapeId != null) {
+        if (a.id == _canvasBloc.state.selectedShapeId) return 1;
+        if (b.id == _canvasBloc.state.selectedShapeId) return -1;
+      }
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
+
+    return processed;
   }
 
   double _pointToSegmentDistance(Offset point, Offset a, Offset b) {
@@ -1168,12 +2002,46 @@ class _CanvasScreenState extends State<CanvasScreen> {
             return element.id;
           }
         }
+      } else if (element.kind == _ElementKind.connector) {
+        Offset start = element.startPoint;
+        Offset end = element.endPoint;
+        if (element.startElementId != null) {
+          final sElem = elements.where((e) => e.id == element.startElementId).firstOrNull;
+          if (sElem != null) start = sElem.center;
+        }
+        if (element.endElementId != null) {
+          final eElem = elements.where((e) => e.id == element.endElementId).firstOrNull;
+          if (eElem != null) end = eElem.center;
+        }
+        final dist = _pointToSegmentDistance(position, start, end);
+        if (dist <= element.strokeWidth / 2 + 14.0) {
+          return element.id;
+        }
+      } else if (element.kind == _ElementKind.shape &&
+          element.shapeType == CanvasShapeType.arrow) {
+        final rot = (element.data['rotation'] as num?)?.toDouble() ?? 0.0;
+        final halfW = element.size * 0.65;
+        final cosR = math.cos(rot);
+        final sinR = math.sin(rot);
+        final start = Offset(
+          element.center.dx - halfW * cosR,
+          element.center.dy - halfW * sinR,
+        );
+        final end = Offset(
+          element.center.dx + halfW * cosR,
+          element.center.dy + halfW * sinR,
+        );
+        final dist = _pointToSegmentDistance(position, start, end);
+        if (dist <= 18.0) {
+          return element.id;
+        }
       } else {
-        // Shapes, images, text
+        // Shapes, images, text, sticky notes
         final distance = (position - element.center).distance;
         final sizeHit = element.kind == _ElementKind.shape
             ? element.size
-            : element.kind == _ElementKind.image
+            : (element.kind == _ElementKind.image ||
+                    element.kind == _ElementKind.stickyNote)
                 ? math.max(element.width, element.height)
                 : 100.0;
         if (distance <= (sizeHit / 2) + 14) {
@@ -1202,6 +2070,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
         ],
       );
     }
+    if (element.kind == _ElementKind.connector) {
+      return _buildConnectorSelectionOverlay(state, element);
+    }
+    if (element.kind == _ElementKind.stickyNote) {
+      return Stack(
+        children: [
+          if (!_isEditingShape)
+            _buildStickyNoteEditBanner(
+              Theme.of(context).brightness == Brightness.dark,
+              element,
+            ),
+          _buildShapeTransformOverlay(state, mappedElements),
+        ],
+      );
+    }
     return Stack(
       children: [
         if (!_isEditingShape && _isShapeEditTrayExpanded)
@@ -1211,6 +2094,141 @@ class _CanvasScreenState extends State<CanvasScreen> {
             Theme.of(context).brightness == Brightness.dark,
           ),
         _buildShapeTransformOverlay(state, mappedElements),
+      ],
+    );
+  }
+
+  Widget _buildStickyNoteEditBanner(bool isDark, _CanvasElement element) {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 24 + MediaQuery.of(context).padding.bottom,
+      child: Center(
+        child: ElevatedButton.icon(
+          onPressed: () => _editStickyNote(element),
+          icon: Icon(
+            Icons.edit,
+            size: 18,
+            color: isDark
+                ? AppColors.textPrimaryDark
+                : AppColors.textPrimaryLight,
+          ),
+          label: Text(
+            'Edit Note',
+            style: TextStyle(
+              color: isDark
+                  ? AppColors.textPrimaryDark
+                  : AppColors.textPrimaryLight,
+            ),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: isDark
+                ? AppColors.surfaceDark
+                : AppColors.surfaceLight,
+            foregroundColor: isDark
+                ? AppColors.textPrimaryDark
+                : AppColors.textPrimaryLight,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            elevation: 2,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConnectorSelectionOverlay(
+    CanvasState state,
+    _CanvasElement element,
+  ) {
+    Offset start = element.startPoint;
+    Offset end = element.endPoint;
+    if (element.startElementId != null) {
+      final s = state.elements
+          .where((e) => e.id == element.startElementId)
+          .firstOrNull;
+      if (s != null) start = _getElementWorldCenter(s);
+    }
+    if (element.endElementId != null) {
+      final e = state.elements
+          .where((e) => e.id == element.endElementId)
+          .firstOrNull;
+      if (e != null) end = _getElementWorldCenter(e);
+    }
+
+    final screenStart = _toScreen(start);
+    final screenEnd = _toScreen(end);
+    final screenMid = Offset(
+      (screenStart.dx + screenEnd.dx) / 2,
+      (screenStart.dy + screenEnd.dy) / 2,
+    );
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Positioned(
+          left: screenStart.dx - 10,
+          top: screenStart.dy - 10,
+          child: Container(
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              color: Colors.blueAccent,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 4,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          left: screenEnd.dx - 10,
+          top: screenEnd.dy - 10,
+          child: Container(
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              color: Colors.blueAccent,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 4,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          left: screenMid.dx - 14,
+          top: screenMid.dy - 36,
+          child: GestureDetector(
+            onTap: () => _canvasBloc.add(CanvasDeleteElement(element.id)),
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: Colors.redAccent,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 4,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.delete, size: 14, color: Colors.white),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -1678,12 +2696,23 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final selected = mappedElements.where((e) => e.id == state.selectedShapeId);
     if (selected.isEmpty) return const SizedBox.shrink();
     final baseShape = selected.first;
+    if (baseShape.kind == _ElementKind.connector) {
+      return const SizedBox.shrink();
+    }
     final shape =
         _shapeTransformDraft != null &&
             _shapeTransformDraft!.shapeId == baseShape.id
         ? baseShape.copyWith(
             center: _shapeTransformDraft!.center,
             size: _shapeTransformDraft!.size,
+            width: (_shapeTransformDraft!.width != null &&
+                    _shapeTransformDraft!.width! > 0)
+                ? _shapeTransformDraft!.width!
+                : baseShape.width,
+            height: (_shapeTransformDraft!.height != null &&
+                    _shapeTransformDraft!.height! > 0)
+                ? _shapeTransformDraft!.height!
+                : baseShape.height,
             data: {
               ...baseShape.data,
               'rotation': _shapeTransformDraft!.rotation,
@@ -1692,15 +2721,38 @@ class _CanvasScreenState extends State<CanvasScreen> {
         : baseShape;
 
     final center = _toScreen(shape.center);
-    final size = shape.size * _viewportScale;
-    final half = size / 2;
+    final double rawW;
+    final double rawH;
+    if (shape.kind == _ElementKind.stickyNote ||
+        shape.kind == _ElementKind.image) {
+      rawW = shape.width > 0
+          ? shape.width
+          : (shape.size > 0 ? shape.size : 160.0);
+      rawH = shape.height > 0
+          ? shape.height
+          : (shape.size > 0 ? shape.size : 160.0);
+    } else if (shape.shapeType == CanvasShapeType.arrow) {
+      rawW = shape.size * 1.3;
+      rawH = shape.size * 0.7;
+    } else if (shape.shapeType == CanvasShapeType.rectangle) {
+      rawW = shape.size * 1.35;
+      rawH = shape.size * 0.8;
+    } else {
+      rawW = shape.size;
+      rawH = shape.size;
+    }
+
+    final screenW = rawW * _viewportScale;
+    final screenH = rawH * _viewportScale;
+    final halfW = screenW / 2;
+    final halfH = screenH / 2;
     final rotation = (shape.data['rotation'] as num?)?.toDouble() ?? 0.0;
 
     return Positioned(
-      left: center.dx - half - 16,
-      top: center.dy - half - 16,
-      width: size + 32,
-      height: size + 32,
+      left: center.dx - halfW - 16,
+      top: center.dy - halfH - 16,
+      width: screenW + 32,
+      height: screenH + 32,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
@@ -1711,14 +2763,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  Positioned.fill(
+                  Positioned(
+                    left: 16,
+                    top: 16,
+                    width: screenW,
+                    height: screenH,
                     child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onPanStart: (_) {
                         _setShapeEditing(true);
                         _shapeTransformDraft ??= _ShapeTransformDraft(
                           shapeId: shape.id,
                           center: shape.center,
                           size: shape.size,
+                          width: rawW,
+                          height: rawH,
                           rotation:
                               (shape.data['rotation'] as num?)?.toDouble() ??
                               state.selectedShapeRotation,
@@ -1731,6 +2790,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               shapeId: shape.id,
                               center: shape.center,
                               size: shape.size,
+                              width: rawW,
+                              height: rawH,
                               rotation:
                                   (shape.data['rotation'] as num?)?.toDouble() ??
                                   state.selectedShapeRotation,
@@ -1754,15 +2815,19 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       },
                       child: Container(
                         decoration: BoxDecoration(
+                          color: Colors.transparent,
                           border: Border.all(color: _tokens.accent, width: 1.5),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(
+                            shape.kind == _ElementKind.stickyNote ? 8 : 4,
+                          ),
                         ),
                       ),
                     ),
                   ),
+                  // Rotate handle (top center)
                   Positioned(
-                    top: -8,
-                    left: size / 2,
+                    top: 2,
+                    left: 16 + (screenW / 2) - 14,
                     child: GestureDetector(
                       onPanStart: (_) {
                         _setShapeEditing(true);
@@ -1774,6 +2839,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           shapeId: shape.id,
                           center: shape.center,
                           size: shape.size,
+                          width: rawW,
+                          height: rawH,
                           rotation: baseRotation,
                         );
                       },
@@ -1804,9 +2871,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       child: _buildHandle(LucideIcons.rotateCw),
                     ),
                   ),
+                  // Resize handle (bottom right)
                   Positioned(
-                    top: size / 2,
-                    right: -8,
+                    bottom: 2,
+                    right: 2,
                     child: GestureDetector(
                       onPanStart: (_) {
                         _setShapeEditing(true);
@@ -1815,6 +2883,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           shapeId: shape.id,
                           center: shape.center,
                           size: shape.size,
+                          width: rawW,
+                          height: rawH,
                           rotation:
                               (shape.data['rotation'] as num?)?.toDouble() ??
                               state.selectedShapeRotation,
@@ -1825,10 +2895,20 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         if (draft == null || draft.shapeId != shape.id) return;
                         final delta = details.delta.dx + details.delta.dy;
                         final nextSize = (draft.size + delta / _viewportScale * 1.8)
-                            .clamp(24.0, 420.0)
+                            .clamp(32.0, 480.0)
+                            .toDouble();
+                        final nextW = ((draft.width ?? draft.size) + details.delta.dx / _viewportScale * 1.8)
+                            .clamp(40.0, 480.0)
+                            .toDouble();
+                        final nextH = ((draft.height ?? draft.size) + details.delta.dy / _viewportScale * 1.8)
+                            .clamp(40.0, 480.0)
                             .toDouble();
                         setState(() {
-                          _shapeTransformDraft = draft.copyWith(size: nextSize);
+                          _shapeTransformDraft = draft.copyWith(
+                            size: nextSize,
+                            width: nextW,
+                            height: nextH,
+                          );
                         });
                         _canvasBloc.add(CanvasPreviewResizeSelectedShape(nextSize));
                       },
@@ -1844,13 +2924,40 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       child: _buildHandle(LucideIcons.maximize2),
                     ),
                   ),
+                  // Sticky note quick edit button (bottom left)
+                  if (shape.kind == _ElementKind.stickyNote)
+                    Positioned(
+                      bottom: 2,
+                      left: 2,
+                      child: GestureDetector(
+                        onTap: () => _editStickyNote(shape),
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.blueAccent, width: 2),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x33000000),
+                                blurRadius: 4,
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(Icons.edit, size: 14, color: Colors.blueAccent),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
           ),
+          // Delete button (top right)
           Positioned(
-            top: -8,
-            right: -8,
+            top: 2,
+            right: 2,
             child: GestureDetector(
               onTap: () => _canvasBloc.add(CanvasDeleteElement(shape.id)),
               child: Container(
@@ -1862,7 +2969,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   border: Border.all(color: Colors.white, width: 2),
                   boxShadow: const [
                     BoxShadow(
-                      color: Color(0x22000000),
+                      color: Color(0x33000000),
                       blurRadius: 4,
                       offset: Offset(0, 2),
                     ),
@@ -1900,7 +3007,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Widget _buildAllTrays(CanvasState state) {
     return Stack(
       children: [
-        MembersTray(isOpen: state.activeTray == 'members'),
+        MembersTray(
+          isOpen: state.activeTray == 'members',
+          onClose: () => _toggleTray('members'),
+        ),
         AITray(
           isOpen: state.activeTray == 'ai',
           controller: _aiPromptController,
@@ -1908,17 +3018,23 @@ class _CanvasScreenState extends State<CanvasScreen> {
           onUploadImage: _uploadImageToCanvas,
           onGenerateImage: _onGenerateImagePlaceholder,
           recentImages: _recentImages,
+          onClose: () => _toggleTray('ai'),
         ),
         ToolsTray(
           isOpen: state.activeTray == 'tools',
           onUndo: _undo,
           onRedo: _redo,
           onClearAll: _clearAll,
+          onAddStickyNote: _addStickyNoteDialog,
+          onAddConnector: _addConnectorDialog,
+          onExport: () => _showExportOptionsSheet(context),
+          onClose: () => _toggleTray('tools'),
         ),
         ShapesTray(
           isOpen: state.activeTray == 'shapes',
           onSelectShapeForDrawing: _selectShapeForDrawing,
           selectedType: state.pendingShapeType,
+          onClose: () => _toggleTray('shapes'),
         ),
         BrushTray(
           isOpen: state.activeTray == 'brushes',
@@ -1947,6 +3063,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           onToolModeChanged: (mode) {
             _canvasBloc.add(CanvasSetToolMode(mode));
           },
+          onClose: () => _toggleTray('brushes'),
         ),
       ],
     );
@@ -2024,11 +3141,37 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     icon: Icon(LucideIcons.scan, color: tokens.ink, size: 18),
                     onPressed: _toggleResetView,
                   ),
+                  if (state.isExporting)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 10),
+                      child: Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    )
+                  else
+                    IconButton(
+                      tooltip: 'Export & Share Board',
+                      icon: Icon(LucideIcons.download, color: tokens.ink, size: 18),
+                      onPressed: () => _showExportOptionsSheet(context),
+                    ),
                   PopupMenuButton<String>(
                     icon: Icon(LucideIcons.ellipsis, color: tokens.ink, size: 18),
                     onSelected: (value) {
                       if (value == 'settings') {
                         _openSettings(state.boardTitle ?? 'Board');
+                      } else if (value == 'export') {
+                        _showExportOptionsSheet(context);
+                      } else if (value == 'share') {
+                        _canvasBloc.add(
+                          const CanvasExportBoardRequested(
+                            format: BoardExportFormat.png,
+                            shareAfterExport: true,
+                          ),
+                        );
                       } else if (value == 'copy') {
                         Clipboard.setData(
                           ClipboardData(text: widget.boardId),
@@ -2038,6 +3181,22 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             content: Text('Join Code copied to clipboard!'),
                           ),
                         );
+                      } else if (value == 'toggle_gesture_lock') {
+                        setState(() {
+                          _preventGestureBack = !_preventGestureBack;
+                        });
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(_preventGestureBack
+                                ? 'Gesture back locked (exit via back button).'
+                                : 'Gesture back unlocked.'),
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      } else if (value == 'toggle_edge_buttons') {
+                        setState(() {
+                          _showEdgeTrayButtons = !_showEdgeTrayButtons;
+                        });
                       } else if (value == 'exit') {
                         _exitCanvas();
                       }
@@ -2048,8 +3207,27 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         child: _menuRow(LucideIcons.slidersHorizontal, 'Board Settings', tokens.ink),
                       ),
                       PopupMenuItem(
+                        value: 'export',
+                        child: _menuRow(LucideIcons.download, 'Export Board...', tokens.ink),
+                      ),
+                      PopupMenuItem(
+                        value: 'share',
+                        child: _menuRow(LucideIcons.share2, 'Share Board', tokens.ink),
+                      ),
+                      PopupMenuItem(
                         value: 'copy',
                         child: _menuRow(LucideIcons.copy, 'Copy Join Code', tokens.ink),
+                      ),
+                      const PopupMenuDivider(),
+                      CheckedPopupMenuItem<String>(
+                        value: 'toggle_gesture_lock',
+                        checked: _preventGestureBack,
+                        child: Text('Lock Back Gesture', style: TextStyle(color: tokens.ink)),
+                      ),
+                      CheckedPopupMenuItem<String>(
+                        value: 'toggle_edge_buttons',
+                        checked: _showEdgeTrayButtons,
+                        child: Text('Show Tray Edge Icons', style: TextStyle(color: tokens.ink)),
                       ),
                       const PopupMenuDivider(),
                       PopupMenuItem(
@@ -2104,6 +3282,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   Widget _buildGlassEdgeTab(IconData icon, {bool vertical = true}) {
+    if (!_showEdgeTrayButtons) return const SizedBox.shrink();
     final tokens = _tokens;
     return IgnorePointer(
       child: Center(
@@ -2119,20 +3298,23 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
-  Widget _buildEdgeTriggers() {
+  Widget _buildEdgeTriggers(CanvasState state, bool isDark) {
     return Stack(
       children: [
+        // Touch triggers for swiping
         // BOTTOM: Swipe Up for Brushes
         Align(
           alignment: Alignment.bottomCenter,
           child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
+            behavior: HitTestBehavior.opaque,
             onTap: () => _openTray('brushes'),
+            onVerticalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onVerticalDragUpdate: (d) {
-              if (d.delta.dy < -8) _openTray('brushes');
+              _lastEdgeDragTime = DateTime.now();
+              if (d.delta.dy < -6) _openTray('brushes');
             },
             child: Container(
-              height: 50,
+              height: 55,
               width: double.infinity,
               color: Colors.transparent,
               child: _buildGlassEdgeTab(LucideIcons.penLine, vertical: false),
@@ -2143,14 +3325,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
         Align(
           alignment: Alignment.topLeft,
           child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
+            behavior: HitTestBehavior.opaque,
             onTap: () => _openTray('members'),
+            onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
-              if (d.delta.dx > 8) _openTray('members');
+              _lastEdgeDragTime = DateTime.now();
+              if (d.delta.dx > 6) _openTray('members');
             },
             child: Container(
-              height: 200,
-              width: 40,
+              height: 220,
+              width: 50,
               margin: const EdgeInsets.only(top: 60),
               color: Colors.transparent,
               child: _buildGlassEdgeTab(LucideIcons.users),
@@ -2161,14 +3345,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
         Align(
           alignment: Alignment.bottomLeft,
           child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
+            behavior: HitTestBehavior.opaque,
             onTap: () => _openTray('tools'),
+            onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
-              if (d.delta.dx > 8) _openTray('tools');
+              _lastEdgeDragTime = DateTime.now();
+              if (d.delta.dx > 6) _openTray('tools');
             },
             child: Container(
-              height: 200,
-              width: 40,
+              height: 220,
+              width: 50,
               margin: const EdgeInsets.only(bottom: 60),
               color: Colors.transparent,
               child: _buildGlassEdgeTab(LucideIcons.slidersHorizontal),
@@ -2179,14 +3365,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
         Align(
           alignment: Alignment.topRight,
           child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
+            behavior: HitTestBehavior.opaque,
             onTap: () => _openTray('ai'),
+            onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
-              if (d.delta.dx < -8) _openTray('ai');
+              _lastEdgeDragTime = DateTime.now();
+              if (d.delta.dx < -6) _openTray('ai');
             },
             child: Container(
-              height: 200,
-              width: 40,
+              height: 220,
+              width: 50,
               margin: const EdgeInsets.only(top: 60),
               color: Colors.transparent,
               child: _buildGlassEdgeTab(LucideIcons.sparkles),
@@ -2197,14 +3385,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
         Align(
           alignment: Alignment.bottomRight,
           child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
+            behavior: HitTestBehavior.opaque,
             onTap: () => _openTray('shapes'),
+            onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
-              if (d.delta.dx < -8) _openTray('shapes');
+              _lastEdgeDragTime = DateTime.now();
+              if (d.delta.dx < -6) _openTray('shapes');
             },
             child: Container(
-              height: 200,
-              width: 40,
+              height: 220,
+              width: 50,
               margin: const EdgeInsets.only(bottom: 60),
               color: Colors.transparent,
               child: _buildGlassEdgeTab(LucideIcons.shapes),
@@ -2220,28 +3410,40 @@ class _CanvasScreenState extends State<CanvasScreen> {
       return const SizedBox.shrink();
     }
 
-    final (IconData icon, String label) = switch (state.currentToolMode) {
-      CanvasToolMode.shape => (
-        LucideIcons.shapes,
-        state.pendingShapeType != null
-            ? 'Shape: ${state.pendingShapeType!.name}'
-            : 'Shape',
-      ),
-      CanvasToolMode.eraser => (LucideIcons.eraser, 'Eraser'),
-      CanvasToolMode.text => (LucideIcons.type, 'Text'),
-      CanvasToolMode.arrow => (LucideIcons.moveUpRight, 'Arrow'),
-      CanvasToolMode.image => (LucideIcons.image, 'Image'),
-      CanvasToolMode.highlight => (LucideIcons.highlighter, 'Highlight'),
-      CanvasToolMode.doodle => (LucideIcons.penLine, 'Doodle'),
-    };
+    final (IconData icon, String label) = _isArrowMode(state)
+        ? (
+            LucideIcons.arrowRight,
+            _arrowConnectStartElementId != null
+                ? 'Arrow: Tap 2nd shape to point to'
+                : 'Arrow: Tap 2 shapes to connect, or drag',
+          )
+        : switch (state.currentToolMode) {
+            CanvasToolMode.shape => (
+              LucideIcons.shapes,
+              state.pendingShapeType != null
+                  ? 'Shape: ${state.pendingShapeType!.name}'
+                  : 'Shape',
+            ),
+            CanvasToolMode.eraser => (LucideIcons.eraser, 'Eraser'),
+            CanvasToolMode.text => (LucideIcons.type, 'Text'),
+            CanvasToolMode.arrow => (LucideIcons.arrowRight, 'Arrow'),
+            CanvasToolMode.image => (LucideIcons.image, 'Image'),
+            CanvasToolMode.highlight => (LucideIcons.highlighter, 'Highlight'),
+            CanvasToolMode.doodle => (LucideIcons.penLine, 'Doodle'),
+          };
 
     return Positioned(
       left: 48,
       bottom: 48,
       child: GestureDetector(
-        onTap: () => _canvasBloc.add(
-          const CanvasSetToolMode(CanvasToolMode.doodle),
-        ),
+        onTap: () {
+          setState(() {
+            _arrowConnectStartElementId = null;
+          });
+          _canvasBloc.add(
+            const CanvasSetToolMode(CanvasToolMode.doodle),
+          );
+        },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
@@ -2498,6 +3700,151 @@ class _CanvasScreenState extends State<CanvasScreen> {
     return overlays;
   }
 
+  void _promptNewCommentDialog(Offset worldPoint) {
+    final textController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.pin_drop, color: Colors.amber),
+            SizedBox(width: 8),
+            Text('Add Comment Pin'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Pin at (${worldPoint.dx.toInt()}, ${worldPoint.dy.toInt()})',
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: textController,
+              autofocus: true,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: 'Write a comment... (use @name to mention)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogCtx);
+              _canvasBloc.add(
+                const CanvasToggleCommentPlacementMode(enable: false),
+              );
+            },
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final text = textController.text.trim();
+              if (text.isNotEmpty) {
+                _canvasBloc.add(
+                  CanvasAddCommentRequested(
+                    text: text,
+                    canvasPosition: worldPoint,
+                  ),
+                );
+              }
+              Navigator.pop(dialogCtx);
+            },
+            child: const Text('Post Pin'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildPinnedCommentPins(CanvasState state) {
+    final widgets = <Widget>[];
+    for (final comment in state.comments) {
+      if (comment.canvasPosition == null) continue;
+      final screenPos = _toScreen(comment.canvasPosition!);
+      final isSelected = comment.id == state.activeCommentId;
+
+      widgets.add(
+        Positioned(
+          left: screenPos.dx - 16,
+          top: screenPos.dy - 32,
+          child: GestureDetector(
+            onTap: () {
+              _canvasBloc.add(CanvasSetActiveComment(comment.id));
+              if (!state.isCommentsTrayOpen) {
+                _canvasBloc.add(const CanvasToggleCommentsTray());
+              }
+            },
+            child: Tooltip(
+              message: '${comment.authorName}: ${comment.text}',
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? Colors.amber.shade700
+                          : Colors.amber.shade600,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: Colors.white,
+                        width: 1.5,
+                      ),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x33000000),
+                          blurRadius: 4,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.chat_bubble,
+                          size: 11,
+                          color: Colors.white,
+                        ),
+                        if (comment.replies.isNotEmpty) ...[
+                          const SizedBox(width: 3),
+                          Text(
+                            '${comment.replies.length}',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  CustomPaint(
+                    size: const Size(8, 5),
+                    painter: _TrianglePainter(
+                      color: isSelected
+                          ? Colors.amber.shade700
+                          : Colors.amber.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return widgets;
+  }
+
   @override
   void dispose() {
     _shapeEditDebounceTimer?.cancel();
@@ -2546,25 +3893,55 @@ class _ShapeTransformDraft {
   final String shapeId;
   final Offset center;
   final double size;
+  final double? width;
+  final double? height;
   final double rotation;
 
   const _ShapeTransformDraft({
     required this.shapeId,
     required this.center,
     required this.size,
+    this.width,
+    this.height,
     required this.rotation,
   });
 
   _ShapeTransformDraft copyWith({
     Offset? center,
     double? size,
+    double? width,
+    double? height,
     double? rotation,
   }) {
     return _ShapeTransformDraft(
       shapeId: shapeId,
       center: center ?? this.center,
       size: size ?? this.size,
+      width: width ?? this.width,
+      height: height ?? this.height,
       rotation: rotation ?? this.rotation,
     );
   }
+}
+
+class _TrianglePainter extends CustomPainter {
+  final Color color;
+  const _TrianglePainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrianglePainter oldDelegate) =>
+      oldDelegate.color != color;
 }

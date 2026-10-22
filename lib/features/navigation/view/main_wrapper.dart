@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/domain/services/presence/presence_service.dart';
 import 'package:inklink/domain/services/settings/settings_service.dart';
+import 'package:inklink/domain/services/profile/profile_service.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../ui/widgets/glass_nav_bar.dart';
 import '../../friends/view/friends_screen.dart';
@@ -110,7 +111,10 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
       const WorkspacesScreen(),
       BlocProvider(
         create: (context) =>
-            SettingsBloc(settingsService: context.read<SettingsService>())
+            SettingsBloc(
+              settingsService: context.read<SettingsService>(),
+              profileService: context.read<ProfileService>(),
+            )
               ..add(const SettingsLoadRequested()),
         child: const SettingsScreen(),
       ),

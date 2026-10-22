@@ -37,6 +37,7 @@ import 'package:inklink/domain/repositories/workspace/workspace_repository_impl.
 import 'package:inklink/domain/repositories/theme/theme_repository_impl.dart';
 import 'package:inklink/domain/services/auth/auth_session_service.dart';
 import 'package:inklink/domain/services/board/board_service.dart';
+import 'package:inklink/domain/services/canvas/board_export_service.dart';
 import 'package:inklink/domain/services/canvas/canvas_service.dart';
 import 'package:inklink/domain/services/friends/friends_service.dart';
 import 'package:inklink/domain/services/invitation/invitation_service.dart';
@@ -46,6 +47,14 @@ import 'package:inklink/domain/services/profile/profile_service.dart';
 import 'package:inklink/domain/services/settings/settings_service.dart';
 import 'package:inklink/domain/services/theme/theme_service.dart';
 import 'package:inklink/domain/services/workspace/workspace_service.dart';
+import 'package:inklink/domain/repositories/canvas/board_comments_repository.dart';
+import 'package:inklink/domain/repositories/canvas/board_comments_repository_impl.dart';
+import 'package:inklink/domain/services/canvas/board_comments_service.dart';
+import 'package:inklink/domain/services/canvas/board_comments_service_impl.dart';
+import 'package:inklink/domain/services/canvas/board_chat_service.dart';
+import 'package:inklink/domain/services/canvas/board_chat_service_impl.dart';
+import 'package:inklink/domain/services/voice/voice_service.dart';
+import 'package:inklink/domain/services/voice/voice_service_impl.dart';
 import 'package:inklink/core/utils/notification_preferences.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
@@ -178,6 +187,11 @@ void main() async {
             localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
+        RepositoryProvider<BoardCommentsRepository>(
+          create: (context) => FirestoreBoardCommentsRepository(
+            firestoreService: context.read<FirestoreService>(),
+          ),
+        ),
         // 2. Domain services (depend on repositories)
         RepositoryProvider<PresenceService>(
           create: (context) => PresenceServiceImpl(
@@ -193,6 +207,7 @@ void main() async {
             localDatabaseService: context.read<LocalDatabaseService>(),
             presenceService: context.read<PresenceService>(),
             canvasSyncRepository: context.read<CanvasSyncRepository>(),
+            cloudFunctionsService: context.read<CloudFunctionsService>(),
           ),
         ),
         RepositoryProvider<FriendsService>(
@@ -229,6 +244,26 @@ void main() async {
           create: (context) => CanvasServiceImpl(
             boardRepository: context.read<BoardRepository>(),
             syncRepository: context.read<CanvasSyncRepository>(),
+          ),
+        ),
+        RepositoryProvider<BoardExportService>(
+          create: (context) => const BoardExportServiceImpl(),
+        ),
+        RepositoryProvider<BoardCommentsService>(
+          create: (context) => BoardCommentsServiceImpl(
+            repository: context.read<BoardCommentsRepository>(),
+            authService: context.read<AuthService>(),
+            cloudFunctionsService: context.read<CloudFunctionsService>(),
+          ),
+        ),
+        RepositoryProvider<BoardChatService>(
+          create: (context) => BoardChatServiceImpl(
+            authService: context.read<AuthService>(),
+          ),
+        ),
+        RepositoryProvider<VoiceService>(
+          create: (context) => VoiceServiceImpl(
+            authService: context.read<AuthService>(),
           ),
         ),
         RepositoryProvider<WorkspaceService>(

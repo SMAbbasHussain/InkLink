@@ -85,6 +85,7 @@ class DashboardCreateBoardRequested extends DashboardEvent {
   final String defaultLinkJoinRole;
   final String inviteTargetRole;
   final List<String> tags;
+  final bool allowMembersToCopy;
   final List<String> invitedUserIds;
   final int inviteExpiryHours;
 
@@ -96,6 +97,7 @@ class DashboardCreateBoardRequested extends DashboardEvent {
     this.defaultLinkJoinRole = Board.roleViewer,
     this.inviteTargetRole = Board.roleViewer,
     this.tags = const [],
+    this.allowMembersToCopy = false,
     this.invitedUserIds = const [],
     this.inviteExpiryHours = 72,
   });
@@ -107,6 +109,7 @@ class DashboardUpdateBoardSettingsRequested extends DashboardEvent {
   final String privateJoinPolicy;
   final String whoCanInvite;
   final String defaultLinkJoinRole;
+  final bool? allowMembersToCopy;
 
   DashboardUpdateBoardSettingsRequested({
     required this.boardId,
@@ -114,6 +117,7 @@ class DashboardUpdateBoardSettingsRequested extends DashboardEvent {
     required this.privateJoinPolicy,
     required this.whoCanInvite,
     required this.defaultLinkJoinRole,
+    this.allowMembersToCopy,
   });
 }
 
@@ -128,6 +132,28 @@ class DashboardDeleteBoardRequested extends DashboardEvent {
   final String boardId;
 
   DashboardDeleteBoardRequested(this.boardId);
+}
+
+class DashboardArchiveBoardRequested extends DashboardEvent {
+  final String boardId;
+  DashboardArchiveBoardRequested(this.boardId);
+}
+
+class DashboardUnarchiveBoardRequested extends DashboardEvent {
+  final String boardId;
+  DashboardUnarchiveBoardRequested(this.boardId);
+}
+
+class DashboardDuplicateBoardRequested extends DashboardEvent {
+  final String boardId;
+  final String? customTitle;
+  DashboardDuplicateBoardRequested(this.boardId, {this.customTitle});
+}
+
+class DashboardUpdateBoardTagsRequested extends DashboardEvent {
+  final String boardId;
+  final List<String> tags;
+  DashboardUpdateBoardTagsRequested({required this.boardId, required this.tags});
 }
 
 class DashboardConsumeEffects extends DashboardEvent {
@@ -168,6 +194,10 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     on<DashboardUpdateBoardSettingsRequested>(
       _onDashboardUpdateBoardSettingsRequested,
     );
+    on<DashboardArchiveBoardRequested>(_onDashboardArchiveBoardRequested);
+    on<DashboardUnarchiveBoardRequested>(_onDashboardUnarchiveBoardRequested);
+    on<DashboardDuplicateBoardRequested>(_onDashboardDuplicateBoardRequested);
+    on<DashboardUpdateBoardTagsRequested>(_onDashboardUpdateBoardTagsRequested);
     on<DashboardConsumeEffects>(_onDashboardConsumeEffects);
     on<DashboardWatchCurrentUserProfileRequested>(
       _onDashboardWatchCurrentUserProfileRequested,
@@ -313,6 +343,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         defaultLinkJoinRole: event.defaultLinkJoinRole,
         inviteTargetRole: event.inviteTargetRole,
         tags: event.tags,
+        allowMembersToCopy: event.allowMembersToCopy,
         invitedUserIds: event.invitedUserIds,
         inviteExpiryHours: event.inviteExpiryHours,
       );
@@ -350,6 +381,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         privateJoinPolicy: event.privateJoinPolicy,
         whoCanInvite: event.whoCanInvite,
         defaultLinkJoinRole: event.defaultLinkJoinRole,
+        allowMembersToCopy: event.allowMembersToCopy,
       );
 
       final current = state;
@@ -396,6 +428,109 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       final current = state;
       if (current is DashboardLoaded) {
         emit(current.copyWith(actionError: null));
+      }
+    } catch (e) {
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(current.copyWith(actionError: _humanizeError(e)));
+      }
+    }
+  }
+
+  Future<void> _onDashboardArchiveBoardRequested(
+    DashboardArchiveBoardRequested event,
+    Emitter<DashboardState> emit,
+  ) async {
+    try {
+      await boardService.archiveBoard(event.boardId);
+      final current = state;
+      if (current is DashboardLoaded) {
+        final updatedOwned = current.ownedBoards
+            .map((b) => b.id == event.boardId ? b.copyWith(isArchived: true) : b)
+            .toList();
+        final updatedJoined = current.joinedBoards
+            .map((b) => b.id == event.boardId ? b.copyWith(isArchived: true) : b)
+            .toList();
+        emit(current.copyWith(
+          ownedBoards: updatedOwned,
+          joinedBoards: updatedJoined,
+          actionError: null,
+          actionInfo: 'Board archived.',
+        ));
+      }
+    } catch (e) {
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(current.copyWith(actionError: _humanizeError(e)));
+      }
+    }
+  }
+
+  Future<void> _onDashboardUnarchiveBoardRequested(
+    DashboardUnarchiveBoardRequested event,
+    Emitter<DashboardState> emit,
+  ) async {
+    try {
+      await boardService.unarchiveBoard(event.boardId);
+      final current = state;
+      if (current is DashboardLoaded) {
+        final updatedOwned = current.ownedBoards
+            .map((b) => b.id == event.boardId ? b.copyWith(isArchived: false) : b)
+            .toList();
+        final updatedJoined = current.joinedBoards
+            .map((b) => b.id == event.boardId ? b.copyWith(isArchived: false) : b)
+            .toList();
+        emit(current.copyWith(
+          ownedBoards: updatedOwned,
+          joinedBoards: updatedJoined,
+          actionError: null,
+          actionInfo: 'Board restored from archive.',
+        ));
+      }
+    } catch (e) {
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(current.copyWith(actionError: _humanizeError(e)));
+      }
+    }
+  }
+
+  Future<void> _onDashboardDuplicateBoardRequested(
+    DashboardDuplicateBoardRequested event,
+    Emitter<DashboardState> emit,
+  ) async {
+    try {
+      final newId = await boardService.duplicateBoard(
+        event.boardId,
+        customTitle: event.customTitle,
+      );
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(
+          current.copyWith(
+            actionError: null,
+            actionInfo: 'Board duplicated successfully.',
+            createdBoardId: newId,
+          ),
+        );
+      }
+    } catch (e) {
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(current.copyWith(actionError: _humanizeError(e)));
+      }
+    }
+  }
+
+  Future<void> _onDashboardUpdateBoardTagsRequested(
+    DashboardUpdateBoardTagsRequested event,
+    Emitter<DashboardState> emit,
+  ) async {
+    try {
+      await boardService.updateBoardTags(event.boardId, event.tags);
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(current.copyWith(actionError: null, actionInfo: 'Board tags updated.'));
       }
     } catch (e) {
       final current = state;

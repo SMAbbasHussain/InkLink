@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../view/trays/canvas_shape_type.dart';
+import '../../../domain/models/canvas/canvas_shape_type.dart';
 
 sealed class CanvasElement {
   final String id;
@@ -69,6 +69,45 @@ sealed class CanvasElement {
           width: (data['width'] as num).toDouble(),
           height: (data['height'] as num).toDouble(),
           imageBase64: data['imageBase64'] as String? ?? '',
+        );
+      case 'sticky_note':
+        return StickyNoteElement(
+          id: id,
+          z: z,
+          center: Offset(
+            (data['cx'] as num).toDouble(),
+            (data['cy'] as num).toDouble(),
+          ),
+          width: (data['width'] as num?)?.toDouble() ??
+              (data['size'] as num?)?.toDouble() ??
+              160,
+          height: (data['height'] as num?)?.toDouble() ??
+              (data['size'] as num?)?.toDouble() ??
+              160,
+          text: data['text'] as String? ?? '',
+          color: Color(data['color'] as int? ?? 0xFFFFF9A6),
+          rotation: (data['rotation'] as num?)?.toDouble() ?? 0,
+        );
+      case 'connector':
+        return ConnectorElement(
+          id: id,
+          z: z,
+          startElementId: data['startElementId'] as String?,
+          startPoint: Offset(
+            (data['sx'] as num).toDouble(),
+            (data['sy'] as num).toDouble(),
+          ),
+          startAnchor: data['startAnchor'] as String? ?? 'center',
+          endElementId: data['endElementId'] as String?,
+          endPoint: Offset(
+            (data['ex'] as num).toDouble(),
+            (data['ey'] as num).toDouble(),
+          ),
+          endAnchor: data['endAnchor'] as String? ?? 'center',
+          lineStyle: data['lineStyle'] as String? ?? 'straight',
+          color: Color(data['color'] as int? ?? 0xFF000000),
+          strokeWidth: (data['strokeWidth'] as num?)?.toDouble() ?? 2.5,
+          hasArrowhead: data['hasArrowhead'] as bool? ?? true,
         );
       default:
         throw ArgumentError('Unknown canvas element type: $type');
@@ -291,4 +330,135 @@ class ImageElement extends CanvasElement {
       width.hashCode ^
       height.hashCode ^
       imageBase64.hashCode;
+}
+
+class StickyNoteElement extends CanvasElement {
+  final Offset center;
+  final double width;
+  final double height;
+  final String text;
+  final Color color;
+  final double rotation;
+
+  const StickyNoteElement({
+    required super.id,
+    required super.z,
+    required this.center,
+    this.width = 160,
+    this.height = 160,
+    this.text = '',
+    this.color = const Color(0xFFFFF9A6),
+    this.rotation = 0,
+  });
+
+  @override
+  Map<String, dynamic> toMap() => {
+        'type': 'sticky_note',
+        'z': z,
+        'cx': center.dx,
+        'cy': center.dy,
+        'width': width,
+        'height': height,
+        'text': text,
+        'color': color.value,
+        'rotation': rotation,
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StickyNoteElement &&
+          super == other &&
+          center == other.center &&
+          width == other.width &&
+          height == other.height &&
+          text == other.text &&
+          color == other.color &&
+          rotation == other.rotation;
+
+  @override
+  int get hashCode =>
+      super.hashCode ^
+      center.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
+      text.hashCode ^
+      color.hashCode ^
+      rotation.hashCode;
+}
+
+class ConnectorElement extends CanvasElement {
+  final String? startElementId;
+  final Offset startPoint;
+  final String startAnchor;
+  final String? endElementId;
+  final Offset endPoint;
+  final String endAnchor;
+  final String lineStyle;
+  final Color color;
+  final double strokeWidth;
+  final bool hasArrowhead;
+
+  const ConnectorElement({
+    required super.id,
+    required super.z,
+    this.startElementId,
+    required this.startPoint,
+    this.startAnchor = 'center',
+    this.endElementId,
+    required this.endPoint,
+    this.endAnchor = 'center',
+    this.lineStyle = 'straight',
+    this.color = const Color(0xFF000000),
+    this.strokeWidth = 2.5,
+    this.hasArrowhead = true,
+  });
+
+  @override
+  Map<String, dynamic> toMap() => {
+        'type': 'connector',
+        'z': z,
+        if (startElementId != null) 'startElementId': startElementId,
+        'sx': startPoint.dx,
+        'sy': startPoint.dy,
+        'startAnchor': startAnchor,
+        if (endElementId != null) 'endElementId': endElementId,
+        'ex': endPoint.dx,
+        'ey': endPoint.dy,
+        'endAnchor': endAnchor,
+        'lineStyle': lineStyle,
+        'color': color.value,
+        'strokeWidth': strokeWidth,
+        'hasArrowhead': hasArrowhead,
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ConnectorElement &&
+          super == other &&
+          startElementId == other.startElementId &&
+          startPoint == other.startPoint &&
+          startAnchor == other.startAnchor &&
+          endElementId == other.endElementId &&
+          endPoint == other.endPoint &&
+          endAnchor == other.endAnchor &&
+          lineStyle == other.lineStyle &&
+          color == other.color &&
+          strokeWidth == other.strokeWidth &&
+          hasArrowhead == other.hasArrowhead;
+
+  @override
+  int get hashCode =>
+      super.hashCode ^
+      startElementId.hashCode ^
+      startPoint.hashCode ^
+      startAnchor.hashCode ^
+      endElementId.hashCode ^
+      endPoint.hashCode ^
+      endAnchor.hashCode ^
+      lineStyle.hashCode ^
+      color.hashCode ^
+      strokeWidth.hashCode ^
+      hasArrowhead.hashCode;
 }

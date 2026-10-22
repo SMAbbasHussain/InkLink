@@ -99,6 +99,82 @@ class CanvasAddImageElement extends CanvasEvent {
   });
 }
 
+/// Add sticky note to canvas
+class CanvasAddStickyNote extends CanvasEvent {
+  final Offset center;
+  final String text;
+  final Color color;
+  final double width;
+  final double height;
+
+  const CanvasAddStickyNote({
+    required this.center,
+    this.text = '',
+    this.color = const Color(0xFFFFF9A6),
+    this.width = 160.0,
+    this.height = 160.0,
+  });
+}
+
+/// Update existing sticky note
+class CanvasUpdateStickyNote extends CanvasEvent {
+  final String elementId;
+  final String? text;
+  final Color? color;
+  final Offset? center;
+
+  const CanvasUpdateStickyNote({
+    required this.elementId,
+    this.text,
+    this.color,
+    this.center,
+  });
+}
+
+/// Add connector element to canvas
+class CanvasAddConnector extends CanvasEvent {
+  final String? startElementId;
+  final Offset startPoint;
+  final String startAnchor;
+  final String? endElementId;
+  final Offset endPoint;
+  final String endAnchor;
+  final String lineStyle;
+  final Color color;
+  final double strokeWidth;
+  final bool hasArrowhead;
+
+  const CanvasAddConnector({
+    this.startElementId,
+    required this.startPoint,
+    this.startAnchor = 'center',
+    this.endElementId,
+    required this.endPoint,
+    this.endAnchor = 'center',
+    this.lineStyle = 'straight',
+    this.color = const Color(0xFF2D3748),
+    this.strokeWidth = 2.5,
+    this.hasArrowhead = true,
+  });
+}
+
+/// Update connector line style or anchors
+class CanvasUpdateConnector extends CanvasEvent {
+  final String elementId;
+  final String? lineStyle;
+  final Color? color;
+  final double? strokeWidth;
+  final bool? hasArrowhead;
+
+  const CanvasUpdateConnector({
+    required this.elementId,
+    this.lineStyle,
+    this.color,
+    this.strokeWidth,
+    this.hasArrowhead,
+  });
+}
+
 /// Update existing image transform
 class CanvasUpdateImageElement extends CanvasEvent {
   final String elementId;
@@ -376,3 +452,155 @@ class CanvasSaveBoardPreviewRequested extends CanvasEvent {
 
   const CanvasSaveBoardPreviewRequested(this.pngBytes);
 }
+
+/// Revoke a member's access from the board (Owner only)
+class CanvasRemoveBoardMember extends CanvasEvent {
+  final String targetUid;
+
+  const CanvasRemoveBoardMember(this.targetUid);
+}
+
+/// Update a member's role (Editor/Viewer) on the board (Owner only)
+class CanvasUpdateBoardMemberRole extends CanvasEvent {
+  final String targetUid;
+  final String newRole;
+
+  const CanvasUpdateBoardMemberRole({
+    required this.targetUid,
+    required this.newRole,
+  });
+}
+
+/// Export canvas board in specified format (PNG, PDF, SVG) and optionally share
+class CanvasExportBoardRequested extends CanvasEvent {
+  final BoardExportFormat format;
+  final bool shareAfterExport;
+
+  const CanvasExportBoardRequested({
+    required this.format,
+    this.shareAfterExport = false,
+  });
+}
+
+/// Reset export message and status
+class CanvasConsumeExportMessage extends CanvasEvent {
+  const CanvasConsumeExportMessage();
+}
+
+// ============================================================
+// Module 11: In-App Communication & Audio Events
+// ============================================================
+
+/// Comments stream updated
+class CanvasCommentsUpdated extends CanvasEvent {
+  final List<CanvasComment> comments;
+  const CanvasCommentsUpdated(this.comments);
+}
+
+/// Chat history / message list updated
+class CanvasChatMessagesUpdated extends CanvasEvent {
+  final List<BoardChatMessage> messages;
+  const CanvasChatMessagesUpdated(this.messages);
+}
+
+/// Single new chat message received
+class CanvasChatMessageReceived extends CanvasEvent {
+  final BoardChatMessage message;
+  const CanvasChatMessageReceived(this.message);
+}
+
+/// Voice participants updated
+class CanvasVoiceParticipantsUpdated extends CanvasEvent {
+  final List<VoiceParticipant> participants;
+  const CanvasVoiceParticipantsUpdated(this.participants);
+}
+
+/// Voice call active status changed
+class CanvasVoiceCallStatusChanged extends CanvasEvent {
+  final bool isInCall;
+  const CanvasVoiceCallStatusChanged(this.isInCall);
+}
+
+/// Voice call mute status changed
+class CanvasVoiceMuteStatusChanged extends CanvasEvent {
+  final bool isMuted;
+  const CanvasVoiceMuteStatusChanged(this.isMuted);
+}
+
+/// Toggle chat drawer open/close
+class CanvasToggleChatDrawer extends CanvasEvent {
+  const CanvasToggleChatDrawer();
+}
+
+/// Toggle comments tray open/close
+class CanvasToggleCommentsTray extends CanvasEvent {
+  const CanvasToggleCommentsTray();
+}
+
+/// Toggle placing comment mode (pin drop on canvas)
+class CanvasToggleCommentPlacementMode extends CanvasEvent {
+  final bool? enable;
+  const CanvasToggleCommentPlacementMode({this.enable});
+}
+
+/// Set active comment thread for viewing / replying
+class CanvasSetActiveComment extends CanvasEvent {
+  final String? commentId;
+  const CanvasSetActiveComment(this.commentId);
+}
+
+/// Add new comment (pinned or board-level)
+class CanvasAddCommentRequested extends CanvasEvent {
+  final String text;
+  final Offset? canvasPosition;
+
+  const CanvasAddCommentRequested({
+    required this.text,
+    this.canvasPosition,
+  });
+}
+
+/// Add reply to comment thread
+class CanvasAddCommentReplyRequested extends CanvasEvent {
+  final String commentId;
+  final String text;
+
+  const CanvasAddCommentReplyRequested({
+    required this.commentId,
+    required this.text,
+  });
+}
+
+/// Delete comment (author or board owner)
+class CanvasDeleteCommentRequested extends CanvasEvent {
+  final String commentId;
+  const CanvasDeleteCommentRequested(this.commentId);
+}
+
+/// Send chat message via WebSocket
+class CanvasSendChatMessageRequested extends CanvasEvent {
+  final String text;
+  const CanvasSendChatMessageRequested(this.text);
+}
+
+/// Join voice call
+class CanvasJoinVoiceCallRequested extends CanvasEvent {
+  const CanvasJoinVoiceCallRequested();
+}
+
+/// Leave voice call
+class CanvasLeaveVoiceCallRequested extends CanvasEvent {
+  const CanvasLeaveVoiceCallRequested();
+}
+
+/// Toggle mic mute
+class CanvasToggleVoiceMuteRequested extends CanvasEvent {
+  const CanvasToggleVoiceMuteRequested();
+}
+
+/// Report speaking activity
+class CanvasVoiceSpeakingChanged extends CanvasEvent {
+  final bool isSpeaking;
+  const CanvasVoiceSpeakingChanged(this.isSpeaking);
+}
+

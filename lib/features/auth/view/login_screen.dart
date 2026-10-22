@@ -10,6 +10,8 @@ import '../../../ui/widgets/auth_hero.dart';
 import '../../../ui/widgets/desk_background.dart';
 import '../../../ui/widgets/glass_panel.dart';
 import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_dialog.dart';
+import '../../../ui/widgets/ink_text_field.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
@@ -54,6 +56,23 @@ class _LoginScreenState extends State<LoginScreen> {
                     Icon(LucideIcons.ban, size: 16, color: tokens.danger),
                     const SizedBox(width: InkSpacing.s8),
                     Flexible(child: Text(state.message)),
+                  ],
+                ),
+              ),
+            );
+          } else if (state is PasswordResetSent) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(LucideIcons.check, size: 16, color: tokens.success),
+                    const SizedBox(width: InkSpacing.s8),
+                    Flexible(
+                      child: Text(
+                        "Password reset link sent to ${state.email}. Check your inbox!",
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -112,7 +131,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             Align(
                               alignment: Alignment.centerRight,
                               child: TextButton(
-                                onPressed: () {},
+                                onPressed: () => _showForgotPasswordDialog(context),
                                 child: Text(
                                   "Forgot Password?",
                                   style: InkType.bodyStrong(tokens.accentText),
@@ -262,6 +281,63 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Text("Sign Up", style: InkType.bodyStrong(tokens.accentText)),
         ),
       ],
+    );
+  }
+
+  void _showForgotPasswordDialog(BuildContext context) {
+    final tokens = context.ink;
+    final resetEmailController = TextEditingController(
+      text: _emailController.text.trim(),
+    );
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return InkDialog(
+          title: "Reset Password",
+          icon: LucideIcons.keyRound,
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Enter your registered email address and we'll send you a link to reset your password.",
+                style: InkType.body(tokens.inkSecondary),
+              ),
+              const SizedBox(height: InkSpacing.s16),
+              InkTextField(
+                controller: resetEmailController,
+                hintText: "Email Address",
+                keyboardType: TextInputType.emailAddress,
+                leadingIcon: LucideIcons.mail,
+              ),
+            ],
+          ),
+          actions: [
+            InkButton.secondary(
+              label: "Cancel",
+              onPressed: () => Navigator.pop(dialogContext),
+            ),
+            InkButton.primary(
+              label: "Send Link",
+              onPressed: () {
+                final email = resetEmailController.text.trim();
+                if (email.isEmpty || !isValidEmail(email)) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text("Please enter a valid email address"),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+                Navigator.pop(dialogContext);
+                context.read<AuthBloc>().add(PasswordResetRequested(email));
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 }

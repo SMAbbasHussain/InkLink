@@ -10,12 +10,14 @@ class ShapesTray extends StatelessWidget {
   final bool isOpen;
   final ValueChanged<CanvasShapeType> onSelectShapeForDrawing;
   final CanvasShapeType? selectedType;
+  final VoidCallback? onClose;
 
   const ShapesTray({
     super.key,
     required this.isOpen,
     required this.onSelectShapeForDrawing,
     this.selectedType,
+    this.onClose,
   });
 
   @override
@@ -48,6 +50,11 @@ class ShapesTray extends StatelessWidget {
         label: 'Semicircle',
         type: CanvasShapeType.semicircle,
       ),
+      (
+        icon: LucideIcons.arrowRight,
+        label: 'Arrow',
+        type: CanvasShapeType.arrow,
+      ),
     ];
 
     return SlidingTray(
@@ -57,6 +64,7 @@ class ShapesTray extends StatelessWidget {
       height: 360,
       width: 244,
       bottomOffset: 60,
+      onClose: onClose,
       child: GridView.builder(
         padding: const EdgeInsets.all(12),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(

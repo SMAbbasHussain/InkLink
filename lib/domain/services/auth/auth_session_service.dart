@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../core/services/auth_service.dart';
+import '../../../core/services/cloud_functions_service.dart';
 import '../../../core/services/messaging_service.dart';
 import '../../../core/services/stream_registry.dart';
 import '../../../core/database/local_database_service.dart';
@@ -20,6 +21,11 @@ abstract class AuthSessionService {
   Future<void> onAuthenticated(User user);
   Future<void> signOut();
   User? get currentUser;
+  Future<void> sendPasswordResetEmail(String email);
+  Future<void> sendEmailVerification();
+  Future<bool> reloadAndCheckEmailVerified();
+  Future<void> deleteAccount({String? password});
+  Future<void> reauthenticate({String? password});
   void registerPreSignOutCallback(Future<void> Function() callback);
   void unregisterPreSignOutCallback(Future<void> Function() callback);
 }
@@ -31,6 +37,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
   final LocalDatabaseService _localDatabaseService;
   final PresenceService _presenceService;
   final CanvasSyncRepository _canvasSyncRepository;
+  final CloudFunctionsService? _cloudFunctionsService;
   final List<Future<void> Function()> _preSignOutCallbacks = [];
   bool _tokenRefreshBound = false;
   String? _lastSyncedToken;
@@ -43,12 +50,14 @@ class AuthSessionServiceImpl implements AuthSessionService {
     required LocalDatabaseService localDatabaseService,
     required PresenceService presenceService,
     required CanvasSyncRepository canvasSyncRepository,
+    CloudFunctionsService? cloudFunctionsService,
   }) : _authRepository = authRepository,
        _authService = authService,
        _messagingService = messagingService,
        _localDatabaseService = localDatabaseService,
        _presenceService = presenceService,
-       _canvasSyncRepository = canvasSyncRepository;
+       _canvasSyncRepository = canvasSyncRepository,
+       _cloudFunctionsService = cloudFunctionsService;
 
   @override
   Stream<User?> get user => _authRepository.user;
@@ -62,6 +71,21 @@ class AuthSessionServiceImpl implements AuthSessionService {
   }
 
   @override
+  Future<void> sendPasswordResetEmail(String email) {
+    return _authRepository.sendPasswordResetEmail(email);
+  }
+
+  @override
+  Future<void> sendEmailVerification() {
+    return _authRepository.sendEmailVerification();
+  }
+
+  @override
+  Future<bool> reloadAndCheckEmailVerified() {
+    return _authRepository.reloadAndCheckEmailVerified();
+  }
+
+  @override
   Future<User?> signUp(String name, String email, String password) async {
     await _authRepository.enableNetwork();
     final user = await _authRepository.signUp(name, email, password);
@@ -69,6 +93,15 @@ class AuthSessionServiceImpl implements AuthSessionService {
 
     await user.updateDisplayName(name);
     await _upsertUserProfile(user, displayName: name);
+
+    // FR01-05: Automatically dispatch email verification upon registration
+    try {
+      await _authRepository.sendEmailVerification();
+      developer.log('Initial email verification dispatched to ${user.email}', name: 'AuthSessionService');
+    } catch (e) {
+      developer.log('Initial email verification dispatch warning: $e', name: 'AuthSessionService', error: e);
+    }
+
     return user;
   }
 
@@ -177,6 +210,78 @@ class AuthSessionServiceImpl implements AuthSessionService {
     await _localDatabaseService.clearLocalCache();
     _lastSyncedToken = null;
     developer.log('signOut: complete', name: 'AuthSessionService');
+  }
+
+  @override
+  Future<void> deleteAccount({String? password}) async {
+    developer.log('deleteAccount: start', name: 'AuthSessionService');
+
+    // Run pre-signout callbacks
+    // 1. Reauthenticate first to validate user credentials before any destructive action
+    await _authRepository.reauthenticate(password: password);
+
+    for (final callback in List.of(_preSignOutCallbacks)) {
+      try {
+        await callback();
+      } catch (e, st) {
+        developer.log(
+          'Error running pre-signout callback during account deletion: $e',
+          name: 'AuthSessionService',
+          error: e,
+          stackTrace: st,
+        );
+      }
+    }
+
+    final current = _authService.getCurrentUser();
+    bool cloudDeleted = false;
+    if (current != null) {
+      try {
+        await _presenceService.setUserOffline();
+      } catch (_) {}
+
+      // Attempt to invoke deleteUserAccount Cloud Function with a short 3s timeout
+      if (_cloudFunctionsService != null) {
+        try {
+          await _cloudFunctionsService
+              .httpsCallable('deleteUserAccount')
+              .call()
+              .timeout(const Duration(seconds: 3));
+          cloudDeleted = true;
+          developer.log('deleteUserAccount Cloud Function succeeded', name: 'AuthSessionService');
+        } catch (e) {
+          developer.log('deleteUserAccount Cloud Function skipped or timed out: $e', name: 'AuthSessionService');
+        }
+      }
+    }
+
+    // Cancel FCM token refresh
+    await _tokenRefreshSub?.cancel();
+    _tokenRefreshSub = null;
+    _tokenRefreshBound = false;
+
+    try {
+      await _canvasSyncRepository.logoutSocket();
+    } catch (_) {}
+    await _canvasSyncRepository.disconnectSocket();
+    StreamRegistry.instance.clearAll();
+
+    // If Cloud Function did not delete the user account, use client-side cascade deletion (skipping re-auth since already verified)
+    if (!cloudDeleted) {
+      await _authRepository.deleteAccount(password: password, reauthenticateUser: false);
+    }
+
+    // Disable network listeners now that user and data are deleted
+    await _authRepository.disableNetwork();
+
+    await _localDatabaseService.clearLocalCache();
+    _lastSyncedToken = null;
+    developer.log('deleteAccount: complete', name: 'AuthSessionService');
+  }
+
+  @override
+  Future<void> reauthenticate({String? password}) {
+    return _authRepository.reauthenticate(password: password);
   }
 
   Future<void> _syncFcmToken() async {

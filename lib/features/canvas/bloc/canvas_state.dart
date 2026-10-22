@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../../domain/models/board.dart';
+import '../models/board_chat_message.dart';
+import '../models/canvas_comment.dart';
 import '../models/canvas_element.dart';
 import '../models/canvas_tool_mode.dart';
+import '../models/voice_participant.dart';
 import '../view/trays/canvas_shape_type.dart';
 
 /// State for CanvasBloc
@@ -20,6 +23,7 @@ class CanvasState {
   final bool isLoading;
   final String? error;
   final String currentUserRole;
+  final String currentUserId;
   final List<BoardMember> boardMembers;
   final String memberSearchQuery;
   final String? selectedShapeId;
@@ -35,6 +39,18 @@ class CanvasState {
   final bool isDrawingShape;
   final Offset? shapeDrawStart;
   final Offset? shapeDrawCurrent;
+  final bool isExporting;
+  final String? exportSuccessMessage;
+  final String? lastExportedFilePath;
+  final List<CanvasComment> comments;
+  final List<BoardChatMessage> chatMessages;
+  final List<VoiceParticipant> voiceParticipants;
+  final bool isVoiceCallActive;
+  final bool isMicMuted;
+  final bool isChatDrawerOpen;
+  final bool isCommentsTrayOpen;
+  final String? activeCommentId;
+  final bool isPlacingComment;
 
   const CanvasState({
     this.boardTitle,
@@ -50,6 +66,7 @@ class CanvasState {
     this.isLoading = false,
     this.error,
     this.currentUserRole = 'viewer',
+    this.currentUserId = '',
     this.boardMembers = const [],
     this.memberSearchQuery = '',
     this.selectedShapeId,
@@ -65,6 +82,18 @@ class CanvasState {
     this.isDrawingShape = false,
     this.shapeDrawStart,
     this.shapeDrawCurrent,
+    this.isExporting = false,
+    this.exportSuccessMessage,
+    this.lastExportedFilePath,
+    this.comments = const [],
+    this.chatMessages = const [],
+    this.voiceParticipants = const [],
+    this.isVoiceCallActive = false,
+    this.isMicMuted = false,
+    this.isChatDrawerOpen = false,
+    this.isCommentsTrayOpen = false,
+    this.activeCommentId,
+    this.isPlacingComment = false,
   });
 
   static const Object _unset = Object();
@@ -83,6 +112,7 @@ class CanvasState {
     bool? isLoading,
     Object? error = _unset,
     String? currentUserRole,
+    String? currentUserId,
     List<BoardMember>? boardMembers,
     String? memberSearchQuery,
     Object? selectedShapeId = _unset,
@@ -98,6 +128,18 @@ class CanvasState {
     bool? isDrawingShape,
     Object? shapeDrawStart = _unset,
     Object? shapeDrawCurrent = _unset,
+    bool? isExporting,
+    Object? exportSuccessMessage = _unset,
+    Object? lastExportedFilePath = _unset,
+    List<CanvasComment>? comments,
+    List<BoardChatMessage>? chatMessages,
+    List<VoiceParticipant>? voiceParticipants,
+    bool? isVoiceCallActive,
+    bool? isMicMuted,
+    bool? isChatDrawerOpen,
+    bool? isCommentsTrayOpen,
+    Object? activeCommentId = _unset,
+    bool? isPlacingComment,
   }) {
     return CanvasState(
       boardTitle: boardTitle == _unset
@@ -118,6 +160,7 @@ class CanvasState {
       isLoading: isLoading ?? this.isLoading,
       error: error == _unset ? this.error : error as String?,
       currentUserRole: currentUserRole ?? this.currentUserRole,
+      currentUserId: currentUserId ?? this.currentUserId,
       boardMembers: boardMembers ?? this.boardMembers,
       memberSearchQuery: memberSearchQuery ?? this.memberSearchQuery,
       selectedShapeId: selectedShapeId == _unset
@@ -148,6 +191,24 @@ class CanvasState {
       shapeDrawCurrent: shapeDrawCurrent == _unset
           ? this.shapeDrawCurrent
           : shapeDrawCurrent as Offset?,
+      isExporting: isExporting ?? this.isExporting,
+      exportSuccessMessage: exportSuccessMessage == _unset
+          ? this.exportSuccessMessage
+          : exportSuccessMessage as String?,
+      lastExportedFilePath: lastExportedFilePath == _unset
+          ? this.lastExportedFilePath
+          : lastExportedFilePath as String?,
+      comments: comments ?? this.comments,
+      chatMessages: chatMessages ?? this.chatMessages,
+      voiceParticipants: voiceParticipants ?? this.voiceParticipants,
+      isVoiceCallActive: isVoiceCallActive ?? this.isVoiceCallActive,
+      isMicMuted: isMicMuted ?? this.isMicMuted,
+      isChatDrawerOpen: isChatDrawerOpen ?? this.isChatDrawerOpen,
+      isCommentsTrayOpen: isCommentsTrayOpen ?? this.isCommentsTrayOpen,
+      activeCommentId: activeCommentId == _unset
+          ? this.activeCommentId
+          : activeCommentId as String?,
+      isPlacingComment: isPlacingComment ?? this.isPlacingComment,
     );
   }
 
@@ -179,6 +240,7 @@ class CanvasState {
           isLoading == other.isLoading &&
           error == other.error &&
           currentUserRole == other.currentUserRole &&
+          currentUserId == other.currentUserId &&
           boardMembers == other.boardMembers &&
           memberSearchQuery == other.memberSearchQuery &&
           selectedShapeId == other.selectedShapeId &&
@@ -193,7 +255,16 @@ class CanvasState {
           pendingShapeType == other.pendingShapeType &&
           isDrawingShape == other.isDrawingShape &&
           shapeDrawStart == other.shapeDrawStart &&
-          shapeDrawCurrent == other.shapeDrawCurrent;
+          shapeDrawCurrent == other.shapeDrawCurrent &&
+          comments == other.comments &&
+          chatMessages == other.chatMessages &&
+          voiceParticipants == other.voiceParticipants &&
+          isVoiceCallActive == other.isVoiceCallActive &&
+          isMicMuted == other.isMicMuted &&
+          isChatDrawerOpen == other.isChatDrawerOpen &&
+          isCommentsTrayOpen == other.isCommentsTrayOpen &&
+          activeCommentId == other.activeCommentId &&
+          isPlacingComment == other.isPlacingComment;
 
   @override
   int get hashCode =>
@@ -210,6 +281,7 @@ class CanvasState {
       isLoading.hashCode ^
       error.hashCode ^
       currentUserRole.hashCode ^
+      currentUserId.hashCode ^
       boardMembers.hashCode ^
       memberSearchQuery.hashCode ^
       selectedShapeId.hashCode ^
@@ -224,11 +296,20 @@ class CanvasState {
       pendingShapeType.hashCode ^
       isDrawingShape.hashCode ^
       shapeDrawStart.hashCode ^
-      shapeDrawCurrent.hashCode;
+      shapeDrawCurrent.hashCode ^
+      comments.hashCode ^
+      chatMessages.hashCode ^
+      voiceParticipants.hashCode ^
+      isVoiceCallActive.hashCode ^
+      isMicMuted.hashCode ^
+      isChatDrawerOpen.hashCode ^
+      isCommentsTrayOpen.hashCode ^
+      activeCommentId.hashCode ^
+      isPlacingComment.hashCode;
 }
 
 class CanvasInitial extends CanvasState {
-  const CanvasInitial() : super();
+  const CanvasInitial({super.currentUserId});
 }
 
 class CanvasCreating extends CanvasState {
