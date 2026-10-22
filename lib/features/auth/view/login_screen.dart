@@ -214,7 +214,7 @@ class _LoginScreenState extends State<LoginScreen> {
     // FIX: Added comprehensive validation with helpful error messages
     if (email.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please enter email and password")),
+        SnackBar(content: Text("Please enter email and password")),
       );
       return;
     }
@@ -324,9 +324,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 final email = resetEmailController.text.trim();
                 if (email.isEmpty || !isValidEmail(email)) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
+                    SnackBar(
                       content: Text("Please enter a valid email address"),
-                      backgroundColor: Colors.red,
+                      backgroundColor: context.ink.danger,
                     ),
                   );
                   return;

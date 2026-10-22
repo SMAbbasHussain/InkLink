@@ -56,7 +56,7 @@ class InkDialog extends StatelessWidget {
                 children: [
                   for (var i = 0; i < actions.length; i++) ...[
                     if (i > 0) const SizedBox(width: InkSpacing.s8),
-                    actions[i],
+                    Flexible(child: actions[i]),
                   ],
                 ],
               ),

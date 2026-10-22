@@ -84,7 +84,7 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
         if (!cameraStatus.isGranted) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
+              SnackBar(
                 content: Text('Camera permission is required to take photos'),
               ),
             );
@@ -124,11 +124,11 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
       if (!['jpg', 'jpeg', 'png'].contains(ext)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text(
                 'Invalid image format. Only PNG, JPEG, and JPG images are supported.',
               ),
-              backgroundColor: Colors.red,
+              backgroundColor: context.ink.danger,
             ),
           );
         }
@@ -154,11 +154,11 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
       if (!isJpeg && !isPng) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text(
                 'Invalid image content. Only valid PNG, JPEG, and JPG images are accepted.',
               ),
-              backgroundColor: Colors.red,
+              backgroundColor: context.ink.danger,
             ),
           );
         }

@@ -12,12 +12,14 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../domain/models/board.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
-import '../../../ui/theme/ink_colors.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
 import '../../../ui/widgets/glass_panel.dart';
 import '../../../ui/widgets/ink_avatar.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_dialog.dart';
+import '../../../ui/widgets/ink_text_field.dart';
 import '../../dashboard/bloc/dashboard_bloc.dart';
 import '../../dashboard/view/board_settings_route.dart';
 import '../bloc/canvas_bloc.dart';
@@ -360,57 +362,78 @@ class _CanvasScreenState extends State<CanvasScreen> {
     } else {
       source = await showModalBottomSheet<ImageSource>(
         context: context,
-        backgroundColor: Theme.of(context).cardColor,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-        ),
-        builder: (ctx) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.withOpacity(0.4),
-                    borderRadius: BorderRadius.circular(2),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        builder: (ctx) {
+          final tokens = ctx.ink;
+          Widget option(IconData icon, String title, String subtitle, ImageSource src) {
+            return Material(
+              color: tokens.field,
+              borderRadius: BorderRadius.circular(InkRadii.input),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(InkRadii.input),
+                onTap: () => Navigator.pop(ctx, src),
+                child: Padding(
+                  padding: const EdgeInsets.all(InkSpacing.s12),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: tokens.accentSoft,
+                          borderRadius: BorderRadius.circular(InkRadii.chip + 2),
+                        ),
+                        child: Icon(icon, size: 20, color: tokens.accentText),
+                      ),
+                      const SizedBox(width: InkSpacing.s12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title, style: InkType.bodyStrong(tokens.ink)),
+                            Text(subtitle, style: InkType.caption(tokens.inkMuted)),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Insert Image',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            );
+          }
+
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(InkSpacing.s12),
+              child: GlassPanel(
+                radius: InkRadii.bottomSheet,
+                padding: const EdgeInsets.all(InkSpacing.s20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Insert Image', style: InkType.title(tokens.ink)),
+                    const SizedBox(height: InkSpacing.s16),
+                    option(
+                      LucideIcons.camera,
+                      'Take Photo with Camera',
+                      'Capture a picture and place onto canvas',
+                      ImageSource.camera,
                     ),
-                  ),
+                    const SizedBox(height: InkSpacing.s8),
+                    option(
+                      LucideIcons.image,
+                      'Choose from Gallery',
+                      'Pick an existing photo or graphic',
+                      ImageSource.gallery,
+                    ),
+                  ],
                 ),
-                ListTile(
-                  leading: const CircleAvatar(
-                    backgroundColor: InkColors.accent,
-                    child: Icon(Icons.camera_alt_rounded, color: Colors.white),
-                  ),
-                  title: const Text('Take Photo with Camera'),
-                  subtitle: const Text('Capture a picture and place onto canvas'),
-                  onTap: () => Navigator.pop(ctx, ImageSource.camera),
-                ),
-                ListTile(
-                  leading: const CircleAvatar(
-                    backgroundColor: Colors.blueAccent,
-                    child: Icon(Icons.photo_library_rounded, color: Colors.white),
-                  ),
-                  title: const Text('Choose from Gallery'),
-                  subtitle: const Text('Pick an existing photo or graphic'),
-                  onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-                ),
-              ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       );
     }
 
@@ -730,24 +753,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final created = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Add Sticky Note'),
+        builder: (ctx, setDialogState) => InkDialog(
+          title: 'Add Sticky Note',
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
+              InkTextField(
                 controller: textController,
                 maxLines: 4,
                 autofocus: true,
-                decoration: const InputDecoration(
-                  hintText: 'Write note content here...',
-                  border: OutlineInputBorder(),
-                ),
+                hintText: 'Write note content here...',
               ),
               const SizedBox(height: 16),
-              const Align(
+              Align(
                 alignment: Alignment.centerLeft,
-                child: Text('Color', style: TextStyle(fontWeight: FontWeight.w600)),
+                child: Text('Color', style: InkType.label(_tokens.ink)),
               ),
               const SizedBox(height: 8),
               Row(
@@ -763,7 +783,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         color: c,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: isSelected ? Colors.blueAccent : Colors.grey.withOpacity(0.4),
+                          color: isSelected ? _tokens.accent : _tokens.inkMuted.withValues(alpha: 0.4),
                           width: isSelected ? 2.5 : 1,
                         ),
                         boxShadow: isSelected
@@ -777,13 +797,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
             ],
           ),
           actions: [
-            TextButton(
+            InkButton.secondary(
+              label: 'Cancel',
+              expand: false,
+              compact: true,
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
             ),
-            ElevatedButton(
+            InkButton.primary(
+              label: 'Add to Canvas',
+              expand: false,
+              compact: true,
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Add to Canvas'),
             ),
           ],
         ),
@@ -815,24 +839,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final updated = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Edit Sticky Note'),
+        builder: (ctx, setDialogState) => InkDialog(
+          title: 'Edit Sticky Note',
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
+              InkTextField(
                 controller: textController,
                 maxLines: 4,
                 autofocus: true,
-                decoration: const InputDecoration(
-                  hintText: 'Note content...',
-                  border: OutlineInputBorder(),
-                ),
+                hintText: 'Note content...',
               ),
               const SizedBox(height: 16),
-              const Align(
+              Align(
                 alignment: Alignment.centerLeft,
-                child: Text('Color', style: TextStyle(fontWeight: FontWeight.w600)),
+                child: Text('Color', style: InkType.label(_tokens.ink)),
               ),
               const SizedBox(height: 8),
               Row(
@@ -848,7 +869,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         color: c,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: isSelected ? Colors.blueAccent : Colors.grey.withOpacity(0.4),
+                          color: isSelected ? _tokens.accent : _tokens.inkMuted.withValues(alpha: 0.4),
                           width: isSelected ? 2.5 : 1,
                         ),
                       ),
@@ -859,13 +880,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
             ],
           ),
           actions: [
-            TextButton(
+            InkButton.secondary(
+              label: 'Cancel',
+              expand: false,
+              compact: true,
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
             ),
-            ElevatedButton(
+            InkButton.primary(
+              label: 'Save',
+              expand: false,
+              compact: true,
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Save'),
             ),
           ],
         ),
@@ -899,15 +924,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final created = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Add Connector / Diagram Link'),
+        builder: (ctx, setDialogState) => InkDialog(
+          title: 'Add Connector / Diagram Link',
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Line Style',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
+                Text('Line Style', style: InkType.label(_tokens.ink)),
                 const SizedBox(height: 8),
                 DropdownButton<String>(
                   value: selectedStyle,
@@ -933,8 +957,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 ),
                 if (linkable.length >= 2) ...[
                   const SizedBox(height: 12),
-                  const Text('Connect Shapes',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  Text('Connect Shapes', style: InkType.label(_tokens.ink)),
                   const SizedBox(height: 6),
                   Row(
                     children: [
@@ -956,7 +979,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      const Icon(Icons.arrow_forward, size: 16),
+                      Icon(LucideIcons.arrowRight, size: 16, color: _tokens.inkMuted),
                       const SizedBox(width: 8),
                       Expanded(
                         child: DropdownButton<String>(
@@ -982,13 +1005,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
             ),
           ),
           actions: [
-            TextButton(
+            InkButton.secondary(
+              label: 'Cancel',
+              expand: false,
+              compact: true,
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
             ),
-            ElevatedButton(
+            InkButton.primary(
+              label: 'Add Connector',
+              expand: false,
+              compact: true,
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Add Connector'),
             ),
           ],
         ),
@@ -1099,82 +1126,71 @@ class _CanvasScreenState extends State<CanvasScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      backgroundColor: Colors.transparent,
+      elevation: 0,
       builder: (sheetContext) {
+        final tokens = sheetContext.ink;
         return SafeArea(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Export & Share Board',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+            padding: const EdgeInsets.all(InkSpacing.s12),
+            child: GlassPanel(
+              radius: InkRadii.bottomSheet,
+              padding: const EdgeInsets.all(InkSpacing.s20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Export & Share Board',
+                          style: InkType.title(tokens.ink),
+                        ),
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(sheetContext),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Export your canvas elements with full layout integrity:',
-                  style: TextStyle(color: Colors.grey, fontSize: 13),
-                ),
-                const SizedBox(height: 16),
-                _buildExportTile(
-                  sheetContext,
-                  icon: Icons.image_outlined,
-                  iconColor: Colors.blue,
-                  title: 'PNG Image',
-                  subtitle: 'High-resolution lossless raster export (2x scale)',
-                  format: BoardExportFormat.png,
-                ),
-                const SizedBox(height: 10),
-                _buildExportTile(
-                  sheetContext,
-                  icon: Icons.picture_as_pdf_outlined,
-                  iconColor: Colors.redAccent,
-                  title: 'PDF Document',
-                  subtitle: 'Printable formatted document with metadata header',
-                  format: BoardExportFormat.pdf,
-                ),
-                const SizedBox(height: 10),
-                _buildExportTile(
-                  sheetContext,
-                  icon: Icons.code_outlined,
-                  iconColor: Colors.teal,
-                  title: 'SVG Vector File',
-                  subtitle: 'Scalable vector graphics compatible with Figma & Illustrator',
-                  format: BoardExportFormat.svg,
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: InkColors.accent,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                      IconButton(
+                        icon: Icon(LucideIcons.x, color: tokens.inkSecondary),
+                        onPressed: () => Navigator.pop(sheetContext),
                       ),
-                    ),
-                    icon: const Icon(Icons.share_outlined, size: 20),
-                    label: const Text(
-                      'Share Board File (Native Sheet)',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
+                    ],
+                  ),
+                  const SizedBox(height: InkSpacing.s4),
+                  Text(
+                    'Export your canvas elements with full layout integrity:',
+                    style: InkType.caption(tokens.inkMuted),
+                  ),
+                  const SizedBox(height: InkSpacing.s16),
+                  _buildExportTile(
+                    sheetContext,
+                    icon: LucideIcons.image,
+                    iconColor: tokens.accentText,
+                    title: 'PNG Image',
+                    subtitle: 'High-resolution lossless raster export (2x scale)',
+                    format: BoardExportFormat.png,
+                  ),
+                  const SizedBox(height: InkSpacing.s8),
+                  _buildExportTile(
+                    sheetContext,
+                    icon: LucideIcons.fileText,
+                    iconColor: tokens.danger,
+                    title: 'PDF Document',
+                    subtitle: 'Printable formatted document with metadata header',
+                    format: BoardExportFormat.pdf,
+                  ),
+                  const SizedBox(height: InkSpacing.s8),
+                  _buildExportTile(
+                    sheetContext,
+                    icon: LucideIcons.code,
+                    iconColor: tokens.success,
+                    title: 'SVG Vector File',
+                    subtitle:
+                        'Scalable vector graphics compatible with Figma & Illustrator',
+                    format: BoardExportFormat.svg,
+                  ),
+                  const SizedBox(height: InkSpacing.s16),
+                  InkButton.hero(
+                    label: 'Share Board File (Native Sheet)',
+                    icon: const Icon(LucideIcons.share2),
                     onPressed: () {
                       Navigator.pop(sheetContext);
                       _canvasBloc.add(
@@ -1185,13 +1201,34 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       );
                     },
                   ),
-                ),
-                const SizedBox(height: 8),
-              ],
+                ],
+              ),
             ),
           ),
         );
       },
+    );
+  }
+
+  void _runExport(
+    BuildContext sheetContext,
+    BoardExportFormat format, {
+    required bool share,
+  }) {
+    Navigator.pop(sheetContext);
+    ScaffoldMessenger.of(context).removeCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          share
+              ? 'Preparing ${format.name.toUpperCase()} for sharing...'
+              : 'Saving ${format.name.toUpperCase()} to device storage...',
+        ),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+    _canvasBloc.add(
+      CanvasExportBoardRequested(format: format, shareAfterExport: share),
     );
   }
 
@@ -1203,89 +1240,52 @@ class _CanvasScreenState extends State<CanvasScreen> {
     required String subtitle,
     required BoardExportFormat format,
   }) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.withOpacity(0.2)),
-      ),
-      child: ListTile(
-        leading: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: iconColor.withOpacity(0.12),
-            borderRadius: BorderRadius.circular(8),
+    final tokens = sheetContext.ink;
+    return Material(
+      color: tokens.field,
+      borderRadius: BorderRadius.circular(InkRadii.input),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(InkRadii.input),
+        onTap: () => _runExport(sheetContext, format, share: false),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: InkSpacing.s12,
+            vertical: InkSpacing.s8,
           ),
-          child: Icon(icon, color: iconColor),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: iconColor.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(InkRadii.chip + 2),
+                ),
+                child: Icon(icon, size: 20, color: iconColor),
+              ),
+              const SizedBox(width: InkSpacing.s12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: InkType.bodyStrong(tokens.ink)),
+                    Text(subtitle, style: InkType.caption(tokens.inkMuted)),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: Icon(LucideIcons.download, size: 20, color: tokens.inkSecondary),
+                tooltip: 'Save to Device Storage',
+                onPressed: () => _runExport(sheetContext, format, share: false),
+              ),
+              IconButton(
+                icon: Icon(LucideIcons.share2, size: 20, color: tokens.inkSecondary),
+                tooltip: 'Share via...',
+                onPressed: () => _runExport(sheetContext, format, share: true),
+              ),
+            ],
+          ),
         ),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: const TextStyle(fontSize: 12, color: Colors.grey),
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.file_download_outlined, size: 22),
-              tooltip: 'Save to Device Storage',
-              onPressed: () {
-                Navigator.pop(sheetContext);
-                ScaffoldMessenger.of(context).removeCurrentSnackBar();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Saving ${format.name.toUpperCase()} to device storage...'),
-                    duration: const Duration(seconds: 1),
-                  ),
-                );
-                _canvasBloc.add(
-                  CanvasExportBoardRequested(
-                    format: format,
-                    shareAfterExport: false,
-                  ),
-                );
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.share_outlined, size: 20),
-              tooltip: 'Share via...',
-              onPressed: () {
-                Navigator.pop(sheetContext);
-                ScaffoldMessenger.of(context).removeCurrentSnackBar();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Preparing ${format.name.toUpperCase()} for sharing...'),
-                    duration: const Duration(seconds: 1),
-                  ),
-                );
-                _canvasBloc.add(
-                  CanvasExportBoardRequested(
-                    format: format,
-                    shareAfterExport: true,
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-        onTap: () {
-          Navigator.pop(sheetContext);
-          ScaffoldMessenger.of(context).removeCurrentSnackBar();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Saving ${format.name.toUpperCase()} to device storage...'),
-              duration: const Duration(seconds: 1),
-            ),
-          );
-          _canvasBloc.add(
-            CanvasExportBoardRequested(
-              format: format,
-              shareAfterExport: false,
-            ),
-          );
-        },
       ),
     );
   }
@@ -1308,7 +1308,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(msg),
-                backgroundColor: Colors.teal.shade700,
+                backgroundColor: context.ink.success,
                 duration: const Duration(seconds: 4),
                 action: path != null
                     ? SnackBarAction(
@@ -2109,7 +2109,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
         child: ElevatedButton.icon(
           onPressed: () => _editStickyNote(element),
           icon: Icon(
-            Icons.edit,
+            LucideIcons.pencil,
             size: 18,
             color: tokens.ink,
           ),
@@ -2166,7 +2166,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
             width: 20,
             height: 20,
             decoration: BoxDecoration(
-              color: Colors.blueAccent,
+              color: _tokens.accent,
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
               boxShadow: const [
@@ -2186,7 +2186,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
             width: 20,
             height: 20,
             decoration: BoxDecoration(
-              color: Colors.blueAccent,
+              color: _tokens.accent,
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
               boxShadow: const [
@@ -2208,7 +2208,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               width: 28,
               height: 28,
               decoration: BoxDecoration(
-                color: Colors.redAccent,
+                color: _tokens.danger,
                 shape: BoxShape.circle,
                 border: Border.all(color: Colors.white, width: 2),
                 boxShadow: const [
@@ -2219,7 +2219,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   ),
                 ],
               ),
-              child: const Icon(Icons.delete, size: 14, color: Colors.white),
+              child: const Icon(LucideIcons.trash2, size: 14, color: Colors.white),
             ),
           ),
         ),
@@ -2395,7 +2395,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         value: state.selectedStrokeWidth.clamp(1, 48),
                         min: 1,
                         max: 48,
-                        activeColor: _tokens.accent,
                         onChanged: (v) => _canvasBloc.add(
                           CanvasUpdateSelectedStrokeWidth(v),
                         ),
@@ -2410,7 +2409,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         value: state.selectedStrokeOpacity.clamp(0, 1),
                         min: 0,
                         max: 1,
-                        activeColor: _tokens.accent,
                         onChanged: (v) => _canvasBloc.add(
                           CanvasUpdateSelectedStrokeOpacity(v),
                         ),
@@ -2931,7 +2929,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           decoration: BoxDecoration(
                             color: Colors.white,
                             shape: BoxShape.circle,
-                            border: Border.all(color: Colors.blueAccent, width: 2),
+                            border: Border.all(color: _tokens.accent, width: 2),
                             boxShadow: const [
                               BoxShadow(
                                 color: Color(0x33000000),
@@ -2940,7 +2938,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               ),
                             ],
                           ),
-                          child: const Icon(Icons.edit, size: 14, color: Colors.blueAccent),
+                          child: Icon(LucideIcons.pencil, size: 14, color: _tokens.accent),
                         ),
                       ),
                     ),
@@ -3698,45 +3696,42 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final textController = TextEditingController();
     showDialog(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.pin_drop, color: Colors.amber),
-            SizedBox(width: 8),
-            Text('Add Comment Pin'),
-          ],
-        ),
+      builder: (dialogCtx) => InkDialog(
+        title: 'Add Comment Pin',
+        icon: LucideIcons.mapPin,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               'Pin at (${worldPoint.dx.toInt()}, ${worldPoint.dy.toInt()})',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
+              style: InkType.caption(_tokens.inkMuted),
             ),
             const SizedBox(height: 12),
-            TextField(
+            InkTextField(
               controller: textController,
               autofocus: true,
               maxLines: 3,
-              decoration: const InputDecoration(
-                hintText: 'Write a comment... (use @name to mention)',
-                border: OutlineInputBorder(),
+              hintText: 'Write a comment... (use @name to mention)',
               ),
-            ),
           ],
         ),
         actions: [
-          TextButton(
+          InkButton.secondary(
+            label: 'Cancel',
+            expand: false,
+            compact: true,
             onPressed: () {
               Navigator.pop(dialogCtx);
               _canvasBloc.add(
                 const CanvasToggleCommentPlacementMode(enable: false),
               );
             },
-            child: const Text('Cancel'),
           ),
-          ElevatedButton(
+          InkButton.primary(
+            label: 'Post Pin',
+            expand: false,
+            compact: true,
             onPressed: () {
               final text = textController.text.trim();
               if (text.isNotEmpty) {
@@ -3749,7 +3744,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
               }
               Navigator.pop(dialogCtx);
             },
-            child: const Text('Post Pin'),
           ),
         ],
       ),
@@ -3783,9 +3777,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
                     decoration: BoxDecoration(
-                      color: isSelected
-                          ? Colors.amber.shade700
-                          : Colors.amber.shade600,
+                      color: isSelected ? _tokens.accent : _tokens.pending,
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
                         color: Colors.white,
@@ -3803,7 +3795,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         const Icon(
-                          Icons.chat_bubble,
+                          LucideIcons.messageCircle,
                           size: 11,
                           color: Colors.white,
                         ),
@@ -3824,9 +3816,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   CustomPaint(
                     size: const Size(8, 5),
                     painter: _TrianglePainter(
-                      color: isSelected
-                          ? Colors.amber.shade700
-                          : Colors.amber.shade600,
+                      color: isSelected ? _tokens.accent : _tokens.pending,
                     ),
                   ),
                 ],

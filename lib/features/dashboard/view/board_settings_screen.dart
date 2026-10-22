@@ -524,7 +524,6 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                           style: InkType.caption(tokens.inkMuted),
                         ),
                         value: _allowMembersToCopy,
-                        activeColor: tokens.accent,
                         onChanged: (value) {
                           setState(() {
                             _allowMembersToCopy = value;

@@ -44,18 +44,18 @@ class ToolsTray extends StatelessWidget {
           children: [
             if (onAddStickyNote != null) ...[
               _ToolButton(
-                icon: Icons.note_alt_outlined,
+                icon: LucideIcons.stickyNote,
                 label: 'Sticky Note',
-                color: Colors.amber.shade700,
+                color: tokens.pending,
                 onTap: onAddStickyNote!,
               ),
               const SizedBox(height: 10),
             ],
             if (onAddConnector != null) ...[
               _ToolButton(
-                icon: Icons.alt_route_rounded,
+                icon: LucideIcons.spline,
                 label: 'Connector / Link',
-                color: Colors.teal,
+                color: tokens.success,
                 onTap: onAddConnector!,
               ),
               const SizedBox(height: 10),
@@ -83,9 +83,9 @@ class ToolsTray extends StatelessWidget {
             if (onExport != null) ...[
               const SizedBox(height: 10),
               _ToolButton(
-                icon: Icons.ios_share_rounded,
+                icon: LucideIcons.share2,
                 label: 'Export & Share',
-                color: Colors.deepPurple,
+                color: tokens.accentText,
                 onTap: onExport!,
               ),
             ],

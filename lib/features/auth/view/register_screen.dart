@@ -210,7 +210,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         password.isEmpty ||
         confirmPassword.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please fill in all fields")),
+        SnackBar(content: Text("Please fill in all fields")),
       );
       return;
     }
@@ -237,7 +237,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(passwordError),
-          backgroundColor: Colors.red,
+          backgroundColor: context.ink.danger,
         ),
       );
       return;

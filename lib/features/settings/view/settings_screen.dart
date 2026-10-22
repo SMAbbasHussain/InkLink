@@ -102,7 +102,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         title: 'Dark Mode',
                         trailing: Switch.adaptive(
                           value: isDark,
-                          activeColor: tokens.accent,
                           onChanged: (_) =>
                               context.read<ThemeBloc>().add(ToggleTheme()),
                         ),
@@ -122,7 +121,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 'Show tray position helper when creating or joining a board',
                             trailing: Switch.adaptive(
                               value: settingsState.showTrayTips,
-                              activeColor: tokens.accent,
                               onChanged: settingsState.isLoadingTrayTips
                                   ? null
                                   : (value) {
@@ -163,7 +161,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             subtitle: 'Recommended ON. Defaults to medium compressed previews.',
                             trailing: Switch.adaptive(
                               value: settingsState.boardPreviewCompressionEnabled,
-                              activeColor: tokens.accent,
                               onChanged: (value) {
                                 context.read<SettingsBloc>().add(
                                   SettingsBoardPreviewCompressionToggled(value),
@@ -208,7 +205,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             subtitle: 'Receive real-time push notifications on this device',
                             trailing: Switch.adaptive(
                               value: settingsState.pushNotificationsEnabled,
-                              activeColor: tokens.accent,
                               onChanged: (value) {
                                 context.read<SettingsBloc>().add(
                                   SettingsNotificationPreferencesChanged(
@@ -226,7 +222,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             subtitle: 'Get notified when someone invites you to a board',
                             trailing: Switch.adaptive(
                               value: settingsState.inviteAlertsEnabled,
-                              activeColor: tokens.accent,
                               onChanged: settingsState.pushNotificationsEnabled
                                   ? (value) {
                                       context.read<SettingsBloc>().add(
@@ -246,7 +241,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             subtitle: 'Get notified when you receive or accept friend requests',
                             trailing: Switch.adaptive(
                               value: settingsState.friendAlertsEnabled,
-                              activeColor: tokens.accent,
                               onChanged: settingsState.pushNotificationsEnabled
                                   ? (value) {
                                       context.read<SettingsBloc>().add(
@@ -274,7 +268,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             subtitle: 'Allow non-friends to view your profile and public boards',
                             trailing: Switch.adaptive(
                               value: settingsState.isProfilePublic,
-                              activeColor: tokens.accent,
                               onChanged: (value) {
                                 context.read<SettingsBloc>().add(
                                   SettingsPrivacyChanged(isProfilePublic: value),
@@ -290,7 +283,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             subtitle: 'Let collaborators see when you are active on boards',
                             trailing: Switch.adaptive(
                               value: settingsState.showOnlineStatus,
-                              activeColor: tokens.accent,
                               onChanged: (value) {
                                 context.read<SettingsBloc>().add(
                                   SettingsPrivacyChanged(showOnlineStatus: value),
@@ -306,7 +298,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             subtitle: 'Display your email address on your public profile',
                             trailing: Switch.adaptive(
                               value: settingsState.showEmail,
-                              activeColor: tokens.accent,
                               onChanged: (value) {
                                 context.read<SettingsBloc>().add(
                                   SettingsPrivacyChanged(showEmail: value),

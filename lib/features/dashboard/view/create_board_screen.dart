@@ -439,7 +439,6 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                         style: InkType.caption(tokens.inkMuted),
                       ),
                       value: _allowMembersToCopy,
-                      activeColor: tokens.accent,
                       onChanged: (val) {
                         setState(() {
                           _allowMembersToCopy = val;

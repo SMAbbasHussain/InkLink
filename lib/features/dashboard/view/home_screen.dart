@@ -23,6 +23,7 @@ import '../../../ui/widgets/command_bar.dart';
 import '../../../ui/widgets/desk_background.dart';
 import '../../../ui/widgets/empty_state.dart';
 import '../../../ui/widgets/glass_panel.dart';
+import '../../../ui/widgets/ink_logo.dart';
 import '../../../ui/widgets/ink_dialog.dart';
 import '../../../ui/widgets/ink_avatar.dart';
 import '../../../ui/widgets/ink_initials.dart';
@@ -329,15 +330,7 @@ class _HomeScreenState extends State<HomeScreen>
         height: 54,
         child: Row(
           children: [
-            Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: tokens.accent,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(LucideIcons.penLine, size: 16, color: Colors.white),
-            ),
+            const InkLogo(size: 30),
             const SizedBox(width: InkSpacing.s8),
             Text('InkLink', style: InkType.title(tokens.ink).copyWith(fontSize: 18)),
             const Spacer(),
