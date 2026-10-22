@@ -10,7 +10,6 @@ import '../../../../ui/widgets/glass_panel.dart';
 import '../../../../ui/widgets/ink_avatar.dart';
 import '../../../../ui/widgets/ink_initials.dart';
 import '../../bloc/canvas_bloc.dart';
-import '../../models/canvas_comment.dart';
 
 class CommentsTray extends StatefulWidget {
   const CommentsTray({super.key});

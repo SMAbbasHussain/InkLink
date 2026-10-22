@@ -471,6 +471,21 @@ class _CanvasPainter extends CustomPainter {
 
     switch (element.shapeType) {
       case null:
+      case CanvasShapeType.square:
+        final rect = Rect.fromCenter(
+          center: c,
+          width: s,
+          height: s,
+        );
+        if (borderRadius > 0) {
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(rect, Radius.circular(borderRadius)),
+            paint,
+          );
+        } else {
+          canvas.drawRect(rect, paint);
+        }
+        break;
       case CanvasShapeType.rectangle:
         final rect = Rect.fromCenter(
           center: c,

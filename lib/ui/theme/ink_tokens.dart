@@ -33,6 +33,8 @@ class InkRadii {
 
   /// Deliberately small, it's paper.
   static const double paperCard = 6;
+  static const double card = 16;
+  static const double pill = 30;
 
   static const double stickyNote = 3;
   static const double stickyNoteCorner = 22;

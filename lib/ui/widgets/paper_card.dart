@@ -21,10 +21,11 @@ class PaperCard extends StatelessWidget {
     super.key,
     required this.child,
     this.padding,
-    this.showTape = false,
+    bool showTape = false,
+    bool? hasTape,
     this.tiltId,
     this.clipBehavior = Clip.none,
-  });
+  }) : showTape = showTape || (hasTape ?? false);
 
   @override
   Widget build(BuildContext context) {

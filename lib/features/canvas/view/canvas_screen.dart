@@ -12,6 +12,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../domain/models/board.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
+import '../../../ui/theme/ink_colors.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
@@ -390,7 +391,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 ),
                 ListTile(
                   leading: const CircleAvatar(
-                    backgroundColor: AppColors.primary,
+                    backgroundColor: InkColors.accent,
                     child: Icon(Icons.camera_alt_rounded, color: Colors.white),
                   ),
                   title: const Text('Take Photo with Camera'),
@@ -1162,7 +1163,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
+                      backgroundColor: InkColors.accent,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
@@ -2099,6 +2100,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   Widget _buildStickyNoteEditBanner(bool isDark, _CanvasElement element) {
+    final tokens = context.ink;
     return Positioned(
       left: 0,
       right: 0,
@@ -2109,25 +2111,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
           icon: Icon(
             Icons.edit,
             size: 18,
-            color: isDark
-                ? AppColors.textPrimaryDark
-                : AppColors.textPrimaryLight,
+            color: tokens.ink,
           ),
           label: Text(
             'Edit Note',
             style: TextStyle(
-              color: isDark
-                  ? AppColors.textPrimaryDark
-                  : AppColors.textPrimaryLight,
+              color: tokens.ink,
             ),
           ),
           style: ElevatedButton.styleFrom(
-            backgroundColor: isDark
-                ? AppColors.surfaceDark
-                : AppColors.surfaceLight,
-            foregroundColor: isDark
-                ? AppColors.textPrimaryDark
-                : AppColors.textPrimaryLight,
+            backgroundColor: tokens.paper,
+            foregroundColor: tokens.ink,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             elevation: 2,
           ),

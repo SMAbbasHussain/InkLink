@@ -242,7 +242,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                                   label: _cooldownSeconds > 0
                                       ? "Resend link in ${_cooldownSeconds}s"
                                       : "Resend Verification Link",
-                                  icon: LucideIcons.refreshCw,
+                                  icon: const Icon(LucideIcons.refreshCw),
                                   onPressed: (_cooldownSeconds > 0 || isLoading)
                                       ? null
                                       : _handleResend,

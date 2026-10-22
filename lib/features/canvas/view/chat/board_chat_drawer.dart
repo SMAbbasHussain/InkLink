@@ -8,7 +8,6 @@ import '../../../../ui/theme/ink_tokens.dart';
 import '../../../../ui/theme/ink_type.dart';
 import '../../../../ui/widgets/glass_panel.dart';
 import '../../bloc/canvas_bloc.dart';
-import '../../models/board_chat_message.dart';
 
 class BoardChatDrawer extends StatefulWidget {
   const BoardChatDrawer({super.key});

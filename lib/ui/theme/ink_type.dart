@@ -60,6 +60,9 @@ class InkType {
     color: color,
   );
 
+  static TextStyle subhead(Color color) =>
+      _geist(fontSize: 16, height: 1.35, weight: FontWeight.w600, color: color);
+
   static TextStyle body(Color color) =>
       _geist(fontSize: 15, height: 1.45, weight: FontWeight.w400, color: color);
 

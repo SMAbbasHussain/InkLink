@@ -10,12 +10,14 @@ import 'ink_button.dart';
 /// (Join Board, Rename, Report user, confirmations, ...).
 class InkDialog extends StatelessWidget {
   final String title;
+  final IconData? icon;
   final Widget? content;
   final List<Widget> actions;
 
   const InkDialog({
     super.key,
     required this.title,
+    this.icon,
     this.content,
     this.actions = const [],
   });
@@ -32,7 +34,17 @@ class InkDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: InkType.title(tokens.ink)),
+            Row(
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 20, color: tokens.ink),
+                  const SizedBox(width: InkSpacing.s8),
+                ],
+                Expanded(
+                  child: Text(title, style: InkType.title(tokens.ink)),
+                ),
+              ],
+            ),
             if (content != null) ...[
               const SizedBox(height: InkSpacing.s12),
               content!,

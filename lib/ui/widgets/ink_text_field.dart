@@ -16,6 +16,8 @@ class InkTextField extends StatelessWidget {
   final String? errorText;
   final IconData? leadingIcon;
   final Widget? suffixIcon;
+  final IconData? trailingIcon;
+  final VoidCallback? onTrailingIconPressed;
   final bool obscureText;
   final bool enabled;
   final bool autofocus;
@@ -36,6 +38,8 @@ class InkTextField extends StatelessWidget {
     this.errorText,
     this.leadingIcon,
     this.suffixIcon,
+    this.trailingIcon,
+    this.onTrailingIconPressed,
     this.obscureText = false,
     this.enabled = true,
     this.autofocus = false,
@@ -85,7 +89,13 @@ class InkTextField extends StatelessWidget {
         prefixIcon: leadingIcon != null
             ? Icon(leadingIcon, size: 20, color: tokens.inkSecondary)
             : null,
-        suffixIcon: suffixIcon,
+        suffixIcon: suffixIcon ??
+            (trailingIcon != null
+                ? IconButton(
+                    icon: Icon(trailingIcon, size: 20, color: tokens.inkSecondary),
+                    onPressed: onTrailingIconPressed,
+                  )
+                : null),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(InkRadii.input),
           borderSide: BorderSide.none,

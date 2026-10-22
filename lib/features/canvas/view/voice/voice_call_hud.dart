@@ -9,7 +9,6 @@ import '../../../../ui/widgets/glass_panel.dart';
 import '../../../../ui/widgets/ink_avatar.dart';
 import '../../../../ui/widgets/ink_initials.dart';
 import '../../bloc/canvas_bloc.dart';
-import '../../models/voice_participant.dart';
 
 class VoiceCallHud extends StatelessWidget {
   const VoiceCallHud({super.key});
