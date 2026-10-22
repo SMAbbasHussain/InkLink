@@ -2999,6 +2999,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Widget _buildAllTrays(CanvasState state) {
     return Stack(
       children: [
+        if (state.activeTray != null)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _toggleTray(state.activeTray!),
+            ),
+          ),
         MembersTray(
           isOpen: state.activeTray == 'members',
           onClose: () => _toggleTray('members'),
@@ -3053,7 +3060,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
             setState(() => _smoothDoodlesEnabled = v);
           },
           onToolModeChanged: (mode) {
-            _canvasBloc.add(CanvasSetToolMode(mode));
+            _canvasBloc.add(CanvasSetToolMode(mode, keepTray: true));
           },
           onClose: () => _toggleTray('brushes'),
         ),

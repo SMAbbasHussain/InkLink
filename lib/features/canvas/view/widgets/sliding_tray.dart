@@ -72,7 +72,7 @@ class SlidingTray extends StatelessWidget {
       left: left,
       right: right,
       child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
+        behavior: HitTestBehavior.opaque,
         onHorizontalDragUpdate: (d) {
           if (direction == TrayDirection.left && d.delta.dx < -8) {
             onClose?.call();

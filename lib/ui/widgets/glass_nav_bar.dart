@@ -41,9 +41,9 @@ class _GlassNavBarState extends State<GlassNavBar>
     with SingleTickerProviderStateMixin {
   // Low damping ratio => visible overshoot and a few back-and-forth swings.
   static const _spring = SpringDescription(
-    mass: 1,
-    stiffness: 260,
-    damping: 11,
+    mass: 1.5,
+    stiffness: 300,
+    damping: 25,
   );
 
   late final AnimationController _controller;

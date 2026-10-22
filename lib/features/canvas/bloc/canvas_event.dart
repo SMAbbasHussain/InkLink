@@ -259,8 +259,13 @@ class CanvasUpdateBrushType extends CanvasEvent {
 class CanvasSetToolMode extends CanvasEvent {
   final CanvasToolMode mode;
   final CanvasShapeType? shapeType;
+  final bool keepTray;
 
-  const CanvasSetToolMode(this.mode, {this.shapeType});
+  const CanvasSetToolMode(
+    this.mode, {
+    this.shapeType,
+    this.keepTray = false,
+  });
 }
 
 /// Start drawing a shape on the canvas
