@@ -11,7 +11,9 @@ import 'glass_panel.dart';
 class CommandBar extends StatelessWidget {
   final TextEditingController? controller;
   final String hintText;
+  final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
+  final VoidCallback? onClear;
   final VoidCallback? onSend;
   final List<Widget> trailing;
 
@@ -19,7 +21,9 @@ class CommandBar extends StatelessWidget {
     super.key,
     this.controller,
     required this.hintText,
+    this.onChanged,
     this.onSubmitted,
+    this.onClear,
     this.onSend,
     this.trailing = const [],
   });
@@ -40,6 +44,7 @@ class CommandBar extends StatelessWidget {
           Expanded(
             child: TextField(
               controller: controller,
+              onChanged: onChanged,
               onSubmitted: onSubmitted,
               style: InkType.body(tokens.ink),
               decoration: InputDecoration(
@@ -51,6 +56,25 @@ class CommandBar extends StatelessWidget {
               ),
             ),
           ),
+          if (controller != null)
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: controller!,
+              builder: (context, value, _) {
+                if (value.text.isEmpty) return const SizedBox.shrink();
+                return IconButton(
+                  iconSize: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  icon: Icon(LucideIcons.x, size: 16, color: tokens.inkMuted),
+                  tooltip: 'Clear search',
+                  onPressed: () {
+                    controller!.clear();
+                    onChanged?.call('');
+                    onClear?.call();
+                  },
+                );
+              },
+            ),
           if (onSend != null)
             IconButton(
               tooltip: 'Send',

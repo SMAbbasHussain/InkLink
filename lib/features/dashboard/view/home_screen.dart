@@ -41,6 +41,8 @@ class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   late TabController _tabController;
   int _selectedTabIndex = 0;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
   String? _watchedProfileUserId;
   bool _isNavigatingToCanvas = false;
 
@@ -72,6 +74,7 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -305,7 +308,18 @@ class _HomeScreenState extends State<HomeScreen>
                     right: 12,
                     bottom: 98,
                     child: CommandBar(
-                      hintText: "Search or jump to board...",
+                      controller: _searchController,
+                      hintText: "Search boards...",
+                      onChanged: (val) {
+                        setState(() {
+                          _searchQuery = val;
+                        });
+                      },
+                      onClear: () {
+                        setState(() {
+                          _searchQuery = '';
+                        });
+                      },
                       trailing: [
                         CommandBarAction(
                           icon: LucideIcons.logIn,
@@ -492,7 +506,23 @@ class _HomeScreenState extends State<HomeScreen>
         boards = state.joinedBoards.where((b) => b.isArchived != true).toList();
       }
 
-      if (boards.isEmpty) {
+      final query = _searchQuery.trim().toLowerCase();
+      final displayedBoards = query.isEmpty
+          ? boards
+          : boards.where((b) {
+              final titleMatches = b.title.toLowerCase().contains(query);
+              final tagsMatch = b.tags.any((t) => t.toLowerCase().contains(query));
+              final idMatches = b.id.toLowerCase().contains(query);
+              return titleMatches || tagsMatch || idMatches;
+            }).toList();
+
+      if (displayedBoards.isEmpty) {
+        if (query.isNotEmpty) {
+          return EmptyState(
+            icon: LucideIcons.searchX,
+            text: 'No boards match "$_searchQuery"',
+          );
+        }
         final String emptyMsg = isArchivedTab
             ? "No archived boards."
             : (isOwner ? "No boards created yet." : "No boards joined yet.");
@@ -510,9 +540,9 @@ class _HomeScreenState extends State<HomeScreen>
           mainAxisSpacing: 12,
           mainAxisExtent: 196,
         ),
-        itemCount: boards.length,
+        itemCount: displayedBoards.length,
         itemBuilder: (context, index) {
-          final board = boards[index];
+          final board = displayedBoards[index];
           final isBoardOwner = board.ownerId == currentUserId;
 
           return BoardCard(
