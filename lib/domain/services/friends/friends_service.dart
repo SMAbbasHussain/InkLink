@@ -57,8 +57,12 @@ class FriendsServiceImpl implements FriendsService {
         List<Map<String, dynamic>> incomingRequests,
         List<Map<String, dynamic>> outgoingRequests,
       ) {
+        final currentUid = _authService.getCurrentUserId();
+        final filteredFriends = currentUid == null
+            ? friends
+            : friends.where((f) => f['uid'] != currentUid).toList();
         return FriendsInfoSnapshot(
-          friends: friends,
+          friends: filteredFriends,
           incomingRequests: incomingRequests,
           outgoingRequests: outgoingRequests,
         );
@@ -72,12 +76,17 @@ class FriendsServiceImpl implements FriendsService {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> searchUsersByEmail(String email) {
+  Future<List<Map<String, dynamic>>> searchUsersByEmail(String email) async {
     final normalizedEmail = email.trim().toLowerCase();
     if (normalizedEmail.isEmpty) {
-      return Future.value(<Map<String, dynamic>>[]);
+      return <Map<String, dynamic>>[];
     }
-    return _friendsRepository.searchUsersByEmail(normalizedEmail);
+    final results = await _friendsRepository.searchUsersByEmail(normalizedEmail);
+    final currentUid = _authService.getCurrentUserId();
+    if (currentUid != null) {
+      return results.where((u) => u['uid'] != currentUid).toList();
+    }
+    return results;
   }
 
   @override

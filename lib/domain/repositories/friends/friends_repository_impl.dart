@@ -35,8 +35,10 @@ class FriendsRepositoryImpl implements FriendsRepository {
         .limit(1)
         .get();
 
+    final currentUid = _authService.getCurrentUserId();
     final users = snap.docs
         .map((doc) => {'uid': doc.id, ...doc.data()})
+        .where((u) => u['uid'] != currentUid)
         .toList();
     await _cacheProfileSnapshots(users, source: 'email_search');
     return users;
@@ -330,10 +332,14 @@ class FriendsRepositoryImpl implements FriendsRepository {
             .watch(fireImmediately: true)
             .listen((items) {
               if (controller.isClosed) return;
+              final friends = items
+                  .where((item) =>
+                      item.uid != currentUid &&
+                      item.friendshipStatus == FriendshipStatus.friend)
+                  .map(_friendProfileToMap)
+                  .toList();
               controller.add(
-                _sortProfilesByDisplayName(
-                  items.map(_friendProfileToMap).toList(),
-                ),
+                _sortProfilesByDisplayName(friends),
               );
             }, onError: controller.addError);
 
@@ -347,7 +353,10 @@ class FriendsRepositoryImpl implements FriendsRepository {
                   .snapshots(),
             )
             .listen((snapshot) async {
-              final friendUids = snapshot.docs.map((doc) => doc.id).toList();
+              final friendUids = snapshot.docs
+                  .map((doc) => doc.id)
+                  .where((id) => id.isNotEmpty && id != currentUid)
+                  .toList();
 
               if (friendUids.isEmpty) {
                 await _clearFriendProfiles();
@@ -410,8 +419,14 @@ class FriendsRepositoryImpl implements FriendsRepository {
 
   Future<void> _clearFriendProfiles() async {
     final isar = await _localDatabaseService.database;
+    final currentUid = _authService.getCurrentUserId();
+    final allProfiles = await isar.localProfiles.where().anyId().findAll();
     await isar.writeTxn(() async {
-      await isar.localProfiles.clear();
+      for (final profile in allProfiles) {
+        if (profile.uid != currentUid) {
+          await isar.localProfiles.deleteByUid(profile.uid);
+        }
+      }
     });
   }
 

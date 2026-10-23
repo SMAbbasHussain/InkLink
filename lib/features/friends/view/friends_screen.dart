@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:inklink/features/friends/view/widgets/friend_request_banner.dart';
 import 'package:inklink/features/friends/view/widgets/friend_presence_avatar.dart';
@@ -176,7 +177,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
     }
 
     if (state is FriendsLoaded) {
+      final myUid = FirebaseAuth.instance.currentUser?.uid;
       final filteredList = state.friends.where((f) {
+        if (myUid != null && f['uid'] == myUid) return false;
         final name = f['displayName']?.toString().toLowerCase() ?? "";
         return name.contains(_searchController.text.toLowerCase());
       }).toList();

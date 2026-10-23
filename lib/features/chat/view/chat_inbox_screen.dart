@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../domain/models/chat/chat_conversation_model.dart';
@@ -87,7 +88,10 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
                     builder: (_, friendsState) {
                       List<Map<String, dynamic>> friends = [];
                       if (friendsState is FriendsLoaded) {
-                        friends = friendsState.friends;
+                        final myUid = FirebaseAuth.instance.currentUser?.uid;
+                        friends = myUid == null
+                            ? friendsState.friends
+                            : friendsState.friends.where((f) => f['uid'] != myUid).toList();
                       }
 
                       if (friends.isEmpty) {

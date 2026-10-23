@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 import '../../../../ui/theme/ink_colors.dart';
@@ -43,7 +44,10 @@ class _FriendsCollapsibleCardState extends State<FriendsCollapsibleCard> {
         int pendingRequestsCount = 0;
 
         if (state is FriendsLoaded) {
-          friends = state.friends;
+          final myUid = FirebaseAuth.instance.currentUser?.uid;
+          friends = myUid == null
+              ? state.friends
+              : state.friends.where((f) => f['uid'] != myUid).toList();
           pendingRequestsCount = state.incomingRequests.length;
         }
 
