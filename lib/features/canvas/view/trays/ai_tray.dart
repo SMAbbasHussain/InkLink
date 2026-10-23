@@ -60,7 +60,7 @@ class AITray extends StatelessWidget {
                   InkButton.secondary(
                     label: 'Generate Image (Soon)',
                     icon: const Icon(LucideIcons.sparkles),
-                    onPressed: null,
+                    onPressed: onGenerateImage,
                   ),
                   const SizedBox(height: InkSpacing.s8 + 2),
                   Text(
