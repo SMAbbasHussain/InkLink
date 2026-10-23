@@ -48,4 +48,39 @@ void main() {
     expect(newChatRect.top, greaterThanOrEqualTo(emptyStateRect.bottom));
     expect(newGroupRect.top, greaterThanOrEqualTo(emptyStateRect.bottom));
   });
+
+  testWidgets('ChatInboxScreen app bar has friend request and new conversation buttons', (tester) async {
+    final mockService = MockChatService();
+    when(() => mockService.getConversations()).thenAnswer((_) async => []);
+    when(() => mockService.watchConversations()).thenAnswer((_) => const Stream.empty());
+
+    await tester.pumpWidget(
+      MultiRepositoryProvider(
+        providers: [
+          RepositoryProvider<ChatService>.value(value: mockService),
+        ],
+        child: MaterialApp(
+          theme: InkTheme.light(),
+          home: const ChatInboxScreen(),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    // Verify Add Collaborator action button exists
+    expect(find.byTooltip('Add Collaborator'), findsOneWidget);
+    expect(find.byTooltip('New Conversation'), findsOneWidget);
+
+    // Tap 'New Conversation' button
+    await tester.tap(find.byTooltip('New Conversation'));
+    await tester.pumpAndSettle();
+
+    // Bottom sheet should appear with options
+    expect(find.text('New Conversation'), findsWidgets);
+    expect(find.text('Choose the type of conversation to start'), findsOneWidget);
+    expect(find.text('Direct Message'), findsOneWidget);
+    expect(find.text('Group Chat'), findsOneWidget);
+  });
 }

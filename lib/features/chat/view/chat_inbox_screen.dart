@@ -12,6 +12,7 @@ import '../../../../ui/widgets/desk_background.dart';
 import '../../../../ui/widgets/empty_state.dart';
 import '../../../../ui/widgets/ink_button.dart';
 import '../../friends/bloc/friends_bloc.dart';
+import '../../friends/view/widgets/add_friend_sheet.dart';
 import '../bloc/chat_inbox_bloc.dart';
 import '../bloc/chat_inbox_event.dart';
 import '../bloc/chat_inbox_state.dart';
@@ -184,6 +185,169 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
     }
   }
 
+  void _showNewConversationSheet(ChatColors colors, InkTokens tokens) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) {
+        return Container(
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.15),
+                blurRadius: 20,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                InkSpacing.s20,
+                InkSpacing.s12,
+                InkSpacing.s20,
+                InkSpacing.s24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: InkSpacing.s16),
+                      decoration: BoxDecoration(
+                        color: colors.divider,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    'New Conversation',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Choose the type of conversation to start',
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: InkSpacing.s20),
+                  _buildChatOptionTile(
+                    colors: colors,
+                    icon: LucideIcons.messageSquare,
+                    iconColor: tokens.accent,
+                    iconBgColor: tokens.accent.withValues(alpha: 0.12),
+                    title: 'Direct Message',
+                    subtitle: 'Chat one-on-one with a friend',
+                    onTap: () {
+                      Navigator.pop(sheetCtx);
+                      _showNewDmSheet(colors);
+                    },
+                  ),
+                  const SizedBox(height: InkSpacing.s12),
+                  _buildChatOptionTile(
+                    colors: colors,
+                    icon: LucideIcons.users,
+                    iconColor: const Color(0xFF8B5CF6),
+                    iconBgColor: const Color(0xFF8B5CF6).withValues(alpha: 0.12),
+                    title: 'Group Chat',
+                    subtitle: 'Collaborate with multiple friends at once',
+                    onTap: () {
+                      Navigator.pop(sheetCtx);
+                      _showCreateGroupSheet();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildChatOptionTile({
+    required ChatColors colors,
+    required IconData icon,
+    required Color iconColor,
+    required Color iconBgColor,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(ChatTheme.space12),
+          decoration: BoxDecoration(
+            color: colors.surfaceElevated,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: colors.divider.withValues(alpha: 0.6),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: iconBgColor,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: iconColor, size: 22),
+              ),
+              const SizedBox(width: ChatTheme.space16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: colors.textSecondary,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = ChatTheme.colorsOf(context);
@@ -200,14 +364,14 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
         ),
         actions: [
           IconButton(
-            icon: Icon(LucideIcons.users, color: tokens.ink, size: 20),
-            tooltip: 'Create Group',
-            onPressed: () => _showCreateGroupSheet(),
+            icon: Icon(LucideIcons.userPlus, color: tokens.ink, size: 20),
+            tooltip: 'Add Collaborator',
+            onPressed: () => AddFriendSheet.show(context),
           ),
           IconButton(
             icon: Icon(LucideIcons.messageSquarePlus, color: tokens.accent, size: 20),
-            tooltip: 'New DM',
-            onPressed: () => _showNewDmSheet(colors),
+            tooltip: 'New Conversation',
+            onPressed: () => _showNewConversationSheet(colors, tokens),
           ),
         ],
       ),
