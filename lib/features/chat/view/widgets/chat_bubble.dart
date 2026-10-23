@@ -8,6 +8,7 @@ import '../../../../domain/services/board/board_service.dart';
 import '../../../canvas/view/canvas_route.dart';
 import '../../../workspaces/view/workspace_detail_screen.dart';
 import '../../theme/chat_theme.dart';
+import 'message_reactions_sheet.dart';
 
 class AnimatedMessageBubble extends StatefulWidget {
   final Widget child;
@@ -373,7 +374,7 @@ class ChatBubble extends StatelessWidget {
                       Positioned(
                         bottom: -8,
                         right: 4,
-                        child: _buildFloatingReactions(colors),
+                        child: _buildFloatingReactions(context, colors),
                       ),
                   ],
                 ),
@@ -850,34 +851,32 @@ class ChatBubble extends StatelessWidget {
     );
   }
 
-  Widget _buildFloatingReactions(ChatColors colors) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colors.divider, width: 0.8),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.12),
-            blurRadius: 4,
-            offset: const Offset(0, 1),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: message.reactions.entries.take(3).map((entry) {
-          final emoji = entry.key;
-          final users = entry.value;
-          final hasReacted = users.contains(currentUid);
+  Widget _buildFloatingReactions(BuildContext context, ChatColors colors) {
+    return GestureDetector(
+      onTap: () => _showReactionsBottomSheet(context, colors),
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colors.divider, width: 0.8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.12),
+              blurRadius: 4,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: message.reactions.entries.take(3).map((entry) {
+            final emoji = entry.key;
+            final users = entry.value;
+            final hasReacted = users.contains(currentUid);
 
-          return GestureDetector(
-            onTap: () {
-              HapticFeedback.selectionClick();
-              onReactionToggled(emoji);
-            },
-            child: Padding(
+            return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 2),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -896,9 +895,29 @@ class ChatBubble extends StatelessWidget {
                   ],
                 ],
               ),
-            ),
-          );
-        }).toList(),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  void _showReactionsBottomSheet(BuildContext context, ChatColors colors) {
+    HapticFeedback.lightImpact();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => MessageReactionsSheet(
+        reactions: message.reactions,
+        currentUid: currentUid,
+        senderId: message.senderId,
+        senderName: message.senderName,
+        senderAvatar: message.senderAvatar,
+        onReactionToggled: onReactionToggled,
       ),
     );
   }
