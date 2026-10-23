@@ -310,21 +310,6 @@ class ChatBubble extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      _formatTime(message.timestamp),
-                      style: TextStyle(
-                        color: colors.textSecondary.withOpacity(0.8),
-                        fontSize: 10,
-                      ),
-                    ),
-                    if (message.isEdited && !message.isDeleted) ...[
-                      const SizedBox(width: 4),
-                      Text(
-                        '(edited)',
-                        style: TextStyle(color: colors.textSecondary.withOpacity(0.8), fontSize: 10),
-                      ),
-                    ],
                   ],
                 ),
               ),
@@ -394,6 +379,13 @@ class ChatBubble extends StatelessWidget {
                       fontSize: 10,
                     ),
                   ),
+                  if (message.isEdited && !message.isDeleted) ...[
+                    const SizedBox(width: 4),
+                    Text(
+                      '(edited)',
+                      style: TextStyle(color: colors.textSecondary.withOpacity(0.7), fontSize: 10),
+                    ),
+                  ],
                   if (isMe) ...[
                     const SizedBox(width: 4),
                     if (message.status == ChatMessageStatus.sending)
