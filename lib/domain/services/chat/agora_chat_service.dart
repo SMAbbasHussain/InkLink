@@ -362,10 +362,46 @@ class AgoraChatServiceImpl implements ChatService {
       }
 
       await isar.localChatConversations.put(conv);
+
+      // 3. For DMs, also materialize counterpart conversation row for the recipient
+      if (!isGroup && model.senderId.isNotEmpty && model.conversationId.isNotEmpty) {
+        final counterpartConvId = model.senderId;
+        final existingCounterpart = await isar.localChatConversations
+            .filter()
+            .conversationIdEqualTo(counterpartConvId)
+            .findFirst();
+
+        final counterpart = existingCounterpart ?? LocalChatConversation();
+        counterpart.conversationId = counterpartConvId;
+        if (counterpart.name.isEmpty || counterpart.name == 'User') {
+          counterpart.name = model.senderName.isNotEmpty ? model.senderName : 'User';
+        }
+        if (model.senderAvatar != null && model.senderAvatar!.isNotEmpty) {
+          counterpart.avatarUrl = model.senderAvatar;
+        }
+        counterpart.isGroup = false;
+        counterpart.lastMessage = model.type == ChatMessageType.text
+            ? model.content
+            : '[${model.type.name}]';
+        counterpart.lastMessageTimestamp = model.timestamp;
+        counterpart.updatedAt = DateTime.now();
+        if (model.senderId == currentUid) {
+          counterpart.unreadCount = counterpart.unreadCount + 1;
+        }
+        final cMembers = Set<String>.from(counterpart.memberIds);
+        cMembers.add(model.senderId);
+        cMembers.add(model.conversationId);
+        counterpart.memberIds = cMembers.toList();
+
+        await isar.localChatConversations.put(counterpart);
+      }
     });
 
     await _syncConversationsFromLocal();
     _notifyThreadUpdated(model.conversationId);
+    if (!isGroup && model.senderId.isNotEmpty) {
+      _notifyThreadUpdated(model.senderId);
+    }
   }
 
   void _notifyThreadUpdated(String conversationId) async {
@@ -392,12 +428,58 @@ class AgoraChatServiceImpl implements ChatService {
   @override
   Future<List<ChatConversationModel>> getConversations() async {
     final isar = await _localDbService.database;
+    final currentUid = _authService.getCurrentUserId();
+
+    // Auto-repair/materialize incoming DM conversations for the current user
+    if (currentUid != null && currentUid.isNotEmpty) {
+      final incomingDmMessages = await isar.localChatMessages
+          .filter()
+          .conversationIdEqualTo(currentUid)
+          .and()
+          .not()
+          .senderIdEqualTo(currentUid)
+          .findAll();
+
+      final senders = <String, LocalChatMessage>{};
+      for (final m in incomingDmMessages) {
+        if (!senders.containsKey(m.senderId) ||
+            m.timestamp.isAfter(senders[m.senderId]!.timestamp)) {
+          senders[m.senderId] = m;
+        }
+      }
+
+      for (final entry in senders.entries) {
+        final senderUid = entry.key;
+        final latestMsg = entry.value;
+        final existingPartnerConv = await isar.localChatConversations
+            .filter()
+            .conversationIdEqualTo(senderUid)
+            .findFirst();
+
+        if (existingPartnerConv == null) {
+          final conv = LocalChatConversation()
+            ..conversationId = senderUid
+            ..name = latestMsg.senderName.isNotEmpty ? latestMsg.senderName : 'User'
+            ..avatarUrl = latestMsg.senderAvatar
+            ..isGroup = false
+            ..lastMessage = latestMsg.type == 'text' ? latestMsg.content : '[${latestMsg.type}]'
+            ..lastMessageTimestamp = latestMsg.timestamp
+            ..unreadCount = 1
+            ..memberIds = [currentUid, senderUid]
+            ..updatedAt = latestMsg.timestamp;
+
+          await isar.writeTxn(() async {
+            await isar.localChatConversations.put(conv);
+          });
+        }
+      }
+    }
+
     final locals = await isar.localChatConversations
         .where()
         .sortByUpdatedAtDesc()
         .findAll();
 
-    final currentUid = _authService.getCurrentUserId();
     final results = <ChatConversationModel>[];
     for (final c in locals) {
       // Don't show DM with self or conversations the current user is not a participant of
@@ -429,6 +511,15 @@ class AgoraChatServiceImpl implements ChatService {
           }
           if (profile.photoURL != null && profile.photoURL!.isNotEmpty) {
             resolvedAvatar = profile.photoURL;
+          }
+        } else {
+          final partnerMsg = await isar.localChatMessages
+              .filter()
+              .senderIdEqualTo(c.conversationId)
+              .findFirst();
+          if (partnerMsg != null && partnerMsg.senderName.isNotEmpty) {
+            resolvedName = partnerMsg.senderName;
+            resolvedAvatar ??= partnerMsg.senderAvatar;
           }
         }
       }
@@ -527,9 +618,19 @@ class AgoraChatServiceImpl implements ChatService {
   @override
   Future<List<ChatMessageModel>> getMessages(String conversationId) async {
     final isar = await _localDbService.database;
+    final currentUid = _authService.getCurrentUserId() ?? '';
+
+    // Fetch all messages for this thread:
+    // Either stored directly under conversationId,
+    // or sent between conversationId and currentUid (counterpart DM)
     var locals = await isar.localChatMessages
         .filter()
         .conversationIdEqualTo(conversationId)
+        .or()
+        .group((q) => q
+            .conversationIdEqualTo(currentUid)
+            .and()
+            .senderIdEqualTo(conversationId))
         .sortByTimestamp()
         .findAll();
 
@@ -545,6 +646,11 @@ class AgoraChatServiceImpl implements ChatService {
           locals = await isar.localChatMessages
               .filter()
               .conversationIdEqualTo(conversationId)
+              .or()
+              .group((q) => q
+                  .conversationIdEqualTo(currentUid)
+                  .and()
+                  .senderIdEqualTo(conversationId))
               .sortByTimestamp()
               .findAll();
         }
