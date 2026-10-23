@@ -8,10 +8,18 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../../../core/constants/app_colors.dart';
 import '../../../domain/models/board.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/glass_panel.dart';
+import '../../../ui/widgets/ink_avatar.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_dialog.dart';
+import '../../../ui/widgets/ink_text_field.dart';
 import '../../dashboard/bloc/dashboard_bloc.dart';
 import '../../dashboard/view/board_settings_route.dart';
 import '../bloc/canvas_bloc.dart';
@@ -90,6 +98,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   static const double _viewportComparisonEpsilon = 0.01;
 
+  InkTokens get _tokens => context.ink;
   bool _preventGestureBack = true;
   bool _showEdgeTrayButtons = true;
   DateTime? _lastEdgeDragTime;
@@ -112,10 +121,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   void _openTray(String tray) {
     if (_canvasBloc.state.activeTray == tray) return;
+    HapticFeedback.lightImpact();
     _canvasBloc.add(CanvasToggleTray(tray));
   }
 
   void _toggleTray(String tray) {
+    HapticFeedback.lightImpact();
     _canvasBloc.add(CanvasToggleTray(tray));
   }
 
@@ -353,57 +364,78 @@ class _CanvasScreenState extends State<CanvasScreen> {
     } else {
       source = await showModalBottomSheet<ImageSource>(
         context: context,
-        backgroundColor: Theme.of(context).cardColor,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-        ),
-        builder: (ctx) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.withOpacity(0.4),
-                    borderRadius: BorderRadius.circular(2),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        builder: (ctx) {
+          final tokens = ctx.ink;
+          Widget option(IconData icon, String title, String subtitle, ImageSource src) {
+            return Material(
+              color: tokens.field,
+              borderRadius: BorderRadius.circular(InkRadii.input),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(InkRadii.input),
+                onTap: () => Navigator.pop(ctx, src),
+                child: Padding(
+                  padding: const EdgeInsets.all(InkSpacing.s12),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: tokens.accentSoft,
+                          borderRadius: BorderRadius.circular(InkRadii.chip + 2),
+                        ),
+                        child: Icon(icon, size: 20, color: tokens.accentText),
+                      ),
+                      const SizedBox(width: InkSpacing.s12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title, style: InkType.bodyStrong(tokens.ink)),
+                            Text(subtitle, style: InkType.caption(tokens.inkMuted)),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Insert Image',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            );
+          }
+
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(InkSpacing.s12),
+              child: GlassPanel(
+                radius: InkRadii.bottomSheet,
+                padding: const EdgeInsets.all(InkSpacing.s20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Insert Image', style: InkType.title(tokens.ink)),
+                    const SizedBox(height: InkSpacing.s16),
+                    option(
+                      LucideIcons.camera,
+                      'Take Photo with Camera',
+                      'Capture a picture and place onto canvas',
+                      ImageSource.camera,
                     ),
-                  ),
+                    const SizedBox(height: InkSpacing.s8),
+                    option(
+                      LucideIcons.image,
+                      'Choose from Gallery',
+                      'Pick an existing photo or graphic',
+                      ImageSource.gallery,
+                    ),
+                  ],
                 ),
-                ListTile(
-                  leading: const CircleAvatar(
-                    backgroundColor: AppColors.primary,
-                    child: Icon(Icons.camera_alt_rounded, color: Colors.white),
-                  ),
-                  title: const Text('Take Photo with Camera'),
-                  subtitle: const Text('Capture a picture and place onto canvas'),
-                  onTap: () => Navigator.pop(ctx, ImageSource.camera),
-                ),
-                ListTile(
-                  leading: const CircleAvatar(
-                    backgroundColor: Colors.blueAccent,
-                    child: Icon(Icons.photo_library_rounded, color: Colors.white),
-                  ),
-                  title: const Text('Choose from Gallery'),
-                  subtitle: const Text('Pick an existing photo or graphic'),
-                  onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-                ),
-              ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       );
     }
 
@@ -723,24 +755,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final created = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Add Sticky Note'),
+        builder: (ctx, setDialogState) => InkDialog(
+          title: 'Add Sticky Note',
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
+              InkTextField(
                 controller: textController,
                 maxLines: 4,
                 autofocus: true,
-                decoration: const InputDecoration(
-                  hintText: 'Write note content here...',
-                  border: OutlineInputBorder(),
-                ),
+                hintText: 'Write note content here...',
               ),
               const SizedBox(height: 16),
-              const Align(
+              Align(
                 alignment: Alignment.centerLeft,
-                child: Text('Color', style: TextStyle(fontWeight: FontWeight.w600)),
+                child: Text('Color', style: InkType.label(_tokens.ink)),
               ),
               const SizedBox(height: 8),
               Row(
@@ -756,7 +785,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         color: c,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: isSelected ? Colors.blueAccent : Colors.grey.withOpacity(0.4),
+                          color: isSelected ? _tokens.accent : _tokens.inkMuted.withValues(alpha: 0.4),
                           width: isSelected ? 2.5 : 1,
                         ),
                         boxShadow: isSelected
@@ -770,13 +799,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
             ],
           ),
           actions: [
-            TextButton(
+            InkButton.secondary(
+              label: 'Cancel',
+              expand: false,
+              compact: true,
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
             ),
-            ElevatedButton(
+            InkButton.primary(
+              label: 'Add to Canvas',
+              expand: false,
+              compact: true,
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Add to Canvas'),
             ),
           ],
         ),
@@ -808,24 +841,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final updated = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Edit Sticky Note'),
+        builder: (ctx, setDialogState) => InkDialog(
+          title: 'Edit Sticky Note',
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
+              InkTextField(
                 controller: textController,
                 maxLines: 4,
                 autofocus: true,
-                decoration: const InputDecoration(
-                  hintText: 'Note content...',
-                  border: OutlineInputBorder(),
-                ),
+                hintText: 'Note content...',
               ),
               const SizedBox(height: 16),
-              const Align(
+              Align(
                 alignment: Alignment.centerLeft,
-                child: Text('Color', style: TextStyle(fontWeight: FontWeight.w600)),
+                child: Text('Color', style: InkType.label(_tokens.ink)),
               ),
               const SizedBox(height: 8),
               Row(
@@ -841,7 +871,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         color: c,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: isSelected ? Colors.blueAccent : Colors.grey.withOpacity(0.4),
+                          color: isSelected ? _tokens.accent : _tokens.inkMuted.withValues(alpha: 0.4),
                           width: isSelected ? 2.5 : 1,
                         ),
                       ),
@@ -852,13 +882,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
             ],
           ),
           actions: [
-            TextButton(
+            InkButton.secondary(
+              label: 'Cancel',
+              expand: false,
+              compact: true,
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
             ),
-            ElevatedButton(
+            InkButton.primary(
+              label: 'Save',
+              expand: false,
+              compact: true,
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Save'),
             ),
           ],
         ),
@@ -892,15 +926,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final created = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Add Connector / Diagram Link'),
+        builder: (ctx, setDialogState) => InkDialog(
+          title: 'Add Connector / Diagram Link',
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Line Style',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
+                Text('Line Style', style: InkType.label(_tokens.ink)),
                 const SizedBox(height: 8),
                 DropdownButton<String>(
                   value: selectedStyle,
@@ -918,16 +951,19 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   },
                 ),
                 const SizedBox(height: 12),
-                SwitchListTile(
+                SwitchListTile.adaptive(
+                  activeColor: _tokens.accent,
                   title: const Text('Arrowhead End'),
                   value: hasArrowhead,
                   contentPadding: EdgeInsets.zero,
-                  onChanged: (v) => setDialogState(() => hasArrowhead = v),
+                  onChanged: (v) {
+                    HapticFeedback.lightImpact();
+                    setDialogState(() => hasArrowhead = v);
+                  },
                 ),
                 if (linkable.length >= 2) ...[
                   const SizedBox(height: 12),
-                  const Text('Connect Shapes',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  Text('Connect Shapes', style: InkType.label(_tokens.ink)),
                   const SizedBox(height: 6),
                   Row(
                     children: [
@@ -949,7 +985,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      const Icon(Icons.arrow_forward, size: 16),
+                      Icon(LucideIcons.arrowRight, size: 16, color: _tokens.inkMuted),
                       const SizedBox(width: 8),
                       Expanded(
                         child: DropdownButton<String>(
@@ -975,13 +1011,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
             ),
           ),
           actions: [
-            TextButton(
+            InkButton.secondary(
+              label: 'Cancel',
+              expand: false,
+              compact: true,
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
             ),
-            ElevatedButton(
+            InkButton.primary(
+              label: 'Add Connector',
+              expand: false,
+              compact: true,
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Add Connector'),
             ),
           ],
         ),
@@ -1092,82 +1132,71 @@ class _CanvasScreenState extends State<CanvasScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      backgroundColor: Colors.transparent,
+      elevation: 0,
       builder: (sheetContext) {
+        final tokens = sheetContext.ink;
         return SafeArea(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Export & Share Board',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+            padding: const EdgeInsets.all(InkSpacing.s12),
+            child: GlassPanel(
+              radius: InkRadii.bottomSheet,
+              padding: const EdgeInsets.all(InkSpacing.s20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Export & Share Board',
+                          style: InkType.title(tokens.ink),
+                        ),
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(sheetContext),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Export your canvas elements with full layout integrity:',
-                  style: TextStyle(color: Colors.grey, fontSize: 13),
-                ),
-                const SizedBox(height: 16),
-                _buildExportTile(
-                  sheetContext,
-                  icon: Icons.image_outlined,
-                  iconColor: Colors.blue,
-                  title: 'PNG Image',
-                  subtitle: 'High-resolution lossless raster export (2x scale)',
-                  format: BoardExportFormat.png,
-                ),
-                const SizedBox(height: 10),
-                _buildExportTile(
-                  sheetContext,
-                  icon: Icons.picture_as_pdf_outlined,
-                  iconColor: Colors.redAccent,
-                  title: 'PDF Document',
-                  subtitle: 'Printable formatted document with metadata header',
-                  format: BoardExportFormat.pdf,
-                ),
-                const SizedBox(height: 10),
-                _buildExportTile(
-                  sheetContext,
-                  icon: Icons.code_outlined,
-                  iconColor: Colors.teal,
-                  title: 'SVG Vector File',
-                  subtitle: 'Scalable vector graphics compatible with Figma & Illustrator',
-                  format: BoardExportFormat.svg,
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                      IconButton(
+                        icon: Icon(LucideIcons.x, color: tokens.inkSecondary),
+                        onPressed: () => Navigator.pop(sheetContext),
                       ),
-                    ),
-                    icon: const Icon(Icons.share_outlined, size: 20),
-                    label: const Text(
-                      'Share Board File (Native Sheet)',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
+                    ],
+                  ),
+                  const SizedBox(height: InkSpacing.s4),
+                  Text(
+                    'Export your canvas elements with full layout integrity:',
+                    style: InkType.caption(tokens.inkMuted),
+                  ),
+                  const SizedBox(height: InkSpacing.s16),
+                  _buildExportTile(
+                    sheetContext,
+                    icon: LucideIcons.image,
+                    iconColor: tokens.accentText,
+                    title: 'PNG Image',
+                    subtitle: 'High-resolution lossless raster export (2x scale)',
+                    format: BoardExportFormat.png,
+                  ),
+                  const SizedBox(height: InkSpacing.s8),
+                  _buildExportTile(
+                    sheetContext,
+                    icon: LucideIcons.fileText,
+                    iconColor: tokens.danger,
+                    title: 'PDF Document',
+                    subtitle: 'Printable formatted document with metadata header',
+                    format: BoardExportFormat.pdf,
+                  ),
+                  const SizedBox(height: InkSpacing.s8),
+                  _buildExportTile(
+                    sheetContext,
+                    icon: LucideIcons.code,
+                    iconColor: tokens.success,
+                    title: 'SVG Vector File',
+                    subtitle:
+                        'Scalable vector graphics compatible with Figma & Illustrator',
+                    format: BoardExportFormat.svg,
+                  ),
+                  const SizedBox(height: InkSpacing.s16),
+                  InkButton.hero(
+                    label: 'Share Board File (Native Sheet)',
+                    icon: const Icon(LucideIcons.share2),
                     onPressed: () {
                       Navigator.pop(sheetContext);
                       _canvasBloc.add(
@@ -1178,13 +1207,34 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       );
                     },
                   ),
-                ),
-                const SizedBox(height: 8),
-              ],
+                ],
+              ),
             ),
           ),
         );
       },
+    );
+  }
+
+  void _runExport(
+    BuildContext sheetContext,
+    BoardExportFormat format, {
+    required bool share,
+  }) {
+    Navigator.pop(sheetContext);
+    ScaffoldMessenger.of(context).removeCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          share
+              ? 'Preparing ${format.name.toUpperCase()} for sharing...'
+              : 'Saving ${format.name.toUpperCase()} to device storage...',
+        ),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+    _canvasBloc.add(
+      CanvasExportBoardRequested(format: format, shareAfterExport: share),
     );
   }
 
@@ -1196,89 +1246,52 @@ class _CanvasScreenState extends State<CanvasScreen> {
     required String subtitle,
     required BoardExportFormat format,
   }) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.withOpacity(0.2)),
-      ),
-      child: ListTile(
-        leading: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: iconColor.withOpacity(0.12),
-            borderRadius: BorderRadius.circular(8),
+    final tokens = sheetContext.ink;
+    return Material(
+      color: tokens.field,
+      borderRadius: BorderRadius.circular(InkRadii.input),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(InkRadii.input),
+        onTap: () => _runExport(sheetContext, format, share: false),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: InkSpacing.s12,
+            vertical: InkSpacing.s8,
           ),
-          child: Icon(icon, color: iconColor),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: iconColor.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(InkRadii.chip + 2),
+                ),
+                child: Icon(icon, size: 20, color: iconColor),
+              ),
+              const SizedBox(width: InkSpacing.s12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: InkType.bodyStrong(tokens.ink)),
+                    Text(subtitle, style: InkType.caption(tokens.inkMuted)),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: Icon(LucideIcons.download, size: 20, color: tokens.inkSecondary),
+                tooltip: 'Save to Device Storage',
+                onPressed: () => _runExport(sheetContext, format, share: false),
+              ),
+              IconButton(
+                icon: Icon(LucideIcons.share2, size: 20, color: tokens.inkSecondary),
+                tooltip: 'Share via...',
+                onPressed: () => _runExport(sheetContext, format, share: true),
+              ),
+            ],
+          ),
         ),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: const TextStyle(fontSize: 12, color: Colors.grey),
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.file_download_outlined, size: 22),
-              tooltip: 'Save to Device Storage',
-              onPressed: () {
-                Navigator.pop(sheetContext);
-                ScaffoldMessenger.of(context).removeCurrentSnackBar();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Saving ${format.name.toUpperCase()} to device storage...'),
-                    duration: const Duration(seconds: 1),
-                  ),
-                );
-                _canvasBloc.add(
-                  CanvasExportBoardRequested(
-                    format: format,
-                    shareAfterExport: false,
-                  ),
-                );
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.share_outlined, size: 20),
-              tooltip: 'Share via...',
-              onPressed: () {
-                Navigator.pop(sheetContext);
-                ScaffoldMessenger.of(context).removeCurrentSnackBar();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Preparing ${format.name.toUpperCase()} for sharing...'),
-                    duration: const Duration(seconds: 1),
-                  ),
-                );
-                _canvasBloc.add(
-                  CanvasExportBoardRequested(
-                    format: format,
-                    shareAfterExport: true,
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-        onTap: () {
-          Navigator.pop(sheetContext);
-          ScaffoldMessenger.of(context).removeCurrentSnackBar();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Saving ${format.name.toUpperCase()} to device storage...'),
-              duration: const Duration(seconds: 1),
-            ),
-          );
-          _canvasBloc.add(
-            CanvasExportBoardRequested(
-              format: format,
-              shareAfterExport: false,
-            ),
-          );
-        },
       ),
     );
   }
@@ -1301,7 +1314,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(msg),
-                backgroundColor: Colors.teal.shade700,
+                backgroundColor: context.ink.success,
                 duration: const Duration(seconds: 4),
                 action: path != null
                     ? SnackBarAction(
@@ -1336,8 +1349,18 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(message),
-              backgroundColor: isViewerWarning ? Colors.orange : Colors.red,
+              content: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isViewerWarning ? LucideIcons.triangleAlert : LucideIcons.ban,
+                    size: 16,
+                    color: isViewerWarning ? _tokens.pending : _tokens.danger,
+                  ),
+                  const SizedBox(width: InkSpacing.s8),
+                  Flexible(child: Text(message)),
+                ],
+              ),
               duration: isViewerWarning
                   ? const Duration(seconds: 2)
                   : const Duration(seconds: 4),
@@ -1394,145 +1417,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
               },
               child: Scaffold(
                 backgroundColor: isDark
-                    ? AppColors.bgDark
-                    : const Color(0xFFF5F5F5),
+                    ? const Color(0xFF121418)
+                    : _tokens.surfaceDesk,
                 resizeToAvoidBottomInset: false,
-                appBar: AppBar(
-                  leading: IconButton(
-                    icon: const Icon(Icons.arrow_back),
-                    tooltip: 'Back to Boards',
-                    onPressed: _exitCanvas,
-                  ),
-                  title: GestureDetector(
-                    onTap: () => _openSettings(state.boardTitle ?? 'Board'),
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  centerTitle: true,
-                  elevation: 0,
-                  backgroundColor: Colors.transparent,
-                  actions: [
-                    IconButton(
-                      icon: const Icon(Icons.center_focus_strong),
-                      tooltip: 'Reset View',
-                      onPressed: _toggleResetView,
-                    ),
-                    state.isExporting
-                        ? const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 12),
-                            child: Center(
-                              child: SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            ),
-                          )
-                        : IconButton(
-                            icon: const Icon(Icons.file_download_outlined),
-                            tooltip: 'Export & Share Board',
-                            onPressed: () => _showExportOptionsSheet(context),
-                          ),
-                    PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert),
-                      onSelected: (value) {
-                        if (value == 'settings') {
-                          _openSettings(state.boardTitle ?? 'Board');
-                        } else if (value == 'export') {
-                          _showExportOptionsSheet(context);
-                        } else if (value == 'share') {
-                          _canvasBloc.add(
-                            const CanvasExportBoardRequested(
-                              format: BoardExportFormat.png,
-                              shareAfterExport: true,
-                            ),
-                          );
-                        } else if (value == 'copy') {
-                          Clipboard.setData(
-                            ClipboardData(text: widget.boardId),
-                          );
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Join Code copied to clipboard!'),
-                            ),
-                          );
-                        } else if (value == 'toggle_gesture_lock') {
-                          setState(() {
-                            _preventGestureBack = !_preventGestureBack;
-                          });
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(_preventGestureBack
-                                  ? 'Gesture back locked (exit via back button).'
-                                  : 'Gesture back unlocked.'),
-                              duration: const Duration(seconds: 2),
-                            ),
-                          );
-                        } else if (value == 'toggle_edge_buttons') {
-                          setState(() {
-                            _showEdgeTrayButtons = !_showEdgeTrayButtons;
-                          });
-                        } else if (value == 'exit') {
-                          _exitCanvas();
-                        }
-                      },
-                      itemBuilder: (context) => [
-                        const PopupMenuItem(
-                          value: 'settings',
-                          child: Text('Board Settings'),
-                        ),
-                        const PopupMenuItem(
-                          value: 'export',
-                          child: Row(
-                            children: [
-                              Icon(Icons.file_download_outlined, size: 18),
-                              SizedBox(width: 8),
-                              Text('Export Board...'),
-                            ],
-                          ),
-                        ),
-                        const PopupMenuItem(
-                          value: 'share',
-                          child: Row(
-                            children: [
-                              Icon(Icons.share_outlined, size: 18),
-                              SizedBox(width: 8),
-                              Text('Share Board'),
-                            ],
-                          ),
-                        ),
-                        const PopupMenuItem(
-                          value: 'copy',
-                          child: Text('Copy Join Code'),
-                        ),
-                        const PopupMenuDivider(),
-                        CheckedPopupMenuItem<String>(
-                          value: 'toggle_gesture_lock',
-                          checked: _preventGestureBack,
-                          child: const Text('Lock Back Gesture'),
-                        ),
-                        CheckedPopupMenuItem<String>(
-                          value: 'toggle_edge_buttons',
-                          checked: _showEdgeTrayButtons,
-                          child: const Text('Show Tray Edge Icons'),
-                        ),
-                        const PopupMenuDivider(),
-                        const PopupMenuItem(
-                          value: 'exit',
-                          child: Text(
-                            'Exit Canvas',
-                            style: TextStyle(color: Colors.red),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+
                 body: LayoutBuilder(
                   builder: (context, constraints) {
                     _lastCanvasSize = Size(
@@ -1894,6 +1782,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   shapeDrawStart: state.shapeDrawStart,
                                   shapeDrawCurrent: state.shapeDrawCurrent,
                                   pendingShapeType: state.pendingShapeType,
+                                  accentColor: _tokens.accent,
                                   arrowConnectStartElementId:
                                       _isArrowMode(state)
                                           ? _arrowConnectStartElementId
@@ -1916,6 +1805,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               state,
                               mappedElements,
                             ),
+                          _buildTopPills(state, title),
 
                           _buildToolModeIndicator(state),
 
@@ -2216,6 +2106,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   Widget _buildStickyNoteEditBanner(bool isDark, _CanvasElement element) {
+    final tokens = context.ink;
     return Positioned(
       left: 0,
       right: 0,
@@ -2224,27 +2115,19 @@ class _CanvasScreenState extends State<CanvasScreen> {
         child: ElevatedButton.icon(
           onPressed: () => _editStickyNote(element),
           icon: Icon(
-            Icons.edit,
+            LucideIcons.pencil,
             size: 18,
-            color: isDark
-                ? AppColors.textPrimaryDark
-                : AppColors.textPrimaryLight,
+            color: tokens.ink,
           ),
           label: Text(
             'Edit Note',
             style: TextStyle(
-              color: isDark
-                  ? AppColors.textPrimaryDark
-                  : AppColors.textPrimaryLight,
+              color: tokens.ink,
             ),
           ),
           style: ElevatedButton.styleFrom(
-            backgroundColor: isDark
-                ? AppColors.surfaceDark
-                : AppColors.surfaceLight,
-            foregroundColor: isDark
-                ? AppColors.textPrimaryDark
-                : AppColors.textPrimaryLight,
+            backgroundColor: tokens.paper,
+            foregroundColor: tokens.ink,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             elevation: 2,
           ),
@@ -2289,7 +2172,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
             width: 20,
             height: 20,
             decoration: BoxDecoration(
-              color: Colors.blueAccent,
+              color: _tokens.accent,
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
               boxShadow: const [
@@ -2309,7 +2192,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
             width: 20,
             height: 20,
             decoration: BoxDecoration(
-              color: Colors.blueAccent,
+              color: _tokens.accent,
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
               boxShadow: const [
@@ -2331,7 +2214,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               width: 28,
               height: 28,
               decoration: BoxDecoration(
-                color: Colors.redAccent,
+                color: _tokens.danger,
                 shape: BoxShape.circle,
                 border: Border.all(color: Colors.white, width: 2),
                 boxShadow: const [
@@ -2342,7 +2225,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   ),
                 ],
               ),
-              child: const Icon(Icons.delete, size: 14, color: Colors.white),
+              child: const Icon(LucideIcons.trash2, size: 14, color: Colors.white),
             ),
           ),
         ),
@@ -2374,7 +2257,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               child: Container(
                 decoration: BoxDecoration(
                   border:
-                      Border.all(color: Colors.blueAccent, width: 1.5),
+                      Border.all(color: _tokens.accent, width: 1.5),
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
@@ -2390,7 +2273,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  color: Colors.red,
+                  color: _tokens.danger,
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white, width: 2),
                   boxShadow: const [
@@ -2401,7 +2284,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     ),
                   ],
                 ),
-                child: const Icon(Icons.delete, size: 14,
+                child: const Icon(LucideIcons.trash2, size: 14,
                     color: Colors.white),
               ),
             ),
@@ -2413,45 +2296,31 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   Widget _buildStrokeEditBanner() {
     final bottomInset = MediaQuery.of(context).padding.bottom;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Positioned(
       left: 0,
       right: 0,
-      bottom: bottomInset,
-      child: Container(
-        color: isDark ? AppColors.bgDark : AppColors.bgLight,
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Center(
-          child: ElevatedButton.icon(
-            onPressed: () {
+      bottom: 12 + bottomInset,
+      child: Center(
+        child: Material(
+          color: const Color(0xD91F2229),
+          borderRadius: BorderRadius.circular(InkRadii.glassBar),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(InkRadii.glassBar),
+            onTap: () {
               setState(() {
                 _isStrokeEditExpanded = true;
               });
             },
-            icon: Icon(
-              Icons.brush,
-              size: 18,
-              color: isDark
-                  ? AppColors.textPrimaryDark
-                  : AppColors.textPrimaryLight,
-            ),
-            label: Text(
-              'Edit Doodle',
-              style: TextStyle(
-                color: isDark
-                    ? AppColors.textPrimaryDark
-                    : AppColors.textPrimaryLight,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.penLine, size: 18, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Edit Doodle', style: TextStyle(color: Colors.white)),
+                ],
               ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: isDark
-                  ? AppColors.surfaceDark
-                  : AppColors.surfaceLight,
-              foregroundColor: isDark
-                  ? AppColors.textPrimaryDark
-                  : AppColors.textPrimaryLight,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              elevation: 0,
             ),
           ),
         ),
@@ -2482,7 +2351,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
       bottom: 8 + bottomInset,
       child: Center(
         child: Material(
-          color: Colors.white,
+          color: _tokens.paper,
           borderRadius: BorderRadius.circular(12),
           elevation: 6,
           child: ConstrainedBox(
@@ -2509,8 +2378,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           IconButton(
                             onPressed: () =>
                                 _canvasBloc.add(CanvasDeleteElement(element.id)),
-                            icon: const Icon(Icons.delete, size: 18,
-                                color: Colors.red),
+                            icon: Icon(LucideIcons.trash2, size: 18,
+                                color: _tokens.danger),
                             splashRadius: 16,
                             tooltip: 'Delete',
                           ),
@@ -2520,7 +2389,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 _isStrokeEditExpanded = false;
                               });
                             },
-                            icon: const Icon(Icons.expand_more, size: 18),
+                            icon: Icon(LucideIcons.chevronDown, size: 18, color: _tokens.inkMuted),
                             splashRadius: 16,
                             tooltip: 'Minimize',
                           ),
@@ -2532,14 +2401,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         value: state.selectedStrokeWidth.clamp(1, 48),
                         min: 1,
                         max: 48,
-                        activeColor: Colors.blueAccent,
                         onChanged: (v) => _canvasBloc.add(
                           CanvasUpdateSelectedStrokeWidth(v),
                         ),
                       ),
                       Text(
                         '${state.selectedStrokeWidth.toStringAsFixed(0)} px',
-                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                        style: TextStyle(fontSize: 11, color: _tokens.inkMuted),
                       ),
                       const SizedBox(height: 6),
                       _buildSectionLabel('Opacity'),
@@ -2547,14 +2415,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         value: state.selectedStrokeOpacity.clamp(0, 1),
                         min: 0,
                         max: 1,
-                        activeColor: Colors.blueAccent,
                         onChanged: (v) => _canvasBloc.add(
                           CanvasUpdateSelectedStrokeOpacity(v),
                         ),
                       ),
                       Text(
                         '${(state.selectedStrokeOpacity * 100).toStringAsFixed(0)}%',
-                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                        style: TextStyle(fontSize: 11, color: _tokens.inkMuted),
                       ),
                       const SizedBox(height: 6),
                       _buildSectionLabel('Brush'),
@@ -2604,7 +2471,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   ),
                                   child: color.value ==
                                           state.selectedStrokeColor
-                                      ? const Icon(Icons.check,
+                                      ? const Icon(LucideIcons.check,
                                           size: 14, color: Colors.white)
                                       : null,
                                 ),
@@ -2626,10 +2493,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Widget _buildSectionLabel(String label) {
     return Text(
       label,
-      style: const TextStyle(
+      style: TextStyle(
         fontWeight: FontWeight.w600,
         fontSize: 12,
-        color: Colors.black87,
+        color: _tokens.ink,
       ),
     );
   }
@@ -2665,7 +2532,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
       bottom: 18 + bottomInset + 12,
       child: Center(
         child: Material(
-          color: Colors.white,
+          color: _tokens.paper,
           borderRadius: BorderRadius.circular(12),
           elevation: 6,
           child: SizedBox(
@@ -2690,7 +2557,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             _isShapeEditTrayExpanded = false;
                           });
                         },
-                        icon: const Icon(Icons.expand_more, size: 18),
+                        icon: Icon(LucideIcons.chevronDown, size: 18, color: _tokens.inkMuted),
                         splashRadius: 16,
                         tooltip: 'Minimize',
                       ),
@@ -2701,7 +2568,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             CanvasDeleteElement(shape.id),
                           );
                         },
-                        icon: const Icon(Icons.delete, size: 18),
+                        icon: Icon(LucideIcons.trash2, size: 18, color: _tokens.danger),
                         splashRadius: 16,
                         tooltip: 'Delete',
                       ),
@@ -2710,7 +2577,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           _commitPendingShapeEdits();
                           _selectShape(null);
                         },
-                        icon: const Icon(Icons.close, size: 18),
+                        icon: Icon(LucideIcons.x, size: 18, color: _tokens.inkMuted),
                         splashRadius: 16,
                         tooltip: 'Deselect shape',
                       ),
@@ -2718,11 +2585,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   ),
                   const SizedBox(height: 4),
                   SwitchListTile.adaptive(
+                    activeColor: _tokens.accent,
                     dense: true,
                     contentPadding: EdgeInsets.zero,
                     value: state.selectedShapeIsFilled,
                     title: const Text('Filled', style: TextStyle(fontSize: 13)),
-                    onChanged: _deferredSetSelectedShapeFill,
+                    onChanged: (v) {
+                      HapticFeedback.lightImpact();
+                      _deferredSetSelectedShapeFill(v);
+                    },
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -2791,41 +2662,28 @@ class _CanvasScreenState extends State<CanvasScreen> {
     return Positioned(
       left: 0,
       right: 0,
-      bottom: bottomInset,
-      child: Container(
-        color: isDark ? AppColors.bgDark : AppColors.bgLight,
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Center(
-          child: ElevatedButton.icon(
-            onPressed: () {
+      bottom: 12 + bottomInset,
+      child: Center(
+        child: Material(
+          color: const Color(0xD91F2229),
+          borderRadius: BorderRadius.circular(InkRadii.glassBar),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(InkRadii.glassBar),
+            onTap: () {
               setState(() {
                 _isShapeEditTrayExpanded = true;
               });
             },
-            icon: Icon(
-              Icons.tune,
-              size: 18,
-              color: isDark
-                  ? AppColors.textPrimaryDark
-                  : AppColors.textPrimaryLight,
-            ),
-            label: Text(
-              'Edit Shape',
-              style: TextStyle(
-                color: isDark
-                    ? AppColors.textPrimaryDark
-                    : AppColors.textPrimaryLight,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.slidersHorizontal, size: 18, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Edit Shape', style: TextStyle(color: Colors.white)),
+                ],
               ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: isDark
-                  ? AppColors.surfaceDark
-                  : AppColors.surfaceLight,
-              foregroundColor: isDark
-                  ? AppColors.textPrimaryDark
-                  : AppColors.textPrimaryLight,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              elevation: 0,
             ),
           ),
         ),
@@ -2960,7 +2818,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       child: Container(
                         decoration: BoxDecoration(
                           color: Colors.transparent,
-                          border: Border.all(color: Colors.blueAccent, width: 2.0),
+                          border: Border.all(color: _tokens.accent, width: 1.5),
                           borderRadius: BorderRadius.circular(
                             shape.kind == _ElementKind.stickyNote ? 8 : 4,
                           ),
@@ -3012,7 +2870,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         _isRotatingShape = false;
                         _setShapeEditing(false);
                       },
-                      child: _buildHandle(Icons.rotate_right),
+                      child: _buildHandle(LucideIcons.rotateCw),
                     ),
                   ),
                   // Resize handle (bottom right)
@@ -3065,7 +2923,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         _isResizingShape = false;
                         _setShapeEditing(false);
                       },
-                      child: _buildHandle(Icons.open_in_full),
+                      child: _buildHandle(LucideIcons.maximize2),
                     ),
                   ),
                   // Sticky note quick edit button (bottom left)
@@ -3081,7 +2939,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           decoration: BoxDecoration(
                             color: Colors.white,
                             shape: BoxShape.circle,
-                            border: Border.all(color: Colors.blueAccent, width: 2),
+                            border: Border.all(color: _tokens.accent, width: 2),
                             boxShadow: const [
                               BoxShadow(
                                 color: Color(0x33000000),
@@ -3090,7 +2948,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               ),
                             ],
                           ),
-                          child: const Icon(Icons.edit, size: 14, color: Colors.blueAccent),
+                          child: Icon(LucideIcons.pencil, size: 14, color: _tokens.accent),
                         ),
                       ),
                     ),
@@ -3103,12 +2961,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
             top: 2,
             right: 2,
             child: GestureDetector(
-              onTap: () => _canvasBloc.add(CanvasDeleteElement(shape.id)),
+              onTap: () {
+                HapticFeedback.mediumImpact();
+                _canvasBloc.add(CanvasDeleteElement(shape.id));
+              },
               child: Container(
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  color: Colors.redAccent,
+                  color: _tokens.danger,
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white, width: 2),
                   boxShadow: const [
@@ -3119,7 +2980,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     ),
                   ],
                 ),
-                child: const Icon(Icons.delete, size: 14, color: Colors.white),
+                child: const Icon(LucideIcons.trash2, size: 14, color: Colors.white),
               ),
             ),
           ),
@@ -3135,7 +2996,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.blueAccent, width: 1.5),
+        border: Border.all(color: _tokens.accent, width: 1.5),
         boxShadow: const [
           BoxShadow(
             color: Color(0x22000000),
@@ -3144,13 +3005,20 @@ class _CanvasScreenState extends State<CanvasScreen> {
           ),
         ],
       ),
-      child: Icon(icon, size: 14, color: Colors.blueAccent),
+      child: Icon(icon, size: 14, color: _tokens.accent),
     );
   }
 
   Widget _buildAllTrays(CanvasState state) {
     return Stack(
       children: [
+        if (state.activeTray != null)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _toggleTray(state.activeTray!),
+            ),
+          ),
         MembersTray(
           isOpen: state.activeTray == 'members',
           onClose: () => _toggleTray('members'),
@@ -3177,6 +3045,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
         ShapesTray(
           isOpen: state.activeTray == 'shapes',
           onSelectShapeForDrawing: _selectShapeForDrawing,
+          selectedType: state.pendingShapeType,
           onClose: () => _toggleTray('shapes'),
         ),
         BrushTray(
@@ -3204,11 +3073,240 @@ class _CanvasScreenState extends State<CanvasScreen> {
             setState(() => _smoothDoodlesEnabled = v);
           },
           onToolModeChanged: (mode) {
-            _canvasBloc.add(CanvasSetToolMode(mode));
+            _canvasBloc.add(CanvasSetToolMode(mode, keepTray: true));
           },
           onClose: () => _toggleTray('brushes'),
         ),
       ],
+    );
+  }
+
+  Widget _buildTopPills(CanvasState state, String title) {
+    final tokens = _tokens;
+    final topInset = MediaQuery.of(context).padding.top + 8;
+
+    return Positioned(
+      top: topInset,
+      left: 12,
+      right: 12,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: GlassPanel(
+              radius: InkRadii.glassBar,
+              child: SizedBox(
+                height: 48,
+                child: Row(
+                  children: [
+                    IconButton(
+                      tooltip: 'Exit canvas',
+                      icon: Icon(LucideIcons.chevronLeft, color: tokens.ink),
+                      onPressed: _exitCanvas,
+                    ),
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _openSettings(state.boardTitle ?? 'Board'),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                                style: InkType.title(tokens.ink),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              LucideIcons.chevronDown,
+                              size: 16,
+                              color: tokens.inkMuted,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GlassPanel(
+            radius: InkRadii.glassBar,
+            child: SizedBox(
+              height: 48,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (state.boardMembers.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    _buildMemberAvatarStack(state.boardMembers),
+                    const SizedBox(width: 4),
+                  ],
+                  IconButton(
+                    tooltip: 'Reset View',
+                    icon: Icon(LucideIcons.scan, color: tokens.ink, size: 18),
+                    onPressed: _toggleResetView,
+                  ),
+                  if (state.isExporting)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 10),
+                      child: Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    )
+                  else
+                    IconButton(
+                      tooltip: 'Export & Share Board',
+                      icon: Icon(LucideIcons.download, color: tokens.ink, size: 18),
+                      onPressed: () => _showExportOptionsSheet(context),
+                    ),
+                  PopupMenuButton<String>(
+                    icon: Icon(LucideIcons.ellipsis, color: tokens.ink, size: 18),
+                    onSelected: (value) {
+                      if (value == 'settings') {
+                        _openSettings(state.boardTitle ?? 'Board');
+                      } else if (value == 'export') {
+                        _showExportOptionsSheet(context);
+                      } else if (value == 'share') {
+                        _canvasBloc.add(
+                          const CanvasExportBoardRequested(
+                            format: BoardExportFormat.png,
+                            shareAfterExport: true,
+                          ),
+                        );
+                      } else if (value == 'copy') {
+                        Clipboard.setData(
+                          ClipboardData(text: widget.boardId),
+                        );
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Join Code copied to clipboard!'),
+                          ),
+                        );
+                      } else if (value == 'toggle_gesture_lock') {
+                        setState(() {
+                          _preventGestureBack = !_preventGestureBack;
+                        });
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(_preventGestureBack
+                                ? 'Gesture back locked (exit via back button).'
+                                : 'Gesture back unlocked.'),
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      } else if (value == 'toggle_edge_buttons') {
+                        setState(() {
+                          _showEdgeTrayButtons = !_showEdgeTrayButtons;
+                        });
+                      } else if (value == 'exit') {
+                        _exitCanvas();
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: 'settings',
+                        child: _menuRow(LucideIcons.slidersHorizontal, 'Board Settings', tokens.ink),
+                      ),
+                      PopupMenuItem(
+                        value: 'export',
+                        child: _menuRow(LucideIcons.download, 'Export Board...', tokens.ink),
+                      ),
+                      PopupMenuItem(
+                        value: 'share',
+                        child: _menuRow(LucideIcons.share2, 'Share Board', tokens.ink),
+                      ),
+                      PopupMenuItem(
+                        value: 'copy',
+                        child: _menuRow(LucideIcons.copy, 'Copy Join Code', tokens.ink),
+                      ),
+                      const PopupMenuDivider(),
+                      CheckedPopupMenuItem<String>(
+                        value: 'toggle_gesture_lock',
+                        checked: _preventGestureBack,
+                        child: Text('Lock Back Gesture', style: TextStyle(color: tokens.ink)),
+                      ),
+                      CheckedPopupMenuItem<String>(
+                        value: 'toggle_edge_buttons',
+                        checked: _showEdgeTrayButtons,
+                        child: Text('Show Tray Edge Icons', style: TextStyle(color: tokens.ink)),
+                      ),
+                      const PopupMenuDivider(),
+                      PopupMenuItem(
+                        value: 'exit',
+                        child: _menuRow(LucideIcons.logOut, 'Exit Canvas', tokens.danger),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 4),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _menuRow(IconData icon, String label, Color color) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 10),
+        Text(label, style: TextStyle(color: color)),
+      ],
+    );
+  }
+
+  Widget _buildMemberAvatarStack(List<BoardMember> members) {
+    final shown = members.take(3).toList();
+    return SizedBox(
+      width: 24 + (shown.length - 1) * 16,
+      height: 32,
+      child: Stack(
+        children: [
+          for (var i = 0; i < shown.length; i++)
+            Positioned(
+              left: i * 16,
+              child: InkAvatar(
+                imageUrl: shown[i].photoUrl,
+                initials: shown[i].label.isNotEmpty
+                    ? shown[i].label.substring(0, 1).toUpperCase()
+                    : '?',
+                id: shown[i].uid,
+                size: 28,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGlassEdgeTab(IconData icon, {bool vertical = true}) {
+    if (!_showEdgeTrayButtons) return const SizedBox.shrink();
+    final tokens = _tokens;
+    return IgnorePointer(
+      child: Center(
+        child: GlassPanel(
+          radius: 14,
+          child: SizedBox(
+            width: vertical ? 36 : 56,
+            height: vertical ? 56 : 36,
+            child: Icon(icon, size: 18, color: tokens.inkMuted),
+          ),
+        ),
+      ),
     );
   }
 
@@ -3221,6 +3319,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           alignment: Alignment.bottomCenter,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
+            onTap: () => _openTray('brushes'),
             onVerticalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onVerticalDragUpdate: (d) {
               _lastEdgeDragTime = DateTime.now();
@@ -3230,6 +3329,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               height: 55,
               width: double.infinity,
               color: Colors.transparent,
+              child: _buildGlassEdgeTab(LucideIcons.penLine, vertical: false),
             ),
           ),
         ),
@@ -3238,6 +3338,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           alignment: Alignment.topLeft,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
+            onTap: () => _openTray('members'),
             onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
               _lastEdgeDragTime = DateTime.now();
@@ -3248,6 +3349,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               width: 50,
               margin: const EdgeInsets.only(top: 60),
               color: Colors.transparent,
+              child: _buildGlassEdgeTab(LucideIcons.users),
             ),
           ),
         ),
@@ -3256,6 +3358,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           alignment: Alignment.bottomLeft,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
+            onTap: () => _openTray('tools'),
             onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
               _lastEdgeDragTime = DateTime.now();
@@ -3266,6 +3369,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               width: 50,
               margin: const EdgeInsets.only(bottom: 60),
               color: Colors.transparent,
+              child: _buildGlassEdgeTab(LucideIcons.slidersHorizontal),
             ),
           ),
         ),
@@ -3274,6 +3378,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           alignment: Alignment.topRight,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
+            onTap: () => _openTray('ai'),
             onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
               _lastEdgeDragTime = DateTime.now();
@@ -3284,6 +3389,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
               width: 50,
               margin: const EdgeInsets.only(top: 60),
               color: Colors.transparent,
+              child: _buildGlassEdgeTab(LucideIcons.sparkles),
             ),
           ),
         ),
@@ -3292,6 +3398,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
           alignment: Alignment.bottomRight,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
+            onTap: () => _openTray('shapes'),
             onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
               _lastEdgeDragTime = DateTime.now();
@@ -3302,196 +3409,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
               width: 50,
               margin: const EdgeInsets.only(bottom: 60),
               color: Colors.transparent,
+              child: _buildGlassEdgeTab(LucideIcons.shapes),
             ),
           ),
         ),
-
-        // Visual Edge Tray Tab Icons (User can tap these instead of swiping)
-        if (_showEdgeTrayButtons) ...[
-          // TOP LEFT: Members Tab
-          _buildSideTab(
-            tray: 'members',
-            icon: Icons.people_alt_outlined,
-            label: 'Members',
-            alignment: Alignment.topLeft,
-            margin: const EdgeInsets.only(top: 130),
-            isLeft: true,
-            isActive: state.activeTray == 'members',
-            isDark: isDark,
-          ),
-          // BOTTOM LEFT: Tools Tab
-          _buildSideTab(
-            tray: 'tools',
-            icon: Icons.handyman_outlined,
-            label: 'Tools',
-            alignment: Alignment.bottomLeft,
-            margin: const EdgeInsets.only(bottom: 120),
-            isLeft: true,
-            isActive: state.activeTray == 'tools',
-            isDark: isDark,
-          ),
-          // TOP RIGHT: AI Tab
-          _buildSideTab(
-            tray: 'ai',
-            icon: Icons.auto_awesome,
-            label: 'AI Assistant',
-            alignment: Alignment.topRight,
-            margin: const EdgeInsets.only(top: 130),
-            isLeft: false,
-            isActive: state.activeTray == 'ai',
-            isDark: isDark,
-          ),
-          // BOTTOM RIGHT: Shapes Tab
-          _buildSideTab(
-            tray: 'shapes',
-            icon: Icons.category_outlined,
-            label: 'Shapes',
-            alignment: Alignment.bottomRight,
-            margin: const EdgeInsets.only(bottom: 120),
-            isLeft: false,
-            isActive: state.activeTray == 'shapes',
-            isDark: isDark,
-          ),
-          // BOTTOM CENTER: Brushes Tab Pill
-          _buildBottomCenterTab(
-            isActive: state.activeTray == 'brushes',
-            isDark: isDark,
-          ),
-        ],
       ],
-    );
-  }
-
-  Widget _buildSideTab({
-    required String tray,
-    required IconData icon,
-    required String label,
-    required Alignment alignment,
-    required EdgeInsets margin,
-    required bool isLeft,
-    required bool isActive,
-    required bool isDark,
-  }) {
-    final bgColor = isDark
-        ? (isActive
-            ? const Color(0xFF1E293B)
-            : const Color(0xFF0F172A).withOpacity(0.92))
-        : (isActive
-            ? Colors.blue.shade50
-            : Colors.white.withOpacity(0.95));
-    final iconColor = isActive
-        ? Colors.blueAccent
-        : (isDark ? Colors.white70 : Colors.black87);
-    final borderColor = isActive
-        ? Colors.blueAccent
-        : (isDark ? Colors.white24 : Colors.black12);
-
-    return Align(
-      alignment: alignment,
-      child: Padding(
-        padding: margin,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => _toggleTray(tray),
-          child: Container(
-            width: 38,
-            height: 46,
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.horizontal(
-                left: isLeft ? Radius.zero : const Radius.circular(14),
-                right: isLeft ? const Radius.circular(14) : Radius.zero,
-              ),
-              border: Border(
-                top: BorderSide(color: borderColor, width: 1.2),
-                bottom: BorderSide(color: borderColor, width: 1.2),
-                left: isLeft
-                    ? BorderSide.none
-                    : BorderSide(color: borderColor, width: 1.2),
-                right: isLeft
-                    ? BorderSide(color: borderColor, width: 1.2)
-                    : BorderSide.none,
-              ),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x1F000000),
-                  blurRadius: 6,
-                  offset: Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Center(
-              child: Icon(icon, size: 20, color: iconColor),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBottomCenterTab({
-    required bool isActive,
-    required bool isDark,
-  }) {
-    final bgColor = isDark
-        ? (isActive
-            ? const Color(0xFF1E293B)
-            : const Color(0xFF0F172A).withOpacity(0.92))
-        : (isActive
-            ? Colors.blue.shade50
-            : Colors.white.withOpacity(0.95));
-    final iconColor = isActive
-        ? Colors.blueAccent
-        : (isDark ? Colors.white70 : Colors.black87);
-    final borderColor = isActive
-        ? Colors.blueAccent
-        : (isDark ? Colors.white24 : Colors.black12);
-
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 24),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => _toggleTray('brushes'),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: borderColor, width: 1.2),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x1F000000),
-                  blurRadius: 6,
-                  offset: Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.palette_outlined, size: 16, color: iconColor),
-                const SizedBox(width: 6),
-                Text(
-                  'Brushes',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: iconColor,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Icon(
-                  isActive ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up,
-                  size: 16,
-                  color: iconColor,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 
@@ -3502,24 +3424,24 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
     final (IconData icon, String label) = _isArrowMode(state)
         ? (
-            Icons.arrow_forward_outlined,
+            LucideIcons.arrowRight,
             _arrowConnectStartElementId != null
                 ? 'Arrow: Tap 2nd shape to point to'
                 : 'Arrow: Tap 2 shapes to connect, or drag',
           )
         : switch (state.currentToolMode) {
             CanvasToolMode.shape => (
-              Icons.category_outlined,
+              LucideIcons.shapes,
               state.pendingShapeType != null
                   ? 'Shape: ${state.pendingShapeType!.name}'
                   : 'Shape',
             ),
-            CanvasToolMode.eraser => (Icons.auto_fix_high_outlined, 'Eraser'),
-            CanvasToolMode.text => (Icons.text_fields, 'Text'),
-            CanvasToolMode.arrow => (Icons.arrow_forward_outlined, 'Arrow'),
-            CanvasToolMode.image => (Icons.image_outlined, 'Image'),
-            CanvasToolMode.highlight => (Icons.highlight_outlined, 'Highlight'),
-            CanvasToolMode.doodle => (Icons.brush, 'Doodle'),
+            CanvasToolMode.eraser => (LucideIcons.eraser, 'Eraser'),
+            CanvasToolMode.text => (LucideIcons.type, 'Text'),
+            CanvasToolMode.arrow => (LucideIcons.arrowRight, 'Arrow'),
+            CanvasToolMode.image => (LucideIcons.image, 'Image'),
+            CanvasToolMode.highlight => (LucideIcons.highlighter, 'Highlight'),
+            CanvasToolMode.doodle => (LucideIcons.penLine, 'Doodle'),
           };
 
     return Positioned(
@@ -3537,7 +3459,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: Colors.black87,
+            color: const Color(0xD91F2229),
             borderRadius: BorderRadius.circular(16),
             boxShadow: const [
               BoxShadow(color: Color(0x22000000), blurRadius: 4, offset: Offset(0, 2)),
@@ -3685,7 +3607,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           width: 24,
                           height: 24,
                           decoration: BoxDecoration(
-                            color: Colors.red,
+                            color: _tokens.danger,
                             shape: BoxShape.circle,
                             border:
                                 Border.all(color: Colors.white, width: 2),
@@ -3697,7 +3619,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               ),
                             ],
                           ),
-                          child: const Icon(Icons.delete,
+                          child: const Icon(LucideIcons.trash2,
                               size: 12, color: Colors.white),
                         ),
                       ),
@@ -3774,9 +3696,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(9),
-                          border: Border.all(color: Colors.black26),
+                          border: Border.all(color: _tokens.accent, width: 1.5),
                         ),
-                        child: const Icon(Icons.open_in_full, size: 12),
+                        child: Icon(LucideIcons.maximize2, size: 12, color: _tokens.accent),
                       ),
                     ),
                   ),
@@ -3794,45 +3716,42 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final textController = TextEditingController();
     showDialog(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.pin_drop, color: Colors.amber),
-            SizedBox(width: 8),
-            Text('Add Comment Pin'),
-          ],
-        ),
+      builder: (dialogCtx) => InkDialog(
+        title: 'Add Comment Pin',
+        icon: LucideIcons.mapPin,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               'Pin at (${worldPoint.dx.toInt()}, ${worldPoint.dy.toInt()})',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
+              style: InkType.caption(_tokens.inkMuted),
             ),
             const SizedBox(height: 12),
-            TextField(
+            InkTextField(
               controller: textController,
               autofocus: true,
               maxLines: 3,
-              decoration: const InputDecoration(
-                hintText: 'Write a comment... (use @name to mention)',
-                border: OutlineInputBorder(),
+              hintText: 'Write a comment... (use @name to mention)',
               ),
-            ),
           ],
         ),
         actions: [
-          TextButton(
+          InkButton.secondary(
+            label: 'Cancel',
+            expand: false,
+            compact: true,
             onPressed: () {
               Navigator.pop(dialogCtx);
               _canvasBloc.add(
                 const CanvasToggleCommentPlacementMode(enable: false),
               );
             },
-            child: const Text('Cancel'),
           ),
-          ElevatedButton(
+          InkButton.primary(
+            label: 'Post Pin',
+            expand: false,
+            compact: true,
             onPressed: () {
               final text = textController.text.trim();
               if (text.isNotEmpty) {
@@ -3845,7 +3764,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
               }
               Navigator.pop(dialogCtx);
             },
-            child: const Text('Post Pin'),
           ),
         ],
       ),
@@ -3879,9 +3797,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
                     decoration: BoxDecoration(
-                      color: isSelected
-                          ? Colors.amber.shade700
-                          : Colors.amber.shade600,
+                      color: isSelected ? _tokens.accent : _tokens.pending,
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
                         color: Colors.white,
@@ -3899,7 +3815,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         const Icon(
-                          Icons.chat_bubble,
+                          LucideIcons.messageCircle,
                           size: 11,
                           color: Colors.white,
                         ),
@@ -3920,9 +3836,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   CustomPaint(
                     size: const Size(8, 5),
                     painter: _TrianglePainter(
-                      color: isSelected
-                          ? Colors.amber.shade700
-                          : Colors.amber.shade600,
+                      color: isSelected ? _tokens.accent : _tokens.pending,
                     ),
                   ),
                 ],

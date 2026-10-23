@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../widgets/sliding_tray.dart';
+import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_tokens.dart';
+import '../../../../ui/theme/ink_type.dart';
+import '../../../../ui/widgets/ink_segmented.dart';
 import '../../models/canvas_tool_mode.dart';
 
 class BrushTray extends StatefulWidget {
@@ -47,6 +53,9 @@ class _BrushTrayState extends State<BrushTray> {
   late TextEditingController _redController;
   late TextEditingController _greenController;
   late TextEditingController _blueController;
+
+  static const _brushTypes = ['solid', 'textured', 'watercolor', 'eraser'];
+  static const _brushTypeLabels = ['Solid', 'Textured', 'Watercolor', 'Eraser'];
 
   @override
   void initState() {
@@ -102,6 +111,19 @@ class _BrushTrayState extends State<BrushTray> {
     }
   }
 
+  void _onBrushTypeSelected(String type) {
+    HapticFeedback.selectionClick();
+    widget.onBrushTypeChanged(type);
+    switch (type) {
+      case 'eraser':
+        widget.onToolModeChanged?.call(CanvasToolMode.eraser);
+      case 'highlight':
+        widget.onToolModeChanged?.call(CanvasToolMode.highlight);
+      default:
+        widget.onToolModeChanged?.call(CanvasToolMode.doodle);
+    }
+  }
+
   @override
   void dispose() {
     _hexController.dispose();
@@ -113,6 +135,7 @@ class _BrushTrayState extends State<BrushTray> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
     final colors = <Color>[
       Colors.black,
       Colors.white,
@@ -133,8 +156,6 @@ class _BrushTrayState extends State<BrushTray> {
       Colors.grey,
     ];
 
-    const brushTypes = ['solid', 'textured', 'watercolor', 'eraser'];
-
     return SlidingTray(
       isOpen: widget.isOpen,
       direction: TrayDirection.bottom,
@@ -147,39 +168,26 @@ class _BrushTrayState extends State<BrushTray> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              /// Brush Size Indicator
-              _buildBrushSizeIndicator(),
-              const SizedBox(height: 16),
-
-              /// Stroke Width Slider
-              _buildStrokeWidthControl(),
-              const SizedBox(height: 16),
-
+              _buildBrushSizeIndicator(tokens),
+              const SizedBox(height: InkSpacing.s16),
+              _buildStrokeWidthControl(tokens),
+              const SizedBox(height: InkSpacing.s16),
               if (widget.brushType == 'eraser') ...[
-                _buildEraserModeControl(),
-                const SizedBox(height: 16),
+                _buildEraserModeControl(tokens),
+                const SizedBox(height: InkSpacing.s16),
               ],
-
-              /// Opacity Slider
-              _buildOpacityControl(),
-              const SizedBox(height: 16),
-
-              /// Brush Type Selector
-              _buildBrushTypeSelector(brushTypes),
-              const SizedBox(height: 16),
-
+              _buildOpacityControl(tokens),
+              const SizedBox(height: InkSpacing.s16),
+              _buildBrushTypeSelector(tokens),
+              const SizedBox(height: InkSpacing.s16),
               if (widget.brushType != 'eraser') ...[
-                _buildSmoothToggle(),
-                const SizedBox(height: 16),
+                _buildSmoothToggle(tokens),
+                const SizedBox(height: InkSpacing.s16),
               ],
-
-              /// Color Palette (Horizontal Scroll)
-              _buildColorPalette(colors),
-              const SizedBox(height: 12),
-
-              /// RGB/HEX Input
-              _buildColorInputs(),
-              const SizedBox(height: 8),
+              _buildColorPalette(tokens, colors),
+              const SizedBox(height: InkSpacing.s12),
+              _buildColorInputs(tokens),
+              const SizedBox(height: InkSpacing.s8),
             ],
           ),
         ),
@@ -187,33 +195,28 @@ class _BrushTrayState extends State<BrushTray> {
     );
   }
 
-  Widget _buildBrushSizeIndicator() {
+  Widget _buildBrushSizeIndicator(InkTokens tokens) {
     final isEraser = widget.brushType == 'eraser';
     return Center(
       child: Container(
-        width: 120,
-        height: 80,
+        width: 52,
+        height: 52,
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey[300]!),
-          borderRadius: BorderRadius.circular(8),
-          color: Colors.grey[50],
+          color: tokens.field,
+          borderRadius: BorderRadius.circular(InkRadii.input),
         ),
         child: Center(
           child: Container(
-            width: widget.strokeWidth * 2,
-            height: widget.strokeWidth * 2,
+            width: widget.strokeWidth,
+            height: widget.strokeWidth,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: isEraser
-                  ? Colors.grey.withOpacity(0.2)
-                  : widget.selectedColor.withOpacity(widget.brushOpacity),
+                  ? tokens.inkMuted.withValues(alpha: 0.3)
+                  : widget.selectedColor.withValues(alpha: widget.brushOpacity),
             ),
             child: isEraser
-                ? const Icon(
-                    Icons.auto_fix_off,
-                    size: 18,
-                    color: Colors.black54,
-                  )
+                ? Icon(LucideIcons.eraser, size: 16, color: tokens.inkMuted)
                 : null,
           ),
         ),
@@ -221,11 +224,11 @@ class _BrushTrayState extends State<BrushTray> {
     );
   }
 
-  Widget _buildStrokeWidthControl() {
+  Widget _buildStrokeWidthControl(InkTokens tokens) {
     return Row(
       children: [
-        const Icon(Icons.edit, size: 18, color: Colors.grey),
-        const SizedBox(width: 12),
+        Icon(LucideIcons.penLine, size: 18, color: tokens.inkMuted),
+        const SizedBox(width: InkSpacing.s12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -234,21 +237,15 @@ class _BrushTrayState extends State<BrushTray> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    widget.brushType == 'eraser'
-                        ? 'Eraser Size'
-                        : 'Stroke Width',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                    widget.brushType == 'eraser' ? 'Eraser Size' : 'Stroke Width',
+                    style: InkType.label(tokens.inkSecondary),
                   ),
                   Text(
                     '${widget.strokeWidth.toStringAsFixed(1)}px',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: InkType.label(tokens.ink),
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
               Slider(
                 value: widget.strokeWidth,
                 min: 2,
@@ -262,11 +259,11 @@ class _BrushTrayState extends State<BrushTray> {
     );
   }
 
-  Widget _buildOpacityControl() {
+  Widget _buildOpacityControl(InkTokens tokens) {
     return Row(
       children: [
-        const Icon(Icons.opacity, size: 18, color: Colors.grey),
-        const SizedBox(width: 12),
+        Icon(LucideIcons.droplet, size: 18, color: tokens.inkMuted),
+        const SizedBox(width: InkSpacing.s12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -274,20 +271,13 @@ class _BrushTrayState extends State<BrushTray> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Opacity',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                  ),
+                  Text('Opacity', style: InkType.label(tokens.inkSecondary)),
                   Text(
                     '${(widget.brushOpacity * 100).toStringAsFixed(0)}%',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: InkType.label(tokens.ink),
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
               Slider(
                 value: widget.brushOpacity,
                 min: 0,
@@ -301,95 +291,63 @@ class _BrushTrayState extends State<BrushTray> {
     );
   }
 
-  Widget _buildBrushTypeSelector(List<String> brushTypes) {
+  Widget _buildBrushTypeSelector(InkTokens tokens) {
+    final selectedIndex = _brushTypes.indexOf(widget.brushType);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Brush Type',
-          style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: brushTypes
-              .map(
-                (type) => Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: ChoiceChip(
-                      label: Text(
-                        type == 'eraser'
-                            ? 'Eraser'
-                            : type[0].toUpperCase() + type.substring(1),
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      selected: widget.brushType == type,
-                      onSelected: (selected) {
-                        if (selected) {
-                          widget.onBrushTypeChanged(type);
-                          switch (type) {
-                            case 'eraser':
-                              widget.onToolModeChanged?.call(CanvasToolMode.eraser);
-                            case 'highlight':
-                              widget.onToolModeChanged?.call(CanvasToolMode.highlight);
-                            default:
-                              widget.onToolModeChanged?.call(CanvasToolMode.doodle);
-                          }
-                        }
-                      },
-                    ),
-                  ),
-                ),
-              )
-              .toList(),
+        Text('Brush Type', style: InkType.label(tokens.inkSecondary)),
+        const SizedBox(height: InkSpacing.s8),
+        InkSegmented(
+          labels: _brushTypeLabels,
+          selectedIndex: selectedIndex < 0 ? 0 : selectedIndex,
+          onChanged: (i) => _onBrushTypeSelected(_brushTypes[i]),
         ),
       ],
     );
   }
 
-  Widget _buildEraserModeControl() {
+  Widget _buildEraserModeControl(InkTokens tokens) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Eraser Target',
-          style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-        ),
-        const SizedBox(height: 8),
+        Text('Eraser Target', style: InkType.label(tokens.inkSecondary)),
+        const SizedBox(height: InkSpacing.s8),
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
           dense: true,
+          activeColor: tokens.accent,
           value: widget.eraserEraseEverything,
-          onChanged: widget.onEraserEraseEverythingChanged,
-          title: const Text(
-            'Erase everything it touches',
-            style: TextStyle(fontSize: 13),
-          ),
-          subtitle: const Text(
-            'Off = erase brush strokes only',
-            style: TextStyle(fontSize: 11),
-          ),
+          onChanged: (v) {
+            HapticFeedback.lightImpact();
+            widget.onEraserEraseEverythingChanged(v);
+          },
+          title: Text('Erase everything it touches', style: InkType.body(tokens.ink)),
+          subtitle: Text('Off = erase brush strokes only', style: InkType.caption(tokens.inkMuted)),
         ),
       ],
     );
   }
 
-  Widget _buildSmoothToggle() {
+  Widget _buildSmoothToggle(InkTokens tokens) {
     return Row(
       children: [
-        const Icon(Icons.auto_fix_high, size: 18, color: Colors.grey),
-        const SizedBox(width: 12),
+        Icon(LucideIcons.sparkles, size: 18, color: tokens.inkMuted),
+        const SizedBox(width: InkSpacing.s12),
         Expanded(
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Smooth Doodles',
-                style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-              ),
+              Text('Smooth Doodles', style: InkType.label(tokens.inkSecondary)),
               Switch.adaptive(
+                activeColor: tokens.accent,
                 value: widget.smoothDoodlesEnabled,
-                onChanged: widget.onSmoothDoodlesChanged,
+                onChanged: widget.onSmoothDoodlesChanged == null
+                    ? null
+                    : (v) {
+                        HapticFeedback.lightImpact();
+                        widget.onSmoothDoodlesChanged!(v);
+                      },
               ),
             ],
           ),
@@ -398,12 +356,12 @@ class _BrushTrayState extends State<BrushTray> {
     );
   }
 
-  Widget _buildColorPalette(List<Color> colors) {
+  Widget _buildColorPalette(InkTokens tokens, List<Color> colors) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Colors', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
-        const SizedBox(height: 8),
+        Text('Colors', style: InkType.label(tokens.inkSecondary)),
+        const SizedBox(height: InkSpacing.s8),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
@@ -412,29 +370,36 @@ class _BrushTrayState extends State<BrushTray> {
                   (c) => Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: InkWell(
-                      onTap: () => widget.onColorSelected(c),
-                      child: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: c,
-                          border: Border.all(
-                            color: widget.selectedColor == c
-                                ? Colors.black
-                                : Colors.grey[300]!,
-                            width: widget.selectedColor == c ? 3 : 1,
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        widget.onColorSelected(c);
+                      },
+                      borderRadius: BorderRadius.circular(20),
+                      child: Padding(
+                        padding: EdgeInsets.all(widget.selectedColor == c ? 2 : 0),
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: c,
+                            border: Border.all(
+                              color: widget.selectedColor == c
+                                  ? tokens.ink
+                                  : tokens.glassStroke,
+                              width: widget.selectedColor == c ? 2 : 1,
+                            ),
                           ),
+                          child: widget.selectedColor == c
+                              ? Icon(
+                                  LucideIcons.check,
+                                  color: c.computeLuminance() > 0.6
+                                      ? Colors.black
+                                      : Colors.white,
+                                  size: 16,
+                                )
+                              : null,
                         ),
-                        child: widget.selectedColor == c
-                            ? Icon(
-                                Icons.check,
-                                color: c.computeLuminance() > 0.6
-                                    ? Colors.black
-                                    : Colors.white,
-                                size: 16,
-                              )
-                            : null,
                       ),
                     ),
                   ),
@@ -446,76 +411,61 @@ class _BrushTrayState extends State<BrushTray> {
     );
   }
 
-  Widget _buildColorInputs() {
+  Widget _buildColorInputs(InkTokens tokens) {
+    final smallFieldDecoration = InputDecoration(
+      isDense: true,
+      filled: true,
+      fillColor: tokens.field,
+      contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide.none,
+      ),
+      counterText: '',
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Custom Color',
-          style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-        ),
-        const SizedBox(height: 8),
-
-        /// HEX Input
+        Text('Custom Color', style: InkType.label(tokens.inkSecondary)),
+        const SizedBox(height: InkSpacing.s8),
         Row(
           children: [
-            Text('#', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
-            const SizedBox(width: 4),
+            Text('#', style: InkType.caption(tokens.inkMuted)),
+            const SizedBox(width: 6),
             Expanded(
+              flex: 2,
               child: TextField(
                 controller: _hexController,
                 onChanged: _updateColorFromHex,
                 maxLength: 6,
-                style: const TextStyle(fontSize: 12),
-                decoration: InputDecoration(
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(
-                    vertical: 6,
-                    horizontal: 8,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  hintText: 'HEX',
-                  counterText: '',
-                ),
+                style: InkType.caption(tokens.ink),
+                decoration: smallFieldDecoration.copyWith(hintText: 'HEX'),
               ),
             ),
-            const SizedBox(width: 8),
-
-            /// RGB Inputs
+            const SizedBox(width: InkSpacing.s8),
             ...[
               ('R', _redController),
               ('G', _greenController),
               ('B', _blueController),
             ].map(
               (pair) => Expanded(
-                child: Column(
-                  children: [
-                    Text(
-                      pair.$1,
-                      style: TextStyle(fontSize: 10, color: Colors.grey[600]),
-                    ),
-                    const SizedBox(height: 2),
-                    TextField(
-                      controller: pair.$2,
-                      onChanged: (_) => _updateColorFromRGB(),
-                      maxLength: 3,
-                      style: const TextStyle(fontSize: 11),
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 4,
-                          horizontal: 6,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        counterText: '',
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Column(
+                    children: [
+                      Text(pair.$1, style: InkType.caption(tokens.inkMuted)),
+                      const SizedBox(height: 2),
+                      TextField(
+                        controller: pair.$2,
+                        onChanged: (_) => _updateColorFromRGB(),
+                        maxLength: 3,
+                        style: InkType.caption(tokens.ink),
+                        keyboardType: TextInputType.number,
+                        decoration: smallFieldDecoration,
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),

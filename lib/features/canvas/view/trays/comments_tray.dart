@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../core/services/auth_service.dart';
+import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_tokens.dart';
+import '../../../../ui/theme/ink_type.dart';
+import '../../../../ui/widgets/glass_panel.dart';
+import '../../../../ui/widgets/ink_avatar.dart';
+import '../../../../ui/widgets/ink_initials.dart';
 import '../../bloc/canvas_bloc.dart';
 
 class CommentsTray extends StatefulWidget {
@@ -49,8 +56,7 @@ class _CommentsTrayState extends State<CommentsTray> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final tokens = context.ink;
 
     return BlocBuilder<CanvasBloc, CanvasState>(
       buildWhen: (prev, curr) =>
@@ -72,279 +78,257 @@ class _CommentsTrayState extends State<CommentsTray> {
                     .firstOrNull);
         final isOwner = state.currentUserRole == 'owner';
 
+        final topInset = MediaQuery.of(context).padding.top + 64;
+
         return Positioned(
-          top: 70,
+          top: topInset,
           right: 16,
-          bottom: 90,
+          bottom: 96,
           width: 350,
-          child: Material(
-            elevation: 8,
-            borderRadius: BorderRadius.circular(16),
-            color: isDark ? const Color(0xFF1E1E2E) : Colors.white,
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: isDark
-                      ? Colors.white.withOpacity(0.1)
-                      : Colors.black.withOpacity(0.08),
-                ),
-              ),
-              child: Column(
-                children: [
-                  // Header
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(
-                          color: isDark
-                              ? Colors.white.withOpacity(0.08)
-                              : Colors.black.withOpacity(0.08),
-                        ),
+          child: GlassPanel(
+            radius: InkRadii.card,
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                // Header
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: InkSpacing.s16,
+                    vertical: InkSpacing.s12,
+                  ),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: tokens.glassStroke,
                       ),
                     ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.comment_outlined,
-                          size: 20,
-                          color: theme.colorScheme.primary,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        LucideIcons.messageSquareQuote,
+                        size: 18,
+                        color: tokens.accent,
+                      ),
+                      const SizedBox(width: InkSpacing.s8),
+                      Text(
+                        'Comments',
+                        style: InkType.subhead(tokens.ink),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Comments',
-                          style: theme.textTheme.titleMedium?.copyWith(
+                        decoration: BoxDecoration(
+                          color: tokens.accent.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '${state.comments.length}',
+                          style: InkType.caption(tokens.accent).copyWith(
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.primary.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: Icon(
+                          state.isPlacingComment
+                              ? LucideIcons.mapPin
+                              : LucideIcons.mapPinPlus,
+                          size: 18,
+                          color: state.isPlacingComment
+                              ? tokens.pending
+                              : tokens.accent,
+                        ),
+                        tooltip: state.isPlacingComment
+                            ? 'Cancel Pin Mode'
+                            : 'Pin Comment on Canvas',
+                        onPressed: () {
+                          context.read<CanvasBloc>().add(
+                                const CanvasToggleCommentPlacementMode(),
+                              );
+                        },
+                      ),
+                      IconButton(
+                        icon: Icon(LucideIcons.x, size: 18, color: tokens.inkMuted),
+                        tooltip: 'Close comments',
+                        onPressed: () {
+                          context
+                              .read<CanvasBloc>()
+                              .add(const CanvasToggleCommentsTray());
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Pin Placement Mode Banner
+                if (state.isPlacingComment)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: InkSpacing.s12,
+                      vertical: InkSpacing.s8,
+                    ),
+                    color: tokens.pending.withValues(alpha: 0.15),
+                    child: Row(
+                      children: [
+                        Icon(LucideIcons.hand, size: 16, color: tokens.pending),
+                        const SizedBox(width: 8),
+                        Expanded(
                           child: Text(
-                            '${state.comments.length}',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: theme.colorScheme.primary,
+                            'Tap anywhere on canvas to drop pin',
+                            style: InkType.caption(tokens.pending).copyWith(
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                         ),
-                        const Spacer(),
-                        IconButton(
-                          icon: Icon(
-                            state.isPlacingComment
-                                ? Icons.pin_drop
-                                : Icons.add_location_alt_outlined,
-                            size: 20,
-                            color: state.isPlacingComment
-                                ? Colors.amber
-                                : theme.colorScheme.primary,
-                          ),
-                          tooltip: state.isPlacingComment
-                              ? 'Cancel Pin Mode'
-                              : 'Pin Comment on Canvas',
-                          splashRadius: 18,
-                          onPressed: () {
+                        GestureDetector(
+                          onTap: () {
                             context.read<CanvasBloc>().add(
-                                  const CanvasToggleCommentPlacementMode(),
+                                  const CanvasToggleCommentPlacementMode(
+                                    enable: false,
+                                  ),
                                 );
                           },
+                          child: Icon(LucideIcons.x, size: 16, color: tokens.pending),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.close, size: 20),
-                          tooltip: 'Close comments',
-                          splashRadius: 18,
-                          onPressed: () {
-                            context
-                                .read<CanvasBloc>()
-                                .add(const CanvasToggleCommentsTray());
+                      ],
+                    ),
+                  ),
+
+                // Comments List
+                Expanded(
+                  child: state.comments.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  LucideIcons.messageSquareCode,
+                                  size: 40,
+                                  color: tokens.inkMuted.withValues(alpha: 0.5),
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'No comments yet',
+                                  style: InkType.bodyStrong(tokens.ink),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Drop a pin on canvas or write a board comment below. Use @name to mention collaborators.',
+                                  textAlign: TextAlign.center,
+                                  style: InkType.caption(tokens.inkMuted),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          itemCount: state.comments.length,
+                          separatorBuilder: (_, _) =>
+                              Divider(height: 16, color: tokens.glassStroke),
+                          itemBuilder: (context, index) {
+                            final comment = state.comments[index];
+                            final isAuthor = comment.authorUid == currentUserId;
+                            final canDelete = isAuthor || isOwner;
+                            final isSelected =
+                                comment.id == state.activeCommentId;
+
+                            return _CommentThreadCard(
+                              comment: comment,
+                              isSelected: isSelected,
+                              canDelete: canDelete,
+                              isReplyExpanded:
+                                  _expandedReplyCommentId == comment.id,
+                              replyController: _replyControllers.putIfAbsent(
+                                comment.id,
+                                () => TextEditingController(),
+                              ),
+                              tokens: tokens,
+                              onToggleReply: () {
+                                setState(() {
+                                  if (_expandedReplyCommentId == comment.id) {
+                                    _expandedReplyCommentId = null;
+                                  } else {
+                                    _expandedReplyCommentId = comment.id;
+                                  }
+                                });
+                              },
+                              onSendReply: () => _sendReply(comment.id),
+                              onDelete: () {
+                                context.read<CanvasBloc>().add(
+                                      CanvasDeleteCommentRequested(
+                                        comment.id,
+                                      ),
+                                    );
+                              },
+                            );
                           },
                         ),
-                      ],
+                ),
+
+                // Bottom Input Field (Board Comment)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      top: BorderSide(
+                        color: tokens.glassStroke,
+                      ),
                     ),
                   ),
-
-                  // Pin Placement Mode Banner
-                  if (state.isPlacingComment)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 8,
-                      ),
-                      color: Colors.amber.withOpacity(0.15),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.touch_app, size: 16, color: Colors.amber),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Tap anywhere on canvas to drop pin',
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: isDark ? Colors.amber.shade200 : Colors.amber.shade900,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          GestureDetector(
-                            onTap: () {
-                              context.read<CanvasBloc>().add(
-                                    const CanvasToggleCommentPlacementMode(
-                                      enable: false,
-                                    ),
-                                  );
-                            },
-                            child: const Icon(Icons.close, size: 16),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                  // Comments List
-                  Expanded(
-                    child: state.comments.isEmpty
-                        ? Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.insert_comment_outlined,
-                                    size: 40,
-                                    color: theme.hintColor.withOpacity(0.5),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    'No comments yet',
-                                    style:
-                                        theme.textTheme.bodyMedium?.copyWith(
-                                      color: theme.hintColor,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Drop a pin on canvas or write a board comment below. Use @name to mention collaborators.',
-                                    textAlign: TextAlign.center,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: theme.hintColor,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                        : ListView.separated(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _newCommentController,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => _addBoardComment(),
+                          style: InkType.body(tokens.ink),
+                          decoration: InputDecoration(
+                            hintText: 'Add a comment... (use @name)',
+                            hintStyle: InkType.body(tokens.inkMuted),
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
                               vertical: 10,
                             ),
-                            itemCount: state.comments.length,
-                            separatorBuilder: (_, _) =>
-                                const Divider(height: 16),
-                            itemBuilder: (context, index) {
-                              final comment = state.comments[index];
-                              final isAuthor = comment.authorUid == currentUserId;
-                              final canDelete = isAuthor || isOwner;
-                              final isSelected =
-                                  comment.id == state.activeCommentId;
-
-                              return _CommentThreadCard(
-                                comment: comment,
-                                isSelected: isSelected,
-                                canDelete: canDelete,
-                                isReplyExpanded:
-                                    _expandedReplyCommentId == comment.id,
-                                replyController: _replyControllers.putIfAbsent(
-                                  comment.id,
-                                  () => TextEditingController(),
-                                ),
-                                onToggleReply: () {
-                                  setState(() {
-                                    if (_expandedReplyCommentId == comment.id) {
-                                      _expandedReplyCommentId = null;
-                                    } else {
-                                      _expandedReplyCommentId = comment.id;
-                                    }
-                                  });
-                                },
-                                onSendReply: () => _sendReply(comment.id),
-                                onDelete: () {
-                                  context.read<CanvasBloc>().add(
-                                        CanvasDeleteCommentRequested(
-                                          comment.id,
-                                        ),
-                                      );
-                                },
-                              );
-                            },
-                          ),
-                  ),
-
-                  // Bottom Input Field (Board Comment)
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      border: Border(
-                        top: BorderSide(
-                          color: isDark
-                              ? Colors.white.withOpacity(0.08)
-                              : Colors.black.withOpacity(0.08),
-                        ),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _newCommentController,
-                            textInputAction: TextInputAction.send,
-                            onSubmitted: (_) => _addBoardComment(),
-                            decoration: InputDecoration(
-                              hintText: 'Add a comment... (use @name)',
-                              isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              filled: true,
-                              fillColor: isDark
-                                  ? Colors.white.withOpacity(0.05)
-                                  : Colors.black.withOpacity(0.04),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(24),
-                                borderSide: BorderSide.none,
-                              ),
+                            filled: true,
+                            fillColor: tokens.field,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              borderSide: BorderSide.none,
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        CircleAvatar(
-                          radius: 20,
-                          backgroundColor: theme.colorScheme.primary,
-                          child: IconButton(
-                            icon: const Icon(Icons.send, size: 16, color: Colors.white),
-                            onPressed: _addBoardComment,
-                            tooltip: 'Post Comment',
-                            splashRadius: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Material(
+                        color: tokens.accent,
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: _addBoardComment,
+                          child: const Padding(
+                            padding: EdgeInsets.all(10.0),
+                            child: Icon(LucideIcons.send, size: 16, color: Colors.white),
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         );
@@ -359,6 +343,7 @@ class _CommentThreadCard extends StatelessWidget {
   final bool canDelete;
   final bool isReplyExpanded;
   final TextEditingController replyController;
+  final InkTokens tokens;
   final VoidCallback onToggleReply;
   final VoidCallback onSendReply;
   final VoidCallback onDelete;
@@ -369,6 +354,7 @@ class _CommentThreadCard extends StatelessWidget {
     required this.canDelete,
     required this.isReplyExpanded,
     required this.replyController,
+    required this.tokens,
     required this.onToggleReply,
     required this.onSendReply,
     required this.onDelete,
@@ -383,7 +369,7 @@ class _CommentThreadCard extends StatelessWidget {
     return '${dt.month}/${dt.day}';
   }
 
-  Widget _buildFormattedText(String text, ThemeData theme) {
+  Widget _buildFormattedText(String text) {
     final words = text.split(' ');
     final spans = <TextSpan>[];
 
@@ -395,7 +381,7 @@ class _CommentThreadCard extends StatelessWidget {
             text: '$w ',
             style: TextStyle(
               fontWeight: FontWeight.bold,
-              color: theme.colorScheme.primary,
+              color: tokens.accent,
             ),
           ),
         );
@@ -407,22 +393,17 @@ class _CommentThreadCard extends StatelessWidget {
     return RichText(
       text: TextSpan(
         children: spans,
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.textTheme.bodyLarge?.color,
-        ),
+        style: InkType.body(tokens.ink),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
     return Container(
       decoration: BoxDecoration(
         color: isSelected
-            ? theme.colorScheme.primary.withOpacity(0.08)
+            ? tokens.accent.withValues(alpha: 0.08)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
       ),
@@ -433,24 +414,11 @@ class _CommentThreadCard extends StatelessWidget {
           // Author & Pin header
           Row(
             children: [
-              CircleAvatar(
-                radius: 12,
-                backgroundColor: theme.colorScheme.primary.withOpacity(0.2),
-                backgroundImage: comment.authorPhotoUrl != null
-                    ? NetworkImage(comment.authorPhotoUrl!)
-                    : null,
-                child: comment.authorPhotoUrl == null
-                    ? Text(
-                        comment.authorName.isNotEmpty
-                            ? comment.authorName[0].toUpperCase()
-                            : '?',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: theme.colorScheme.primary,
-                        ),
-                      )
-                    : null,
+              InkAvatar(
+                imageUrl: comment.authorPhotoUrl,
+                initials: inkInitialsFor(comment.authorName),
+                id: comment.authorUid,
+                size: 24,
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -459,16 +427,11 @@ class _CommentThreadCard extends StatelessWidget {
                   children: [
                     Text(
                       comment.authorName,
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: InkType.bodyStrong(tokens.ink),
                     ),
                     Text(
                       _formatTime(comment.createdAt),
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.hintColor,
-                        fontSize: 10,
-                      ),
+                      style: InkType.caption(tokens.inkMuted).copyWith(fontSize: 10),
                     ),
                   ],
                 ),
@@ -480,20 +443,20 @@ class _CommentThreadCard extends StatelessWidget {
                     vertical: 2,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.amber.withOpacity(0.15),
+                    color: tokens.pending.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.pin_drop, size: 10, color: Colors.amber),
+                      Icon(LucideIcons.mapPin, size: 10, color: tokens.pending),
                       const SizedBox(width: 2),
                       Text(
                         '(${comment.canvasPosition!.dx.toInt()}, ${comment.canvasPosition!.dy.toInt()})',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 9,
                           fontWeight: FontWeight.bold,
-                          color: Colors.amber,
+                          color: tokens.pending,
                         ),
                       ),
                     ],
@@ -501,10 +464,8 @@ class _CommentThreadCard extends StatelessWidget {
                 ),
               if (canDelete)
                 IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 16),
-                  color: Colors.redAccent.withOpacity(0.7),
+                  icon: Icon(LucideIcons.trash2, size: 16, color: tokens.danger.withValues(alpha: 0.8)),
                   tooltip: 'Delete comment',
-                  splashRadius: 14,
                   onPressed: onDelete,
                 ),
             ],
@@ -512,7 +473,7 @@ class _CommentThreadCard extends StatelessWidget {
           const SizedBox(height: 6),
 
           // Comment body with @mention highlighting
-          _buildFormattedText(comment.text, theme),
+          _buildFormattedText(comment.text),
           const SizedBox(height: 6),
 
           // Actions: Reply button
@@ -523,17 +484,16 @@ class _CommentThreadCard extends StatelessWidget {
                 child: Row(
                   children: [
                     Icon(
-                      Icons.reply,
+                      LucideIcons.reply,
                       size: 14,
-                      color: theme.colorScheme.primary,
+                      color: tokens.accent,
                     ),
                     const SizedBox(width: 4),
                     Text(
                       comment.replies.isNotEmpty
                           ? '${comment.replies.length} replies'
                           : 'Reply',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.primary,
+                      style: InkType.caption(tokens.accent).copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -554,25 +514,11 @@ class _CommentThreadCard extends StatelessWidget {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        CircleAvatar(
-                          radius: 10,
-                          backgroundColor:
-                              theme.colorScheme.primary.withOpacity(0.15),
-                          backgroundImage: reply.authorPhotoUrl != null
-                              ? NetworkImage(reply.authorPhotoUrl!)
-                              : null,
-                          child: reply.authorPhotoUrl == null
-                              ? Text(
-                                  reply.authorName.isNotEmpty
-                                      ? reply.authorName[0].toUpperCase()
-                                      : '?',
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.bold,
-                                    color: theme.colorScheme.primary,
-                                  ),
-                                )
-                              : null,
+                        InkAvatar(
+                          imageUrl: reply.authorPhotoUrl,
+                          initials: inkInitialsFor(reply.authorName),
+                          id: reply.authorUid,
+                          size: 20,
                         ),
                         const SizedBox(width: 6),
                         Expanded(
@@ -582,10 +528,9 @@ class _CommentThreadCard extends StatelessWidget {
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: isDark
-                                  ? Colors.white.withOpacity(0.04)
-                                  : Colors.black.withOpacity(0.03),
+                              color: tokens.paper,
                               borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: tokens.glassStroke),
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -594,24 +539,21 @@ class _CommentThreadCard extends StatelessWidget {
                                   children: [
                                     Text(
                                       reply.authorName,
-                                      style:
-                                          theme.textTheme.labelSmall?.copyWith(
+                                      style: InkType.caption(tokens.ink).copyWith(
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
                                     const Spacer(),
                                     Text(
                                       _formatTime(reply.createdAt),
-                                      style:
-                                          theme.textTheme.labelSmall?.copyWith(
+                                      style: InkType.caption(tokens.inkMuted).copyWith(
                                         fontSize: 9,
-                                        color: theme.hintColor,
                                       ),
                                     ),
                                   ],
                                 ),
                                 const SizedBox(height: 2),
-                                _buildFormattedText(reply.text, theme),
+                                _buildFormattedText(reply.text),
                               ],
                             ),
                           ),
@@ -634,17 +576,17 @@ class _CommentThreadCard extends StatelessWidget {
                       controller: replyController,
                       textInputAction: TextInputAction.send,
                       onSubmitted: (_) => onSendReply(),
+                      style: InkType.body(tokens.ink),
                       decoration: InputDecoration(
                         hintText: 'Reply... (use @name)',
+                        hintStyle: InkType.body(tokens.inkMuted),
                         isDense: true,
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 10,
                           vertical: 6,
                         ),
                         filled: true,
-                        fillColor: isDark
-                            ? Colors.white.withOpacity(0.05)
-                            : Colors.black.withOpacity(0.04),
+                        fillColor: tokens.field,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(16),
                           borderSide: BorderSide.none,
@@ -654,9 +596,7 @@ class _CommentThreadCard extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   IconButton(
-                    icon: const Icon(Icons.send, size: 16),
-                    color: theme.colorScheme.primary,
-                    splashRadius: 16,
+                    icon: Icon(LucideIcons.send, size: 16, color: tokens.accent),
                     onPressed: onSendReply,
                   ),
                 ],

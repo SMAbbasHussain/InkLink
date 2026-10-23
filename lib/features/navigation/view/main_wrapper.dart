@@ -1,17 +1,40 @@
 import 'dart:developer' as developer;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/domain/services/presence/presence_service.dart';
 import 'package:inklink/domain/services/settings/settings_service.dart';
 import 'package:inklink/domain/services/profile/profile_service.dart';
-import '../../../core/constants/app_colors.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+import '../../../ui/widgets/glass_nav_bar.dart';
 import '../../friends/view/friends_screen.dart';
 import '../../settings/bloc/settings_bloc.dart';
 import '../../settings/view/settings_screen.dart';
 import '../../dashboard/view/home_screen.dart';
 import '../../workspaces/view/workspaces_screen.dart';
 import '../bloc/nav_bloc.dart';
+
+const _navItems = [
+  GlassNavItem(
+    activeIcon: LucideIcons.house,
+    inactiveIcon: LucideIcons.house,
+    label: 'Home',
+  ),
+  GlassNavItem(
+    activeIcon: LucideIcons.users,
+    inactiveIcon: LucideIcons.users,
+    label: 'Friends',
+  ),
+  GlassNavItem(
+    activeIcon: LucideIcons.layoutGrid,
+    inactiveIcon: LucideIcons.layoutGrid,
+    label: 'Workspaces',
+  ),
+  GlassNavItem(
+    activeIcon: LucideIcons.slidersHorizontal,
+    inactiveIcon: LucideIcons.slidersHorizontal,
+    label: 'Settings',
+  ),
+];
 
 class MainWrapper extends StatefulWidget {
   const MainWrapper({super.key});
@@ -100,48 +123,19 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
     return BlocBuilder<NavBloc, NavState>(
       builder: (context, state) {
         return Scaffold(
-          body: IndexedStack(index: state.index, children: screens),
-          bottomNavigationBar: NavigationBarTheme(
-            data: NavigationBarThemeData(
-              // This creates the capsule/pill behind the icon
-              indicatorColor: AppColors.primary.withOpacity(0.2),
-              labelTextStyle: WidgetStateProperty.all(
-                const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+          body: Stack(
+            children: [
+              IndexedStack(index: state.index, children: screens),
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: GlassNavBar(
+                  items: _navItems,
+                  currentIndex: state.index,
+                  onTap: (index) =>
+                      context.read<NavBloc>().add(ChangeTab(index)),
+                ),
               ),
-            ),
-            child: NavigationBar(
-              selectedIndex: state.index,
-              onDestinationSelected: (index) =>
-                  context.read<NavBloc>().add(ChangeTab(index)),
-              destinations: const [
-                NavigationDestination(
-                  selectedIcon: Icon(
-                    Icons.home_filled,
-                    color: AppColors.primary,
-                  ),
-                  icon: Icon(Icons.home_outlined),
-                  label: 'Home',
-                ),
-                NavigationDestination(
-                  selectedIcon: Icon(Icons.people, color: AppColors.primary),
-                  icon: Icon(Icons.people_outline),
-                  label: 'Friends',
-                ),
-                NavigationDestination(
-                  selectedIcon: Icon(
-                    Icons.workspaces,
-                    color: AppColors.primary,
-                  ),
-                  icon: Icon(Icons.workspaces_outline),
-                  label: 'Workspaces',
-                ),
-                NavigationDestination(
-                  selectedIcon: Icon(Icons.settings, color: AppColors.primary),
-                  icon: Icon(Icons.settings_outlined),
-                  label: 'Settings',
-                ),
-              ],
-            ),
+            ],
           ),
         );
       },

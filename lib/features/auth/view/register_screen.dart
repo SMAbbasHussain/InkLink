@@ -1,9 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+
+import '../../../core/utils/helpers.dart'; // FIX: Import validation helpers
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/auth_hero.dart';
+import '../../../ui/widgets/desk_background.dart';
+import '../../../ui/widgets/glass_panel.dart';
+import '../../../ui/widgets/ink_button.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
-import '../../../core/utils/helpers.dart'; // FIX: Import validation helpers
 import './widgets/auth_text_field.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -14,7 +23,6 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  // 1. Define Controllers
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
@@ -32,7 +40,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final sheetTop = screenHeight * 0.25;
+
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0),
       // 2. Wrap with BlocListener for Navigation/Errors
       body: BlocListener<AuthBloc, AuthState>(
@@ -45,137 +58,140 @@ class _RegisterScreenState extends State<RegisterScreen> {
           } else if (state is AuthError) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(state.message),
-                backgroundColor: Colors.red,
+                content: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(LucideIcons.ban, size: 16, color: tokens.danger),
+                    const SizedBox(width: InkSpacing.s8),
+                    Flexible(child: Text(state.message)),
+                  ],
+                ),
               ),
             );
           }
         },
         child: BlocBuilder<AuthBloc, AuthState>(
           builder: (context, state) {
-            bool isLoading = state is AuthLoading;
+            final isLoading = state is AuthLoading;
 
-            return Stack(
-              children: [
-                SingleChildScrollView(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          "Create Account",
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                          ),
+            return DeskBackground(
+              child: Stack(
+                children: [
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: sheetTop + 40,
+                    child: const ExcludeSemantics(child: AuthHero()),
+                  ),
+                  Positioned(
+                    top: sheetTop,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _RegisterSheet(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(
+                          InkSpacing.s24,
+                          InkSpacing.s32,
+                          InkSpacing.s24,
+                          InkSpacing.s24,
                         ),
-                        Text(
-                          "Start your collaborative journey today",
-                          style: TextStyle(color: Colors.grey.shade500),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text("Create Account", style: InkType.display(tokens.ink)),
+                            const SizedBox(height: InkSpacing.s8),
+                            Text(
+                              "Start your collaborative journey today",
+                              style: InkType.body(tokens.inkSecondary),
+                            ),
+                            const SizedBox(height: InkSpacing.s24),
+                            AuthTextField(
+                              controller: _nameController,
+                              hintText: "Full Name",
+                              icon: LucideIcons.user,
+                            ),
+                            const SizedBox(height: InkSpacing.s12),
+                            AuthTextField(
+                              controller: _emailController,
+                              hintText: "Email Address",
+                              icon: LucideIcons.mail,
+                            ),
+                            const SizedBox(height: InkSpacing.s12),
+                            AuthTextField(
+                              controller: _passwordController,
+                              hintText: "Password",
+                              icon: LucideIcons.lock,
+                              isPassword: true,
+                            ),
+                            const SizedBox(height: InkSpacing.s12),
+                            AuthTextField(
+                              controller: _confirmPasswordController,
+                              hintText: "Confirm Password",
+                              icon: LucideIcons.lock,
+                              isPassword: true,
+                            ),
+                            const SizedBox(height: InkSpacing.s8),
+                            Text(
+                              "Password must be at least 8 characters and include uppercase, lowercase, number, and special character.",
+                              style: InkType.caption(tokens.inkMuted),
+                            ),
+                            const SizedBox(height: InkSpacing.s24),
+                            isLoading
+                                ? Container(
+                                    height: 48,
+                                    decoration: BoxDecoration(
+                                      gradient: tokens.accentGradient,
+                                      borderRadius: BorderRadius.circular(InkRadii.button),
+                                    ),
+                                    child: const Center(
+                                      child: SizedBox(
+                                        height: 20,
+                                        width: 20,
+                                        child: CircularProgressIndicator(
+                                          color: Colors.white,
+                                          strokeWidth: 2.5,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                : InkButton.hero(
+                                    label: "Sign Up",
+                                    onPressed: _handleSignUp,
+                                  ),
+                            const SizedBox(height: InkSpacing.s20),
+                            Center(
+                              child: Text(
+                                "By signing up, you agree to our Terms & Conditions",
+                                textAlign: TextAlign.center,
+                                style: InkType.caption(tokens.inkMuted),
+                              ),
+                            ),
+                            const SizedBox(height: InkSpacing.s32),
+                            _buildFooter(context, tokens),
+                          ],
                         ),
-
-                        const SizedBox(height: 40),
-
-                        // 3. Input Fields linked to controllers
-                        AuthTextField(
-                          controller: _nameController,
-                          hintText: "Full Name",
-                          icon: Icons.person_outline,
-                        ),
-                        const SizedBox(height: 16),
-                        AuthTextField(
-                          controller: _emailController,
-                          hintText: "Email Address",
-                          icon: Icons.email_outlined,
-                        ),
-                        const SizedBox(height: 16),
-                        AuthTextField(
-                          controller: _passwordController,
-                          hintText: "Password",
-                          icon: Icons.lock_outline,
-                          isPassword: true,
-                        ),
-                        const SizedBox(height: 16),
-                        AuthTextField(
-                          controller: _confirmPasswordController,
-                          hintText: "Confirm Password",
-                          icon: Icons.lock_reset,
-                          isPassword: true,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          "Password must be at least 8 characters and include uppercase, lowercase, number, and special character.",
-                          style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-                        ),
-
-                        const SizedBox(height: 32),
-
-                        // 4. Functional Sign Up Button
-                        _buildSignUpButton(context, isLoading),
-
-                        const SizedBox(height: 30),
-                        const Center(
-                          child: Text(
-                            "By signing up, you agree to our Terms & Conditions",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                        ),
-
-                        const SizedBox(height: 40),
-                        _buildFooter(context),
-                      ],
+                      ),
                     ),
                   ),
-                ),
-                // Full screen loader
-                if (isLoading)
-                  Container(
-                    color: Colors.black.withOpacity(0.2),
-                    child: const Center(
-                      child: CircularProgressIndicator(color: Colors.orange),
+                  if (isLoading)
+                    Positioned.fill(
+                      child: Container(
+                        color: Colors.black.withValues(alpha: 0.2),
+                        child: Center(
+                          child: GlassPanel(
+                            radius: InkRadii.dialog,
+                            padding: const EdgeInsets.all(InkSpacing.s24),
+                            child: CircularProgressIndicator(color: tokens.accent),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             );
           },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSignUpButton(BuildContext context, bool isLoading) {
-    return InkWell(
-      onTap: isLoading ? null : _handleSignUp,
-      borderRadius: BorderRadius.circular(15),
-      child: Container(
-        width: double.infinity,
-        height: 55,
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFFFF5F6D), Color(0xFFFFC371)],
-          ),
-          borderRadius: BorderRadius.circular(15),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFFFF5F6D).withOpacity(0.3),
-              blurRadius: 10,
-              offset: const Offset(0, 5),
-            ),
-          ],
-        ),
-        child: Center(
-          child: isLoading
-              ? const CircularProgressIndicator(color: Colors.white)
-              : const Text(
-                  "Sign Up",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
         ),
       ),
     );
@@ -194,7 +210,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         password.isEmpty ||
         confirmPassword.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please fill in all fields")),
+        SnackBar(content: Text("Please fill in all fields")),
       );
       return;
     }
@@ -221,7 +237,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(passwordError),
-          backgroundColor: Colors.red,
+          backgroundColor: context.ink.danger,
         ),
       );
       return;
@@ -239,19 +255,38 @@ class _RegisterScreenState extends State<RegisterScreen> {
     context.read<AuthBloc>().add(RegisterRequested(name, email, password));
   }
 
-  Widget _buildFooter(BuildContext context) {
+  Widget _buildFooter(BuildContext context, InkTokens tokens) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Text("Already have an account?"),
+        Text("Already have an account?", style: InkType.body(tokens.inkSecondary)),
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text(
-            "Login",
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
+          child: Text("Login", style: InkType.bodyStrong(tokens.accentText)),
         ),
       ],
+    );
+  }
+}
+
+class _RegisterSheet extends StatelessWidget {
+  final Widget child;
+
+  const _RegisterSheet({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return Container(
+      decoration: BoxDecoration(
+        color: tokens.paper,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+        boxShadow: tokens.paperShadow,
+      ),
+      child: ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+        child: child,
+      ),
     );
   }
 }

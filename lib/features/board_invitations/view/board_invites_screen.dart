@@ -1,6 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../ui/theme/ink_colors.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/empty_state.dart';
+import '../../../ui/widgets/glass_panel.dart';
+import '../../../ui/widgets/ink_avatar.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_initials.dart';
+import '../../../ui/widgets/sticky_note.dart';
 import '../../../features/canvas/view/canvas_route.dart';
 import '../bloc/board_invitations_bloc.dart';
 
@@ -34,10 +45,19 @@ class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
     return BlocConsumer<BoardInvitationsBloc, BoardInvitationsState>(
       listener: (context, state) {
         if (state is BoardInvitationsLoaded && state.message != null) {
+          final tokens = context.ink;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(state.message!),
-              backgroundColor: state.isError ? Colors.red : null,
+              content: state.isError
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(LucideIcons.ban, size: 16, color: tokens.danger),
+                        const SizedBox(width: InkSpacing.s8),
+                        Flexible(child: Text(state.message!)),
+                      ],
+                    )
+                  : Text(state.message!),
             ),
           );
 
@@ -54,52 +74,72 @@ class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
         }
       },
       builder: (context, state) {
+        final tokens = context.ink;
+
         if (state is BoardInvitationsInitial ||
             state is BoardInvitationsLoading) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+          return Scaffold(
+            body: Center(child: CircularProgressIndicator(color: tokens.accent)),
           );
         }
 
         if (state is BoardInvitationsError) {
           return Scaffold(
-            appBar: AppBar(title: const Text('Board Invites')),
-            body: Center(child: Text(state.message)),
+            backgroundColor: tokens.paper,
+            appBar: AppBar(
+              backgroundColor: tokens.paper,
+              title: Text('Board Invites', style: InkType.title(tokens.ink)),
+            ),
+            body: Center(child: Text(state.message, style: InkType.body(tokens.inkMuted))),
           );
         }
 
         final loaded = state as BoardInvitationsLoaded;
         return Scaffold(
-          appBar: AppBar(title: const Text('Board Invites')),
+          backgroundColor: tokens.paper,
+          appBar: AppBar(
+            backgroundColor: tokens.paper,
+            title: Text('Board Invites', style: InkType.title(tokens.ink)),
+          ),
           body: Column(
             children: [
               if (loaded.isOffline)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: Container(
-                    width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(
+                    InkSpacing.s16,
+                    InkSpacing.s12,
+                    InkSpacing.s16,
+                    0,
+                  ),
+                  child: GlassPanel(
+                    radius: InkRadii.glassBar,
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
+                      horizontal: InkSpacing.s16,
+                      vertical: InkSpacing.s12,
                     ),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.amber.withOpacity(0.45)),
-                    ),
-                    child: const Text(
-                      'Offline mode: showing cached board invites.',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(LucideIcons.wifiOff, size: 16, color: tokens.pending),
+                        const SizedBox(width: InkSpacing.s8),
+                        Text(
+                          'Offline mode: showing cached board invites.',
+                          style: InkType.bodyStrong(tokens.pending),
+                        ),
+                      ],
                     ),
                   ),
                 ),
               Expanded(
                 child: loaded.invites.isEmpty
-                    ? const Center(child: Text('No pending invites.'))
+                    ? const EmptyState(
+                        icon: LucideIcons.mail,
+                        text: 'No pending invites.',
+                      )
                     : ListView.separated(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(InkSpacing.s16),
                         itemCount: loaded.invites.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 12),
+                        separatorBuilder: (_, _) => const SizedBox(height: InkSpacing.s20),
                         itemBuilder: (context, index) {
                           final invite = loaded.invites[index];
                           final inviteId = invite['id']?.toString() ?? '';
@@ -113,53 +153,48 @@ class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
                           final senderPic = invite['senderPic']?.toString();
                           final expiresAt = invite['expiresAt'];
 
-                          return Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
+                          final angleDeg = index.isEven ? 3.0 : -3.0;
+
+                          return Transform.rotate(
+                            angle: angleDeg * 3.1415926535 / 180,
+                            child: StickyNote(
+                              color: InkColors.stickyButter,
+                              showTape: true,
+                              padding: const EdgeInsets.all(InkSpacing.s16),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Row(
                                     children: [
-                                      CircleAvatar(
-                                        backgroundImage:
-                                            senderPic != null &&
-                                                senderPic.isNotEmpty
-                                            ? NetworkImage(senderPic)
-                                            : null,
-                                        child:
-                                            senderPic == null ||
-                                                senderPic.isEmpty
-                                            ? Text(
-                                                senderName.isEmpty
-                                                    ? 'I'
-                                                    : senderName[0]
-                                                          .toUpperCase(),
-                                              )
-                                            : null,
+                                      InkAvatar(
+                                        imageUrl: senderPic,
+                                        initials: inkInitialsFor(senderName),
+                                        id: inviteId,
+                                        size: 44,
                                       ),
-                                      const SizedBox(width: 12),
+                                      const SizedBox(width: InkSpacing.s12),
                                       Expanded(
                                         child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
+                                          crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
                                             Text(
                                               senderName,
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.w600,
+                                              style: InkType.bodyStrong(
+                                                InkColors.stickyInkFor(InkColors.stickyButter),
                                               ),
                                             ),
                                             Text(
                                               'invited you to "$boardTitle"',
+                                              style: InkType.cardTitle(
+                                                InkColors.stickyInkFor(InkColors.stickyButter),
+                                              ),
                                             ),
                                             if (expiresAt != null) ...[
-                                              const SizedBox(height: 4),
+                                              const SizedBox(height: InkSpacing.s4),
                                               Text(
                                                 'Invite has an expiration window',
-                                                style: TextStyle(
-                                                  color: Colors.grey.shade600,
-                                                  fontSize: 12,
+                                                style: InkType.caption(
+                                                  InkColors.stickyInkFor(InkColors.stickyButter),
                                                 ),
                                               ),
                                             ],
@@ -168,11 +203,12 @@ class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
                                       ),
                                     ],
                                   ),
-                                  const SizedBox(height: 12),
+                                  const SizedBox(height: InkSpacing.s16),
                                   Row(
                                     children: [
                                       Expanded(
-                                        child: OutlinedButton(
+                                        child: InkButton.secondary(
+                                          label: 'Decline',
                                           onPressed: inviteId.isEmpty
                                               ? null
                                               : () {
@@ -186,12 +222,12 @@ class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
                                                         ),
                                                       );
                                                 },
-                                          child: const Text('Decline'),
                                         ),
                                       ),
-                                      const SizedBox(width: 12),
+                                      const SizedBox(width: InkSpacing.s12),
                                       Expanded(
-                                        child: ElevatedButton(
+                                        child: InkButton.primary(
+                                          label: 'Accept',
                                           onPressed:
                                               inviteId.isEmpty ||
                                                   boardId.isEmpty
@@ -208,7 +244,6 @@ class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
                                                         ),
                                                       );
                                                 },
-                                          child: const Text('Accept'),
                                         ),
                                       ),
                                     ],

@@ -1,7 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../domain/models/board.dart';
+import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_tokens.dart';
+import '../../../../ui/theme/ink_type.dart';
+import '../../../../ui/widgets/ink_avatar.dart';
+import '../../../../ui/widgets/ink_button.dart';
+import '../../../../ui/widgets/ink_dialog.dart';
+import '../../../../ui/widgets/ink_initials.dart';
+import '../../../../ui/widgets/ink_text_field.dart';
 import '../../bloc/canvas_bloc.dart';
 import '../widgets/sliding_tray.dart';
 
@@ -53,11 +62,15 @@ class _MembersTrayState extends State<MembersTray> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
     return BlocBuilder<CanvasBloc, CanvasState>(
       buildWhen: (prev, curr) =>
           prev.filteredBoardMembers != curr.filteredBoardMembers ||
           prev.memberSearchQuery != curr.memberSearchQuery ||
-          prev.currentUserRole != curr.currentUserRole,
+          prev.currentUserRole != curr.currentUserRole ||
+          prev.isVoiceCallActive != curr.isVoiceCallActive ||
+          prev.isChatDrawerOpen != curr.isChatDrawerOpen ||
+          prev.isCommentsTrayOpen != curr.isCommentsTrayOpen,
       builder: (context, state) {
         final filteredMembers = state.filteredBoardMembers;
 
@@ -70,7 +83,7 @@ class _MembersTrayState extends State<MembersTray> {
           headerActions: _isSearchMode
               ? IconButton(
                   onPressed: _exitSearchMode,
-                  icon: const Icon(Icons.close, size: 18),
+                  icon: Icon(LucideIcons.x, size: 18, color: tokens.inkMuted),
                   tooltip: 'Close search',
                   splashRadius: 18,
                 )
@@ -87,9 +100,13 @@ class _MembersTrayState extends State<MembersTray> {
                         }
                       },
                       icon: Icon(
-                        state.isVoiceCallActive ? Icons.call_end : Icons.call,
+                        state.isVoiceCallActive
+                            ? LucideIcons.phoneOff
+                            : LucideIcons.phone,
                         size: 18,
-                        color: state.isVoiceCallActive ? Colors.green : null,
+                        color: state.isVoiceCallActive
+                            ? tokens.success
+                            : tokens.inkMuted,
                       ),
                       tooltip: state.isVoiceCallActive
                           ? 'Leave Voice Call'
@@ -103,11 +120,11 @@ class _MembersTrayState extends State<MembersTray> {
                             .add(const CanvasToggleChatDrawer());
                       },
                       icon: Icon(
-                        Icons.chat,
+                        LucideIcons.messageSquare,
                         size: 18,
                         color: state.isChatDrawerOpen
-                            ? Theme.of(context).colorScheme.primary
-                            : null,
+                            ? tokens.accent
+                            : tokens.inkMuted,
                       ),
                       tooltip: 'Board Chat',
                       splashRadius: 18,
@@ -119,18 +136,18 @@ class _MembersTrayState extends State<MembersTray> {
                             .add(const CanvasToggleCommentsTray());
                       },
                       icon: Icon(
-                        Icons.comment_outlined,
+                        LucideIcons.messageCircle,
                         size: 18,
                         color: state.isCommentsTrayOpen
-                            ? Theme.of(context).colorScheme.primary
-                            : null,
+                            ? tokens.accent
+                            : tokens.inkMuted,
                       ),
                       tooltip: 'Comments',
                       splashRadius: 18,
                     ),
                     IconButton(
                       onPressed: _enterSearchMode,
-                      icon: const Icon(Icons.search, size: 18),
+                      icon: Icon(LucideIcons.search, size: 18, color: tokens.inkMuted),
                       tooltip: 'Search members',
                       splashRadius: 18,
                     ),
@@ -141,25 +158,16 @@ class _MembersTrayState extends State<MembersTray> {
               if (_isSearchMode)
                 Padding(
                   padding: const EdgeInsets.all(12),
-                  child: TextField(
+                  child: InkTextField(
                     controller: _searchController,
                     focusNode: _searchFocusNode,
                     onChanged: _onSearchChanged,
-                    decoration: InputDecoration(
-                      hintText: 'Search members...',
-                      prefixIcon: const Icon(Icons.search, size: 20),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.close, size: 20),
-                        onPressed: _exitSearchMode,
-                      ),
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        vertical: 8,
-                        horizontal: 12,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                    hintText: 'Search members...',
+                    leadingIcon: LucideIcons.search,
+                    suffixIcon: IconButton(
+                      tooltip: 'Close search',
+                      icon: Icon(LucideIcons.x, size: 18, color: tokens.inkMuted),
+                      onPressed: _exitSearchMode,
                     ),
                   ),
                 ),
@@ -171,20 +179,11 @@ class _MembersTrayState extends State<MembersTray> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(
-                              Icons.people_outline,
-                              size: 48,
-                              color: Colors.grey[400],
-                            ),
-                            const SizedBox(height: 12),
+                            Icon(LucideIcons.users, size: 48, color: tokens.inkMuted),
+                            const SizedBox(height: InkSpacing.s12),
                             Text(
-                              _isSearchMode
-                                  ? 'No members found'
-                                  : 'No members yet',
-                              style: TextStyle(
-                                color: Colors.grey[600],
-                                fontSize: 14,
-                              ),
+                              _isSearchMode ? 'No members found' : 'No members yet',
+                              style: InkType.body(tokens.inkMuted),
                             ),
                           ],
                         ),
@@ -194,26 +193,29 @@ class _MembersTrayState extends State<MembersTray> {
                         children: [
                           ..._buildMemberSection(
                             context,
+                            tokens,
                             'Owner',
                             filteredMembers,
                             Board.roleOwner,
-                            Colors.orange,
+                            tokens.accent,
                             state,
                           ),
                           ..._buildMemberSection(
                             context,
+                            tokens,
                             'Editor',
                             filteredMembers,
                             Board.roleEditor,
-                            Colors.blue,
+                            tokens.inkSecondary,
                             state,
                           ),
                           ..._buildMemberSection(
                             context,
+                            tokens,
                             'Viewer',
                             filteredMembers,
                             Board.roleViewer,
-                            Colors.green,
+                            tokens.inkMuted,
                             state,
                           ),
                         ],
@@ -228,6 +230,7 @@ class _MembersTrayState extends State<MembersTray> {
 
   List<Widget> _buildMemberSection(
     BuildContext context,
+    InkTokens tokens,
     String roleLabel,
     List<BoardMember> allMembers,
     String roleValue,
@@ -239,51 +242,44 @@ class _MembersTrayState extends State<MembersTray> {
 
     return [
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
         child: Row(
           children: [
             Container(
-              width: 3,
-              height: 16,
+              width: 8,
+              height: 8,
               decoration: BoxDecoration(
                 color: roleColor,
-                borderRadius: BorderRadius.circular(2),
+                shape: BoxShape.circle,
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: InkSpacing.s8),
             Text(
-              roleLabel,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[700],
-              ),
+              roleLabel.toUpperCase(),
+              style: InkType.caption(tokens.inkSecondary),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: InkSpacing.s8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: roleColor.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(4),
+                color: tokens.field,
+                borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
-                membersInRole.length.toString(),
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: roleColor,
-                ),
+                '${membersInRole.length}',
+                style: InkType.caption(tokens.inkMuted),
               ),
             ),
           ],
         ),
       ),
-      ...membersInRole.map((member) => _buildMemberTile(context, member, state)),
+      ...membersInRole.map((member) => _buildMemberTile(context, tokens, member, state)),
     ];
   }
 
   Widget _buildMemberTile(
     BuildContext context,
+    InkTokens tokens,
     BoardMember member,
     CanvasState state,
   ) {
@@ -294,125 +290,128 @@ class _MembersTrayState extends State<MembersTray> {
     final canManage = isOwner && !isTargetOwner;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: ListTile(
-        dense: true,
-        leading: CircleAvatar(
-          radius: 18,
-          backgroundImage:
-              member.photoUrl != null && member.photoUrl!.isNotEmpty
-                  ? NetworkImage(member.photoUrl!)
-                  : null,
-          child: member.photoUrl == null || member.photoUrl!.isEmpty
-              ? Text(
-                  displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
-                  style: const TextStyle(fontSize: 12),
-                )
-              : null,
-        ),
-        title: Text(
-          displayName,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 14),
-        ),
-        subtitle: Text(
-          subtitle,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12),
-        ),
-        trailing: canManage
-            ? PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert, size: 20),
-                tooltip: 'Member options',
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Row(
+        children: [
+          InkAvatar(
+            imageUrl: member.photoUrl,
+            initials: inkInitialsFor(displayName),
+            id: member.uid,
+            size: 36,
+          ),
+          const SizedBox(width: InkSpacing.s12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: InkType.bodyStrong(tokens.ink),
                 ),
-                onSelected: (action) {
-                  if (action == 'toggle_role') {
-                    final newRole = member.role == Board.roleEditor
-                        ? Board.roleViewer
-                        : Board.roleEditor;
-                    context.read<CanvasBloc>().add(
-                          CanvasUpdateBoardMemberRole(
-                            targetUid: member.uid,
-                            newRole: newRole,
-                          ),
-                        );
-                  } else if (action == 'revoke') {
-                    _confirmRevokeMember(context, member, displayName);
-                  }
-                },
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'toggle_role',
-                    child: Row(
-                      children: [
-                        Icon(
-                          member.role == Board.roleEditor
-                              ? Icons.visibility_outlined
-                              : Icons.edit_outlined,
-                          size: 18,
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: InkType.caption(tokens.inkMuted),
+                ),
+              ],
+            ),
+          ),
+          if (canManage)
+            PopupMenuButton<String>(
+              icon: Icon(LucideIcons.ellipsisVertical, size: 18, color: tokens.inkSecondary),
+              tooltip: 'Member options',
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(InkRadii.input),
+              ),
+              color: tokens.paper,
+              onSelected: (action) {
+                if (action == 'toggle_role') {
+                  final newRole = member.role == Board.roleEditor
+                      ? Board.roleViewer
+                      : Board.roleEditor;
+                  context.read<CanvasBloc>().add(
+                        CanvasUpdateBoardMemberRole(
+                          targetUid: member.uid,
+                          newRole: newRole,
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          member.role == Board.roleEditor
-                              ? 'Change to Viewer'
-                              : 'Change to Editor',
-                        ),
-                      ],
-                    ),
+                      );
+                } else if (action == 'revoke') {
+                  _confirmRevokeMember(context, tokens, member, displayName);
+                }
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  value: 'toggle_role',
+                  child: Row(
+                    children: [
+                      Icon(
+                        member.role == Board.roleEditor
+                            ? LucideIcons.eye
+                            : LucideIcons.pencil,
+                        size: 16,
+                        color: tokens.ink,
+                      ),
+                      const SizedBox(width: InkSpacing.s8),
+                      Text(
+                        member.role == Board.roleEditor
+                            ? 'Change to Viewer'
+                            : 'Change to Editor',
+                        style: InkType.body(tokens.ink),
+                      ),
+                    ],
                   ),
-                  const PopupMenuDivider(),
-                  const PopupMenuItem(
-                    value: 'revoke',
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.person_remove_outlined,
-                          size: 18,
-                          color: Colors.redAccent,
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          'Revoke Access',
-                          style: TextStyle(color: Colors.redAccent),
-                        ),
-                      ],
-                    ),
+                ),
+                PopupMenuDivider(height: 1),
+                PopupMenuItem(
+                  value: 'revoke',
+                  child: Row(
+                    children: [
+                      Icon(
+                        LucideIcons.userMinus,
+                        size: 16,
+                        color: tokens.danger,
+                      ),
+                      const SizedBox(width: InkSpacing.s8),
+                      Text(
+                        'Revoke Access',
+                        style: InkType.body(tokens.danger),
+                      ),
+                    ],
                   ),
-                ],
-              )
-            : null,
+                ),
+              ],
+            ),
+        ],
       ),
     );
   }
 
   Future<void> _confirmRevokeMember(
     BuildContext context,
+    InkTokens tokens,
     BoardMember member,
     String displayName,
   ) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        title: const Text('Revoke Member Access'),
+      builder: (dialogCtx) => InkDialog(
+        title: 'Revoke Member Access',
+        icon: LucideIcons.userMinus,
         content: Text(
           'Are you sure you want to remove "$displayName" from this board? They will lose access immediately.',
+          style: InkType.body(tokens.inkSecondary),
         ),
         actions: [
-          TextButton(
+          InkButton.secondary(
+            label: 'Cancel',
             onPressed: () => Navigator.of(dialogCtx).pop(false),
-            child: const Text('Cancel'),
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(dialogCtx).colorScheme.error,
-              foregroundColor: Theme.of(dialogCtx).colorScheme.onError,
-            ),
+          InkButton.danger(
+            label: 'Revoke',
             onPressed: () => Navigator.of(dialogCtx).pop(true),
-            child: const Text('Revoke'),
           ),
         ],
       ),

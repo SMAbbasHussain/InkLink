@@ -1340,7 +1340,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       isDrawingShape: false,
       shapeDrawStart: null,
       shapeDrawCurrent: null,
-      activeTray: null,
+      activeTray: event.keepTray ? state.activeTray : null,
     ));
   }
 

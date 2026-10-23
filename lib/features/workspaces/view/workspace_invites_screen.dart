@@ -1,7 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'dart:developer' as developer;
 
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/empty_state.dart';
+import '../../../ui/widgets/ink_avatar.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_initials.dart';
+import '../../../ui/widgets/paper_card.dart';
 import '../bloc/workspace_bloc.dart';
 
 class WorkspaceInvitesScreen extends StatefulWidget {
@@ -20,8 +29,14 @@ class _WorkspaceInvitesScreenState extends State<WorkspaceInvitesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Workspace Invitations')),
+      backgroundColor: tokens.paper,
+      appBar: AppBar(
+        backgroundColor: tokens.paper,
+        title: Text('Workspace Invitations', style: InkType.title(tokens.ink)),
+      ),
       body: SafeArea(
         child: BlocConsumer<WorkspaceBloc, WorkspaceState>(
           listener: (context, state) {
@@ -45,7 +60,7 @@ class _WorkspaceInvitesScreenState extends State<WorkspaceInvitesScreen> {
           },
           builder: (context, state) {
             if (state is! WorkspaceLoaded) {
-              return const Center(child: CircularProgressIndicator());
+              return Center(child: CircularProgressIndicator(color: tokens.accent));
             }
 
             final pendingInvites = state.incomingInvites
@@ -53,91 +68,73 @@ class _WorkspaceInvitesScreenState extends State<WorkspaceInvitesScreen> {
                 .toList();
 
             if (pendingInvites.isEmpty) {
-              return Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.mail_outline, size: 64, color: Colors.grey[400]),
-                    const SizedBox(height: 16),
-                    Text(
-                      'No pending invitations',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ],
-                ),
+              return const EmptyState(
+                icon: LucideIcons.mail,
+                text: 'No pending invitations',
               );
             }
 
             return ListView.builder(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(InkSpacing.s16),
               itemCount: pendingInvites.length,
               itemBuilder: (context, index) {
                 final invite = pendingInvites[index];
                 final isProcessing = state.processingInviteDecisionIds.contains(
                   invite.id,
                 );
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).cardColor,
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: Colors.grey.shade200),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 15,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      ListTile(
-                        contentPadding: const EdgeInsets.all(16),
-                        leading: CircleAvatar(
-                          radius: 28,
-                          backgroundImage:
-                              invite.senderPhotoUrl != null &&
-                                  invite.senderPhotoUrl!.isNotEmpty
-                              ? NetworkImage(invite.senderPhotoUrl!)
-                              : null,
-                          child:
-                              invite.senderPhotoUrl == null ||
-                                  invite.senderPhotoUrl!.isEmpty
-                              ? Text(
-                                  invite.senderName.isEmpty
-                                      ? 'U'
-                                      : invite.senderName
-                                            .substring(0, 1)
-                                            .toUpperCase(),
-                                )
-                              : null,
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: InkSpacing.s16),
+                  child: PaperCard(
+                    padding: const EdgeInsets.all(InkSpacing.s16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            InkAvatar(
+                              imageUrl: invite.senderPhotoUrl,
+                              initials: inkInitialsFor(invite.senderName),
+                              id: invite.fromUid,
+                              size: 48,
+                            ),
+                            const SizedBox(width: InkSpacing.s12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    invite.senderName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: InkType.bodyStrong(tokens.ink),
+                                  ),
+                                  Text(
+                                    'invited you to ${invite.workspaceName}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: InkType.caption(tokens.inkMuted),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                        title: Text(
-                          invite.senderName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                          ),
-                        ),
-                        subtitle: Text(
-                          'invited you to ${invite.workspaceName}',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(
-                          left: 16,
-                          right: 16,
-                          bottom: 16,
-                        ),
-                        child: Row(
+                        const SizedBox(height: InkSpacing.s16),
+                        Row(
                           children: [
                             Expanded(
-                              child: OutlinedButton.icon(
+                              child: InkButton.secondary(
+                                label: isProcessing ? '' : 'Reject',
+                                icon: isProcessing
+                                    ? SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: tokens.ink,
+                                        ),
+                                      )
+                                    : const Icon(LucideIcons.x),
                                 onPressed: isProcessing
                                     ? null
                                     : () {
@@ -151,21 +148,22 @@ class _WorkspaceInvitesScreenState extends State<WorkspaceInvitesScreen> {
                                           ),
                                         );
                                       },
+                              ),
+                            ),
+                            const SizedBox(width: InkSpacing.s8 + 2),
+                            Expanded(
+                              child: InkButton.primary(
+                                label: isProcessing ? 'Processing...' : 'Accept',
                                 icon: isProcessing
                                     ? const SizedBox(
                                         width: 14,
                                         height: 14,
                                         child: CircularProgressIndicator(
                                           strokeWidth: 2,
+                                          color: Colors.white,
                                         ),
                                       )
-                                    : const Icon(Icons.close),
-                                label: const Text('Reject'),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: FilledButton.icon(
+                                    : const Icon(LucideIcons.check),
                                 onPressed: isProcessing
                                     ? null
                                     : () {
@@ -179,25 +177,12 @@ class _WorkspaceInvitesScreenState extends State<WorkspaceInvitesScreen> {
                                           ),
                                         );
                                       },
-                                icon: isProcessing
-                                    ? const SizedBox(
-                                        width: 14,
-                                        height: 14,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : const Icon(Icons.check),
-                                label: Text(
-                                  isProcessing ? 'Processing...' : 'Accept',
-                                ),
                               ),
                             ),
                           ],
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 );
               },

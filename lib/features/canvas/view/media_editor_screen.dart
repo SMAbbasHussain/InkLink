@@ -3,6 +3,13 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/glass_panel.dart';
+import '../../../ui/widgets/ink_button.dart';
 
 class MediaEditorScreen extends StatefulWidget {
   final Uint8List imageBytes;
@@ -169,37 +176,47 @@ class _MediaEditorScreenState extends State<MediaEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Edit Image'),
-        actions: [
-          TextButton(
-            onPressed: () => setState(() {
-              _workingImageBytes = widget.imageBytes;
-              _backgroundWasRemoved = false;
-            }),
-            child: const Text('Reset'),
-          ),
-          TextButton(onPressed: _save, child: const Text('Done')),
-        ],
-      ),
+      backgroundColor: tokens.surfaceDesk,
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(InkSpacing.s16),
           child: Column(
             children: [
+              GlassPanel(
+                radius: InkRadii.glassBar,
+                padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s16),
+                child: SizedBox(
+                  height: 48,
+                  child: Row(
+                    children: [
+                      Text('Edit Image', style: InkType.title(tokens.ink)),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () => setState(() {
+                          _workingImageBytes = widget.imageBytes;
+                          _backgroundWasRemoved = false;
+                        }),
+                        child: const Text('Reset'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: InkSpacing.s16),
               Expanded(
                 child: Center(
                   child: Container(
                     width: double.infinity,
                     constraints: const BoxConstraints(maxWidth: 340),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.black12),
-                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(InkRadii.paperCard),
+                      color: tokens.field,
+                      boxShadow: tokens.paperShadow,
                     ),
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(InkRadii.paperCard),
                       child: ClipRect(
                         child: Transform.translate(
                           offset: Offset.zero,
@@ -216,7 +233,7 @@ class _MediaEditorScreenState extends State<MediaEditorScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: InkSpacing.s12),
               Expanded(
                 child: SingleChildScrollView(
                   child: Column(
@@ -238,24 +255,23 @@ class _MediaEditorScreenState extends State<MediaEditorScreen> {
                         onChanged: (v) =>
                             setState(() => _backgroundThreshold = v),
                       ),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: _isRemovingBackground
-                              ? null
-                              : _removeBackground,
-                          icon: _isRemovingBackground
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.layers_clear, size: 16),
-                          label: const Text('Remove Background'),
-                        ),
+                      const SizedBox(height: InkSpacing.s8),
+                      InkButton.secondary(
+                        label: 'Remove Background',
+                        icon: _isRemovingBackground
+                            ? SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: tokens.ink,
+                                ),
+                              )
+                            : const Icon(LucideIcons.eraser),
+                        onPressed: _isRemovingBackground ? null : _removeBackground,
                       ),
+                      const SizedBox(height: InkSpacing.s12),
+                      InkButton.primary(label: 'Done', onPressed: _save),
                     ],
                   ),
                 ),
@@ -287,13 +303,14 @@ class _SliderRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
     return Column(
       children: [
         Row(
           children: [
-            Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+            Text(label, style: InkType.bodyStrong(tokens.ink)),
             const Spacer(),
-            Text(valueLabel),
+            Text(valueLabel, style: InkType.label(tokens.inkMuted)),
           ],
         ),
         Slider(value: value, min: min, max: max, onChanged: onChanged),
