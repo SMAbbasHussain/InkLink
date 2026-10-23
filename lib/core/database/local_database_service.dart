@@ -46,7 +46,7 @@ class LocalDatabaseService {
 
   Future<Isar> get database async => await db;
 
-  Future<void> clearLocalCache() async {
+  Future<void> clearLocalCache({bool clearChats = false}) async {
     final isar = await database;
     await isar.writeTxn(() async {
       await isar.localBoards.clear();
@@ -59,8 +59,10 @@ class LocalDatabaseService {
       await isar.localNotifications.clear();
       await isar.localWorkspaces.clear();
       await isar.localWorkspaceInvites.clear();
-      await isar.localChatConversations.clear();
-      await isar.localChatMessages.clear();
+      if (clearChats) {
+        await isar.localChatConversations.clear();
+        await isar.localChatMessages.clear();
+      }
     });
   }
 }

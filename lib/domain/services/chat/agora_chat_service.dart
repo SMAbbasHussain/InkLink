@@ -144,11 +144,50 @@ class AgoraChatServiceImpl implements ChatService {
         await ChatClient.getInstance.loginWithAgoraToken(agoraUsername, token);
       }
       developer.log('Logged into Agora Chat as: $agoraUsername', name: 'AgoraChatService');
+
+      // Sync conversations and messages from Agora Chat SDK into local database
+      await _syncFromAgora();
     } catch (e) {
       developer.log('Agora Chat login notice (operating in local-first mode): $e', name: 'AgoraChatService');
     }
 
     await _syncConversationsFromLocal();
+  }
+
+  Future<void> _syncFromAgora() async {
+    try {
+      List<ChatConversation> agoraConvs = [];
+      try {
+        agoraConvs = await ChatClient.getInstance.chatManager.loadAllConversations();
+      } catch (e) {
+        developer.log('Agora loadAllConversations error: $e', name: 'AgoraChatService');
+      }
+
+      try {
+        final serverConvs = await ChatClient.getInstance.chatManager.getConversationsFromServer();
+        final existingIds = agoraConvs.map((c) => c.id).toSet();
+        for (final sc in serverConvs) {
+          if (!existingIds.contains(sc.id)) {
+            agoraConvs.add(sc);
+          }
+        }
+      } catch (e) {
+        developer.log('Agora getConversationsFromServer notice (local-first): $e', name: 'AgoraChatService');
+      }
+
+      for (final conv in agoraConvs) {
+        try {
+          final messages = await conv.loadMessages(startMsgId: '', loadCount: 50);
+          for (final msg in messages) {
+            await _handleIncomingAgoraMessage(msg, triggerNotification: false);
+          }
+        } catch (e) {
+          developer.log('Error loading messages for conv ${conv.id}: $e', name: 'AgoraChatService');
+        }
+      }
+    } catch (e) {
+      developer.log('Agora sync error: $e', name: 'AgoraChatService');
+    }
   }
 
   @override
@@ -158,7 +197,10 @@ class AgoraChatServiceImpl implements ChatService {
     } catch (_) {}
   }
 
-  Future<void> _handleIncomingAgoraMessage(ChatMessage msg) async {
+  Future<void> _handleIncomingAgoraMessage(
+    ChatMessage msg, {
+    bool triggerNotification = true,
+  }) async {
     try {
       final conversationId = msg.conversationId ?? msg.from ?? '';
       String textContent = '';
@@ -211,34 +253,36 @@ class AgoraChatServiceImpl implements ChatService {
       await _persistMessageLocally(model, isGroup: isGroup);
 
       // Dispatch local foreground notification if receiver is not sender and chat is not muted
-      final currentUid = _authService.getCurrentUserId();
-      if (model.senderId != currentUid) {
-        final isar = await _localDbService.database;
-        final conv = await isar.localChatConversations
-            .filter()
-            .conversationIdEqualTo(conversationId)
-            .findFirst();
-        final isMuted = conv?.isMuted ?? false;
-        if (!isMuted) {
-          final notifyTitle = isGroup
-              ? (conv != null && conv.name.isNotEmpty
-                  ? '${conv.name} (${model.senderName})'
-                  : model.senderName)
-              : model.senderName;
-          final notifyBody = model.type == ChatMessageType.text
-              ? model.content
-              : '[${model.type.name}]';
-          await LocalNotificationService.showNotification(
-            title: notifyTitle,
-            body: notifyBody,
-            largeIcon: model.senderAvatar,
-            payload: {
-              'type': 'chat_message',
-              'targetId': conversationId,
-              'senderName': isGroup ? (conv?.name ?? 'Group') : model.senderName,
-              'isGroup': isGroup.toString(),
-            },
-          );
+      if (triggerNotification) {
+        final currentUid = _authService.getCurrentUserId();
+        if (model.senderId != currentUid) {
+          final isar = await _localDbService.database;
+          final conv = await isar.localChatConversations
+              .filter()
+              .conversationIdEqualTo(conversationId)
+              .findFirst();
+          final isMuted = conv?.isMuted ?? false;
+          if (!isMuted) {
+            final notifyTitle = isGroup
+                ? (conv != null && conv.name.isNotEmpty
+                    ? '${conv.name} (${model.senderName})'
+                    : model.senderName)
+                : model.senderName;
+            final notifyBody = model.type == ChatMessageType.text
+                ? model.content
+                : '[${model.type.name}]';
+            await LocalNotificationService.showNotification(
+              title: notifyTitle,
+              body: notifyBody,
+              largeIcon: model.senderAvatar,
+              payload: {
+                'type': 'chat_message',
+                'targetId': conversationId,
+                'senderName': isGroup ? (conv?.name ?? 'Group') : model.senderName,
+                'isGroup': isGroup.toString(),
+              },
+            );
+          }
         }
       }
     } catch (e) {
@@ -308,6 +352,15 @@ class AgoraChatServiceImpl implements ChatService {
         conv.unreadCount = conv.unreadCount + 1;
       }
 
+      // Track participants for DMs so we know which user owns this conversation
+      if (!conv.isGroup) {
+        final members = Set<String>.from(conv.memberIds);
+        if (currentUid != null && currentUid.isNotEmpty) members.add(currentUid);
+        if (model.conversationId.isNotEmpty) members.add(model.conversationId);
+        if (model.senderId.isNotEmpty) members.add(model.senderId);
+        conv.memberIds = members.toList();
+      }
+
       await isar.localChatConversations.put(conv);
     });
 
@@ -344,8 +397,19 @@ class AgoraChatServiceImpl implements ChatService {
         .sortByUpdatedAtDesc()
         .findAll();
 
+    final currentUid = _authService.getCurrentUserId();
     final results = <ChatConversationModel>[];
     for (final c in locals) {
+      // Don't show DM with self or conversations the current user is not a participant of
+      if (currentUid != null && currentUid.isNotEmpty) {
+        if (!c.isGroup) {
+          if (c.conversationId == currentUid) continue;
+          if (c.memberIds.isNotEmpty && !c.memberIds.contains(currentUid)) continue;
+        } else {
+          if (c.memberIds.isNotEmpty && !c.memberIds.contains(currentUid)) continue;
+        }
+      }
+
       String resolvedName = c.name;
       String? resolvedAvatar = c.avatarUrl;
 
@@ -463,11 +527,31 @@ class AgoraChatServiceImpl implements ChatService {
   @override
   Future<List<ChatMessageModel>> getMessages(String conversationId) async {
     final isar = await _localDbService.database;
-    final locals = await isar.localChatMessages
+    var locals = await isar.localChatMessages
         .filter()
         .conversationIdEqualTo(conversationId)
         .sortByTimestamp()
         .findAll();
+
+    // If local Isar has no messages, lazily fetch from Agora Chat SDK
+    if (locals.isEmpty) {
+      try {
+        final conv = await ChatClient.getInstance.chatManager.getConversation(conversationId);
+        if (conv != null) {
+          final msgs = await conv.loadMessages(startMsgId: '', loadCount: 50);
+          for (final msg in msgs) {
+            await _handleIncomingAgoraMessage(msg, triggerNotification: false);
+          }
+          locals = await isar.localChatMessages
+              .filter()
+              .conversationIdEqualTo(conversationId)
+              .sortByTimestamp()
+              .findAll();
+        }
+      } catch (e) {
+        developer.log('Notice loading messages on demand from Agora: $e', name: 'AgoraChatService');
+      }
+    }
 
     return locals.map((m) {
       Map<String, List<String>> parsedReactions = {};

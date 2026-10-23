@@ -274,7 +274,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
     // Disable network listeners now that user and data are deleted
     await _authRepository.disableNetwork();
 
-    await _localDatabaseService.clearLocalCache();
+    await _localDatabaseService.clearLocalCache(clearChats: true);
     _lastSyncedToken = null;
     developer.log('deleteAccount: complete', name: 'AuthSessionService');
   }
