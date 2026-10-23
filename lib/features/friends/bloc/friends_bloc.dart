@@ -87,6 +87,28 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           .where((uid) => uid.isNotEmpty)
           .toSet();
 
+      final current = state;
+      if (current is EmailSearchResultsLoaded) {
+        final friendUids = event.friends
+            .map((f) => f['uid']?.toString() ?? '')
+            .where((uid) => uid.isNotEmpty)
+            .toSet();
+        emit(
+          EmailSearchResultsLoaded(
+            result: current.result,
+            friendUids: friendUids,
+            pendingOutgoingUids: _pendingOutgoingTargetUids,
+            sendingRequestTargetUids: _sendingRequestTargetUids,
+            isOffline: _isOffline,
+          ),
+        );
+        return;
+      }
+
+      if (current is EmailSearchInProgress || current is EmailSearchEmpty) {
+        return;
+      }
+
       final blockedUsers = state is FriendsLoaded
           ? (state as FriendsLoaded).blockedUsers
           : const <Map<String, dynamic>>[];

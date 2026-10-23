@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../domain/models/chat/chat_conversation_model.dart';
+import '../../../../domain/services/friends/friends_service.dart';
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_tokens.dart';
 import '../../../../ui/theme/ink_type.dart';
@@ -38,6 +39,10 @@ class AddFriendSheet extends StatefulWidget {
 
 class _AddFriendSheetState extends State<AddFriendSheet> {
   final TextEditingController _emailController = TextEditingController();
+  Map<String, dynamic>? _searchResult;
+  bool _isSearching = false;
+  bool _hasSearched = false;
+  String? _searchError;
 
   @override
   void dispose() {
@@ -45,10 +50,36 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
     super.dispose();
   }
 
-  void _triggerSearch() {
+  Future<void> _triggerSearch() async {
     final query = _emailController.text.trim();
-    if (query.isNotEmpty) {
-      context.read<FriendsBloc>().add(SearchUserByEmailRequested(query));
+    if (query.isEmpty) return;
+
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isSearching = true;
+      _hasSearched = true;
+      _searchError = null;
+      _searchResult = null;
+    });
+
+    try {
+      final friendsService = context.read<FriendsService>();
+      final results = await friendsService.searchUsersByEmail(query);
+      if (mounted) {
+        setState(() {
+          _isSearching = false;
+          _searchResult = results.isNotEmpty ? results.first : null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isSearching = false;
+          _searchError = e.toString().contains('offline')
+              ? 'Offline mode: Search requires internet.'
+              : 'Failed to search for user.';
+        });
+      }
     }
   }
 
@@ -120,13 +151,30 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
               Expanded(
                 child: BlocBuilder<FriendsBloc, FriendsState>(
                   builder: (context, state) {
-                    if (state is EmailSearchInProgress) {
+                    if (_isSearching) {
                       return Center(
                         child: CircularProgressIndicator(color: tokens.accent),
                       );
                     }
 
-                    if (state is EmailSearchEmpty) {
+                    if (_searchError != null) {
+                      return Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(LucideIcons.wifiOff, size: 52, color: tokens.inkMuted),
+                          const SizedBox(height: InkSpacing.s12),
+                          Text('Search unavailable', style: InkType.bodyStrong(tokens.ink)),
+                          const SizedBox(height: InkSpacing.s4),
+                          Text(
+                            _searchError!,
+                            textAlign: TextAlign.center,
+                            style: InkType.caption(tokens.inkMuted),
+                          ),
+                        ],
+                      );
+                    }
+
+                    if (_hasSearched && _searchResult == null) {
                       return Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -140,30 +188,33 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
                       );
                     }
 
-                    if (state is EmailSearchResultsLoaded) {
-                      if (state.isOffline) {
-                        return Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(LucideIcons.wifiOff, size: 52, color: tokens.inkMuted),
-                            const SizedBox(height: InkSpacing.s12),
-                            Text('Offline mode', style: InkType.bodyStrong(tokens.ink)),
-                            const SizedBox(height: InkSpacing.s4),
-                            Text(
-                              'Search requires internet. Cached friends and requests are still available.',
-                              textAlign: TextAlign.center,
-                              style: InkType.caption(tokens.inkMuted),
-                            ),
-                          ],
-                        );
-                      }
-
-                      final user = state.result;
+                    if (_searchResult != null) {
+                      final user = _searchResult!;
+                      final uid = user['uid']?.toString() ?? '';
                       final String name = user['displayName'] ?? 'Creator';
                       final String? photoUrl = user['photoURL'];
-                      final isAlreadyFriend = state.friendUids.contains(user['uid']);
-                      final isPending = state.pendingOutgoingUids.contains(user['uid']);
-                      final isSending = state.sendingRequestTargetUids.contains(user['uid']);
+
+                      final friendUids = <String>{};
+                      final pendingOutgoingUids = <String>{};
+                      final sendingRequestTargetUids = <String>{};
+
+                      if (state is FriendsLoaded) {
+                        friendUids.addAll(
+                          state.friends.map((f) => f['uid']?.toString() ?? ''),
+                        );
+                        pendingOutgoingUids.addAll(
+                          state.outgoingRequests.map((r) => r['toUid']?.toString() ?? ''),
+                        );
+                        sendingRequestTargetUids.addAll(state.sendingRequestTargetUids);
+                      } else if (state is EmailSearchResultsLoaded) {
+                        friendUids.addAll(state.friendUids);
+                        pendingOutgoingUids.addAll(state.pendingOutgoingUids);
+                        sendingRequestTargetUids.addAll(state.sendingRequestTargetUids);
+                      }
+
+                      final isAlreadyFriend = friendUids.contains(uid);
+                      final isPending = pendingOutgoingUids.contains(uid);
+                      final isSending = sendingRequestTargetUids.contains(uid);
 
                       return SingleChildScrollView(
                         child: PaperCard(
@@ -173,7 +224,7 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
                             onTap: () {
                               Navigator.push(
                                 context,
-                                buildProfileRoute(context, userId: user['uid']),
+                                buildProfileRoute(context, userId: uid),
                               );
                             },
                             child: Row(
@@ -181,7 +232,7 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
                                 InkAvatar(
                                   imageUrl: photoUrl,
                                   initials: inkInitialsFor(name),
-                                  id: user['uid']?.toString() ?? '',
+                                  id: uid,
                                   size: 50,
                                 ),
                                 const SizedBox(width: InkSpacing.s16),
@@ -222,7 +273,7 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
                                             ? () {
                                                 Navigator.pop(context);
                                                 final conv = ChatConversationModel(
-                                                  id: user['uid'].toString(),
+                                                  id: uid,
                                                   name: name,
                                                   avatarUrl: photoUrl,
                                                   isGroup: false,
@@ -236,7 +287,7 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
                                               }
                                             : () {
                                                 context.read<FriendsBloc>().add(
-                                                      SendFriendRequestRequested(user['uid']),
+                                                      SendFriendRequestRequested(uid),
                                                     );
                                               },
                                   ),
