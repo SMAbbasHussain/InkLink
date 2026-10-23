@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
-import '../../../../core/constants/app_colors.dart';
+import 'package:flutter/services.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+
+import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_tokens.dart';
+import '../../../../ui/theme/ink_type.dart';
+import '../../../../ui/widgets/glass_panel.dart';
 
 enum TrayDirection { left, right, top, bottom }
 
@@ -31,155 +37,135 @@ class SlidingTray extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = context.ink;
 
     // Calculate off-screen positions
     double? top, bottom, left, right;
+    const inset = 12.0;
 
     switch (direction) {
       case TrayDirection.left:
-        left = isOpen ? 10 : -width - 20; // Extra offset for shadow
+        left = isOpen ? inset : -width - 20; // Extra offset for shadow
         top = topOffset ?? (bottomOffset == null ? 100.0 : null);
         bottom = bottomOffset;
         break;
       case TrayDirection.right:
-        right = isOpen ? 10 : -width - 20;
+        right = isOpen ? inset : -width - 20;
         top = topOffset ?? (bottomOffset == null ? 100.0 : null);
         bottom = bottomOffset;
         break;
       case TrayDirection.top:
-        top = isOpen ? 10 : -height - 20;
+        top = isOpen ? inset : -height - 20;
         left = MediaQuery.of(context).size.width / 2 - (width / 2);
         break;
       case TrayDirection.bottom:
-        bottom = isOpen ? 20 : -height - 20;
-        left = 20;
-        right = 20;
+        bottom = isOpen ? inset : -height - 20;
+        left = inset;
+        right = inset;
         break;
     }
 
     return AnimatedPositioned(
       duration: const Duration(milliseconds: 400),
-      // FIX: Changed from non-existent offsetToVector to easeOutBack
       curve: Curves.easeOutBack,
       top: top,
       bottom: bottom,
       left: left,
       right: right,
       child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
+        behavior: HitTestBehavior.opaque,
         onHorizontalDragUpdate: (d) {
           if (direction == TrayDirection.left && d.delta.dx < -8) {
+            HapticFeedback.lightImpact();
             onClose?.call();
           } else if (direction == TrayDirection.right && d.delta.dx > 8) {
+            HapticFeedback.lightImpact();
             onClose?.call();
           }
         },
         onVerticalDragUpdate: (d) {
           if (direction == TrayDirection.bottom && d.delta.dy > 8) {
+            HapticFeedback.lightImpact();
             onClose?.call();
           } else if (direction == TrayDirection.top && d.delta.dy < -8) {
+            HapticFeedback.lightImpact();
             onClose?.call();
           }
         },
-        child: Container(
+        child: SizedBox(
           width: width,
           height: height,
-          decoration: BoxDecoration(
-            color: isDark
-                ? AppColors.surfaceDark.withOpacity(0.95)
-                : Colors.white.withOpacity(0.95),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: isDark
-                  ? Colors.white.withOpacity(0.1)
-                  : AppColors.primary.withOpacity(0.2),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(isDark ? 0.4 : 0.1),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: Column(
-            children: [
-              // Header Handle (UX cue for swiping)
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onVerticalDragUpdate: (d) {
-                  if (direction == TrayDirection.bottom && d.delta.dy > 6) {
-                    onClose?.call();
-                  } else if (direction == TrayDirection.top && d.delta.dy < -6) {
-                    onClose?.call();
-                  }
-                },
-                onHorizontalDragUpdate: (d) {
-                  if (direction == TrayDirection.left && d.delta.dx < -6) {
-                    onClose?.call();
-                  } else if (direction == TrayDirection.right && d.delta.dx > 6) {
-                    onClose?.call();
-                  }
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  width: double.infinity,
-                  alignment: Alignment.center,
+          child: GlassPanel(
+            radius: InkRadii.glassBar,
+            child: Column(
+              children: [
+                // Header Handle (UX cue for swiping)
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onVerticalDragUpdate: (d) {
+                    if (direction == TrayDirection.bottom && d.delta.dy > 6) {
+                      onClose?.call();
+                    } else if (direction == TrayDirection.top && d.delta.dy < -6) {
+                      onClose?.call();
+                    }
+                  },
+                  onHorizontalDragUpdate: (d) {
+                    if (direction == TrayDirection.left && d.delta.dx < -6) {
+                      onClose?.call();
+                    } else if (direction == TrayDirection.right && d.delta.dx > 6) {
+                      onClose?.call();
+                    }
+                  },
                   child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.withOpacity(0.3),
-                      borderRadius: BorderRadius.circular(10),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    width: double.infinity,
+                    alignment: Alignment.center,
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: tokens.inkMuted.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
                   ),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 8.0,
-                  horizontal: 16,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        title,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: InkSpacing.s8,
+                    horizontal: InkSpacing.s16,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(title, style: InkType.bodyStrong(tokens.ink)),
                       ),
-                    ),
-                    ?headerActions,
-                    if (onClose != null) ...[
-                      const SizedBox(width: 8),
-                      InkWell(
-                        borderRadius: BorderRadius.circular(16),
-                        onTap: onClose,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: isDark
-                                ? Colors.white.withOpacity(0.08)
-                                : Colors.black.withOpacity(0.05),
-                          ),
-                          child: Icon(
-                            Icons.close_rounded,
-                            size: 18,
-                            color: isDark ? Colors.white70 : Colors.black54,
+                      ?headerActions,
+                      if (onClose != null) ...[
+                        const SizedBox(width: InkSpacing.s8),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(InkRadii.chip),
+                          onTap: () {
+                            HapticFeedback.lightImpact();
+                            onClose?.call();
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Icon(
+                              LucideIcons.x,
+                              size: 18,
+                              color: tokens.inkSecondary,
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-              const Divider(height: 1),
-              Expanded(child: child),
-            ],
+                Divider(height: 1, color: tokens.glassStroke),
+                Expanded(child: child),
+              ],
+            ),
           ),
         ),
       ),

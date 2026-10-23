@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../../../core/constants/app_colors.dart';
+import '../../../ui/theme/ink_colors.dart';
 
 class ChatColors {
   final bool isDark;
@@ -16,7 +16,7 @@ class ChatColors {
   Color get textSecondary => isDark ? const Color(0xFFA0A0A5) : const Color(0xFF757575);
 
   // iMessage bubbles
-  Color get outgoingBubble => AppColors.primary;
+  Color get outgoingBubble => InkColors.accent;
   Color get outgoingText => Colors.white;
   Color get incomingBubble => isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE9E9EB);
   Color get incomingText => isDark ? Colors.white : const Color(0xFF1C1C1E);
@@ -27,7 +27,7 @@ class ChatColors {
   Color get inputHint => const Color(0xFF8E8E93);
   Color get inputText => isDark ? Colors.white : const Color(0xFF1A1A1A);
 
-  Color get accent => isDark ? const Color(0xFF8257E6) : AppColors.primary;
+  Color get accent => isDark ? const Color(0xFF8257E6) : InkColors.accent;
   Color get accentAlt => isDark ? const Color(0xFF9B84EE) : const Color(0xFF7C4DFF);
 
   Color get statusOnline => const Color(0xFF34C759);

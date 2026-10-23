@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../../core/constants/app_colors.dart';
 import '../../../../domain/models/chat/chat_conversation_model.dart';
+import '../../../../ui/theme/ink_colors.dart';
 import '../../../chat/theme/chat_theme.dart';
 import '../../../chat/view/chat_thread_screen.dart';
 import '../../../friends/bloc/friends_bloc.dart';
@@ -87,12 +87,12 @@ class _FriendsCollapsibleCardState extends State<FriendsCollapsibleCard> {
                       Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.15),
+                          color: InkColors.accent.withOpacity(0.15),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Icon(
                           Icons.people_alt_rounded,
-                          color: AppColors.primary,
+                          color: InkColors.accent,
                           size: 20,
                         ),
                       ),
@@ -109,7 +109,7 @@ class _FriendsCollapsibleCardState extends State<FriendsCollapsibleCard> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.2),
+                          color: InkColors.accent.withOpacity(0.2),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Text(
@@ -117,7 +117,7 @@ class _FriendsCollapsibleCardState extends State<FriendsCollapsibleCard> {
                           style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
-                            color: AppColors.primary,
+                            color: InkColors.accent,
                           ),
                         ),
                       ),
@@ -179,12 +179,12 @@ class _FriendsCollapsibleCardState extends State<FriendsCollapsibleCard> {
                           margin: const EdgeInsets.only(bottom: 12),
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           decoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.12),
+                            color: InkColors.accent.withOpacity(0.12),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Row(
                             children: [
-                              const Icon(Icons.mark_email_unread_outlined, size: 18, color: AppColors.primary),
+                              const Icon(Icons.mark_email_unread_outlined, size: 18, color: InkColors.accent),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
@@ -235,7 +235,7 @@ class _FriendsCollapsibleCardState extends State<FriendsCollapsibleCard> {
                           if (widget.isSelf) ...[
                             const SizedBox(width: 8),
                             IconButton(
-                              icon: const Icon(Icons.person_add_alt_1, color: AppColors.primary),
+                              icon: const Icon(Icons.person_add_alt_1, color: InkColors.accent),
                               tooltip: 'Add Friend',
                               onPressed: () {
                                 Navigator.push(
@@ -285,10 +285,6 @@ class _FriendsCollapsibleCardState extends State<FriendsCollapsibleCard> {
                                     userId: uid,
                                     displayName: name,
                                     photoUrl: photo,
-                                    gradient: const LinearGradient(
-                                      colors: [Color(0xFF6A11CB), Color(0xFF2575FC)],
-                                    ),
-                                    isDark: widget.isDark,
                                   ),
                                 ),
                                 title: Text(

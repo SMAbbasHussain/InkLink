@@ -1,10 +1,11 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:inklink/core/constants/app_colors.dart';
 import 'package:inklink/domain/models/board.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../canvas/view/canvas_route.dart';
+import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_type.dart';
+import '../../../../ui/widgets/board_card_frame.dart';
 
 class BoardCard extends StatelessWidget {
   final Board board;
@@ -28,167 +29,94 @@ class BoardCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = context.ink;
 
-    return GestureDetector(
+    final String captionText = board.tags.isNotEmpty
+        ? "${board.tags.map((t) => '#$t').join(' ')} • Edited ${_timeAgo(board.updatedAt)}"
+        : "Edited ${_timeAgo(board.updatedAt)}";
+
+    return BoardCardFrame(
+      previewPath: board.previewPath,
+      title: board.title,
+      caption: captionText,
       onTap: () {
+        HapticFeedback.lightImpact();
         Navigator.push(context, buildCanvasRoute(context, boardId: board.id));
       },
-      child: Container(
-        decoration: BoxDecoration(
-          color: isDark ? AppColors.surfaceDark : Colors.white,
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(
-            color: isDark ? Colors.white10 : Colors.grey.shade200,
+      menuButton: PopupMenuButton<String>(
+        tooltip: 'Board options',
+        icon: Icon(LucideIcons.ellipsisVertical, size: 18, color: tokens.ink),
+        onSelected: (value) {
+          if (value == 'copy') {
+            HapticFeedback.mediumImpact();
+            Clipboard.setData(ClipboardData(text: board.id));
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Join Code (Board ID) copied to clipboard!'),
+              ),
+            );
+          } else if (value == 'duplicate') {
+            HapticFeedback.lightImpact();
+            onDuplicate?.call();
+          } else if (value == 'archive') {
+            HapticFeedback.lightImpact();
+            onArchive?.call();
+          } else if (value == 'unarchive') {
+            HapticFeedback.lightImpact();
+            onUnarchive?.call();
+          } else if (value == 'delete') {
+            HapticFeedback.mediumImpact();
+            onDelete(board.id);
+          } else if (value == 'settings') {
+            HapticFeedback.lightImpact();
+            onOpenSettings?.call();
+          }
+        },
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            value: 'settings',
+            child: _menuRow(LucideIcons.slidersHorizontal, 'Settings', tokens.ink),
           ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.white10 : Colors.grey.shade100,
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(15),
-                  ),
-                ),
-                child:
-                    board.previewPath != null && board.previewPath!.isNotEmpty
-                    ? ClipRRect(
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(15),
-                        ),
-                        child: Image.file(
-                          File(board.previewPath!),
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          gaplessPlayback: true,
-                          errorBuilder: (_, _, _) => Center(
-                            child: Icon(
-                              Icons.draw_rounded,
-                              size: 36,
-                              color: isDark ? Colors.white54 : Colors.black26,
-                            ),
-                          ),
-                        ),
-                      )
-                    : Center(
-                        child: Icon(
-                          Icons.draw_rounded,
-                          size: 36,
-                          color: isDark ? Colors.white54 : Colors.black26,
-                        ),
-                      ),
+          PopupMenuItem(
+            value: 'copy',
+            child: _menuRow(LucideIcons.copy, 'Copy Join Code', tokens.ink),
+          ),
+          if (onDuplicate != null)
+            PopupMenuItem(
+              value: 'duplicate',
+              child: _menuRow(
+                LucideIcons.copyPlus,
+                isOwner ? 'Duplicate' : 'Make a Copy',
+                tokens.ink,
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12.0,
-                vertical: 8.0,
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          board.title,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (board.tags.isNotEmpty) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            board.tags.map((t) => '#$t').join(' '),
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                        const SizedBox(height: 4),
-                        Text(
-                          "Edited ${_timeAgo(board.updatedAt)}",
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: isDark
-                                ? AppColors.textSecondaryDark
-                                : AppColors.textSecondaryLight,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert, size: 20),
-                    onSelected: (value) {
-                      if (value == 'copy') {
-                        Clipboard.setData(ClipboardData(text: board.id));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Join Code (Board ID) copied to clipboard!',
-                            ),
-                          ),
-                        );
-                      } else if (value == 'duplicate') {
-                        onDuplicate?.call();
-                      } else if (value == 'archive') {
-                        onArchive?.call();
-                      } else if (value == 'unarchive') {
-                        onUnarchive?.call();
-                      } else if (value == 'delete') {
-                        onDelete(board.id);
-                      } else if (value == 'settings') {
-                        onOpenSettings?.call();
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(
-                        value: 'settings',
-                        child: Text('Settings'),
-                      ),
-                      const PopupMenuItem(
-                        value: 'copy',
-                        child: Text('Copy Join Code'),
-                      ),
-                      if (onDuplicate != null)
-                        PopupMenuItem(
-                          value: 'duplicate',
-                          child: Text(isOwner ? 'Duplicate' : 'Make a Copy'),
-                        ),
-                      if (isOwner && onArchive != null && !board.isArchived)
-                        const PopupMenuItem(
-                          value: 'archive',
-                          child: Text('Archive'),
-                        ),
-                      if (isOwner && onUnarchive != null && board.isArchived)
-                        const PopupMenuItem(
-                          value: 'unarchive',
-                          child: Text('Unarchive'),
-                        ),
-                      if (isOwner)
-                        const PopupMenuItem(
-                          value: 'delete',
-                          child: Text(
-                            'Delete',
-                            style: TextStyle(color: Colors.red),
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
+          if (isOwner && onArchive != null && !board.isArchived)
+            PopupMenuItem(
+              value: 'archive',
+              child: _menuRow(LucideIcons.archive, 'Archive', tokens.ink),
             ),
-          ],
-        ),
+          if (isOwner && onUnarchive != null && board.isArchived)
+            PopupMenuItem(
+              value: 'unarchive',
+              child: _menuRow(LucideIcons.archiveRestore, 'Unarchive', tokens.ink),
+            ),
+          if (isOwner)
+            PopupMenuItem(
+              value: 'delete',
+              child: _menuRow(LucideIcons.trash2, 'Delete', tokens.danger),
+            ),
+        ],
       ),
+    );
+  }
+
+  Widget _menuRow(IconData icon, String label, Color color) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 10),
+        Text(label, style: InkType.body(color)),
+      ],
     );
   }
 

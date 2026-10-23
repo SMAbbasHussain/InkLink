@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../domain/models/board.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_text_field.dart';
+import '../../../ui/widgets/paper_card.dart';
 import '../bloc/workspace_bloc.dart';
 
 class CreateWorkspaceScreen extends StatefulWidget {
@@ -63,115 +70,91 @@ class _CreateWorkspaceScreenState extends State<CreateWorkspaceScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Create Workspace')),
+      backgroundColor: tokens.paper,
+      appBar: AppBar(
+        backgroundColor: tokens.paper,
+        title: Text('Create Workspace', style: InkType.title(tokens.ink)),
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(InkSpacing.s16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Workspace Details Section
-              Text(
-                'Workspace Details',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _nameController,
-                decoration: InputDecoration(
-                  labelText: 'Workspace Name',
-                  hintText: 'e.g., My Team, Project X',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
+              PaperCard(
+                padding: const EdgeInsets.all(InkSpacing.s16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Workspace Details', style: InkType.title(tokens.ink)),
+                    const SizedBox(height: InkSpacing.s16),
+                    InkTextField(
+                      controller: _nameController,
+                      labelText: 'Workspace Name',
+                      hintText: 'e.g., My Team, Project X',
+                      enabled: !_isCreating,
+                    ),
+                    const SizedBox(height: InkSpacing.s16),
+                    InkTextField(
+                      controller: _descriptionController,
+                      labelText: 'Description (optional)',
+                      hintText: 'What is this workspace for?',
+                      maxLines: 3,
+                      enabled: !_isCreating,
+                    ),
+                  ],
                 ),
-                enabled: !_isCreating,
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _descriptionController,
-                decoration: InputDecoration(
-                  labelText: 'Description (optional)',
-                  hintText: 'What is this workspace for?',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
+              const SizedBox(height: InkSpacing.s16),
+              PaperCard(
+                padding: const EdgeInsets.all(InkSpacing.s16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Add Boards (Optional)', style: InkType.title(tokens.ink)),
+                    const SizedBox(height: InkSpacing.s12),
+                    Text(
+                      'Select boards to include in this workspace',
+                      style: InkType.caption(tokens.inkMuted),
+                    ),
+                    const SizedBox(height: InkSpacing.s12),
+                    InkTextField(
+                      controller: _boardSearchController,
+                      labelText: 'Search boards',
+                      hintText: 'Filter by board name',
+                      leadingIcon: LucideIcons.search,
+                      enabled: !_isCreating,
+                      onChanged: (value) => setState(() {}),
+                    ),
+                    const SizedBox(height: InkSpacing.s16),
+                    _BuildBoardsList(
+                      searchQuery: _boardSearchController.text,
+                      selectedBoardIds: _selectedBoardIds,
+                      isCreating: _isCreating,
+                      ownedBoardsStream: widget.ownedBoardsStream,
+                      joinedBoardsStream: widget.joinedBoardsStream,
+                      onSelectionChanged: () => setState(() {}),
+                    ),
+                  ],
                 ),
-                maxLines: 3,
-                enabled: !_isCreating,
               ),
-              const SizedBox(height: 32),
-
-              // Boards Selection Section
-              Text(
-                'Add Boards (Optional)',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Select boards to include in this workspace',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
-              ),
-              const SizedBox(height: 12),
-
-              // Search Bar
-              TextField(
-                controller: _boardSearchController,
-                decoration: InputDecoration(
-                  labelText: 'Search boards',
-                  hintText: 'Filter by board name',
-                  prefixIcon: const Icon(Icons.search),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                ),
-                enabled: !_isCreating,
-                onChanged: (value) => setState(() {}),
-              ),
-              const SizedBox(height: 16),
-
-              // Boards List
-              _BuildBoardsList(
-                searchQuery: _boardSearchController.text,
-                selectedBoardIds: _selectedBoardIds,
-                isCreating: _isCreating,
-                ownedBoardsStream: widget.ownedBoardsStream,
-                joinedBoardsStream: widget.joinedBoardsStream,
-                onSelectionChanged: () => setState(() {}),
-              ),
-              const SizedBox(height: 32),
-
-              // Create Button
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _isCreating ? null : _createWorkspace,
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                  child: _isCreating
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Create Workspace'),
-                ),
+              const SizedBox(height: InkSpacing.s24),
+              InkButton.primary(
+                label: _isCreating ? '' : 'Create Workspace',
+                icon: _isCreating
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : null,
+                onPressed: _isCreating ? null : _createWorkspace,
               ),
             ],
           ),
@@ -205,6 +188,8 @@ class _BuildBoardsList extends StatefulWidget {
 class _BuildBoardsListState extends State<_BuildBoardsList> {
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
+
     return Column(
       children: [
         StreamBuilder<List<Board>>(
@@ -228,16 +213,16 @@ class _BuildBoardsListState extends State<_BuildBoardsList> {
 
                 if (filteredBoards.isEmpty) {
                   return Container(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(InkSpacing.s16),
                     decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey[300]!),
-                      borderRadius: BorderRadius.circular(8),
+                      color: tokens.field,
+                      borderRadius: BorderRadius.circular(InkRadii.input),
                     ),
                     child: Text(
                       widget.searchQuery.isEmpty
                           ? 'No boards available'
                           : 'No boards match your search',
-                      style: TextStyle(color: Colors.grey[600]),
+                      style: InkType.body(tokens.inkMuted),
                       textAlign: TextAlign.center,
                     ),
                   );
@@ -245,15 +230,16 @@ class _BuildBoardsListState extends State<_BuildBoardsList> {
 
                 return Container(
                   decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey[300]!),
-                    borderRadius: BorderRadius.circular(8),
+                    color: tokens.paper,
+                    borderRadius: BorderRadius.circular(InkRadii.input),
+                    border: Border.all(color: tokens.glassStroke),
                   ),
                   child: ListView.separated(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
                     itemCount: filteredBoards.length,
                     separatorBuilder: (context, index) =>
-                        Divider(height: 1, color: Colors.grey[300]),
+                        Divider(height: 1, color: tokens.glassStroke),
                     itemBuilder: (context, index) {
                       final board = filteredBoards[index];
                       final isSelected = widget.selectedBoardIds.contains(
@@ -272,10 +258,10 @@ class _BuildBoardsListState extends State<_BuildBoardsList> {
                                 }
                                 widget.onSelectionChanged();
                               },
-                        title: Text(board.title),
+                        title: Text(board.title, style: InkType.body(tokens.ink)),
                         contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
+                          horizontal: InkSpacing.s16,
+                          vertical: InkSpacing.s8,
                         ),
                       );
                     },
@@ -286,13 +272,10 @@ class _BuildBoardsListState extends State<_BuildBoardsList> {
           },
         ),
         if (widget.selectedBoardIds.isNotEmpty) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: InkSpacing.s12),
           Text(
             '${widget.selectedBoardIds.length} board(s) selected',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).primaryColor,
-              fontWeight: FontWeight.w500,
-            ),
+            style: InkType.caption(tokens.accentText),
           ),
         ],
       ],

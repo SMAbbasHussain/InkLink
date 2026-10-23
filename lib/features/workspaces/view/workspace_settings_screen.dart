@@ -1,8 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../core/utils/helpers.dart';
 import '../../../domain/models/workspace.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/ink_avatar.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_chip.dart';
+import '../../../ui/widgets/ink_dialog.dart';
+import '../../../ui/widgets/ink_initials.dart';
+import '../../../ui/widgets/ink_text_field.dart';
+import '../../../ui/widgets/paper_card.dart';
+import '../../../ui/widgets/status_chip.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../../profile/view/profile_route.dart';
 import '../bloc/workspace_bloc.dart';
@@ -76,54 +88,23 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
 
   Widget _buildAvatar(Map<String, dynamic> friend, String fallbackLabel) {
     final photoUrl = (friend['photoURL'] ?? '').toString();
-    if (photoUrl.isNotEmpty) {
-      return CircleAvatar(
-        backgroundImage: NetworkImage(photoUrl),
-        onBackgroundImageError: (_, _) {},
-        child: const SizedBox.shrink(),
-      );
-    }
-
-    return CircleAvatar(
-      child: Text(
-        fallbackLabel.isEmpty
-            ? 'U'
-            : fallbackLabel.substring(0, 1).toUpperCase(),
-      ),
+    final uid = (friend['uid'] ?? '').toString();
+    return InkAvatar(
+      imageUrl: photoUrl.isEmpty ? null : photoUrl,
+      initials: inkInitialsFor(fallbackLabel),
+      id: uid,
+      size: 40,
     );
   }
 
-  Widget _buildMemberAvatar(WorkspaceMember member) {
-    final url = (member.photoUrl ?? '').trim();
-    if (url.isNotEmpty) {
-      return CircleAvatar(
-        radius: 24,
-        backgroundImage: NetworkImage(url),
-        onBackgroundImageError: (_, _) {},
-      );
-    }
-
-    final label = member.label.trim();
-    return CircleAvatar(
-      radius: 24,
-      backgroundColor: Colors.indigo.withOpacity(0.12),
-      child: Text(
-        label.isEmpty ? 'U' : label.substring(0, 1).toUpperCase(),
-        style: const TextStyle(fontWeight: FontWeight.w700),
-      ),
-    );
-  }
-
-  Color _roleChipColor(BuildContext context, String role) {
+  Color _roleColor(InkTokens tokens, String role) {
     switch (role.toLowerCase()) {
       case 'owner':
-        return Colors.deepPurple;
+        return tokens.accent;
       case 'editor':
-        return Colors.teal;
-      case 'viewer':
-        return Colors.blueGrey;
+        return tokens.inkSecondary;
       default:
-        return Theme.of(context).colorScheme.primary;
+        return tokens.inkMuted;
     }
   }
 
@@ -132,22 +113,21 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
     WorkspaceMember member, {
     required bool canRemove,
   }) {
-    final roleColor = _roleChipColor(context, member.role);
+    final tokens = context.ink;
+    final roleColor = _roleColor(tokens, member.role);
     final secondary = member.email != null && member.email!.trim().isNotEmpty
         ? member.email!.trim()
         : member.uid;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: InkSpacing.s12),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        color: Theme.of(context).cardColor,
-        border: Border.all(
-          color: Theme.of(context).dividerColor.withOpacity(0.2),
-        ),
+        borderRadius: BorderRadius.circular(16),
+        color: tokens.paper,
+        boxShadow: tokens.paperShadow,
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         onTap: () {
           Navigator.push(
             context,
@@ -158,8 +138,13 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
             children: [
-              _buildMemberAvatar(member),
-              const SizedBox(width: 12),
+              InkAvatar(
+                imageUrl: member.photoUrl,
+                initials: inkInitialsFor(member.label),
+                id: member.uid,
+                size: 44,
+              ),
+              const SizedBox(width: InkSpacing.s12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -168,48 +153,27 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                       member.label,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: InkType.bodyStrong(tokens.ink),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       secondary,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Theme.of(context).textTheme.bodySmall?.color,
-                      ),
+                      style: InkType.caption(tokens.inkMuted),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: InkSpacing.s8),
                     Row(
                       children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: roleColor.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            member.role.toUpperCase(),
-                            style: TextStyle(
-                              color: roleColor,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 11,
-                            ),
-                          ),
+                        InkChip(
+                          label: member.role.toUpperCase(),
+                          backgroundColor: roleColor.withValues(alpha: 0.12),
+                          textColor: roleColor,
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          member.status,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(context).textTheme.bodySmall?.color,
-                          ),
+                        const SizedBox(width: InkSpacing.s8),
+                        StatusChip(
+                          status: _statusFor(member.status),
+                          label: member.status,
                         ),
                       ],
                     ),
@@ -218,7 +182,8 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
               ),
               if (canRemove)
                 IconButton(
-                  icon: const Icon(Icons.person_remove_outlined),
+                  icon: Icon(LucideIcons.userX, color: tokens.danger),
+                  tooltip: 'Remove member',
                   onPressed: () => _removeMember(member.uid),
                 ),
             ],
@@ -228,26 +193,27 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
     );
   }
 
+  InkStatus _statusFor(String status) {
+    switch (status.toLowerCase()) {
+      case 'invited':
+      case 'pending':
+        return InkStatus.pending;
+      case 'declined':
+        return InkStatus.declined;
+      default:
+        return InkStatus.accepted;
+    }
+  }
+
   Future<void> _removeMember(String memberUid) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Remove Member?'),
-        content: const Text('This member will lose workspace access.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remove', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+    final confirmed = await showInkConfirmDialog(
+      context,
+      title: 'Remove Member?',
+      message: 'This member will lose workspace access.',
+      confirmLabel: 'Remove',
     );
 
-    if (confirm == true && mounted) {
+    if (confirmed && mounted) {
       context.read<WorkspaceBloc>().add(
         RemoveWorkspaceMemberRequested(
           workspaceId: widget.workspaceId,
@@ -260,54 +226,59 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
   Future<void> _leaveWorkspace() async {
     // Show a dialog asking which imported boards to keep
     final importedBoardsToKeep = <String>{};
+    final tokens = context.ink;
 
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Leave Workspace?'),
+      builder: (context) => InkDialog(
+        title: 'Leave Workspace?',
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'When you leave this workspace:',
-                style: TextStyle(fontWeight: FontWeight.w600),
+                style: InkType.bodyStrong(tokens.ink),
               ),
-              const SizedBox(height: 12),
-              const Padding(
-                padding: EdgeInsets.only(left: 12),
+              const SizedBox(height: InkSpacing.s12),
+              Padding(
+                padding: const EdgeInsets.only(left: 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       '• Boards created in this workspace will remove you as a member',
-                      style: TextStyle(fontSize: 12),
+                      style: InkType.caption(tokens.inkSecondary),
                     ),
-                    SizedBox(height: 8),
+                    const SizedBox(height: 8),
                     Text(
                       '• Imported boards can optionally be kept in your board list',
-                      style: TextStyle(fontSize: 12),
+                      style: InkType.caption(tokens.inkSecondary),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
-              const Text(
+              const SizedBox(height: InkSpacing.s16),
+              Text(
                 'You will no longer have access to this workspace.',
-                style: TextStyle(fontSize: 12, color: Colors.red),
+                style: InkType.caption(tokens.danger),
               ),
             ],
           ),
         ),
         actions: [
-          TextButton(
+          InkButton.secondary(
+            label: 'Cancel',
+            expand: false,
+            compact: true,
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
           ),
-          TextButton(
+          InkButton.dangerConfirm(
+            label: 'Leave',
+            expand: false,
+            compact: true,
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Leave', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -325,25 +296,14 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
   }
 
   Future<void> _deleteWorkspace() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Workspace?'),
-        content: const Text('This action cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+    final confirmed = await showInkConfirmDialog(
+      context,
+      title: 'Delete Workspace?',
+      message: 'This action cannot be undone.',
+      confirmLabel: 'Delete',
     );
 
-    if (confirm == true && mounted) {
+    if (confirmed && mounted) {
       context.read<WorkspaceBloc>().add(
         DeleteWorkspaceRequested(widget.workspaceId),
       );
@@ -353,8 +313,14 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Workspace Settings')),
+      backgroundColor: tokens.paper,
+      appBar: AppBar(
+        backgroundColor: tokens.paper,
+        title: Text('Workspace Settings', style: InkType.title(tokens.ink)),
+      ),
       body: BlocConsumer<WorkspaceBloc, WorkspaceState>(
         listener: (context, state) {
           if (state is! WorkspaceLoaded) return;
@@ -378,7 +344,7 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
         },
         builder: (context, state) {
           if (state is! WorkspaceLoaded) {
-            return const Center(child: CircularProgressIndicator());
+            return Center(child: CircularProgressIndicator(color: tokens.accent));
           }
 
           Workspace? workspace;
@@ -393,7 +359,9 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
           }
 
           if (workspace == null) {
-            return const Center(child: Text('Workspace not found'));
+            return Center(
+              child: Text('Workspace not found', style: InkType.body(tokens.inkMuted)),
+            );
           }
 
           if (_nameController.text.isEmpty) {
@@ -410,47 +378,51 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
 
           return SafeArea(
             child: ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(InkSpacing.s16),
               children: [
-                Text('Details', style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _nameController,
-                  enabled: isOwner && !_isSaving,
-                  decoration: const InputDecoration(
-                    labelText: 'Workspace name',
-                    border: OutlineInputBorder(),
+                Text('Details', style: InkType.title(tokens.ink)),
+                const SizedBox(height: InkSpacing.s12),
+                PaperCard(
+                  padding: const EdgeInsets.all(InkSpacing.s16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      InkTextField(
+                        controller: _nameController,
+                        enabled: isOwner && !_isSaving,
+                        labelText: 'Workspace name',
+                      ),
+                      const SizedBox(height: InkSpacing.s12),
+                      InkTextField(
+                        controller: _descriptionController,
+                        enabled: isOwner && !_isSaving,
+                        maxLines: 3,
+                        labelText: 'Description',
+                      ),
+                      if (isOwner) ...[
+                        const SizedBox(height: InkSpacing.s12),
+                        InkButton.primary(
+                          label: _isSaving ? '' : 'Save workspace details',
+                          icon: _isSaving
+                              ? const SizedBox(
+                                  height: 16,
+                                  width: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : null,
+                          onPressed: _isSaving ? null : _saveWorkspaceDetails,
+                        ),
+                      ],
+                    ],
                   ),
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _descriptionController,
-                  enabled: isOwner && !_isSaving,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: 'Description',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                if (isOwner)
-                  FilledButton(
-                    onPressed: _isSaving ? null : _saveWorkspaceDetails,
-                    child: _isSaving
-                        ? const SizedBox(
-                            height: 16,
-                            width: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Save workspace details'),
-                  ),
-                const SizedBox(height: 24),
+                const SizedBox(height: InkSpacing.s24),
                 Row(
                   children: [
-                    Text(
-                      'Members',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
+                    Text('Members', style: InkType.title(tokens.ink)),
                     const Spacer(),
                     if (isOwner)
                       TextButton.icon(
@@ -463,17 +435,16 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                           });
                         },
                         icon: Icon(
-                          _showInviteComposer ? Icons.close : Icons.person_add,
+                          _showInviteComposer ? LucideIcons.x : LucideIcons.userPlus,
+                          size: 18,
                         ),
-                        label: Text(
-                          _showInviteComposer ? 'Hide invite' : 'Invite',
-                        ),
+                        label: Text(_showInviteComposer ? 'Hide invite' : 'Invite'),
                       ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: InkSpacing.s8),
                 if (members.isEmpty)
-                  const Text('No members found.')
+                  Text('No members found.', style: InkType.body(tokens.inkMuted))
                 else
                   ...members.map((member) {
                     final canRemove = isOwner && member.role != 'owner';
@@ -483,35 +454,33 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                       canRemove: canRemove,
                     );
                   }),
-                const SizedBox(height: 24),
+                const SizedBox(height: InkSpacing.s24),
                 if (isOwner && _showInviteComposer) ...[
-                  TextField(
+                  InkTextField(
                     controller: _inviteSearchController,
                     onChanged: (_) => setState(() {}),
                     onSubmitted: (_) => setState(() {}),
                     keyboardType: TextInputType.emailAddress,
-                    decoration: InputDecoration(
-                      hintText: 'Search friends by name or email',
-                      border: const OutlineInputBorder(),
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: _inviteSearchController.text.isEmpty
-                          ? null
-                          : IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                setState(() {
-                                  _inviteSearchController.clear();
-                                });
-                              },
-                            ),
-                    ),
+                    hintText: 'Search friends by name or email',
+                    leadingIcon: LucideIcons.search,
+                    suffixIcon: _inviteSearchController.text.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'Clear search',
+                            icon: Icon(LucideIcons.x, size: 18, color: tokens.inkMuted),
+                            onPressed: () {
+                              setState(() {
+                                _inviteSearchController.clear();
+                              });
+                            },
+                          ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: InkSpacing.s12),
                   BlocBuilder<FriendsBloc, FriendsState>(
                     builder: (context, friendsState) {
                       if (friendsState is FriendsInitial ||
                           friendsState is FriendsLoading) {
-                        return const Center(child: CircularProgressIndicator());
+                        return Center(child: CircularProgressIndicator(color: tokens.accent));
                       }
 
                       final friends = friendsState is FriendsLoaded
@@ -531,161 +500,156 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                         return query.isEmpty || searchable.contains(query);
                       }).toList();
 
-                      if (query.isEmpty) {
-                        if (filteredFriends.isEmpty) {
-                          return const Text('No friends found for invite.');
-                        }
+                      Widget buildFriendRow(Map<String, dynamic> friend) {
+                        final uid = (friend['uid'] ?? '').toString();
+                        final displayName = (friend['displayName'] ?? '')
+                            .toString();
+                        final email = (friend['email'] ?? '').toString();
+                        final isAlreadyMember = memberUids.contains(uid);
+                        final isInviting = state.invitingUserIds.contains(uid);
+                        final title = displayName.isNotEmpty
+                            ? displayName
+                            : (email.isNotEmpty ? email : uid);
 
-                        return Column(
-                          children: filteredFriends.map((friend) {
-                            final uid = (friend['uid'] ?? '').toString();
-                            final displayName = (friend['displayName'] ?? '')
-                                .toString();
-                            final email = (friend['email'] ?? '').toString();
-                            final isAlreadyMember = memberUids.contains(uid);
-                            final isInviting = state.invitingUserIds.contains(
-                              uid,
-                            );
-                            final title = displayName.isNotEmpty
-                                ? displayName
-                                : (email.isNotEmpty ? email : uid);
-
-                            return Card(
-                              child: ListTile(
-                                leading: _buildAvatar(friend, title),
-                                title: Text(title),
-                                subtitle: Text(email.isNotEmpty ? email : uid),
-                                trailing: isAlreadyMember
-                                    ? const Text('Member')
-                                    : FilledButton(
-                                        onPressed: uid.isEmpty || isInviting
-                                            ? null
-                                            : () => _inviteMember(uid),
-                                        child: isInviting
-                                            ? const SizedBox(
-                                                height: 16,
-                                                width: 16,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                      strokeWidth: 2,
-                                                      color: Colors.white,
-                                                    ),
-                                              )
-                                            : const Text('Invite'),
-                                      ),
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: InkSpacing.s8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: InkSpacing.s12,
+                            vertical: InkSpacing.s8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: tokens.paper,
+                            borderRadius: BorderRadius.circular(14),
+                            boxShadow: tokens.paperShadow,
+                          ),
+                          child: Row(
+                            children: [
+                              _buildAvatar(friend, title),
+                              const SizedBox(width: InkSpacing.s12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(title, style: InkType.bodyStrong(tokens.ink)),
+                                    Text(
+                                      email.isNotEmpty ? email : uid,
+                                      style: InkType.caption(tokens.inkMuted),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            );
-                          }).toList(),
-                        );
-                      }
-
-                      if (filteredFriends.isNotEmpty) {
-                        return Column(
-                          children: filteredFriends.map((friend) {
-                            final uid = (friend['uid'] ?? '').toString();
-                            final displayName = (friend['displayName'] ?? '')
-                                .toString();
-                            final email = (friend['email'] ?? '').toString();
-                            final isAlreadyMember = memberUids.contains(uid);
-                            final isInviting = state.invitingUserIds.contains(
-                              uid,
-                            );
-                            final title = displayName.isNotEmpty
-                                ? displayName
-                                : (email.isNotEmpty ? email : uid);
-
-                            return Card(
-                              child: ListTile(
-                                leading: _buildAvatar(friend, title),
-                                title: Text(title),
-                                subtitle: Text(email.isNotEmpty ? email : uid),
-                                trailing: isAlreadyMember
-                                    ? const Text('Member')
-                                    : FilledButton(
-                                        onPressed: uid.isEmpty || isInviting
-                                            ? null
-                                            : () => _inviteMember(uid),
-                                        child: isInviting
-                                            ? const SizedBox(
-                                                height: 16,
-                                                width: 16,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                      strokeWidth: 2,
-                                                      color: Colors.white,
-                                                    ),
-                                              )
-                                            : const Text('Invite'),
-                                      ),
-                              ),
-                            );
-                          }).toList(),
-                        );
-                      }
-
-                      if (isValidEmail(query)) {
-                        final typedEmail = _inviteSearchController.text.trim();
-                        final isInviting = state.invitingUserIds.contains(
-                          typedEmail,
-                        );
-                        return Card(
-                          child: ListTile(
-                            leading: const CircleAvatar(
-                              child: Icon(Icons.mail_outline),
-                            ),
-                            title: Text(typedEmail),
-                            subtitle: const Text('Invite by email address'),
-                            trailing: FilledButton(
-                              onPressed: isInviting
-                                  ? null
-                                  : () => _inviteMember(typedEmail),
-                              child: isInviting
-                                  ? const SizedBox(
-                                      height: 16,
-                                      width: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : const Text('Invite'),
-                            ),
+                              isAlreadyMember
+                                  ? StatusChip(status: InkStatus.accepted, label: 'Member')
+                                  : InkButton.primary(
+                                      label: isInviting ? '' : 'Invite',
+                                      compact: true,
+                                      expand: false,
+                                      icon: isInviting
+                                          ? const SizedBox(
+                                              height: 16,
+                                              width: 16,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Colors.white,
+                                              ),
+                                            )
+                                          : null,
+                                      onPressed: uid.isEmpty || isInviting
+                                          ? null
+                                          : () => _inviteMember(uid),
+                                    ),
+                            ],
                           ),
                         );
                       }
 
-                      return const Text(
+                      if (query.isEmpty) {
+                        if (filteredFriends.isEmpty) {
+                          return Text(
+                            'No friends found for invite.',
+                            style: InkType.body(tokens.inkMuted),
+                          );
+                        }
+                        return Column(children: filteredFriends.map(buildFriendRow).toList());
+                      }
+
+                      if (filteredFriends.isNotEmpty) {
+                        return Column(children: filteredFriends.map(buildFriendRow).toList());
+                      }
+
+                      if (isValidEmail(query)) {
+                        final typedEmail = _inviteSearchController.text.trim();
+                        final isInviting = state.invitingUserIds.contains(typedEmail);
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: InkSpacing.s12,
+                            vertical: InkSpacing.s8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: tokens.paper,
+                            borderRadius: BorderRadius.circular(14),
+                            boxShadow: tokens.paperShadow,
+                          ),
+                          child: Row(
+                            children: [
+                              InkAvatar(initials: '?', id: typedEmail, size: 40),
+                              const SizedBox(width: InkSpacing.s12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(typedEmail, style: InkType.bodyStrong(tokens.ink)),
+                                    Text(
+                                      'Invite by email address',
+                                      style: InkType.caption(tokens.inkMuted),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              InkButton.primary(
+                                label: isInviting ? '' : 'Invite',
+                                compact: true,
+                                expand: false,
+                                icon: isInviting
+                                    ? const SizedBox(
+                                        height: 16,
+                                        width: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : null,
+                                onPressed: isInviting ? null : () => _inviteMember(typedEmail),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return Text(
                         'No matching friends. Enter a valid email to invite a non-friend.',
+                        style: InkType.body(tokens.inkMuted),
                       );
                     },
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: InkSpacing.s24),
                 ],
-                Text(
-                  'Danger zone',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(color: Colors.red),
-                ),
-                const SizedBox(height: 8),
-                if (isOwner)
-                  OutlinedButton(
-                    onPressed: _deleteWorkspace,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
-                      side: const BorderSide(color: Colors.red),
-                    ),
-                    child: const Text('Delete workspace'),
-                  )
-                else
-                  OutlinedButton(
-                    onPressed: _leaveWorkspace,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
-                      side: const BorderSide(color: Colors.red),
-                    ),
-                    child: const Text('Leave workspace'),
+                Text('Danger zone', style: InkType.title(tokens.danger)),
+                const SizedBox(height: InkSpacing.s8),
+                Container(
+                  padding: const EdgeInsets.all(InkSpacing.s16),
+                  decoration: BoxDecoration(
+                    color: tokens.paper,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: tokens.danger.withValues(alpha: 0.3)),
+                    boxShadow: tokens.paperShadow,
                   ),
+                  child: InkButton.danger(
+                    label: isOwner ? 'Delete workspace' : 'Leave workspace',
+                    onPressed: isOwner ? _deleteWorkspace : _leaveWorkspace,
+                  ),
+                ),
               ],
             ),
           );

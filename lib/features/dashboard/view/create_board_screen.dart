@@ -1,7 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../domain/models/board.dart';
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/glass_panel.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_chip.dart';
+import '../../../ui/widgets/ink_segmented.dart';
+import '../../../ui/widgets/ink_text_field.dart';
+import '../../../ui/widgets/paper_card.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../bloc/dashboard_bloc.dart';
 
@@ -140,9 +151,11 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
   }
 
   Future<void> _openInviteSettings() async {
+    final tokens = context.ink;
     final result = await showModalBottomSheet<Map<String, String>>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (context) {
         String whoCanInvite = _whoCanInvite;
         String defaultLinkJoinRole = _defaultLinkJoinRole;
@@ -150,95 +163,74 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
 
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                left: 16,
-                right: 16,
-                top: 16,
-                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Invite Settings',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: whoCanInvite,
-                    decoration: const InputDecoration(
-                      labelText: 'Who can send invites',
-                      border: OutlineInputBorder(),
+            return _GlassSheet(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).viewInsets.bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Invite Settings', style: InkType.title(tokens.ink)),
+                    const SizedBox(height: InkSpacing.s16),
+                    _buildDropdown<String>(
+                      label: 'Who can send invites',
+                      value: whoCanInvite,
+                      items: const [
+                        DropdownMenuItem(
+                          value: Board.inviteOwnerOnly,
+                          child: Text('Owner only'),
+                        ),
+                        DropdownMenuItem(
+                          value: Board.inviteOwnerEditor,
+                          child: Text('Owner + Editors'),
+                        ),
+                        DropdownMenuItem(
+                          value: Board.inviteAllMembers,
+                          child: Text('All members'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setSheetState(() => whoCanInvite = value);
+                      },
                     ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: Board.inviteOwnerOnly,
-                        child: Text('Owner only'),
-                      ),
-                      DropdownMenuItem(
-                        value: Board.inviteOwnerEditor,
-                        child: Text('Owner + Editors'),
-                      ),
-                      DropdownMenuItem(
-                        value: Board.inviteAllMembers,
-                        child: Text('All members'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setSheetState(() => whoCanInvite = value);
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: defaultLinkJoinRole,
-                    decoration: const InputDecoration(
-                      labelText: 'Default role for link/code joins',
-                      border: OutlineInputBorder(),
+                    const SizedBox(height: InkSpacing.s12),
+                    _buildDropdown<String>(
+                      label: 'Default role for link/code joins',
+                      value: defaultLinkJoinRole,
+                      items: const [
+                        DropdownMenuItem(
+                          value: Board.roleViewer,
+                          child: Text('Viewer (default)'),
+                        ),
+                        DropdownMenuItem(
+                          value: Board.roleEditor,
+                          child: Text('Editor'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setSheetState(() => defaultLinkJoinRole = value);
+                      },
                     ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: Board.roleViewer,
-                        child: Text('Viewer (default)'),
-                      ),
-                      DropdownMenuItem(
-                        value: Board.roleEditor,
-                        child: Text('Editor'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setSheetState(() => defaultLinkJoinRole = value);
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: inviteTargetRole,
-                    decoration: const InputDecoration(
-                      labelText: 'Role for invited users',
-                      border: OutlineInputBorder(),
+                    const SizedBox(height: InkSpacing.s12),
+                    _buildDropdown<String>(
+                      label: 'Role for invited users',
+                      value: inviteTargetRole,
+                      items: const [
+                        DropdownMenuItem(value: Board.roleViewer, child: Text('Viewer')),
+                        DropdownMenuItem(value: Board.roleEditor, child: Text('Editor')),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setSheetState(() => inviteTargetRole = value);
+                      },
                     ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: Board.roleViewer,
-                        child: Text('Viewer'),
-                      ),
-                      DropdownMenuItem(
-                        value: Board.roleEditor,
-                        child: Text('Editor'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setSheetState(() => inviteTargetRole = value);
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
+                    const SizedBox(height: InkSpacing.s20),
+                    InkButton.primary(
+                      label: 'Save Settings',
                       onPressed: () {
                         Navigator.pop(context, {
                           'whoCanInvite': whoCanInvite,
@@ -246,10 +238,9 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                           'inviteTargetRole': inviteTargetRole,
                         });
                       },
-                      child: const Text('Save Settings'),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             );
           },
@@ -265,8 +256,24 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
     });
   }
 
+  static Widget _buildDropdown<T>({
+    String? label,
+    required T value,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?> onChanged,
+  }) {
+    return DropdownButtonFormField<T>(
+      value: value,
+      icon: const Icon(LucideIcons.chevronDown, size: 18),
+      decoration: InputDecoration(labelText: label),
+      items: items,
+      onChanged: onChanged,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
     final dashboardState = context.watch<DashboardBloc>().state;
     List<Board> copyableBoards = [];
     if (dashboardState is DashboardLoaded) {
@@ -279,336 +286,381 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Create Board')),
+      backgroundColor: tokens.paper,
+      appBar: AppBar(
+        backgroundColor: tokens.paper,
+        title: Text('Create Board', style: InkType.title(tokens.ink)),
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(InkSpacing.s16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (copyableBoards.isNotEmpty) ...[
-                const Text(
-                  'Copy from existing board (optional)',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 6),
-                DropdownButtonFormField<String?>(
-                  value: _selectedSourceBoardId,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.copy_rounded),
-                    isDense: true,
-                  ),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('Start with blank board'),
-                    ),
-                    ...copyableBoards.map((b) {
-                      final isOwner = b.currentUserRole == Board.roleOwner;
-                      final label =
-                          '${b.title} (${isOwner ? "My Board" : "Shared"})';
-                      return DropdownMenuItem<String?>(
-                        value: b.id,
-                        child: Text(label, overflow: TextOverflow.ellipsis),
-                      );
-                    }),
-                  ],
-                  onChanged: (val) {
-                    setState(() {
-                      _selectedSourceBoardId = val;
-                      if (val != null) {
-                        final chosen = copyableBoards.firstWhere(
-                          (b) => b.id == val,
-                        );
-                        if (_titleController.text.trim().isEmpty ||
-                            _titleController.text.endsWith('(Copy)')) {
-                          _titleController.text = '${chosen.title} (Copy)';
-                        }
-                      }
-                    });
-                  },
-                ),
-                if (_selectedSourceBoardId != null) ...[
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .primaryContainer
-                          .withOpacity(0.4),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.info_outline,
-                          size: 18,
-                          color: Theme.of(context).colorScheme.primary,
+                PaperCard(
+                  padding: const EdgeInsets.all(InkSpacing.s16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Copy from existing board (optional)',
+                        style: InkType.title(tokens.ink),
+                      ),
+                      const SizedBox(height: InkSpacing.s8),
+                      DropdownButtonFormField<String?>(
+                        value: _selectedSourceBoardId,
+                        icon: const Icon(LucideIcons.chevronDown, size: 18),
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(LucideIcons.copy, size: 18),
+                          isDense: true,
                         ),
-                        const SizedBox(width: 8),
-                        const Expanded(
-                          child: Text(
-                            'All drawings and shapes will be copied into your new board. The members list will not be copied; you will be the sole member.',
-                            style: TextStyle(fontSize: 12),
+                        items: [
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('Start with blank board'),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 16),
-              ],
-              TextField(
-                controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: 'Board name',
-                  hintText: 'Enter board name',
-                ),
-                onChanged: (_) => setState(() {}),
-                autofocus: true,
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Board visibility',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment<String>(
-                    value: Board.visibilityPrivate,
-                    label: Text('Private'),
-                  ),
-                  ButtonSegment<String>(
-                    value: Board.visibilityPublic,
-                    label: Text('Public'),
-                  ),
-                ],
-                selected: <String>{_visibility},
-                onSelectionChanged: (selection) {
-                  setState(() {
-                    _visibility = selection.first;
-                  });
-                },
-              ),
-              if (_visibility == Board.visibilityPrivate) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  'Private board join policy',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: _privateJoinPolicy,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: Board.policyOwnerOnlyInvite,
-                      child: Text('Only owner can invite'),
-                    ),
-                    DropdownMenuItem(
-                      value: Board.policyLinkCanJoin,
-                      child: Text('Anyone with join code can join'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {
-                      _privateJoinPolicy = value;
-                    });
-                  },
-                ),
-              ],
-              const SizedBox(height: 12),
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text(
-                  'Allow members to copy this board',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                subtitle: const Text(
-                  'Members can get their own independent copy with all edits',
-                  style: TextStyle(fontSize: 12),
-                ),
-                value: _allowMembersToCopy,
-                onChanged: (val) {
-                  setState(() {
-                    _allowMembersToCopy = val;
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Tags (optional)',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _tagController,
-                      decoration: const InputDecoration(hintText: 'e.g. #art'),
-                      onSubmitted: (_) => _addTagFromInput(),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _addTagFromInput,
-                    child: const Text('Add'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _tags
-                    .map(
-                      (tag) => Chip(
-                        label: Text('#$tag'),
-                        onDeleted: () {
+                          ...copyableBoards.map((b) {
+                            final isOwner = b.currentUserRole == Board.roleOwner;
+                            final label =
+                                '${b.title} (${isOwner ? "My Board" : "Shared"})';
+                            return DropdownMenuItem<String?>(
+                              value: b.id,
+                              child: Text(label, overflow: TextOverflow.ellipsis),
+                            );
+                          }),
+                        ],
+                        onChanged: (val) {
                           setState(() {
-                            _tags.remove(tag);
+                            _selectedSourceBoardId = val;
+                            if (val != null) {
+                              final chosen = copyableBoards.firstWhere(
+                                (b) => b.id == val,
+                              );
+                              if (_titleController.text.trim().isEmpty ||
+                                  _titleController.text.endsWith('(Copy)')) {
+                                _titleController.text = '${chosen.title} (Copy)';
+                              }
+                            }
                           });
                         },
                       ),
-                    )
-                    .toList(),
-              ),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
-                onPressed: _openInviteSettings,
-                icon: const Icon(Icons.tune),
-                label: const Text('Configure Invite Settings'),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Who can invite: ${_whoCanInvite.replaceAll('_', ' ')} | '
-                'Link role: $_defaultLinkJoinRole | Invite role: $_inviteTargetRole',
-                style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _inviteesController,
-                decoration: const InputDecoration(
-                  labelText: 'Invite users (optional)',
-                  hintText: 'Comma-separated emails or user IDs',
+                      if (_selectedSourceBoardId != null) ...[
+                        const SizedBox(height: InkSpacing.s12),
+                        Container(
+                          padding: const EdgeInsets.all(InkSpacing.s12),
+                          decoration: BoxDecoration(
+                            color: tokens.accent.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(InkRadii.card),
+                            border: Border.all(
+                              color: tokens.accent.withValues(alpha: 0.3),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                LucideIcons.info,
+                                size: 18,
+                                color: tokens.accent,
+                              ),
+                              const SizedBox(width: InkSpacing.s8),
+                              Expanded(
+                                child: Text(
+                                  'All drawings and shapes will be copied into your new board. The members list will not be copied; you will be the sole member.',
+                                  style: InkType.caption(tokens.ink),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
-                maxLines: 2,
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Select from friends (optional)',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+                const SizedBox(height: InkSpacing.s16),
+              ],
+              PaperCard(
+                padding: const EdgeInsets.all(InkSpacing.s16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Board name', style: InkType.title(tokens.ink)),
+                    const SizedBox(height: InkSpacing.s12),
+                    InkTextField(
+                      controller: _titleController,
+                      hintText: 'Enter board name',
+                      onChanged: (_) => setState(() {}),
+                      autofocus: true,
                     ),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      context.read<FriendsBloc>().add(LoadFriendsInfo());
-                    },
-                    child: const Text('Refresh'),
-                  ),
-                ],
+                    const SizedBox(height: InkSpacing.s20),
+                    Text('Board visibility', style: InkType.title(tokens.ink)),
+                    const SizedBox(height: InkSpacing.s12),
+                    InkSegmented(
+                      labels: const ['Private', 'Public'],
+                      selectedIndex: _visibility == Board.visibilityPrivate ? 0 : 1,
+                      onChanged: (i) {
+                        setState(() {
+                          _visibility = i == 0
+                              ? Board.visibilityPrivate
+                              : Board.visibilityPublic;
+                        });
+                      },
+                    ),
+                    if (_visibility == Board.visibilityPrivate) ...[
+                      const SizedBox(height: InkSpacing.s16),
+                      Text('Private board join policy', style: InkType.title(tokens.ink)),
+                      const SizedBox(height: InkSpacing.s12),
+                      _buildDropdown<String>(
+                        value: _privateJoinPolicy,
+                        items: const [
+                          DropdownMenuItem(
+                            value: Board.policyOwnerOnlyInvite,
+                            child: Text('Only owner can invite'),
+                          ),
+                          DropdownMenuItem(
+                            value: Board.policyLinkCanJoin,
+                            child: Text('Anyone with join code can join'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() => _privateJoinPolicy = value);
+                        },
+                      ),
+                    ],
+                    const SizedBox(height: InkSpacing.s16),
+                    SwitchListTile.adaptive(
+                      activeColor: tokens.accent,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        'Allow members to copy this board',
+                        style: InkType.subhead(tokens.ink),
+                      ),
+                      subtitle: Text(
+                        'Members can get their own independent copy with all edits',
+                        style: InkType.caption(tokens.inkMuted),
+                      ),
+                      value: _allowMembersToCopy,
+                      onChanged: (val) {
+                        HapticFeedback.lightImpact();
+                        setState(() {
+                          _allowMembersToCopy = val;
+                        });
+                      },
+                    ),
+                  ],
+                ),
               ),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 180),
-                child: BlocBuilder<FriendsBloc, FriendsState>(
-                  builder: (context, friendsState) {
-                    if (friendsState is FriendsLoading) {
-                      return const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(8.0),
-                          child: CircularProgressIndicator(),
+              const SizedBox(height: InkSpacing.s16),
+              PaperCard(
+                padding: const EdgeInsets.all(InkSpacing.s16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text('Tags (optional)', style: InkType.title(tokens.ink)),
+                        const Spacer(),
+                        Text('${_tags.length} of 5', style: InkType.caption(tokens.inkMuted)),
+                      ],
+                    ),
+                    const SizedBox(height: InkSpacing.s12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: InkTextField(
+                            controller: _tagController,
+                            hintText: 'e.g. #art',
+                            onSubmitted: (_) => _addTagFromInput(),
+                          ),
                         ),
-                      );
-                    }
-
-                    if (friendsState is! FriendsLoaded ||
-                        friendsState.friends.isEmpty) {
-                      return const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'No friends loaded yet.',
-                          style: TextStyle(color: Colors.grey),
+                        const SizedBox(width: InkSpacing.s8),
+                        InkButton.secondary(
+                          label: 'Add',
+                          expand: false,
+                          onPressed: _addTagFromInput,
                         ),
-                      );
-                    }
-
-                    return SingleChildScrollView(
-                      child: Wrap(
+                      ],
+                    ),
+                    if (_tags.isNotEmpty) ...[
+                      const SizedBox(height: InkSpacing.s12),
+                      Wrap(
                         spacing: 8,
                         runSpacing: 8,
-                        children: friendsState.friends.map((friend) {
-                          final uid = friend['uid']?.toString() ?? '';
-                          if (uid.isEmpty) {
-                            return const SizedBox.shrink();
-                          }
-                          final name =
-                              friend['displayName']?.toString() ?? 'Friend';
-                          final selected = _selectedFriendIds.contains(uid);
-                          return FilterChip(
-                            selected: selected,
-                            label: Text(name),
-                            onSelected: (value) {
-                              setState(() {
-                                if (value) {
-                                  _selectedFriendIds.add(uid);
-                                } else {
-                                  _selectedFriendIds.remove(uid);
-                                }
-                              });
-                            },
-                          );
-                        }).toList(),
+                        children: _tags
+                            .map(
+                              (tag) => InkChip(
+                                label: '#$tag',
+                                selected: true,
+                                onDeleted: () => setState(() => _tags.remove(tag)),
+                              ),
+                            )
+                            .toList(),
                       ),
-                    );
-                  },
+                    ],
+                  ],
                 ),
               ),
-              const SizedBox(height: 16),
-              const Text('Invite expiration'),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<int>(
-                value: _inviteExpiryHours,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  isDense: true,
+              const SizedBox(height: InkSpacing.s16),
+              PaperCard(
+                padding: const EdgeInsets.all(InkSpacing.s16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    InkButton.secondary(
+                      label: 'Configure Invite Settings',
+                      icon: const Icon(LucideIcons.slidersHorizontal),
+                      onPressed: _openInviteSettings,
+                    ),
+                    const SizedBox(height: InkSpacing.s8),
+                    Text(
+                      'Who can invite: ${_whoCanInvite.replaceAll('_', ' ')} | '
+                      'Link role: $_defaultLinkJoinRole | Invite role: $_inviteTargetRole',
+                      style: InkType.caption(tokens.inkMuted),
+                    ),
+                    const SizedBox(height: InkSpacing.s20),
+                    Text('Invite users (optional)', style: InkType.title(tokens.ink)),
+                    const SizedBox(height: InkSpacing.s12),
+                    InkTextField(
+                      controller: _inviteesController,
+                      hintText: 'Comma-separated emails or user IDs',
+                      maxLines: 2,
+                    ),
+                    const SizedBox(height: InkSpacing.s16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Select from friends (optional)',
+                            style: InkType.title(tokens.ink),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            context.read<FriendsBloc>().add(LoadFriendsInfo());
+                          },
+                          child: const Text('Refresh'),
+                        ),
+                      ],
+                    ),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 180),
+                      child: BlocBuilder<FriendsBloc, FriendsState>(
+                        builder: (context, friendsState) {
+                          if (friendsState is FriendsLoading) {
+                            return Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(8.0),
+                                child: CircularProgressIndicator(color: tokens.accent),
+                              ),
+                            );
+                          }
+
+                          if (friendsState is! FriendsLoaded ||
+                              friendsState.friends.isEmpty) {
+                            return Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'No friends loaded yet.',
+                                style: InkType.body(tokens.inkMuted),
+                              ),
+                            );
+                          }
+
+                          return SingleChildScrollView(
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: friendsState.friends.map((friend) {
+                                final uid = friend['uid']?.toString() ?? '';
+                                if (uid.isEmpty) return const SizedBox.shrink();
+                                final name =
+                                    friend['displayName']?.toString() ?? 'Friend';
+                                final selected = _selectedFriendIds.contains(uid);
+                                return InkChip(
+                                  label: name,
+                                  selected: selected,
+                                  onTap: () {
+                                    setState(() {
+                                      if (selected) {
+                                        _selectedFriendIds.remove(uid);
+                                      } else {
+                                        _selectedFriendIds.add(uid);
+                                      }
+                                    });
+                                  },
+                                );
+                              }).toList(),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: InkSpacing.s16),
+                    Text('Invite expiration', style: InkType.title(tokens.ink)),
+                    const SizedBox(height: InkSpacing.s12),
+                    _buildDropdown<int>(
+                      value: _inviteExpiryHours,
+                      items: const [
+                        DropdownMenuItem(value: 24, child: Text('24 hours')),
+                        DropdownMenuItem(value: 72, child: Text('3 days')),
+                        DropdownMenuItem(value: 168, child: Text('7 days')),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => _inviteExpiryHours = value);
+                      },
+                    ),
+                  ],
                 ),
-                items: const [
-                  DropdownMenuItem(value: 24, child: Text('24 hours')),
-                  DropdownMenuItem(value: 72, child: Text('3 days')),
-                  DropdownMenuItem(value: 168, child: Text('7 days')),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() {
-                    _inviteExpiryHours = value;
-                  });
-                },
               ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: _canSubmit ? _submit : null,
-                  child: Text(
-                    _selectedSourceBoardId != null
-                        ? 'Copy & Create Board'
-                        : 'Create Board',
-                  ),
-                ),
+              const SizedBox(height: InkSpacing.s24),
+              InkButton.primary(
+                label: _selectedSourceBoardId != null
+                    ? 'Copy & Create Board'
+                    : 'Create Board',
+                onPressed: _canSubmit ? _submit : null,
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassSheet extends StatelessWidget {
+  final Widget child;
+
+  const _GlassSheet({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        InkSpacing.s16,
+        InkSpacing.s8,
+        InkSpacing.s16,
+        InkSpacing.s24,
+      ),
+      child: GlassPanel(
+        radius: InkRadii.bottomSheet,
+        padding: const EdgeInsets.all(InkSpacing.s20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: InkSpacing.s16),
+              decoration: BoxDecoration(
+                color: tokens.inkMuted.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            child,
+          ],
         ),
       ),
     );

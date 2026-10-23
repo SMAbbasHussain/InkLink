@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../../../ui/theme/ink_type.dart';
+import '../../../../ui/widgets/ink_button.dart';
+
 class TrayTipsOverlay extends StatelessWidget {
   final VoidCallback onDismiss;
 
@@ -55,13 +58,9 @@ class TrayTipsOverlay extends StatelessWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text(
+                      Text(
                         'Canvas Gestures',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: InkType.headline(Colors.white),
                       ),
                       const SizedBox(height: 10),
                       Text(
@@ -80,9 +79,11 @@ class TrayTipsOverlay extends StatelessWidget {
                 alignment: Alignment.bottomRight,
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 8, right: 8),
-                  child: ElevatedButton(
+                  child: InkButton.hero(
+                    label: 'Got it',
+                    expand: false,
+                    compact: true,
                     onPressed: onDismiss,
-                    child: const Text('Got it'),
                   ),
                 ),
               ),

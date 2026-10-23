@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'ui/theme/ink_theme.dart';
+import 'ui/widgets/desk_background.dart';
+import 'ui/widgets/ink_logo.dart';
 import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/bloc/auth_state.dart';
 import 'features/auth/view/login_screen.dart';
@@ -104,26 +107,30 @@ class _AppViewState extends State<AppView> {
       },
       builder: (context, state) {
         if (state is AuthDeletingAccount) {
-          return const Scaffold(
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(color: Colors.red),
-                  SizedBox(height: 24),
-                  Text(
-                    "Deleting Account & Data...",
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+          final tokens = context.ink;
+          return Scaffold(
+            body: DeskBackground(
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(color: tokens.danger),
+                    const SizedBox(height: 24),
+                    Text(
+                      "Deleting Account & Data...",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: tokens.ink,
+                      ),
                     ),
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    "Permanently purging boards, memberships, and profile",
-                    style: TextStyle(fontSize: 13, color: Colors.grey),
-                  ),
-                ],
+                    const SizedBox(height: 8),
+                    Text(
+                      "Permanently purging boards, memberships, and profile",
+                      style: TextStyle(fontSize: 13, color: tokens.inkSecondary),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
@@ -148,23 +155,16 @@ class _AppViewState extends State<AppView> {
           return const LoginScreen();
         }
         // While checking session or loading
-        return Scaffold(
-          body: Center(
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF6A11CB), Color(0xFF2575FC)],
+        return Builder(
+          builder: (context) {
+            return Scaffold(
+              body: DeskBackground(
+                child: Center(
+                  child: const InkLogo(size: 96),
                 ),
-                shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.edit_note_rounded,
-                size: 80,
-                color: Colors.white,
-              ),
-            ),
-          ),
+            );
+          },
         );
       },
     );

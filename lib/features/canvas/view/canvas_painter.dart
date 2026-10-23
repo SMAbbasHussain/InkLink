@@ -298,6 +298,7 @@ class _CanvasPainter extends CustomPainter {
   final Offset? shapeDrawStart;
   final Offset? shapeDrawCurrent;
   final CanvasShapeType? pendingShapeType;
+  final Color accentColor;
   final String? arrowConnectStartElementId;
 
   const _CanvasPainter({
@@ -314,6 +315,7 @@ class _CanvasPainter extends CustomPainter {
     this.shapeDrawStart,
     this.shapeDrawCurrent,
     this.pendingShapeType,
+    required this.accentColor,
     this.arrowConnectStartElementId,
   });
 
@@ -361,11 +363,11 @@ class _CanvasPainter extends CustomPainter {
           elements.where((e) => e.id == arrowConnectStartElementId).firstOrNull;
       if (startElem != null) {
         final ringPaint = Paint()
-          ..color = const Color(0xFF2563EB)
+          ..color = accentColor
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.5;
         final glowPaint = Paint()
-          ..color = const Color(0xFF3B82F6).withOpacity(0.18)
+          ..color = accentColor.withValues(alpha: 0.18)
           ..style = PaintingStyle.fill;
         final radius = (startElem.kind == _ElementKind.shape
                 ? startElem.size
@@ -439,7 +441,7 @@ class _CanvasPainter extends CustomPainter {
     final points = element.points;
     if (points.length < 2) return;
     final paint = Paint()
-      ..color = Colors.blue.withOpacity(0.5)
+      ..color = accentColor.withValues(alpha: 0.5)
       ..strokeWidth = element.strokeWidth + 3
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
@@ -462,16 +464,22 @@ class _CanvasPainter extends CustomPainter {
     canvas.save();
     canvas.translate(c.dx, c.dy);
     final rotation = (element.data['rotation'] as num?)?.toDouble() ?? 0.0;
-    canvas.rotate(rotation);
+    if (rotation != 0.0) {
+      canvas.rotate(rotation);
+    }
     canvas.translate(-c.dx, -c.dy);
 
-    switch (element.shapeType!) {
+    switch (element.shapeType) {
+      case null:
       case CanvasShapeType.square:
-        final rect = Rect.fromCenter(center: c, width: s, height: s);
+        final rect = Rect.fromCenter(
+          center: c,
+          width: s,
+          height: s,
+        );
         if (borderRadius > 0) {
-          final clamped = borderRadius.clamp(0.0, s / 2);
           canvas.drawRRect(
-            RRect.fromRectAndRadius(rect, Radius.circular(clamped)),
+            RRect.fromRectAndRadius(rect, Radius.circular(borderRadius)),
             paint,
           );
         } else {
@@ -485,12 +493,8 @@ class _CanvasPainter extends CustomPainter {
           height: s * 0.8,
         );
         if (borderRadius > 0) {
-          final clamped = borderRadius.clamp(
-            0.0,
-            math.min(rect.width, rect.height) / 2,
-          );
           canvas.drawRRect(
-            RRect.fromRectAndRadius(rect, Radius.circular(clamped)),
+            RRect.fromRectAndRadius(rect, Radius.circular(borderRadius)),
             paint,
           );
         } else {
@@ -641,7 +645,7 @@ class _CanvasPainter extends CustomPainter {
   void _paintShapeDrawPreview(Canvas canvas, Offset start, Offset current) {
     if (pendingShapeType == CanvasShapeType.arrow) {
       final linePaint = Paint()
-        ..color = Colors.blueAccent
+        ..color = accentColor
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.5
         ..strokeCap = StrokeCap.round;
@@ -660,7 +664,7 @@ class _CanvasPainter extends CustomPainter {
         )
         ..close();
       final fillPaint = Paint()
-        ..color = Colors.blueAccent
+        ..color = accentColor
         ..style = PaintingStyle.fill;
       canvas.drawPath(arrowPath, fillPaint);
       return;
@@ -668,7 +672,7 @@ class _CanvasPainter extends CustomPainter {
 
     final rect = Rect.fromPoints(start, current);
     final dashPaint = Paint()
-      ..color = Colors.blueAccent.withOpacity(0.6)
+      ..color = accentColor.withValues(alpha: 0.6)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     canvas.drawRect(rect, dashPaint);
@@ -677,8 +681,8 @@ class _CanvasPainter extends CustomPainter {
     final size = math.max((current.dx - start.dx).abs(), (current.dy - start.dy).abs());
     final sizeText = TextSpan(
       text: size.toStringAsFixed(0),
-      style: const TextStyle(
-        color: Colors.blueAccent,
+      style: TextStyle(
+        color: accentColor,
         fontSize: 11,
         fontWeight: FontWeight.w500,
       ),
@@ -1001,7 +1005,7 @@ class _CanvasPainter extends CustomPainter {
 
     if (selectedShapeId == element.id) {
       final highlightPaint = Paint()
-        ..color = Colors.blueAccent.withOpacity(0.5)
+        ..color = accentColor.withValues(alpha: 0.5)
         ..strokeWidth = element.strokeWidth + 4
         ..strokeCap = StrokeCap.round
         ..style = PaintingStyle.stroke;
@@ -1022,6 +1026,7 @@ class _CanvasPainter extends CustomPainter {
         oldDelegate.isDrawingShape != isDrawingShape ||
         oldDelegate.shapeDrawStart != shapeDrawStart ||
         oldDelegate.shapeDrawCurrent != shapeDrawCurrent ||
-        oldDelegate.arrowConnectStartElementId != arrowConnectStartElementId;
+        oldDelegate.arrowConnectStartElementId != arrowConnectStartElementId ||
+        oldDelegate.accentColor != accentColor;
   }
 }

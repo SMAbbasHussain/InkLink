@@ -1,9 +1,16 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:inklink/domain/models/board.dart';
 import 'package:inklink/domain/models/workspace.dart';
+import 'package:inklink/ui/theme/ink_colors.dart';
+import 'package:inklink/ui/theme/ink_theme.dart';
+import 'package:inklink/ui/theme/ink_tokens.dart';
+import 'package:inklink/ui/theme/ink_type.dart';
+import 'package:inklink/ui/widgets/ink_tilt.dart';
+import 'package:inklink/ui/widgets/paper_card.dart';
 
 class WorkspaceCard extends StatelessWidget {
   final Workspace workspace;
@@ -21,85 +28,102 @@ class WorkspaceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final boards = previewBoards.take(4).toList();
-    while (boards.length < 4) {
-      boards.add(
-        Board(
-          id: '',
-          title: '',
-          ownerId: '',
-          members: const [],
-          createdAt: DateTime.fromMillisecondsSinceEpoch(0),
-          updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
-        ),
-      );
-    }
+    final tokens = context.ink;
+    final boards = previewBoards.take(3).toList();
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              AspectRatio(
-                aspectRatio: 1,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: InkSpacing.s20),
+      child: SizedBox(
+        height: 190,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // Two peeking sheets behind the main card.
+            Positioned(
+              top: 6,
+              left: 10,
+              right: 2,
+              bottom: -2,
+              child: Transform.rotate(
+                angle: inkDeterministicTilt('${workspace.id}-back2', maxDegrees: 2.2),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: tokens.paper,
+                    borderRadius: BorderRadius.circular(InkRadii.paperCard),
+                    boxShadow: tokens.paperShadow,
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 3,
+              left: 5,
+              right: -2,
+              bottom: 1,
+              child: Transform.rotate(
+                angle: inkDeterministicTilt('${workspace.id}-back1', maxDegrees: 1.4),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: tokens.paper,
+                    borderRadius: BorderRadius.circular(InkRadii.paperCard),
+                    boxShadow: tokens.paperShadow,
+                  ),
+                ),
+              ),
+            ),
+            PaperCard(
+              padding: const EdgeInsets.all(InkSpacing.s12),
+              child: InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(InkRadii.paperCard),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(
+                    SizedBox(
+                      height: 88,
                       child: Row(
                         children: [
-                          Expanded(child: _BoardPreviewTile(board: boards[0])),
-                          const SizedBox(width: 6),
-                          Expanded(child: _BoardPreviewTile(board: boards[1])),
+                          for (var i = 0; i < 3; i++) ...[
+                            if (i > 0) const SizedBox(width: 6),
+                            Expanded(
+                              child: _BoardPreviewTile(
+                                board: i < boards.length ? boards[i] : null,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Expanded(child: _BoardPreviewTile(board: boards[2])),
-                          const SizedBox(width: 6),
-                          Expanded(child: _BoardPreviewTile(board: boards[3])),
-                        ],
-                      ),
+                    const SizedBox(height: InkSpacing.s12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            workspace.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: InkType.cardTitle(tokens.ink),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: onOptionsPressed,
+                          icon: Icon(LucideIcons.ellipsis, color: tokens.inkMuted),
+                          tooltip: 'Workspace actions',
+                        ),
+                      ],
                     ),
+                    if (workspace.description.isNotEmpty)
+                      Text(
+                        workspace.description,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: InkType.caption(tokens.inkMuted),
+                      ),
                   ],
                 ),
               ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      workspace.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: onOptionsPressed,
-                    icon: const Icon(Icons.more_vert),
-                    tooltip: 'Workspace actions',
-                  ),
-                ],
-              ),
-              if (workspace.description.isNotEmpty)
-                Text(
-                  workspace.description,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -107,42 +131,41 @@ class WorkspaceCard extends StatelessWidget {
 }
 
 class _BoardPreviewTile extends StatelessWidget {
-  final Board board;
+  final Board? board;
 
   const _BoardPreviewTile({required this.board});
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final borderColor = isDark ? Colors.white12 : Colors.black12;
-    final tileColor = isDark ? Colors.white10 : Colors.black.withOpacity(0.04);
+    final tokens = context.ink;
+    final hasPreview = board != null &&
+        board!.previewPath != null &&
+        board!.previewPath!.isNotEmpty &&
+        File(board!.previewPath!).existsSync();
+    final placeholderColor =
+        board != null ? InkColors.stickyForId(board!.id) : tokens.field;
 
     return Container(
       decoration: BoxDecoration(
-        color: tileColor,
+        color: hasPreview ? tokens.field : placeholderColor,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: borderColor),
       ),
-      child: board.id.isEmpty
-          ? Icon(
-              Icons.dashboard_outlined,
-              color: isDark ? Colors.white38 : Colors.black26,
-              size: 20,
-            )
+      child: board == null
+          ? Icon(LucideIcons.layoutGrid, color: tokens.inkMuted, size: 20)
           : ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child:
-                  board.previewPath != null &&
-                      board.previewPath!.isNotEmpty &&
-                      File(board.previewPath!).existsSync()
+                  board!.previewPath != null &&
+                      board!.previewPath!.isNotEmpty &&
+                      File(board!.previewPath!).existsSync()
                   ? Image.file(
-                      File(board.previewPath!),
+                      File(board!.previewPath!),
                       fit: BoxFit.cover,
                       width: double.infinity,
                       height: double.infinity,
-                      errorBuilder: (_, _, _) => _FallbackPreview(board: board),
+                      errorBuilder: (_, _, _) => _FallbackPreview(board: board!),
                     )
-                  : _FallbackPreview(board: board),
+                  : _FallbackPreview(board: board!),
             ),
     );
   }
@@ -155,7 +178,7 @@ class _FallbackPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final ink = InkColors.stickyInkFor(InkColors.stickyForId(board.id));
     return Container(
       alignment: Alignment.center,
       padding: const EdgeInsets.all(6),
@@ -164,10 +187,7 @@ class _FallbackPreview extends StatelessWidget {
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
         textAlign: TextAlign.center,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: isDark ? Colors.white70 : Colors.black87,
-          fontWeight: FontWeight.w600,
-        ),
+        style: InkType.caption(ink),
       ),
     );
   }

@@ -1,6 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/empty_state.dart';
+import '../../../ui/widgets/ink_avatar.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_initials.dart';
+import '../../../ui/widgets/paper_card.dart';
 import '../bloc/friends_bloc.dart';
 
 class BlockedUsersScreen extends StatefulWidget {
@@ -19,8 +28,14 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Blocked Users'), elevation: 0),
+      backgroundColor: tokens.paper,
+      appBar: AppBar(
+        backgroundColor: tokens.paper,
+        title: Text('Blocked Users', style: InkType.title(tokens.ink)),
+      ),
       body: BlocBuilder<FriendsBloc, FriendsState>(
         builder: (context, state) {
           final blockedUsers = state is FriendsLoaded
@@ -28,38 +43,21 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
               : const <Map<String, dynamic>>[];
 
           if (state is FriendsInitial || state is FriendsLoading) {
-            return const Center(child: CircularProgressIndicator());
+            return Center(child: CircularProgressIndicator(color: tokens.accent));
           }
 
           if (blockedUsers.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.block_outlined,
-                    size: 72,
-                    color: Colors.grey.withOpacity(0.3),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'No blocked users',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'People you block will appear here.',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                ],
-              ),
+            return const EmptyState(
+              icon: LucideIcons.ban,
+              text: 'No blocked users',
+              subtitle: 'People you block will appear here.',
             );
           }
 
           return ListView.separated(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(InkSpacing.s16),
             itemCount: blockedUsers.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 10),
+            separatorBuilder: (_, _) => const SizedBox(height: InkSpacing.s12),
             itemBuilder: (context, index) {
               final user = blockedUsers[index];
               final blockedUid = user['blockedUid']?.toString() ?? '';
@@ -69,28 +67,42 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                   : 'User';
               final photoUrl = user['photoURL']?.toString();
 
-              return Card(
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundImage: (photoUrl != null && photoUrl.isNotEmpty)
-                        ? NetworkImage(photoUrl)
-                        : null,
-                    child: (photoUrl == null || photoUrl.isEmpty)
-                        ? const Icon(Icons.person)
-                        : null,
-                  ),
-                  title: Text(displayName),
-                  subtitle: Text(blockedUid),
-                  trailing: TextButton(
-                    onPressed: blockedUid.isEmpty
-                        ? null
-                        : () {
-                            context
-                                .read<FriendsBloc>()
-                                .add(UnblockUserRequested(blockedUid));
-                          },
-                    child: const Text('Unblock'),
-                  ),
+              return PaperCard(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: InkSpacing.s16,
+                  vertical: InkSpacing.s12,
+                ),
+                child: Row(
+                  children: [
+                    InkAvatar(
+                      imageUrl: photoUrl,
+                      initials: inkInitialsFor(displayName),
+                      id: blockedUid,
+                      size: 44,
+                    ),
+                    const SizedBox(width: InkSpacing.s12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(displayName, style: InkType.bodyStrong(tokens.ink)),
+                          Text(blockedUid, style: InkType.caption(tokens.inkMuted)),
+                        ],
+                      ),
+                    ),
+                    InkButton.secondary(
+                      label: 'Unblock',
+                      compact: true,
+                      expand: false,
+                      onPressed: blockedUid.isEmpty
+                          ? null
+                          : () {
+                              context
+                                  .read<FriendsBloc>()
+                                  .add(UnblockUserRequested(blockedUid));
+                            },
+                    ),
+                  ],
                 ),
               );
             },

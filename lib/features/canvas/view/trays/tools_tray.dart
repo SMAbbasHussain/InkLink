@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_type.dart';
 import '../widgets/sliding_tray.dart';
 
 class ToolsTray extends StatelessWidget {
@@ -26,6 +30,7 @@ class ToolsTray extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
     return SlidingTray(
       isOpen: isOpen,
       direction: TrayDirection.left,
@@ -40,48 +45,48 @@ class ToolsTray extends StatelessWidget {
           children: [
             if (onAddStickyNote != null) ...[
               _ToolButton(
-                icon: Icons.note_alt_outlined,
+                icon: LucideIcons.stickyNote,
                 label: 'Sticky Note',
-                color: Colors.amber.shade700,
+                color: tokens.pending,
                 onTap: onAddStickyNote!,
               ),
               const SizedBox(height: 10),
             ],
             if (onAddConnector != null) ...[
               _ToolButton(
-                icon: Icons.alt_route_rounded,
+                icon: LucideIcons.spline,
                 label: 'Connector / Link',
-                color: Colors.teal,
+                color: tokens.success,
                 onTap: onAddConnector!,
               ),
               const SizedBox(height: 10),
             ],
             _ToolButton(
-              icon: Icons.undo,
+              icon: LucideIcons.undo2,
               label: 'Undo',
-              color: Colors.blue,
+              color: tokens.ink,
               onTap: onUndo,
             ),
             const SizedBox(height: 10),
             _ToolButton(
-              icon: Icons.redo,
+              icon: LucideIcons.redo2,
               label: 'Redo',
-              color: Colors.blue,
+              color: tokens.ink,
               onTap: onRedo,
             ),
             const SizedBox(height: 10),
             _ToolButton(
-              icon: Icons.delete_outline,
+              icon: LucideIcons.trash2,
               label: 'Clear All',
-              color: Colors.red,
+              color: tokens.danger,
               onTap: onClearAll,
             ),
             if (onExport != null) ...[
               const SizedBox(height: 10),
               _ToolButton(
-                icon: Icons.ios_share_rounded,
+                icon: LucideIcons.share2,
                 label: 'Export & Share',
-                color: Colors.deepPurple,
+                color: tokens.accentText,
                 onTap: onExport!,
               ),
             ],
@@ -107,25 +112,25 @@ class _ToolButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
     return InkWell(
-      onTap: onTap,
+      onTap: () {
+        HapticFeedback.lightImpact();
+        onTap();
+      },
       borderRadius: BorderRadius.circular(10),
       child: Ink(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: color.withOpacity(0.2)),
-          color: color.withOpacity(0.06),
+          color: tokens.field,
         ),
         child: Row(
           children: [
             Icon(icon, size: 18, color: color),
             const SizedBox(width: 10),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            ),
+            Text(label, style: InkType.bodyStrong(color)),
           ],
         ),
       ),

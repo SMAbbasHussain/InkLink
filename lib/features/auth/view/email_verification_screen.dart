@@ -2,6 +2,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+
+import '../../../ui/theme/ink_theme.dart';
+import '../../../ui/theme/ink_tokens.dart';
+import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/desk_background.dart';
+import '../../../ui/widgets/glass_panel.dart';
+import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/paper_card.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
@@ -63,7 +72,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tokens = context.ink;
 
     return Scaffold(
       body: BlocListener<AuthBloc, AuthState>(
@@ -71,16 +80,32 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
           if (state is AuthError) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(state.message),
-                backgroundColor: Colors.red,
+                content: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(LucideIcons.ban, size: 16, color: tokens.danger),
+                    const SizedBox(width: InkSpacing.s8),
+                    Flexible(child: Text(state.message)),
+                  ],
+                ),
               ),
             );
           } else if (state is AuthEmailUnverified && state.message != null) {
             final isWarning = state.message!.contains('not verified');
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(state.message!),
-                backgroundColor: isWarning ? Colors.amber.shade900 : Colors.green.shade700,
+                content: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isWarning ? LucideIcons.circleAlert : LucideIcons.check,
+                      size: 16,
+                      color: isWarning ? tokens.pending : tokens.success,
+                    ),
+                    const SizedBox(width: InkSpacing.s8),
+                    Flexible(child: Text(state.message!)),
+                  ],
+                ),
               ),
             );
           }
@@ -91,198 +116,176 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                 (state is AuthEmailUnverified && state.isChecking) ||
                 state is AuthLoading;
 
-            return Stack(
-              children: [
-                SafeArea(
-                  child: Center(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 28.0, vertical: 24.0),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          // 1. Glowing Header Icon
-                          Container(
-                            padding: const EdgeInsets.all(24),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFFFF5F6D), Color(0xFFFFC371)],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(0xFFFF5F6D).withOpacity(0.35),
-                                  blurRadius: 24,
-                                  offset: const Offset(0, 10),
-                                ),
-                              ],
-                            ),
-                            child: const Icon(
-                              Icons.mark_email_unread_outlined,
-                              size: 64,
-                              color: Colors.white,
-                            ),
-                          ),
-
-                          const SizedBox(height: 36),
-
-                          // 2. Title & Explanation
-                          Text(
-                            "Check Your Mail",
-                            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            "We sent a verification link to:",
-                            style: TextStyle(
-                              color: isDark ? Colors.grey[400] : Colors.grey[600],
-                              fontSize: 15,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 8),
-
-                          // 3. Email Pill
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: isDark
-                                  ? Colors.white.withOpacity(0.08)
-                                  : Colors.black.withOpacity(0.05),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Row(
+            return DeskBackground(
+              child: Stack(
+                children: [
+                  SafeArea(
+                    child: Center(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: InkSpacing.s20,
+                          vertical: InkSpacing.s24,
+                        ),
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 480),
+                          child: PaperCard(
+                            hasTape: true,
+                            padding: const EdgeInsets.all(InkSpacing.s24),
+                            child: Column(
                               mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
-                                const Icon(Icons.email_outlined, size: 16, color: Color(0xFFFF5F6D)),
-                                const SizedBox(width: 8),
-                                Flexible(
-                                  child: Text(
-                                    widget.email,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 15,
+                                const SizedBox(height: InkSpacing.s8),
+
+                                // 1. Icon Tile
+                                Container(
+                                  width: 64,
+                                  height: 64,
+                                  decoration: BoxDecoration(
+                                    color: tokens.accentSoft,
+                                    borderRadius: BorderRadius.circular(InkRadii.input),
+                                  ),
+                                  child: Center(
+                                    child: Icon(
+                                      LucideIcons.mailCheck,
+                                      size: 32,
+                                      color: tokens.accent,
                                     ),
-                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
 
-                          const SizedBox(height: 20),
+                                const SizedBox(height: InkSpacing.s20),
 
-                          Text(
-                            "Please open your email inbox (or spam folder) and click the verification link. Once you have clicked the link, tap the button below to verify your action and go to the home screen.",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: isDark ? Colors.grey[400] : Colors.grey[600],
-                              height: 1.5,
-                            ),
-                          ),
-
-                          const SizedBox(height: 36),
-
-                          // 4. Primary Button: I've Verified / Clicked The Link
-                          InkWell(
-                            onTap: isLoading ? null : _handleCheckVerified,
-                            borderRadius: BorderRadius.circular(15),
-                            child: Container(
-                              width: double.infinity,
-                              height: 54,
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [Color(0xFFFF5F6D), Color(0xFFFFC371)],
+                                // 2. Title & Explanation
+                                Text(
+                                  "Check Your Mail",
+                                  style: InkType.headline(tokens.ink),
+                                  textAlign: TextAlign.center,
                                 ),
-                                borderRadius: BorderRadius.circular(15),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: const Color(0xFFFF5F6D).withOpacity(0.3),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 5),
+                                const SizedBox(height: InkSpacing.s8),
+                                Text(
+                                  "We sent a verification link to:",
+                                  style: InkType.body(tokens.inkSecondary),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: InkSpacing.s8),
+
+                                // 3. Email Pill
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: InkSpacing.s16,
+                                    vertical: InkSpacing.s8,
                                   ),
-                                ],
-                              ),
-                              child: Center(
-                                child: isLoading
-                                    ? const SizedBox(
-                                        width: 24,
-                                        height: 24,
-                                        child: CircularProgressIndicator(
-                                          color: Colors.white,
-                                          strokeWidth: 2.5,
+                                  decoration: BoxDecoration(
+                                    color: tokens.field,
+                                    borderRadius: BorderRadius.circular(InkRadii.button),
+                                    border: Border.all(color: tokens.glassStroke),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        LucideIcons.mail,
+                                        size: 16,
+                                        color: tokens.accent,
+                                      ),
+                                      const SizedBox(width: InkSpacing.s8),
+                                      Flexible(
+                                        child: Text(
+                                          widget.email,
+                                          style: InkType.bodyStrong(tokens.ink),
+                                          overflow: TextOverflow.ellipsis,
                                         ),
-                                      )
-                                    : const Row(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        children: [
-                                          Icon(Icons.check_circle_outline, color: Colors.white),
-                                          SizedBox(width: 8),
-                                          Text(
-                                            "I've Clicked The Link — Continue",
-                                            style: TextStyle(
+                                      ),
+                                    ],
+                                  ),
+                                ),
+
+                                const SizedBox(height: InkSpacing.s16),
+
+                                Text(
+                                  "Please open your email inbox (or spam folder) and click the verification link. Once clicked, tap the button below to continue.",
+                                  textAlign: TextAlign.center,
+                                  style: InkType.body(tokens.inkSecondary),
+                                ),
+
+                                const SizedBox(height: InkSpacing.s24),
+
+                                // 4. Primary Button: I've Verified / Clicked The Link
+                                isLoading
+                                    ? Container(
+                                        height: 48,
+                                        decoration: BoxDecoration(
+                                          gradient: tokens.accentGradient,
+                                          borderRadius: BorderRadius.circular(InkRadii.button),
+                                        ),
+                                        child: const Center(
+                                          child: SizedBox(
+                                            height: 20,
+                                            width: 20,
+                                            child: CircularProgressIndicator(
                                               color: Colors.white,
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold,
+                                              strokeWidth: 2.5,
                                             ),
                                           ),
-                                        ],
+                                        ),
+                                      )
+                                    : InkButton.hero(
+                                        label: "I've Clicked The Link — Continue",
+                                        onPressed: _handleCheckVerified,
                                       ),
-                              ),
+
+                                const SizedBox(height: InkSpacing.s12),
+
+                                // 5. Secondary Button: Resend Email
+                                InkButton.secondary(
+                                  label: _cooldownSeconds > 0
+                                      ? "Resend link in ${_cooldownSeconds}s"
+                                      : "Resend Verification Link",
+                                  icon: const Icon(LucideIcons.refreshCw),
+                                  onPressed: (_cooldownSeconds > 0 || isLoading)
+                                      ? null
+                                      : _handleResend,
+                                ),
+
+                                const SizedBox(height: InkSpacing.s20),
+
+                                // 6. Sign Out Button
+                                TextButton.icon(
+                                  onPressed: isLoading ? null : _handleLogout,
+                                  icon: Icon(
+                                    LucideIcons.logOut,
+                                    size: 16,
+                                    color: tokens.inkMuted,
+                                  ),
+                                  label: Text(
+                                    "Sign in with a different account",
+                                    style: InkType.caption(tokens.inkMuted),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-
-                          const SizedBox(height: 16),
-
-                          // 5. Secondary Button: Resend Email
-                          OutlinedButton.icon(
-                            onPressed: (_cooldownSeconds > 0 || isLoading) ? null : _handleResend,
-                            style: OutlinedButton.styleFrom(
-                              minimumSize: const Size.fromHeight(50),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(15),
-                              ),
-                              side: BorderSide(
-                                color: isDark ? Colors.grey[700]! : Colors.grey[300]!,
-                              ),
-                            ),
-                            icon: const Icon(Icons.refresh, size: 18),
-                            label: Text(
-                              _cooldownSeconds > 0
-                                  ? "Resend link in ${_cooldownSeconds}s"
-                                  : "Resend Verification Link",
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                          ),
-
-                          const SizedBox(height: 30),
-
-                          // 6. Sign Out Button
-                          TextButton.icon(
-                            onPressed: isLoading ? null : _handleLogout,
-                            icon: const Icon(Icons.logout, size: 18, color: Colors.grey),
-                            label: const Text(
-                              "Sign in with a different account",
-                              style: TextStyle(color: Colors.grey, fontSize: 13),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                ),
 
-                if (isLoading)
-                  Container(
-                    color: Colors.black.withOpacity(0.15),
-                  ),
-              ],
+                  if (isLoading)
+                    Positioned.fill(
+                      child: Container(
+                        color: Colors.black.withValues(alpha: 0.25),
+                        child: Center(
+                          child: GlassPanel(
+                            radius: InkRadii.dialog,
+                            padding: const EdgeInsets.all(InkSpacing.s24),
+                            child: CircularProgressIndicator(color: tokens.accent),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             );
           },
         ),
