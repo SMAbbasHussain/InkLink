@@ -13,7 +13,6 @@ import '../../../../ui/widgets/ink_button.dart';
 import '../../../../ui/widgets/ink_initials.dart';
 import '../../../../ui/widgets/ink_text_field.dart';
 import '../../../../ui/widgets/paper_card.dart';
-import '../../../../ui/widgets/status_chip.dart';
 import '../../../chat/view/chat_thread_screen.dart';
 import '../../../profile/view/profile_route.dart';
 import '../../bloc/friends_bloc.dart';
@@ -248,13 +247,38 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
                                     ],
                                   ),
                                 ),
-                                if (isPending)
-                                  const StatusChip(status: InkStatus.pending)
+                                if (isAlreadyFriend)
+                                  InkButton.primary(
+                                    label: 'Message',
+                                    compact: true,
+                                    expand: false,
+                                    onPressed: () {
+                                      Navigator.pop(context);
+                                      final conv = ChatConversationModel(
+                                        id: uid,
+                                        name: name,
+                                        avatarUrl: photoUrl,
+                                        isGroup: false,
+                                      );
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => ChatThreadScreen(conversation: conv),
+                                        ),
+                                      );
+                                    },
+                                  )
+                                else if (isPending)
+                                  const InkButton.success(
+                                    label: 'Sent',
+                                    compact: true,
+                                    expand: false,
+                                    icon: Icon(LucideIcons.check, color: Colors.white, size: 16),
+                                    onPressed: null,
+                                  )
                                 else
                                   InkButton.primary(
-                                    label: isSending
-                                        ? ''
-                                        : (isAlreadyFriend ? 'Message' : 'Add'),
+                                    label: isSending ? '' : 'Add',
                                     compact: true,
                                     expand: false,
                                     icon: isSending
@@ -269,27 +293,24 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
                                         : null,
                                     onPressed: isSending
                                         ? null
-                                        : isAlreadyFriend
-                                            ? () {
-                                                Navigator.pop(context);
-                                                final conv = ChatConversationModel(
-                                                  id: uid,
-                                                  name: name,
-                                                  avatarUrl: photoUrl,
-                                                  isGroup: false,
+                                        : () {
+                                            context.read<FriendsBloc>().add(
+                                                  SendFriendRequestRequested(uid),
                                                 );
-                                                Navigator.push(
-                                                  context,
-                                                  MaterialPageRoute(
-                                                    builder: (_) => ChatThreadScreen(conversation: conv),
-                                                  ),
-                                                );
-                                              }
-                                            : () {
-                                                context.read<FriendsBloc>().add(
-                                                      SendFriendRequestRequested(uid),
-                                                    );
-                                              },
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(
+                                                content: Row(
+                                                  children: [
+                                                    const Icon(LucideIcons.checkCircle2, color: Colors.white, size: 18),
+                                                    const SizedBox(width: 8),
+                                                    Text('Friend request sent to $name!'),
+                                                  ],
+                                                ),
+                                                backgroundColor: const Color(0xFF16A34A),
+                                                behavior: SnackBarBehavior.floating,
+                                              ),
+                                            );
+                                          },
                                   ),
                               ],
                             ),

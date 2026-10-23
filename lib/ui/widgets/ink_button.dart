@@ -5,7 +5,7 @@ import '../theme/ink_theme.dart';
 import '../theme/ink_tokens.dart';
 import '../theme/ink_type.dart';
 
-enum InkButtonVariant { primary, hero, secondary, danger, dangerSolid }
+enum InkButtonVariant { primary, hero, secondary, danger, dangerSolid, success }
 
 /// The button variants used across the redesign. All are 48 high
 /// (unless [compact]) with radius 14, tactile haptics, and optional [isLoading].
@@ -81,6 +81,17 @@ class InkButton extends StatelessWidget {
     this.isLoading = false,
   }) : variant = InkButtonVariant.dangerSolid;
 
+  /// Success green fill (e.g. "Sent", "Request Sent", confirmed actions).
+  const InkButton.success({
+    super.key,
+    required this.label,
+    this.onPressed,
+    this.icon,
+    this.expand = true,
+    this.compact = false,
+    this.isLoading = false,
+  }) : variant = InkButtonVariant.success;
+
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
@@ -115,13 +126,24 @@ class InkButton extends StatelessWidget {
         bg = tokens.danger;
         fg = Colors.white;
         break;
+      case InkButtonVariant.success:
+        bg = const Color(0xFF16A34A);
+        fg = Colors.white;
+        break;
     }
 
     if (disabled && !isLoading) {
-      bg = tokens.field;
-      fg = tokens.inkMuted;
-      gradient = null;
-      border = null;
+      if (variant == InkButtonVariant.success) {
+        bg = const Color(0xFF16A34A);
+        fg = Colors.white;
+        gradient = null;
+        border = null;
+      } else {
+        bg = tokens.field;
+        fg = tokens.inkMuted;
+        gradient = null;
+        border = null;
+      }
     }
 
     final content = Row(

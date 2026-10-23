@@ -178,6 +178,50 @@ class FriendsRepositoryImpl implements FriendsRepository {
   }
 
   @override
+  Future<void> cacheOutgoingFriendRequestLocally({
+    required String targetUid,
+    String? recipientName,
+    String? recipientPic,
+  }) async {
+    final fromUid = _currentUid;
+    final normalizedTargetUid = targetUid.trim();
+    if (fromUid.isEmpty || normalizedTargetUid.isEmpty) return;
+
+    final isar = await _localDatabaseService.database;
+
+    final requestIdParts = <String>[fromUid, normalizedTargetUid]..sort();
+    final deterministicId = requestIdParts.join('_');
+
+    final profile = await isar.localProfiles.getByUid(normalizedTargetUid);
+    final targetName = (recipientName != null && recipientName.isNotEmpty)
+        ? recipientName
+        : (profile?.displayName ?? 'User');
+    final targetPic = (recipientPic != null && recipientPic.isNotEmpty)
+        ? recipientPic
+        : profile?.photoURL;
+
+    final existing = await isar.localFriendRequests
+        .filter()
+        .requestIdEqualTo(deterministicId)
+        .findFirst();
+
+    await isar.writeTxn(() async {
+      final model = existing ?? LocalFriendRequest();
+      model.requestId = deterministicId;
+      model.fromUid = fromUid;
+      model.toUid = normalizedTargetUid;
+      model.senderName = 'You';
+      model.recipientName = targetName;
+      model.recipientPic = targetPic;
+      model.status = 'pending';
+      model.timestamp = DateTime.now();
+      model.cachedAt = DateTime.now();
+
+      await isar.localFriendRequests.putByRequestId(model);
+    });
+  }
+
+  @override
   Stream<List<Map<String, dynamic>>> watchIncomingRequests() {
     final uid = _currentUid;
     final controller = StreamController<List<Map<String, dynamic>>>.broadcast();

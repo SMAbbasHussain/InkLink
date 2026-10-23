@@ -19,4 +19,10 @@ abstract class FriendsRepository {
     required String firstUid,
     required String secondUid,
   });
+
+  Future<void> cacheOutgoingFriendRequestLocally({
+    required String targetUid,
+    String? recipientName,
+    String? recipientPic,
+  });
 }
