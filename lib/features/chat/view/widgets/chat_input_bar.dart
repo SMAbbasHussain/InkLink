@@ -2,16 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../../domain/models/chat/chat_message_model.dart';
 import '../../../../domain/models/chat/chat_share_payload.dart';
 import '../../theme/chat_theme.dart';
 import 'gif_picker_tray.dart';
 import 'share_selector_sheet.dart';
 
 class ChatInputBar extends StatefulWidget {
-  final ValueChanged<String> onSendText;
-  final ValueChanged<String> onSendImage;
-  final ValueChanged<String> onSendGif;
-  final ValueChanged<ChatSharePayload> onSendSharePayload;
+  final Function(String text, {String? replyToId, String? replyToSender, String? replyToText}) onSendText;
+  final Function(String filePath, {String? replyToId, String? replyToSender, String? replyToText}) onSendImage;
+  final Function(String gifUrl, {String? replyToId, String? replyToSender, String? replyToText}) onSendGif;
+  final Function(ChatSharePayload payload, {String? replyToId, String? replyToSender, String? replyToText}) onSendSharePayload;
+  final ChatMessageModel? replyingTo;
+  final VoidCallback? onCancelReply;
 
   const ChatInputBar({
     super.key,
@@ -19,6 +22,8 @@ class ChatInputBar extends StatefulWidget {
     required this.onSendImage,
     required this.onSendGif,
     required this.onSendSharePayload,
+    this.replyingTo,
+    this.onCancelReply,
   });
 
   @override
@@ -44,18 +49,50 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   @override
+  void didUpdateWidget(ChatInputBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.replyingTo != null && oldWidget.replyingTo != widget.replyingTo) {
+      _focusNode.requestFocus();
+    }
+  }
+
+  @override
   void dispose() {
     _textController.dispose();
     _focusNode.dispose();
     super.dispose();
   }
 
+  String _formatReplySnippet(ChatMessageModel msg) {
+    switch (msg.type) {
+      case ChatMessageType.image:
+        return '📷 Photo';
+      case ChatMessageType.gif:
+        return '👾 GIF';
+      case ChatMessageType.file:
+        return '📄 ${msg.fileName ?? 'File'}';
+      case ChatMessageType.boardShare:
+        return '🎨 Shared board';
+      case ChatMessageType.workspaceShare:
+        return '📂 Shared workspace';
+      case ChatMessageType.text:
+        return msg.content;
+    }
+  }
+
   void _handleSend() {
     final text = _textController.text.trim();
     if (text.isEmpty) return;
     HapticFeedback.lightImpact();
-    widget.onSendText(text);
+    final reply = widget.replyingTo;
+    widget.onSendText(
+      text,
+      replyToId: reply?.id,
+      replyToSender: reply?.senderName,
+      replyToText: reply != null ? _formatReplySnippet(reply) : null,
+    );
     _textController.clear();
+    widget.onCancelReply?.call();
   }
 
   void _showAttachmentOptions(BuildContext context, ChatColors colors) {
@@ -104,7 +141,16 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   onTap: () async {
                     Navigator.pop(bottomCtx);
                     final photo = await _picker.pickImage(source: ImageSource.camera);
-                    if (photo != null) widget.onSendImage(photo.path);
+                    if (photo != null) {
+                      final reply = widget.replyingTo;
+                      widget.onSendImage(
+                        photo.path,
+                        replyToId: reply?.id,
+                        replyToSender: reply?.senderName,
+                        replyToText: reply != null ? _formatReplySnippet(reply) : null,
+                      );
+                      widget.onCancelReply?.call();
+                    }
                   },
                 ),
                 ListTile(
@@ -129,7 +175,16 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   onTap: () async {
                     Navigator.pop(bottomCtx);
                     final image = await _picker.pickImage(source: ImageSource.gallery);
-                    if (image != null) widget.onSendImage(image.path);
+                    if (image != null) {
+                      final reply = widget.replyingTo;
+                      widget.onSendImage(
+                        image.path,
+                        replyToId: reply?.id,
+                        replyToSender: reply?.senderName,
+                        replyToText: reply != null ? _formatReplySnippet(reply) : null,
+                      );
+                      widget.onCancelReply?.call();
+                    }
                   },
                 ),
                 ListTile(
@@ -159,7 +214,16 @@ class _ChatInputBarState extends State<ChatInputBar> {
                       backgroundColor: Colors.transparent,
                       builder: (_) => const ShareSelectorSheet(),
                     );
-                    if (payload != null) widget.onSendSharePayload(payload);
+                    if (payload != null) {
+                      final reply = widget.replyingTo;
+                      widget.onSendSharePayload(
+                        payload,
+                        replyToId: reply?.id,
+                        replyToSender: reply?.senderName,
+                        replyToText: reply != null ? _formatReplySnippet(reply) : null,
+                      );
+                      widget.onCancelReply?.call();
+                    }
                   },
                 ),
                 ListTile(
@@ -189,7 +253,16 @@ class _ChatInputBarState extends State<ChatInputBar> {
                       backgroundColor: Colors.transparent,
                       builder: (_) => const ShareSelectorSheet(),
                     );
-                    if (payload != null) widget.onSendSharePayload(payload);
+                    if (payload != null) {
+                      final reply = widget.replyingTo;
+                      widget.onSendSharePayload(
+                        payload,
+                        replyToId: reply?.id,
+                        replyToSender: reply?.senderName,
+                        replyToText: reply != null ? _formatReplySnippet(reply) : null,
+                      );
+                      widget.onCancelReply?.call();
+                    }
                   },
                 ),
               ],
@@ -197,6 +270,64 @@ class _ChatInputBarState extends State<ChatInputBar> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildReplyBanner(ChatColors colors, ChatMessageModel reply) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: colors.inputFill,
+        borderRadius: BorderRadius.circular(12),
+        border: Border(
+          left: BorderSide(color: colors.accent, width: 3.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.reply_rounded, size: 14, color: colors.accent),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Replying to ${reply.senderName}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: colors.accent,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _formatReplySnippet(reply),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colors.textSecondary,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.close_rounded, size: 18, color: colors.textSecondary),
+            onPressed: widget.onCancelReply,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          ),
+        ],
+      ),
     );
   }
 
@@ -211,7 +342,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
           GifPickerTray(
             onGifSelected: (gifUrl) {
               setState(() => _showGifTray = false);
-              widget.onSendGif(gifUrl);
+              final reply = widget.replyingTo;
+              widget.onSendGif(
+                gifUrl,
+                replyToId: reply?.id,
+                replyToSender: reply?.senderName,
+                replyToText: reply != null ? _formatReplySnippet(reply) : null,
+              );
+              widget.onCancelReply?.call();
             },
           ),
         Container(
@@ -234,9 +372,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           child: SafeArea(
             top: false,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
+                if (widget.replyingTo != null)
+                  _buildReplyBanner(colors, widget.replyingTo!),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
                 // iMessage style circular '+' button
                 Padding(
                   padding: const EdgeInsets.only(bottom: 2),
@@ -379,9 +522,11 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 ),
               ],
             ),
-          ),
+          ],
         ),
-      ],
-    );
+      ),
+    ),
+  ],
+);
   }
 }

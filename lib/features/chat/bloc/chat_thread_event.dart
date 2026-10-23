@@ -20,12 +20,18 @@ class SendTextMessageRequested extends ChatThreadEvent {
   final bool isGroup;
   final String? conversationName;
   final String? conversationAvatar;
+  final String? replyToId;
+  final String? replyToSender;
+  final String? replyToText;
 
   const SendTextMessageRequested({
     required this.text,
     this.isGroup = false,
     this.conversationName,
     this.conversationAvatar,
+    this.replyToId,
+    this.replyToSender,
+    this.replyToText,
   });
 }
 
@@ -34,12 +40,18 @@ class SendImageMessageRequested extends ChatThreadEvent {
   final bool isGroup;
   final String? conversationName;
   final String? conversationAvatar;
+  final String? replyToId;
+  final String? replyToSender;
+  final String? replyToText;
 
   const SendImageMessageRequested({
     required this.filePath,
     this.isGroup = false,
     this.conversationName,
     this.conversationAvatar,
+    this.replyToId,
+    this.replyToSender,
+    this.replyToText,
   });
 }
 
@@ -48,12 +60,18 @@ class SendGifMessageRequested extends ChatThreadEvent {
   final bool isGroup;
   final String? conversationName;
   final String? conversationAvatar;
+  final String? replyToId;
+  final String? replyToSender;
+  final String? replyToText;
 
   const SendGifMessageRequested({
     required this.gifUrl,
     this.isGroup = false,
     this.conversationName,
     this.conversationAvatar,
+    this.replyToId,
+    this.replyToSender,
+    this.replyToText,
   });
 }
 
@@ -64,6 +82,9 @@ class SendFileMessageRequested extends ChatThreadEvent {
   final bool isGroup;
   final String? conversationName;
   final String? conversationAvatar;
+  final String? replyToId;
+  final String? replyToSender;
+  final String? replyToText;
 
   const SendFileMessageRequested({
     required this.filePath,
@@ -72,6 +93,9 @@ class SendFileMessageRequested extends ChatThreadEvent {
     this.isGroup = false,
     this.conversationName,
     this.conversationAvatar,
+    this.replyToId,
+    this.replyToSender,
+    this.replyToText,
   });
 }
 
@@ -80,12 +104,18 @@ class SendShareCardRequested extends ChatThreadEvent {
   final bool isGroup;
   final String? conversationName;
   final String? conversationAvatar;
+  final String? replyToId;
+  final String? replyToSender;
+  final String? replyToText;
 
   const SendShareCardRequested({
     required this.payload,
     this.isGroup = false,
     this.conversationName,
     this.conversationAvatar,
+    this.replyToId,
+    this.replyToSender,
+    this.replyToText,
   });
 }
 

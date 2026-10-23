@@ -22,6 +22,9 @@ abstract class ChatService {
     bool isGroup = false,
     String? conversationName,
     String? conversationAvatar,
+    String? replyToId,
+    String? replyToSender,
+    String? replyToText,
   });
 
   Future<ChatMessageModel> sendImageMessage({
@@ -30,6 +33,9 @@ abstract class ChatService {
     bool isGroup = false,
     String? conversationName,
     String? conversationAvatar,
+    String? replyToId,
+    String? replyToSender,
+    String? replyToText,
   });
 
   Future<ChatMessageModel> sendGifMessage({
@@ -38,6 +44,9 @@ abstract class ChatService {
     bool isGroup = false,
     String? conversationName,
     String? conversationAvatar,
+    String? replyToId,
+    String? replyToSender,
+    String? replyToText,
   });
 
   Future<ChatMessageModel> sendFileMessage({
@@ -48,6 +57,9 @@ abstract class ChatService {
     bool isGroup = false,
     String? conversationName,
     String? conversationAvatar,
+    String? replyToId,
+    String? replyToSender,
+    String? replyToText,
   });
 
   Future<ChatMessageModel> sendShareCardMessage({
@@ -56,6 +68,9 @@ abstract class ChatService {
     bool isGroup = false,
     String? conversationName,
     String? conversationAvatar,
+    String? replyToId,
+    String? replyToSender,
+    String? replyToText,
   });
 
   Future<void> addReaction({

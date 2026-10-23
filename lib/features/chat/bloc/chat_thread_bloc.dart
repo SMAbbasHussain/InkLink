@@ -69,6 +69,9 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
         isGroup: event.isGroup,
         conversationName: event.conversationName,
         conversationAvatar: event.conversationAvatar,
+        replyToId: event.replyToId,
+        replyToSender: event.replyToSender,
+        replyToText: event.replyToText,
       );
       if (_activeConversationId != null && !isClosed) {
         final messages = await _chatService.getMessages(_activeConversationId!);
@@ -96,6 +99,9 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
         isGroup: event.isGroup,
         conversationName: event.conversationName,
         conversationAvatar: event.conversationAvatar,
+        replyToId: event.replyToId,
+        replyToSender: event.replyToSender,
+        replyToText: event.replyToText,
       );
       if (_activeConversationId != null && !isClosed) {
         final messages = await _chatService.getMessages(_activeConversationId!);
@@ -123,6 +129,9 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
         isGroup: event.isGroup,
         conversationName: event.conversationName,
         conversationAvatar: event.conversationAvatar,
+        replyToId: event.replyToId,
+        replyToSender: event.replyToSender,
+        replyToText: event.replyToText,
       );
     } catch (e) {
       if (state is! ChatThreadLoaded) {
@@ -145,6 +154,9 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
         isGroup: event.isGroup,
         conversationName: event.conversationName,
         conversationAvatar: event.conversationAvatar,
+        replyToId: event.replyToId,
+        replyToSender: event.replyToSender,
+        replyToText: event.replyToText,
       );
     } catch (e) {
       if (state is! ChatThreadLoaded) {
@@ -165,6 +177,9 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
         isGroup: event.isGroup,
         conversationName: event.conversationName,
         conversationAvatar: event.conversationAvatar,
+        replyToId: event.replyToId,
+        replyToSender: event.replyToSender,
+        replyToText: event.replyToText,
       );
     } catch (e) {
       if (state is! ChatThreadLoaded) {

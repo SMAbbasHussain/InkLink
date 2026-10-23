@@ -93,6 +93,132 @@ class _AnimatedMessageBubbleState extends State<AnimatedMessageBubble>
   }
 }
 
+class SwipeToReplyWrapper extends StatefulWidget {
+  final Widget child;
+  final bool isMe;
+  final VoidCallback onReply;
+  final Color accentColor;
+
+  const SwipeToReplyWrapper({
+    super.key,
+    required this.child,
+    required this.isMe,
+    required this.onReply,
+    required this.accentColor,
+  });
+
+  @override
+  State<SwipeToReplyWrapper> createState() => _SwipeToReplyWrapperState();
+}
+
+class _SwipeToReplyWrapperState extends State<SwipeToReplyWrapper>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animController;
+  late Animation<double> _anim;
+  double _dragOffset = 0.0;
+  bool _triggered = false;
+  static const double _threshold = 40.0;
+  static const double _maxDrag = 68.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
+    _anim = Tween<double>(begin: 0.0, end: 0.0).animate(
+      CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
+    )..addListener(() {
+        setState(() {
+          _dragOffset = _anim.value;
+        });
+      });
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
+  }
+
+  void _onHorizontalDragUpdate(DragUpdateDetails details) {
+    // Sent messages (on the right) drag left towards center (primaryDelta < 0).
+    // Received messages (on the left) drag right towards center (primaryDelta > 0).
+    final delta = widget.isMe ? -(details.primaryDelta ?? 0.0) : (details.primaryDelta ?? 0.0);
+    setState(() {
+      _dragOffset = (_dragOffset + delta * 0.75).clamp(0.0, _maxDrag);
+      if (_dragOffset >= _threshold && !_triggered) {
+        _triggered = true;
+        HapticFeedback.mediumImpact();
+      } else if (_dragOffset < _threshold && _triggered) {
+        _triggered = false;
+      }
+    });
+  }
+
+  void _onHorizontalDragEnd(DragEndDetails details) {
+    if (_triggered) {
+      widget.onReply();
+    }
+    _triggered = false;
+    _anim = Tween<double>(begin: _dragOffset, end: 0.0).animate(
+      CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
+    );
+    _animController.forward(from: 0.0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = (_dragOffset / _threshold).clamp(0.0, 1.0);
+    final translateX = widget.isMe ? -_dragOffset : _dragOffset;
+
+    return GestureDetector(
+      onHorizontalDragUpdate: _onHorizontalDragUpdate,
+      onHorizontalDragEnd: _onHorizontalDragEnd,
+      behavior: HitTestBehavior.translucent,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: widget.isMe ? Alignment.centerRight : Alignment.centerLeft,
+        children: [
+          // Reply icon revealed behind the bubble
+          if (_dragOffset > 2.0)
+            Positioned(
+              right: widget.isMe ? 4.0 : null,
+              left: widget.isMe ? null : 4.0,
+              child: Opacity(
+                opacity: progress,
+                child: Transform.scale(
+                  scale: 0.5 + 0.5 * progress,
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: _triggered
+                          ? widget.accentColor.withOpacity(0.2)
+                          : Colors.grey.withOpacity(0.16),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.reply_rounded,
+                      color: _triggered ? widget.accentColor : Colors.grey,
+                      size: 18,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          Transform.translate(
+            offset: Offset(translateX, 0),
+            child: widget.child,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class ChatBubble extends StatelessWidget {
   final ChatMessageModel message;
   final bool isMe;
@@ -101,6 +227,7 @@ class ChatBubble extends StatelessWidget {
   final Function(String emoji) onReactionToggled;
   final Function(String newText)? onEditRequested;
   final VoidCallback? onDeleteRequested;
+  final VoidCallback? onReplyRequested;
 
   const ChatBubble({
     super.key,
@@ -111,6 +238,7 @@ class ChatBubble extends StatelessWidget {
     required this.onReactionToggled,
     this.onEditRequested,
     this.onDeleteRequested,
+    this.onReplyRequested,
   });
 
   BorderRadius _getBubbleRadius(bool isMe) {
@@ -201,49 +329,54 @@ class ChatBubble extends StatelessWidget {
               ),
             ],
 
-            // Main Bubble with Long Press Context Menu
-            GestureDetector(
-              onLongPress: () {
-                HapticFeedback.mediumImpact();
-                _showContextMenu(context, colors);
-              },
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    constraints: BoxConstraints(
-                      maxWidth: MediaQuery.of(context).size.width * 0.76,
+            // Main Bubble with Swipe-to-Reply & Long Press Context Menu
+            SwipeToReplyWrapper(
+              isMe: isMe,
+              accentColor: colors.accent,
+              onReply: () => onReplyRequested?.call(),
+              child: GestureDetector(
+                onLongPress: () {
+                  HapticFeedback.mediumImpact();
+                  _showContextMenu(context, colors);
+                },
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
+                      constraints: BoxConstraints(
+                        maxWidth: MediaQuery.of(context).size.width * 0.76,
+                      ),
+                      decoration: BoxDecoration(
+                        gradient: isMe
+                            ? LinearGradient(
+                                colors: [colors.accent, colors.accentAlt],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              )
+                            : null,
+                        color: isMe ? null : colors.incomingBubble,
+                        borderRadius: _getBubbleRadius(isMe),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(colors.isDark ? 0.2 : 0.05),
+                            blurRadius: 4,
+                            offset: const Offset(0, 1.5),
+                          ),
+                        ],
+                      ),
+                      padding: _getPaddingForType(message.type),
+                      child: _buildBubbleContent(context, colors),
                     ),
-                    decoration: BoxDecoration(
-                      gradient: isMe
-                          ? LinearGradient(
-                              colors: [colors.accent, colors.accentAlt],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            )
-                          : null,
-                      color: isMe ? null : colors.incomingBubble,
-                      borderRadius: _getBubbleRadius(isMe),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(colors.isDark ? 0.2 : 0.05),
-                          blurRadius: 4,
-                          offset: const Offset(0, 1.5),
-                        ),
-                      ],
-                    ),
-                    padding: _getPaddingForType(message.type),
-                    child: _buildBubbleContent(context, colors),
-                  ),
 
-                  // Floating Reaction Pill on Bottom Right Corner
-                  if (message.reactions.isNotEmpty)
-                    Positioned(
-                      bottom: -8,
-                      right: 4,
-                      child: _buildFloatingReactions(colors),
-                    ),
-                ],
+                    // Floating Reaction Pill on Bottom Right Corner
+                    if (message.reactions.isNotEmpty)
+                      Positioned(
+                        bottom: -8,
+                        right: 4,
+                        child: _buildFloatingReactions(colors),
+                      ),
+                  ],
+                ),
               ),
             ),
 
@@ -286,15 +419,66 @@ class ChatBubble extends StatelessWidget {
   }
 
   EdgeInsets _getPaddingForType(ChatMessageType type) {
+    if (message.replyToSender != null && message.replyToSender!.isNotEmpty) {
+      return const EdgeInsets.symmetric(horizontal: 10, vertical: 8);
+    }
     if (type == ChatMessageType.image || type == ChatMessageType.gif) {
       return EdgeInsets.zero;
     }
     return const EdgeInsets.symmetric(horizontal: 14, vertical: 10);
   }
 
+  Widget _buildQuotedReplyPreview(ChatColors colors) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: isMe
+            ? Colors.black.withOpacity(0.18)
+            : colors.surfaceElevated.withOpacity(0.65),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: isMe ? Colors.white.withOpacity(0.9) : colors.accent,
+            width: 3.5,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            message.replyToSender ?? 'User',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              color: isMe ? Colors.white : colors.accent,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            message.replyToText ?? '',
+            style: TextStyle(
+              fontSize: 12,
+              color: isMe ? Colors.white.withOpacity(0.85) : colors.textSecondary,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBubbleContent(BuildContext context, ChatColors colors) {
+    final hasReply = message.replyToSender != null && message.replyToSender!.isNotEmpty;
+
+    Widget mainContent;
     if (message.isDeleted) {
-      return Row(
+      mainContent = Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.block_rounded, size: 14, color: isMe ? Colors.white70 : colors.textSecondary),
@@ -309,34 +493,46 @@ class ChatBubble extends StatelessWidget {
           ),
         ],
       );
+    } else {
+      switch (message.type) {
+        case ChatMessageType.text:
+          mainContent = Text(
+            message.content,
+            style: TextStyle(
+              fontSize: 15,
+              height: 1.35,
+              color: isMe ? Colors.white : colors.incomingText,
+            ),
+          );
+          break;
+        case ChatMessageType.image:
+          mainContent = _buildImageWidget(context);
+          break;
+        case ChatMessageType.gif:
+          mainContent = _buildGifWidget(context);
+          break;
+        case ChatMessageType.file:
+          mainContent = _buildFileWidget(colors);
+          break;
+        case ChatMessageType.boardShare:
+          mainContent = _buildBoardShareCard(context, colors);
+          break;
+        case ChatMessageType.workspaceShare:
+          mainContent = _buildWorkspaceShareCard(context, colors);
+          break;
+      }
     }
 
-    switch (message.type) {
-      case ChatMessageType.text:
-        return Text(
-          message.content,
-          style: TextStyle(
-            fontSize: 15,
-            height: 1.35,
-            color: isMe ? Colors.white : colors.incomingText,
-          ),
-        );
+    if (!hasReply) return mainContent;
 
-      case ChatMessageType.image:
-        return _buildImageWidget(context);
-
-      case ChatMessageType.gif:
-        return _buildGifWidget(context);
-
-      case ChatMessageType.file:
-        return _buildFileWidget(colors);
-
-      case ChatMessageType.boardShare:
-        return _buildBoardShareCard(context, colors);
-
-      case ChatMessageType.workspaceShare:
-        return _buildWorkspaceShareCard(context, colors);
-    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildQuotedReplyPreview(colors),
+        mainContent,
+      ],
+    );
   }
 
   Widget _buildImageWidget(BuildContext context) {
@@ -746,6 +942,17 @@ class ChatBubble extends StatelessWidget {
                 ),
 
                 const SizedBox(height: 12),
+
+                // Reply to message
+                ListTile(
+                  leading: Icon(Icons.reply_rounded, color: colors.textPrimary, size: 20),
+                  title: Text('Reply', style: TextStyle(color: colors.textPrimary, fontSize: 15)),
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    Navigator.pop(bottomContext);
+                    onReplyRequested?.call();
+                  },
+                ),
 
                 // Copy Text
                 if (message.type == ChatMessageType.text)

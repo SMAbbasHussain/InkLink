@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/services/auth_service.dart';
 import '../../../../domain/models/chat/chat_conversation_model.dart';
+import '../../../../domain/models/chat/chat_message_model.dart';
 import '../../../../domain/services/chat/chat_service.dart';
 import '../../profile/view/profile_route.dart';
 import '../bloc/chat_thread_bloc.dart';
@@ -42,6 +43,7 @@ class _ChatThreadView extends StatefulWidget {
 
 class _ChatThreadViewState extends State<_ChatThreadView> {
   final ScrollController _scrollController = ScrollController();
+  ChatMessageModel? _replyingTo;
 
   @override
   void dispose() {
@@ -260,6 +262,9 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
                         isMe: isMe,
                         showHeader: isFirstInGroup,
                         currentUid: currentUid,
+                        onReplyRequested: () {
+                          setState(() => _replyingTo = message);
+                        },
                         onReactionToggled: (emoji) {
                           context.read<ChatThreadBloc>().add(
                             ToggleReactionRequested(messageId: message.id, emoji: emoji),
@@ -285,45 +290,59 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
             ),
           ),
 
-          // iMessage-Style Chat Input Bar
+          // iMessage-Style Chat Input Bar with WhatsApp-style Reply Banner
           ChatInputBar(
-            onSendText: (text) {
+            replyingTo: _replyingTo,
+            onCancelReply: () => setState(() => _replyingTo = null),
+            onSendText: (text, {replyToId, replyToSender, replyToText}) {
               context.read<ChatThreadBloc>().add(
                 SendTextMessageRequested(
                   text: text,
                   isGroup: conv.isGroup,
                   conversationName: conv.name,
                   conversationAvatar: conv.avatarUrl,
+                  replyToId: replyToId,
+                  replyToSender: replyToSender,
+                  replyToText: replyToText,
                 ),
               );
             },
-            onSendImage: (filePath) {
+            onSendImage: (filePath, {replyToId, replyToSender, replyToText}) {
               context.read<ChatThreadBloc>().add(
                 SendImageMessageRequested(
                   filePath: filePath,
                   isGroup: conv.isGroup,
                   conversationName: conv.name,
                   conversationAvatar: conv.avatarUrl,
+                  replyToId: replyToId,
+                  replyToSender: replyToSender,
+                  replyToText: replyToText,
                 ),
               );
             },
-            onSendGif: (gifUrl) {
+            onSendGif: (gifUrl, {replyToId, replyToSender, replyToText}) {
               context.read<ChatThreadBloc>().add(
                 SendGifMessageRequested(
                   gifUrl: gifUrl,
                   isGroup: conv.isGroup,
                   conversationName: conv.name,
                   conversationAvatar: conv.avatarUrl,
+                  replyToId: replyToId,
+                  replyToSender: replyToSender,
+                  replyToText: replyToText,
                 ),
               );
             },
-            onSendSharePayload: (payload) {
+            onSendSharePayload: (payload, {replyToId, replyToSender, replyToText}) {
               context.read<ChatThreadBloc>().add(
                 SendShareCardRequested(
                   payload: payload,
                   isGroup: conv.isGroup,
                   conversationName: conv.name,
                   conversationAvatar: conv.avatarUrl,
+                  replyToId: replyToId,
+                  replyToSender: replyToSender,
+                  replyToText: replyToText,
                 ),
               );
             },

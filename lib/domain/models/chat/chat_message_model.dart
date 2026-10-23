@@ -85,6 +85,9 @@ class ChatMessageModel {
   final int? fileSize;
   final String? fileName;
   final ChatSharePayload? sharePayload;
+  final String? replyToId;
+  final String? replyToSender;
+  final String? replyToText;
 
   const ChatMessageModel({
     required this.id,
@@ -102,6 +105,9 @@ class ChatMessageModel {
     this.fileSize,
     this.fileName,
     this.sharePayload,
+    this.replyToId,
+    this.replyToSender,
+    this.replyToText,
   });
 
   ChatMessageModel copyWith({
@@ -120,6 +126,9 @@ class ChatMessageModel {
     int? fileSize,
     String? fileName,
     ChatSharePayload? sharePayload,
+    String? replyToId,
+    String? replyToSender,
+    String? replyToText,
   }) {
     return ChatMessageModel(
       id: id ?? this.id,
@@ -137,6 +146,9 @@ class ChatMessageModel {
       fileSize: fileSize ?? this.fileSize,
       fileName: fileName ?? this.fileName,
       sharePayload: sharePayload ?? this.sharePayload,
+      replyToId: replyToId ?? this.replyToId,
+      replyToSender: replyToSender ?? this.replyToSender,
+      replyToText: replyToText ?? this.replyToText,
     );
   }
 
@@ -157,6 +169,9 @@ class ChatMessageModel {
       'fileSize': fileSize,
       'fileName': fileName,
       'sharePayload': sharePayload?.toMap(),
+      'replyToId': replyToId,
+      'replyToSender': replyToSender,
+      'replyToText': replyToText,
     };
   }
 
@@ -200,6 +215,9 @@ class ChatMessageModel {
       fileSize: map['fileSize'] != null ? int.tryParse(map['fileSize'].toString()) : null,
       fileName: map['fileName']?.toString(),
       sharePayload: parsedPayload,
+      replyToId: map['replyToId']?.toString(),
+      replyToSender: map['replyToSender']?.toString(),
+      replyToText: map['replyToText']?.toString(),
     );
   }
 

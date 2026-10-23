@@ -248,6 +248,9 @@ class AgoraChatServiceImpl implements ChatService {
         status: ChatMessageStatus.delivered,
         fileName: fileName,
         fileSize: fileSize,
+        replyToId: msg.attributes?['replyToId']?.toString(),
+        replyToSender: msg.attributes?['replyToSender']?.toString(),
+        replyToText: msg.attributes?['replyToText']?.toString(),
       );
 
       await _persistMessageLocally(model, isGroup: isGroup);
@@ -321,6 +324,9 @@ class AgoraChatServiceImpl implements ChatService {
       localMsg.fileName = model.fileName;
       localMsg.fileSize = model.fileSize;
       localMsg.sharePayloadJson = model.sharePayload?.toJsonString();
+      localMsg.replyToId = model.replyToId;
+      localMsg.replyToSender = model.replyToSender;
+      localMsg.replyToText = model.replyToText;
 
       await isar.localChatMessages.put(localMsg);
 
@@ -697,6 +703,9 @@ class AgoraChatServiceImpl implements ChatService {
         fileName: m.fileName,
         fileSize: m.fileSize,
         sharePayload: sharePayload,
+        replyToId: m.replyToId,
+        replyToSender: m.replyToSender,
+        replyToText: m.replyToText,
       );
     }).toList();
   }
@@ -736,6 +745,9 @@ class AgoraChatServiceImpl implements ChatService {
     bool isGroup = false,
     String? conversationName,
     String? conversationAvatar,
+    String? replyToId,
+    String? replyToSender,
+    String? replyToText,
   }) async {
     final currentUser = _authService.getCurrentUser();
     final currentUid = currentUser?.uid ?? 'unknown';
@@ -753,6 +765,9 @@ class AgoraChatServiceImpl implements ChatService {
       content: text,
       timestamp: DateTime.now(),
       status: ChatMessageStatus.sending,
+      replyToId: replyToId,
+      replyToSender: replyToSender,
+      replyToText: replyToText,
     );
 
     await _persistMessageLocally(
@@ -773,6 +788,9 @@ class AgoraChatServiceImpl implements ChatService {
         'senderName': currentName,
         'senderAvatar': currentAvatar ?? '',
         'localMessageId': messageId,
+        'replyToId': ?replyToId,
+        'replyToSender': ?replyToSender,
+        'replyToText': ?replyToText,
       };
       await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
       await _updateMessageStatus(messageId, ChatMessageStatus.sent, conversationId: conversationId);
@@ -800,6 +818,9 @@ class AgoraChatServiceImpl implements ChatService {
     bool isGroup = false,
     String? conversationName,
     String? conversationAvatar,
+    String? replyToId,
+    String? replyToSender,
+    String? replyToText,
   }) async {
     final currentUser = _authService.getCurrentUser();
     final currentUid = currentUser?.uid ?? 'unknown';
@@ -823,6 +844,9 @@ class AgoraChatServiceImpl implements ChatService {
       status: ChatMessageStatus.sending,
       fileName: fileName,
       fileSize: fileSize,
+      replyToId: replyToId,
+      replyToSender: replyToSender,
+      replyToText: replyToText,
     );
 
     await _persistMessageLocally(
@@ -843,6 +867,9 @@ class AgoraChatServiceImpl implements ChatService {
         'senderName': currentName,
         'senderAvatar': currentAvatar ?? '',
         'localMessageId': messageId,
+        'replyToId': ?replyToId,
+        'replyToSender': ?replyToSender,
+        'replyToText': ?replyToText,
       };
       await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
       await _updateMessageStatus(messageId, ChatMessageStatus.sent, conversationId: conversationId);
@@ -869,6 +896,9 @@ class AgoraChatServiceImpl implements ChatService {
     bool isGroup = false,
     String? conversationName,
     String? conversationAvatar,
+    String? replyToId,
+    String? replyToSender,
+    String? replyToText,
   }) async {
     final currentUser = _authService.getCurrentUser();
     final currentUid = currentUser?.uid ?? 'unknown';
@@ -886,6 +916,9 @@ class AgoraChatServiceImpl implements ChatService {
       content: gifUrl,
       timestamp: DateTime.now(),
       status: ChatMessageStatus.sent,
+      replyToId: replyToId,
+      replyToSender: replyToSender,
+      replyToText: replyToText,
     );
 
     await _persistMessageLocally(
@@ -902,6 +935,14 @@ class AgoraChatServiceImpl implements ChatService {
         params: {'payload': gifUrl},
         chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
       );
+      agoraMsg.attributes = {
+        'senderName': currentName,
+        'senderAvatar': currentAvatar ?? '',
+        'localMessageId': messageId,
+        'replyToId': ?replyToId,
+        'replyToSender': ?replyToSender,
+        'replyToText': ?replyToText,
+      };
       await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
     } catch (_) {}
 
@@ -926,6 +967,9 @@ class AgoraChatServiceImpl implements ChatService {
     bool isGroup = false,
     String? conversationName,
     String? conversationAvatar,
+    String? replyToId,
+    String? replyToSender,
+    String? replyToText,
   }) async {
     final currentUser = _authService.getCurrentUser();
     final currentUid = currentUser?.uid ?? 'unknown';
@@ -945,6 +989,9 @@ class AgoraChatServiceImpl implements ChatService {
       status: ChatMessageStatus.sent,
       fileName: fileName,
       fileSize: fileSize,
+      replyToId: replyToId,
+      replyToSender: replyToSender,
+      replyToText: replyToText,
     );
 
     await _persistMessageLocally(
@@ -961,6 +1008,14 @@ class AgoraChatServiceImpl implements ChatService {
         displayName: fileName,
         chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
       );
+      agoraMsg.attributes = {
+        'senderName': currentName,
+        'senderAvatar': currentAvatar ?? '',
+        'localMessageId': messageId,
+        'replyToId': ?replyToId,
+        'replyToSender': ?replyToSender,
+        'replyToText': ?replyToText,
+      };
       await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
     } catch (_) {}
 
@@ -983,6 +1038,9 @@ class AgoraChatServiceImpl implements ChatService {
     bool isGroup = false,
     String? conversationName,
     String? conversationAvatar,
+    String? replyToId,
+    String? replyToSender,
+    String? replyToText,
   }) async {
     final currentUser = _authService.getCurrentUser();
     final currentUid = currentUser?.uid ?? 'unknown';
@@ -1002,6 +1060,9 @@ class AgoraChatServiceImpl implements ChatService {
       timestamp: DateTime.now(),
       status: ChatMessageStatus.sent,
       sharePayload: payload,
+      replyToId: replyToId,
+      replyToSender: replyToSender,
+      replyToText: replyToText,
     );
 
     await _persistMessageLocally(
@@ -1018,6 +1079,14 @@ class AgoraChatServiceImpl implements ChatService {
         params: {'payload': payload.toJsonString()},
         chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
       );
+      agoraMsg.attributes = {
+        'senderName': currentName,
+        'senderAvatar': currentAvatar ?? '',
+        'localMessageId': messageId,
+        'replyToId': ?replyToId,
+        'replyToSender': ?replyToSender,
+        'replyToText': ?replyToText,
+      };
       await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
     } catch (_) {}
 
@@ -1089,6 +1158,12 @@ class AgoraChatServiceImpl implements ChatService {
             }
           } catch (_) {}
         }
+
+        // Ensure single reaction per user: replace previous reaction
+        reactions.forEach((k, v) {
+          v.remove(currentUid);
+        });
+        reactions.removeWhere((k, v) => v.isEmpty);
 
         final users = reactions[emoji] ?? [];
         if (!users.contains(currentUid)) {

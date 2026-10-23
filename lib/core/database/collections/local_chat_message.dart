@@ -31,4 +31,8 @@ class LocalChatMessage {
   int? fileSize;
   String? fileName;
   String? sharePayloadJson;
+
+  String? replyToId;
+  String? replyToSender;
+  String? replyToText;
 }
