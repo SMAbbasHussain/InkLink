@@ -144,8 +144,8 @@ class ChatBubble extends StatelessWidget {
       enabled: isRecent,
       child: Padding(
         padding: EdgeInsets.only(
-          top: showHeader ? 8.0 : (message.reactions.isNotEmpty ? 10.0 : 2.0),
-          bottom: 2.0,
+          top: showHeader ? 8.0 : 2.0,
+          bottom: message.reactions.isNotEmpty ? 10.0 : 2.0,
           left: isMe ? 56.0 : 12.0,
           right: isMe ? 12.0 : 56.0,
         ),
@@ -236,12 +236,11 @@ class ChatBubble extends StatelessWidget {
                     child: _buildBubbleContent(context, colors),
                   ),
 
-                  // Floating iMessage Reaction Pill on Corner
+                  // Floating Reaction Pill on Bottom Right Corner
                   if (message.reactions.isNotEmpty)
                     Positioned(
-                      top: -10,
-                      right: isMe ? -4 : null,
-                      left: isMe ? null : -4,
+                      bottom: -8,
+                      right: 4,
                       child: _buildFloatingReactions(colors),
                     ),
                 ],

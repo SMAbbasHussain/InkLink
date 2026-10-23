@@ -1068,12 +1068,14 @@ class AgoraChatServiceImpl implements ChatService {
     final currentUid = _authService.getCurrentUserId() ?? 'me';
     final isar = await _localDbService.database;
 
+    LocalChatMessage? targetMsg;
     await isar.writeTxn(() async {
       final msg = await isar.localChatMessages
           .filter()
           .messageIdEqualTo(messageId)
           .findFirst();
       if (msg != null) {
+        targetMsg = msg;
         Map<String, List<String>> reactions = {};
         if (msg.reactionsJson != null && msg.reactionsJson!.isNotEmpty) {
           try {
@@ -1100,13 +1102,29 @@ class AgoraChatServiceImpl implements ChatService {
     });
 
     try {
-      await ChatClient.getInstance.chatManager.addReaction(
-        messageId: messageId,
-        reaction: emoji,
-      );
-    } catch (_) {}
+      final isLoggedIn = await ChatClient.getInstance.isLoginBefore();
+      if (isLoggedIn) {
+        final agoraMsg = await ChatClient.getInstance.chatManager.loadMessage(messageId);
+        if (agoraMsg != null) {
+          await ChatClient.getInstance.chatManager.addReaction(
+            messageId: messageId,
+            reaction: emoji,
+          );
+        }
+      }
+    } catch (e) {
+      developer.log('Agora addReaction skipped or failed: $e', name: 'AgoraChatService');
+    }
 
     _notifyThreadUpdated(conversationId);
+    if (targetMsg != null) {
+      if (targetMsg!.conversationId.isNotEmpty && targetMsg!.conversationId != conversationId) {
+        _notifyThreadUpdated(targetMsg!.conversationId);
+      }
+      if (targetMsg!.senderId.isNotEmpty && targetMsg!.senderId != conversationId) {
+        _notifyThreadUpdated(targetMsg!.senderId);
+      }
+    }
   }
 
   @override
@@ -1118,12 +1136,14 @@ class AgoraChatServiceImpl implements ChatService {
     final currentUid = _authService.getCurrentUserId() ?? 'me';
     final isar = await _localDbService.database;
 
+    LocalChatMessage? targetMsg;
     await isar.writeTxn(() async {
       final msg = await isar.localChatMessages
           .filter()
           .messageIdEqualTo(messageId)
           .findFirst();
       if (msg != null) {
+        targetMsg = msg;
         Map<String, List<String>> reactions = {};
         if (msg.reactionsJson != null && msg.reactionsJson!.isNotEmpty) {
           try {
@@ -1154,13 +1174,29 @@ class AgoraChatServiceImpl implements ChatService {
     });
 
     try {
-      await ChatClient.getInstance.chatManager.removeReaction(
-        messageId: messageId,
-        reaction: emoji,
-      );
-    } catch (_) {}
+      final isLoggedIn = await ChatClient.getInstance.isLoginBefore();
+      if (isLoggedIn) {
+        final agoraMsg = await ChatClient.getInstance.chatManager.loadMessage(messageId);
+        if (agoraMsg != null) {
+          await ChatClient.getInstance.chatManager.removeReaction(
+            messageId: messageId,
+            reaction: emoji,
+          );
+        }
+      }
+    } catch (e) {
+      developer.log('Agora removeReaction skipped or failed: $e', name: 'AgoraChatService');
+    }
 
     _notifyThreadUpdated(conversationId);
+    if (targetMsg != null) {
+      if (targetMsg!.conversationId.isNotEmpty && targetMsg!.conversationId != conversationId) {
+        _notifyThreadUpdated(targetMsg!.conversationId);
+      }
+      if (targetMsg!.senderId.isNotEmpty && targetMsg!.senderId != conversationId) {
+        _notifyThreadUpdated(targetMsg!.senderId);
+      }
+    }
   }
 
   @override
