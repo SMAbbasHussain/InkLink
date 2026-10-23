@@ -81,14 +81,16 @@ class AgoraChatServiceImpl implements ChatService {
           },
           onMessagesDelivered: (List<ChatMessage> messages) async {
             for (final msg in messages) {
-              await _updateMessageStatus(msg.msgId, ChatMessageStatus.delivered);
-              _notifyThreadUpdated(msg.conversationId ?? msg.to ?? '');
+              final targetId = msg.attributes?['localMessageId']?.toString() ?? msg.msgId;
+              final convId = msg.conversationId ?? msg.to ?? '';
+              await _updateMessageStatus(targetId, ChatMessageStatus.delivered, conversationId: convId);
             }
           },
           onMessagesRead: (List<ChatMessage> messages) async {
             for (final msg in messages) {
-              await _updateMessageStatus(msg.msgId, ChatMessageStatus.read);
-              _notifyThreadUpdated(msg.conversationId ?? msg.to ?? '');
+              final targetId = msg.attributes?['localMessageId']?.toString() ?? msg.msgId;
+              final convId = msg.conversationId ?? msg.to ?? '';
+              await _updateMessageStatus(targetId, ChatMessageStatus.read, conversationId: convId);
             }
           },
           onMessagesRecalled: (List<ChatMessage> messages) async {
@@ -579,12 +581,13 @@ class AgoraChatServiceImpl implements ChatService {
       agoraMsg.attributes = {
         'senderName': currentName,
         'senderAvatar': currentAvatar ?? '',
+        'localMessageId': messageId,
       };
       await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
-      await _updateMessageStatus(messageId, ChatMessageStatus.sent);
+      await _updateMessageStatus(messageId, ChatMessageStatus.sent, conversationId: conversationId);
     } catch (e) {
       developer.log('Agora send text notice: $e', name: 'AgoraChatService');
-      await _updateMessageStatus(messageId, ChatMessageStatus.sent);
+      await _updateMessageStatus(messageId, ChatMessageStatus.sent, conversationId: conversationId);
     }
 
     if (!isGroup) {
@@ -596,7 +599,7 @@ class AgoraChatServiceImpl implements ChatService {
       );
     }
 
-    return model;
+    return model.copyWith(status: ChatMessageStatus.sent);
   }
 
   @override
@@ -648,11 +651,12 @@ class AgoraChatServiceImpl implements ChatService {
       agoraMsg.attributes = {
         'senderName': currentName,
         'senderAvatar': currentAvatar ?? '',
+        'localMessageId': messageId,
       };
       await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
-      await _updateMessageStatus(messageId, ChatMessageStatus.sent);
+      await _updateMessageStatus(messageId, ChatMessageStatus.sent, conversationId: conversationId);
     } catch (_) {
-      await _updateMessageStatus(messageId, ChatMessageStatus.sent);
+      await _updateMessageStatus(messageId, ChatMessageStatus.sent, conversationId: conversationId);
     }
 
     if (!isGroup) {
@@ -664,7 +668,7 @@ class AgoraChatServiceImpl implements ChatService {
       );
     }
 
-    return model;
+    return model.copyWith(status: ChatMessageStatus.sent);
   }
 
   @override
@@ -840,8 +844,13 @@ class AgoraChatServiceImpl implements ChatService {
     return model;
   }
 
-  Future<void> _updateMessageStatus(String messageId, ChatMessageStatus status) async {
+  Future<void> _updateMessageStatus(
+    String messageId,
+    ChatMessageStatus status, {
+    String? conversationId,
+  }) async {
     final isar = await _localDbService.database;
+    String? targetConvId = conversationId;
     await isar.writeTxn(() async {
       final msg = await isar.localChatMessages
           .filter()
@@ -849,9 +858,14 @@ class AgoraChatServiceImpl implements ChatService {
           .findFirst();
       if (msg != null) {
         msg.status = status.name;
+        targetConvId ??= msg.conversationId;
         await isar.localChatMessages.put(msg);
       }
     });
+
+    if (targetConvId != null && targetConvId!.isNotEmpty) {
+      _notifyThreadUpdated(targetConvId!);
+    }
   }
 
   @override

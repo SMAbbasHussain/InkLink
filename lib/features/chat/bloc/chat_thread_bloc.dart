@@ -70,6 +70,13 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
         conversationName: event.conversationName,
         conversationAvatar: event.conversationAvatar,
       );
+      if (_activeConversationId != null && !isClosed) {
+        final messages = await _chatService.getMessages(_activeConversationId!);
+        emit(ChatThreadLoaded(
+          conversationId: _activeConversationId!,
+          messages: messages,
+        ));
+      }
     } catch (e) {
       if (state is! ChatThreadLoaded) {
         emit(ChatThreadError(e.toString()));
@@ -90,6 +97,13 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
         conversationName: event.conversationName,
         conversationAvatar: event.conversationAvatar,
       );
+      if (_activeConversationId != null && !isClosed) {
+        final messages = await _chatService.getMessages(_activeConversationId!);
+        emit(ChatThreadLoaded(
+          conversationId: _activeConversationId!,
+          messages: messages,
+        ));
+      }
     } catch (e) {
       if (state is! ChatThreadLoaded) {
         emit(ChatThreadError(e.toString()));
