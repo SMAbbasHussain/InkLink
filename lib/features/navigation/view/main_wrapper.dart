@@ -6,7 +6,7 @@ import 'package:inklink/domain/services/presence/presence_service.dart';
 import 'package:inklink/domain/services/settings/settings_service.dart';
 import 'package:inklink/domain/services/profile/profile_service.dart';
 import '../../../core/constants/app_colors.dart';
-import '../../friends/view/friends_screen.dart';
+import '../../chat/view/chat_inbox_screen.dart';
 import '../../settings/bloc/settings_bloc.dart';
 import '../../settings/view/settings_screen.dart';
 import '../../dashboard/view/home_screen.dart';
@@ -84,7 +84,7 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final List<Widget> screens = [
       const HomeScreen(),
-      const FriendsScreen(),
+      const ChatInboxScreen(),
       const WorkspacesScreen(),
       BlocProvider(
         create: (context) =>
@@ -123,9 +123,9 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
                   label: 'Home',
                 ),
                 NavigationDestination(
-                  selectedIcon: Icon(Icons.people, color: AppColors.primary),
-                  icon: Icon(Icons.people_outline),
-                  label: 'Friends',
+                  selectedIcon: Icon(Icons.chat_bubble, color: AppColors.primary),
+                  icon: Icon(Icons.chat_bubble_outline),
+                  label: 'Messages',
                 ),
                 NavigationDestination(
                   selectedIcon: Icon(

@@ -72,8 +72,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       title: const Text('Dark Mode'),
                       secondary: const Icon(Icons.dark_mode),
                       value: isDark,
-                      onChanged: (_) =>
-                          context.read<ThemeBloc>().add(ToggleTheme()),
+                      onChanged: (val) =>
+                          context.read<ThemeBloc>().add(SetThemeMode(val ? ThemeMode.dark : ThemeMode.light)),
                     ),
                     _buildSectionHeader('Canvas'),
                     SwitchListTile(

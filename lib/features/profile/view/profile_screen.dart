@@ -8,6 +8,9 @@ import '../../../core/constants/app_colors.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../../friends/view/blocked_users_screen.dart';
 import '../../friends/view/friend_requests_screen.dart';
+import 'widgets/friends_collapsible_card.dart';
+import '../../../domain/models/chat/chat_conversation_model.dart';
+import '../../chat/view/chat_thread_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   final String userId;
@@ -173,26 +176,32 @@ class ProfileScreen extends StatelessWidget {
               final isPrivateToViewer =
                   !state.isSelf && !state.isFriend && !isProfilePublic;
 
-              return Column(
-                children: [
-                  _buildHeader(user, isDark, isSelf: state.isSelf),
-                  const SizedBox(height: 12),
-                  if (!isPrivateToViewer) ...[
-                    _buildProfileStats(state, isDark),
+              return SingleChildScrollView(
+                child: Column(
+                  children: [
+                    _buildHeader(user, isDark, isSelf: state.isSelf),
                     const SizedBox(height: 12),
-                    _buildJoinDate(_asDateTime(user['createdAt']), isDark),
+                    if (!isPrivateToViewer) ...[
+                      _buildProfileStats(state, isDark),
+                      const SizedBox(height: 12),
+                      _buildJoinDate(_asDateTime(user['createdAt']), isDark),
+                    ],
+                    if (state.isBlocked) const SizedBox(height: 12),
+                    if (state.isBlocked) _buildBlockedBanner(isDark),
+                    const SizedBox(height: 12),
+                    if (isPrivateToViewer)
+                      _buildPrivateProfileBanner(isDark)
+                    else ...[
+                      _buildBioSection(user, isDark),
+                      const SizedBox(height: 12),
+                      if (state.isSelf)
+                        FriendsCollapsibleCard(isSelf: true, isDark: isDark),
+                    ],
+                    const SizedBox(height: 24),
+                    _buildActionButtons(context, state, isDark),
+                    const SizedBox(height: 40),
                   ],
-                  if (state.isBlocked) const SizedBox(height: 12),
-                  if (state.isBlocked) _buildBlockedBanner(isDark),
-                  const SizedBox(height: 12),
-                  if (isPrivateToViewer)
-                    _buildPrivateProfileBanner(isDark)
-                  else
-                    _buildBioSection(user, isDark),
-                  const Spacer(),
-                  _buildActionButtons(context, state, isDark),
-                  const SizedBox(height: 40),
-                ],
+                ),
               );
             }
 
@@ -643,8 +652,17 @@ class ProfileScreen extends StatelessWidget {
               }
 
               if (effectiveIsFriend) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Messaging is coming soon.')),
+                final friendConv = ChatConversationModel(
+                  id: userId,
+                  name: state.userData['displayName']?.toString() ?? 'Friend',
+                  avatarUrl: state.userData['photoURL']?.toString(),
+                  isGroup: false,
+                );
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ChatThreadScreen(conversation: friendConv),
+                  ),
                 );
                 return;
               }

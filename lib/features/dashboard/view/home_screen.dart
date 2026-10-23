@@ -202,7 +202,7 @@ class _HomeScreenState extends State<HomeScreen>
               actions: [
                 IconButton(
                   icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
-                  onPressed: () => context.read<ThemeBloc>().add(ToggleTheme()),
+                  onPressed: () => context.read<ThemeBloc>().add(ToggleTheme(isCurrentlyDark: isDark)),
                 ),
                 Padding(
                   padding: const EdgeInsets.only(right: 4.0),

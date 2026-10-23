@@ -24,18 +24,23 @@ const LocalCanvasSyncStateSchema = CollectionSchema(
       name: r'lastAppliedVersion',
       type: IsarType.long,
     ),
-    r'lastSnapshotAt': PropertySchema(
+    r'lastSeenCursor': PropertySchema(
       id: 2,
+      name: r'lastSeenCursor',
+      type: IsarType.string,
+    ),
+    r'lastSnapshotAt': PropertySchema(
+      id: 3,
       name: r'lastSnapshotAt',
       type: IsarType.dateTime,
     ),
     r'lastSnapshotVersion': PropertySchema(
-      id: 3,
+      id: 4,
       name: r'lastSnapshotVersion',
       type: IsarType.long,
     ),
     r'lastSyncedAppliedAt': PropertySchema(
-      id: 4,
+      id: 5,
       name: r'lastSyncedAppliedAt',
       type: IsarType.dateTime,
     ),
@@ -77,6 +82,12 @@ int _localCanvasSyncStateEstimateSize(
 ) {
   var bytesCount = offsets.last;
   bytesCount += 3 + object.boardId.length * 3;
+  {
+    final value = object.lastSeenCursor;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
   return bytesCount;
 }
 
@@ -88,9 +99,10 @@ void _localCanvasSyncStateSerialize(
 ) {
   writer.writeString(offsets[0], object.boardId);
   writer.writeLong(offsets[1], object.lastAppliedVersion);
-  writer.writeDateTime(offsets[2], object.lastSnapshotAt);
-  writer.writeLong(offsets[3], object.lastSnapshotVersion);
-  writer.writeDateTime(offsets[4], object.lastSyncedAppliedAt);
+  writer.writeString(offsets[2], object.lastSeenCursor);
+  writer.writeDateTime(offsets[3], object.lastSnapshotAt);
+  writer.writeLong(offsets[4], object.lastSnapshotVersion);
+  writer.writeDateTime(offsets[5], object.lastSyncedAppliedAt);
 }
 
 LocalCanvasSyncState _localCanvasSyncStateDeserialize(
@@ -103,9 +115,10 @@ LocalCanvasSyncState _localCanvasSyncStateDeserialize(
   object.boardId = reader.readString(offsets[0]);
   object.id = id;
   object.lastAppliedVersion = reader.readLong(offsets[1]);
-  object.lastSnapshotAt = reader.readDateTimeOrNull(offsets[2]);
-  object.lastSnapshotVersion = reader.readLong(offsets[3]);
-  object.lastSyncedAppliedAt = reader.readDateTimeOrNull(offsets[4]);
+  object.lastSeenCursor = reader.readStringOrNull(offsets[2]);
+  object.lastSnapshotAt = reader.readDateTimeOrNull(offsets[3]);
+  object.lastSnapshotVersion = reader.readLong(offsets[4]);
+  object.lastSyncedAppliedAt = reader.readDateTimeOrNull(offsets[5]);
   return object;
 }
 
@@ -121,10 +134,12 @@ P _localCanvasSyncStateDeserializeProp<P>(
     case 1:
       return (reader.readLong(offset)) as P;
     case 2:
-      return (reader.readDateTimeOrNull(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 3:
-      return (reader.readLong(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 4:
+      return (reader.readLong(offset)) as P;
+    case 5:
       return (reader.readDateTimeOrNull(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -675,6 +690,213 @@ extension LocalCanvasSyncStateQueryFilter
     LocalCanvasSyncState,
     QAfterFilterCondition
   >
+  lastSeenCursorIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'lastSeenCursor'),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalCanvasSyncState,
+    LocalCanvasSyncState,
+    QAfterFilterCondition
+  >
+  lastSeenCursorIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'lastSeenCursor'),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalCanvasSyncState,
+    LocalCanvasSyncState,
+    QAfterFilterCondition
+  >
+  lastSeenCursorEqualTo(String? value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'lastSeenCursor',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalCanvasSyncState,
+    LocalCanvasSyncState,
+    QAfterFilterCondition
+  >
+  lastSeenCursorGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'lastSeenCursor',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalCanvasSyncState,
+    LocalCanvasSyncState,
+    QAfterFilterCondition
+  >
+  lastSeenCursorLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'lastSeenCursor',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalCanvasSyncState,
+    LocalCanvasSyncState,
+    QAfterFilterCondition
+  >
+  lastSeenCursorBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'lastSeenCursor',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalCanvasSyncState,
+    LocalCanvasSyncState,
+    QAfterFilterCondition
+  >
+  lastSeenCursorStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'lastSeenCursor',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalCanvasSyncState,
+    LocalCanvasSyncState,
+    QAfterFilterCondition
+  >
+  lastSeenCursorEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'lastSeenCursor',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalCanvasSyncState,
+    LocalCanvasSyncState,
+    QAfterFilterCondition
+  >
+  lastSeenCursorContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'lastSeenCursor',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalCanvasSyncState,
+    LocalCanvasSyncState,
+    QAfterFilterCondition
+  >
+  lastSeenCursorMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'lastSeenCursor',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalCanvasSyncState,
+    LocalCanvasSyncState,
+    QAfterFilterCondition
+  >
+  lastSeenCursorIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'lastSeenCursor', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalCanvasSyncState,
+    LocalCanvasSyncState,
+    QAfterFilterCondition
+  >
+  lastSeenCursorIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'lastSeenCursor', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalCanvasSyncState,
+    LocalCanvasSyncState,
+    QAfterFilterCondition
+  >
   lastSnapshotAtIsNull() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(
@@ -983,6 +1205,20 @@ extension LocalCanvasSyncStateQuerySortBy
   }
 
   QueryBuilder<LocalCanvasSyncState, LocalCanvasSyncState, QAfterSortBy>
+  sortByLastSeenCursor() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'lastSeenCursor', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalCanvasSyncState, LocalCanvasSyncState, QAfterSortBy>
+  sortByLastSeenCursorDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'lastSeenCursor', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalCanvasSyncState, LocalCanvasSyncState, QAfterSortBy>
   sortByLastSnapshotAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'lastSnapshotAt', Sort.asc);
@@ -1070,6 +1306,20 @@ extension LocalCanvasSyncStateQuerySortThenBy
   }
 
   QueryBuilder<LocalCanvasSyncState, LocalCanvasSyncState, QAfterSortBy>
+  thenByLastSeenCursor() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'lastSeenCursor', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalCanvasSyncState, LocalCanvasSyncState, QAfterSortBy>
+  thenByLastSeenCursorDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'lastSeenCursor', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalCanvasSyncState, LocalCanvasSyncState, QAfterSortBy>
   thenByLastSnapshotAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'lastSnapshotAt', Sort.asc);
@@ -1129,6 +1379,16 @@ extension LocalCanvasSyncStateQueryWhereDistinct
   }
 
   QueryBuilder<LocalCanvasSyncState, LocalCanvasSyncState, QDistinct>
+  distinctByLastSeenCursor({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(
+        r'lastSeenCursor',
+        caseSensitive: caseSensitive,
+      );
+    });
+  }
+
+  QueryBuilder<LocalCanvasSyncState, LocalCanvasSyncState, QDistinct>
   distinctByLastSnapshotAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'lastSnapshotAt');
@@ -1174,6 +1434,13 @@ extension LocalCanvasSyncStateQueryProperty
   lastAppliedVersionProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'lastAppliedVersion');
+    });
+  }
+
+  QueryBuilder<LocalCanvasSyncState, String?, QQueryOperations>
+  lastSeenCursorProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'lastSeenCursor');
     });
   }
 

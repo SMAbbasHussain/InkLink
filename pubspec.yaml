@@ -61,6 +61,7 @@ dependencies:
   image_picker: ^1.2.2
   share_plus: ^13.3.1
   pdf: ^3.13.1
+  agora_chat_sdk: ^1.4.0+1
 
 dev_dependencies:
   flutter_test:

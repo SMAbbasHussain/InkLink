@@ -6,10 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../domain/services/invitation/invitation_service.dart';
+import '../../domain/models/chat/chat_conversation_model.dart';
 import '../../features/friends/view/friend_requests_screen.dart';
 import '../../features/board_invitations/bloc/board_invitations_bloc.dart';
 import '../../features/board_invitations/view/board_invites_screen.dart';
 import '../../features/workspaces/view/workspace_invites_screen.dart';
+import '../../features/chat/view/chat_thread_screen.dart';
 
 class LocalNotificationService {
   static bool _initialized = false;
@@ -69,6 +71,23 @@ class LocalNotificationService {
     if (type == 'workspace_invite') {
       navigator.push(
         MaterialPageRoute(builder: (_) => const WorkspaceInvitesScreen()),
+      );
+      return;
+    }
+
+    if (type == 'chat_message') {
+      final conversationId = receivedAction.payload?['targetId'] ?? '';
+      final senderName = receivedAction.payload?['senderName'] ?? 'Chat';
+      final isGroup = receivedAction.payload?['isGroup'] == 'true';
+      final conv = ChatConversationModel(
+        id: conversationId,
+        name: senderName,
+        isGroup: isGroup,
+      );
+      navigator.push(
+        MaterialPageRoute(
+          builder: (_) => ChatThreadScreen(conversation: conv),
+        ),
       );
     }
   }

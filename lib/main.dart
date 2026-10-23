@@ -52,6 +52,8 @@ import 'package:inklink/domain/services/canvas/board_chat_service.dart';
 import 'package:inklink/domain/services/canvas/board_chat_service_impl.dart';
 import 'package:inklink/domain/services/voice/voice_service.dart';
 import 'package:inklink/domain/services/voice/voice_service_impl.dart';
+import 'package:inklink/domain/services/chat/chat_service.dart';
+import 'package:inklink/domain/services/chat/agora_chat_service.dart';
 import 'package:inklink/core/utils/notification_preferences.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_event.dart';
@@ -262,6 +264,13 @@ void main() async {
           create: (context) => VoiceServiceImpl(
             authService: context.read<AuthService>(),
           ),
+        ),
+        RepositoryProvider<ChatService>(
+          create: (context) => AgoraChatServiceImpl(
+            localDbService: context.read<LocalDatabaseService>(),
+            authService: context.read<AuthService>(),
+            cloudFunctionsService: context.read<CloudFunctionsService>(),
+          )..initialize(),
         ),
         RepositoryProvider<WorkspaceService>(
           create: (context) => WorkspaceServiceImpl(
