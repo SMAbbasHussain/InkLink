@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 import '../../../../domain/services/chat/chat_service.dart';
+import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_tokens.dart';
+import '../../../../ui/theme/ink_type.dart';
+import '../../../../ui/widgets/desk_background.dart';
+import '../../../../ui/widgets/empty_state.dart';
+import '../../../../ui/widgets/ink_button.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../bloc/chat_inbox_bloc.dart';
 import '../bloc/chat_inbox_event.dart';
@@ -176,162 +183,137 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
   @override
   Widget build(BuildContext context) {
     final colors = ChatTheme.colorsOf(context);
+    final tokens = context.ink;
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: tokens.surfaceDesk,
       appBar: AppBar(
-        backgroundColor: colors.surface,
-        elevation: 0.5,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
         title: Text(
           'Messages',
-          style: TextStyle(
-            color: colors.textPrimary,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
+          style: InkType.headline(tokens.ink),
         ),
         actions: [
           IconButton(
-            icon: Icon(Icons.group_add_outlined, color: colors.accent),
+            icon: Icon(LucideIcons.users, color: tokens.ink, size: 20),
             tooltip: 'Create Group',
             onPressed: () => _showCreateGroupSheet(),
           ),
           IconButton(
-            icon: Icon(Icons.add_comment_outlined, color: colors.accent),
+            icon: Icon(LucideIcons.messageSquarePlus, color: tokens.accent, size: 20),
             tooltip: 'New DM',
             onPressed: () => _showNewDmSheet(colors),
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // Search Bar
-          Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: ChatTheme.space16,
-              vertical: ChatTheme.space8,
-            ),
-            child: TextField(
-              controller: _searchController,
-              onChanged: (val) {
-                context.read<ChatInboxBloc>().add(SearchConversations(val));
-              },
-              style: TextStyle(color: colors.inputText, fontSize: 14),
-              decoration: InputDecoration(
-                hintText: 'Search chats & groups...',
-                hintStyle: TextStyle(color: colors.inputHint, fontSize: 14),
-                prefixIcon: Icon(Icons.search_rounded, color: colors.textSecondary, size: 20),
-                suffixIcon: _searchController.text.isNotEmpty
-                    ? IconButton(
-                        icon: Icon(Icons.clear, color: colors.textSecondary, size: 18),
-                        onPressed: () {
-                          _searchController.clear();
-                          context.read<ChatInboxBloc>().add(const SearchConversations(''));
-                        },
-                      )
-                    : null,
-                isDense: true,
-                filled: true,
-                fillColor: colors.inputFill,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: ChatTheme.space12,
-                  vertical: ChatTheme.space8,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: colors.inputBorder, width: 0.8),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: colors.inputBorder, width: 0.8),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: colors.accent, width: 1.2),
+      body: DeskBackground(
+        child: Column(
+          children: [
+            // Search Bar
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: InkSpacing.s16,
+                vertical: InkSpacing.s8,
+              ),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (val) {
+                  context.read<ChatInboxBloc>().add(SearchConversations(val));
+                },
+                style: InkType.body(tokens.ink),
+                decoration: InputDecoration(
+                  hintText: 'Search chats & groups...',
+                  hintStyle: InkType.body(tokens.inkMuted),
+                  prefixIcon: Icon(LucideIcons.search, color: tokens.inkMuted, size: 18),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: Icon(LucideIcons.x, color: tokens.inkMuted, size: 18),
+                          onPressed: () {
+                            _searchController.clear();
+                            context.read<ChatInboxBloc>().add(const SearchConversations(''));
+                          },
+                        )
+                      : null,
+                  isDense: true,
+                  filled: true,
+                  fillColor: tokens.field,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: InkSpacing.s16,
+                    vertical: InkSpacing.s12,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(InkRadii.input),
+                    borderSide: BorderSide.none,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(InkRadii.input),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(InkRadii.input),
+                    borderSide: BorderSide(color: tokens.accent, width: 1.5),
+                  ),
                 ),
               ),
             ),
-          ),
 
-          // Conversation List
-          Expanded(
-            child: BlocBuilder<ChatInboxBloc, ChatInboxState>(
-              builder: (context, state) {
-                if (state is ChatInboxLoading) {
-                  return Center(child: CircularProgressIndicator(color: colors.accent));
-                }
-
-                if (state is ChatInboxLoaded) {
-                  final conversations = state.filteredConversations;
-
-                  if (conversations.isEmpty) {
-                    return Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(ChatTheme.space24),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.chat_bubble_outline_rounded,
-                              size: 56,
-                              color: colors.textSecondary.withOpacity(0.4),
-                            ),
-                            const SizedBox(height: ChatTheme.space16),
-                            Text(
-                              'No conversations yet',
-                              style: TextStyle(
-                                color: colors.textPrimary,
-                                fontSize: 17,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'Start a direct message with friends or create a new group chat to begin collaborating.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: colors.textSecondary,
-                                fontSize: 13,
-                              ),
-                            ),
-                            const SizedBox(height: ChatTheme.space24),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: colors.accent,
-                                    foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                  ),
-                                  icon: const Icon(Icons.add_comment_outlined, size: 16),
-                                  label: const Text('New Chat'),
-                                  onPressed: () => _showNewDmSheet(colors),
-                                ),
-                                const SizedBox(width: ChatTheme.space12),
-                                OutlinedButton.icon(
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: colors.accent,
-                                    side: BorderSide(color: colors.accent),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                  ),
-                                  icon: const Icon(Icons.groups_outlined, size: 16),
-                                  label: const Text('New Group'),
-                                  onPressed: () => _showCreateGroupSheet(),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
+            // Conversation List
+            Expanded(
+              child: BlocBuilder<ChatInboxBloc, ChatInboxState>(
+                builder: (context, state) {
+                  if (state is ChatInboxLoading) {
+                    return Center(child: CircularProgressIndicator(color: tokens.accent));
                   }
+
+                  if (state is ChatInboxLoaded) {
+                    final conversations = state.filteredConversations;
+
+                    if (conversations.isEmpty) {
+                      return Center(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(
+                            InkSpacing.s24,
+                            InkSpacing.s16,
+                            InkSpacing.s24,
+                            120,
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const EmptyState(
+                                icon: LucideIcons.messageSquare,
+                                text: 'No conversations yet',
+                                subtitle:
+                                    'Start a direct message with friends or create a new group chat to begin collaborating.',
+                              ),
+                              const SizedBox(height: InkSpacing.s16),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  InkButton.primary(
+                                    label: 'New Chat',
+                                    icon: const Icon(LucideIcons.messageSquarePlus),
+                                    expand: false,
+                                    compact: true,
+                                    onPressed: () => _showNewDmSheet(colors),
+                                  ),
+                                  const SizedBox(width: InkSpacing.s12),
+                                  InkButton.secondary(
+                                    label: 'New Group',
+                                    icon: const Icon(LucideIcons.users),
+                                    expand: false,
+                                    compact: true,
+                                    onPressed: () => _showCreateGroupSheet(),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
 
                   return ListView.separated(
                     itemCount: conversations.length,
@@ -371,10 +353,12 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
                                   onPressed: () => Navigator.pop(ctx, false),
                                   child: Text('Cancel', style: TextStyle(color: colors.textSecondary)),
                                 ),
-                                ElevatedButton(
-                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                                TextButton(
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: tokens.danger,
+                                  ),
                                   onPressed: () => Navigator.pop(ctx, true),
-                                  child: const Text('Delete', style: TextStyle(color: Colors.white)),
+                                  child: const Text('Delete'),
                                 ),
                               ],
                             ),
@@ -506,6 +490,7 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
             ),
           ),
         ],
+        ),
       ),
     );
   }
