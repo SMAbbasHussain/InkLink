@@ -4,6 +4,7 @@ import 'package:inklink/domain/models/board.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../canvas/view/canvas_route.dart';
 import '../../../../ui/theme/ink_theme.dart';
+import '../../../../ui/theme/ink_type.dart';
 import '../../../../ui/widgets/board_card_frame.dart';
 
 class BoardCard extends StatelessWidget {
@@ -39,6 +40,7 @@ class BoardCard extends StatelessWidget {
       title: board.title,
       caption: captionText,
       onTap: () {
+        HapticFeedback.lightImpact();
         Navigator.push(context, buildCanvasRoute(context, boardId: board.id));
       },
       menuButton: PopupMenuButton<String>(
@@ -46,6 +48,7 @@ class BoardCard extends StatelessWidget {
         icon: Icon(LucideIcons.ellipsisVertical, size: 18, color: tokens.ink),
         onSelected: (value) {
           if (value == 'copy') {
+            HapticFeedback.mediumImpact();
             Clipboard.setData(ClipboardData(text: board.id));
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -53,14 +56,19 @@ class BoardCard extends StatelessWidget {
               ),
             );
           } else if (value == 'duplicate') {
+            HapticFeedback.lightImpact();
             onDuplicate?.call();
           } else if (value == 'archive') {
+            HapticFeedback.lightImpact();
             onArchive?.call();
           } else if (value == 'unarchive') {
+            HapticFeedback.lightImpact();
             onUnarchive?.call();
           } else if (value == 'delete') {
+            HapticFeedback.mediumImpact();
             onDelete(board.id);
           } else if (value == 'settings') {
+            HapticFeedback.lightImpact();
             onOpenSettings?.call();
           }
         },
@@ -107,7 +115,7 @@ class BoardCard extends StatelessWidget {
       children: [
         Icon(icon, size: 18, color: color),
         const SizedBox(width: 10),
-        Text(label, style: TextStyle(color: color)),
+        Text(label, style: InkType.body(color)),
       ],
     );
   }

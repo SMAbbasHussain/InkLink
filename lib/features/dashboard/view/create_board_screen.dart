@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -429,6 +430,7 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                     ],
                     const SizedBox(height: InkSpacing.s16),
                     SwitchListTile.adaptive(
+                      activeColor: tokens.accent,
                       contentPadding: EdgeInsets.zero,
                       title: Text(
                         'Allow members to copy this board',
@@ -440,6 +442,7 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                       ),
                       value: _allowMembersToCopy,
                       onChanged: (val) {
+                        HapticFeedback.lightImpact();
                         setState(() {
                           _allowMembersToCopy = val;
                         });

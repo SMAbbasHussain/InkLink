@@ -514,6 +514,7 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                       ),
                       const SizedBox(height: InkSpacing.s16),
                       SwitchListTile.adaptive(
+                        activeColor: tokens.accent,
                         contentPadding: EdgeInsets.zero,
                         title: Text(
                           'Allow members to copy this board',
@@ -525,6 +526,7 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                         ),
                         value: _allowMembersToCopy,
                         onChanged: (value) {
+                          HapticFeedback.lightImpact();
                           setState(() {
                             _allowMembersToCopy = value;
                           });

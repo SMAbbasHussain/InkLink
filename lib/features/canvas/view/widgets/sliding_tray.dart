@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../ui/theme/ink_theme.dart';
@@ -75,15 +76,19 @@ class SlidingTray extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onHorizontalDragUpdate: (d) {
           if (direction == TrayDirection.left && d.delta.dx < -8) {
+            HapticFeedback.lightImpact();
             onClose?.call();
           } else if (direction == TrayDirection.right && d.delta.dx > 8) {
+            HapticFeedback.lightImpact();
             onClose?.call();
           }
         },
         onVerticalDragUpdate: (d) {
           if (direction == TrayDirection.bottom && d.delta.dy > 8) {
+            HapticFeedback.lightImpact();
             onClose?.call();
           } else if (direction == TrayDirection.top && d.delta.dy < -8) {
+            HapticFeedback.lightImpact();
             onClose?.call();
           }
         },
@@ -140,7 +145,10 @@ class SlidingTray extends StatelessWidget {
                         const SizedBox(width: InkSpacing.s8),
                         InkWell(
                           borderRadius: BorderRadius.circular(InkRadii.chip),
-                          onTap: onClose,
+                          onTap: () {
+                            HapticFeedback.lightImpact();
+                            onClose?.call();
+                          },
                           child: Padding(
                             padding: const EdgeInsets.all(4),
                             child: Icon(

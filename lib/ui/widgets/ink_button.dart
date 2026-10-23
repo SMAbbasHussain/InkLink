@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/ink_theme.dart';
 import '../theme/ink_tokens.dart';
@@ -6,8 +7,8 @@ import '../theme/ink_type.dart';
 
 enum InkButtonVariant { primary, hero, secondary, danger, dangerSolid }
 
-/// The four button variants used across the redesign. All are 48 high
-/// (unless [compact]) with radius 14.
+/// The button variants used across the redesign. All are 48 high
+/// (unless [compact]) with radius 14, tactile haptics, and optional [isLoading].
 class InkButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
@@ -15,6 +16,7 @@ class InkButton extends StatelessWidget {
   final Widget? icon;
   final bool expand;
   final bool compact;
+  final bool isLoading;
 
   const InkButton({
     super.key,
@@ -24,6 +26,7 @@ class InkButton extends StatelessWidget {
     this.icon,
     this.expand = true,
     this.compact = false,
+    this.isLoading = false,
   });
 
   const InkButton.primary({
@@ -33,6 +36,7 @@ class InkButton extends StatelessWidget {
     this.icon,
     this.expand = true,
     this.compact = false,
+    this.isLoading = false,
   }) : variant = InkButtonVariant.primary;
 
   const InkButton.hero({
@@ -42,6 +46,7 @@ class InkButton extends StatelessWidget {
     this.icon,
     this.expand = true,
     this.compact = false,
+    this.isLoading = false,
   }) : variant = InkButtonVariant.hero;
 
   const InkButton.secondary({
@@ -51,6 +56,7 @@ class InkButton extends StatelessWidget {
     this.icon,
     this.expand = true,
     this.compact = false,
+    this.isLoading = false,
   }) : variant = InkButtonVariant.secondary;
 
   const InkButton.danger({
@@ -60,6 +66,7 @@ class InkButton extends StatelessWidget {
     this.icon,
     this.expand = true,
     this.compact = false,
+    this.isLoading = false,
   }) : variant = InkButtonVariant.danger;
 
   /// Solid danger fill, used for destructive confirmations (e.g. "Delete"
@@ -71,13 +78,14 @@ class InkButton extends StatelessWidget {
     this.icon,
     this.expand = true,
     this.compact = false,
+    this.isLoading = false,
   }) : variant = InkButtonVariant.dangerSolid;
 
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
     final height = compact ? 36.0 : 48.0;
-    final disabled = onPressed == null;
+    final disabled = onPressed == null || isLoading;
 
     Color bg;
     Color fg;
@@ -109,7 +117,7 @@ class InkButton extends StatelessWidget {
         break;
     }
 
-    if (disabled) {
+    if (disabled && !isLoading) {
       bg = tokens.field;
       fg = tokens.inkMuted;
       gradient = null;
@@ -120,17 +128,28 @@ class InkButton extends StatelessWidget {
       mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        if (icon != null) ...[
-          IconTheme(data: IconThemeData(color: fg, size: 18), child: icon!),
-          const SizedBox(width: InkSpacing.s8),
-        ],
-        Flexible(
-          child: Text(
-            label,
-            overflow: TextOverflow.ellipsis,
-            style: InkType.bodyStrong(fg),
+        if (isLoading)
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: fg,
+            ),
+          )
+        else ...[
+          if (icon != null) ...[
+            IconTheme(data: IconThemeData(color: fg, size: 18), child: icon!),
+            const SizedBox(width: InkSpacing.s8),
+          ],
+          Flexible(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: InkType.bodyStrong(fg),
+            ),
           ),
-        ),
+        ],
       ],
     );
 
@@ -148,7 +167,17 @@ class InkButton extends StatelessWidget {
           ),
           child: InkWell(
             borderRadius: BorderRadius.circular(InkRadii.button),
-            onTap: onPressed,
+            onTap: disabled
+                ? null
+                : () {
+                    if (variant == InkButtonVariant.danger ||
+                        variant == InkButtonVariant.dangerSolid) {
+                      HapticFeedback.mediumImpact();
+                    } else {
+                      HapticFeedback.lightImpact();
+                    }
+                    onPressed!();
+                  },
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s16),
               child: Center(child: content),

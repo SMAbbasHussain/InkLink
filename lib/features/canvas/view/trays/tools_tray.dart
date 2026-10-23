@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../ui/theme/ink_theme.dart';
@@ -113,7 +114,10 @@ class _ToolButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = context.ink;
     return InkWell(
-      onTap: onTap,
+      onTap: () {
+        HapticFeedback.lightImpact();
+        onTap();
+      },
       borderRadius: BorderRadius.circular(10),
       child: Ink(
         width: double.infinity,

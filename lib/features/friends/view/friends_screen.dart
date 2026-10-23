@@ -71,6 +71,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
             child: BlocBuilder<FriendsBloc, FriendsState>(
               builder: (context, state) {
                 return CustomScrollView(
+                  physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
                   slivers: [
                     SliverToBoxAdapter(
                       child: Padding(

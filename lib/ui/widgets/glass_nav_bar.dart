@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/ink_theme.dart';
 import 'glass_panel.dart';
@@ -72,6 +73,21 @@ class _GlassNavBarState extends State<GlassNavBar>
     }
   }
 
+  void _handleTap(int index) {
+    if (widget.currentIndex != index) {
+      HapticFeedback.selectionClick();
+      _controller.animateWith(
+        SpringSimulation(
+          _spring,
+          _controller.value,
+          index.toDouble(),
+          _controller.velocity,
+        ),
+      );
+    }
+    widget.onTap(index);
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -128,7 +144,7 @@ class _GlassNavBarState extends State<GlassNavBar>
                           child: Tooltip(
                             message: items[i].label,
                             child: InkWell(
-                              onTap: () => widget.onTap(i),
+                              onTap: () => _handleTap(i),
                               customBorder: const StadiumBorder(),
                               child: Center(
                                 child: AnimatedSwitcher(

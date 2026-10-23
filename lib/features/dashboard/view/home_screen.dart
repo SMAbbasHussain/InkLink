@@ -229,6 +229,7 @@ class _HomeScreenState extends State<HomeScreen>
                 children: [
                   Positioned.fill(
                     child: NestedScrollView(
+                      physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
                       headerSliverBuilder: (context, innerBoxIsScrolled) => [
                         SliverToBoxAdapter(
                           child: SafeArea(
@@ -533,6 +534,7 @@ class _HomeScreenState extends State<HomeScreen>
       }
 
       return GridView.builder(
+        physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
         padding: const EdgeInsets.fromLTRB(16, 24, 16, 160),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,

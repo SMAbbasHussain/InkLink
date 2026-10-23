@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../theme/ink_theme.dart';
@@ -134,7 +135,10 @@ class CommandBarAction extends StatelessWidget {
             ),
             child: InkWell(
               borderRadius: BorderRadius.circular(14),
-              onTap: onPressed,
+              onTap: () {
+                HapticFeedback.lightImpact();
+                onPressed?.call();
+              },
               child: Icon(icon, size: 20, color: gradient != null ? Colors.white : fg),
             ),
           ),

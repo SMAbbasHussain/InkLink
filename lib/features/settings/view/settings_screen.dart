@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
@@ -83,6 +84,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 backgroundColor: tokens.surfaceDesk,
                 appBar: AppBar(title: Text('Settings', style: InkType.headline(tokens.ink))),
                 body: ListView(
+                  physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
                   padding: const EdgeInsets.fromLTRB(
                     InkSpacing.s16,
                     InkSpacing.s8,
@@ -102,8 +104,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         title: 'Dark Mode',
                         trailing: Switch.adaptive(
                           value: isDark,
-                          onChanged: (_) =>
-                              context.read<ThemeBloc>().add(ToggleTheme()),
+                          onChanged: (_) {
+                            HapticFeedback.lightImpact();
+                            context.read<ThemeBloc>().add(ToggleTheme());
+                          },
                         ),
                       ),
                     ),
@@ -124,6 +128,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               onChanged: settingsState.isLoadingTrayTips
                                   ? null
                                   : (value) {
+                                      HapticFeedback.lightImpact();
                                       context.read<SettingsBloc>().add(
                                         SettingsTrayTipsToggled(value),
                                       );
@@ -138,10 +143,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             subtitle: 'Used when saving board thumbnail after leaving canvas',
                             trailing: DropdownButton<String>(
                               value: settingsState.boardPreviewQuality,
+                              dropdownColor: tokens.surfaceDesk,
+                              style: InkType.body(tokens.ink),
                               underline: const SizedBox.shrink(),
                               icon: Icon(LucideIcons.chevronDown, size: 18, color: tokens.inkMuted),
                               onChanged: (value) {
                                 if (value == null) return;
+                                HapticFeedback.selectionClick();
                                 context.read<SettingsBloc>().add(
                                   SettingsBoardPreviewQualityChanged(value),
                                 );
@@ -162,6 +170,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             trailing: Switch.adaptive(
                               value: settingsState.boardPreviewCompressionEnabled,
                               onChanged: (value) {
+                                HapticFeedback.lightImpact();
                                 context.read<SettingsBloc>().add(
                                   SettingsBoardPreviewCompressionToggled(value),
                                 );
@@ -206,6 +215,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             trailing: Switch.adaptive(
                               value: settingsState.pushNotificationsEnabled,
                               onChanged: (value) {
+                                HapticFeedback.lightImpact();
                                 context.read<SettingsBloc>().add(
                                   SettingsNotificationPreferencesChanged(
                                     pushNotificationsEnabled: value,
@@ -224,6 +234,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               value: settingsState.inviteAlertsEnabled,
                               onChanged: settingsState.pushNotificationsEnabled
                                   ? (value) {
+                                      HapticFeedback.lightImpact();
                                       context.read<SettingsBloc>().add(
                                         SettingsNotificationPreferencesChanged(
                                           inviteAlertsEnabled: value,
@@ -243,6 +254,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               value: settingsState.friendAlertsEnabled,
                               onChanged: settingsState.pushNotificationsEnabled
                                   ? (value) {
+                                      HapticFeedback.lightImpact();
                                       context.read<SettingsBloc>().add(
                                         SettingsNotificationPreferencesChanged(
                                           friendAlertsEnabled: value,
@@ -269,6 +281,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             trailing: Switch.adaptive(
                               value: settingsState.isProfilePublic,
                               onChanged: (value) {
+                                HapticFeedback.lightImpact();
                                 context.read<SettingsBloc>().add(
                                   SettingsPrivacyChanged(isProfilePublic: value),
                                 );
@@ -284,6 +297,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             trailing: Switch.adaptive(
                               value: settingsState.showOnlineStatus,
                               onChanged: (value) {
+                                HapticFeedback.lightImpact();
                                 context.read<SettingsBloc>().add(
                                   SettingsPrivacyChanged(showOnlineStatus: value),
                                 );
@@ -299,6 +313,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             trailing: Switch.adaptive(
                               value: settingsState.showEmail,
                               onChanged: (value) {
+                                HapticFeedback.lightImpact();
                                 context.read<SettingsBloc>().add(
                                   SettingsPrivacyChanged(showEmail: value),
                                 );

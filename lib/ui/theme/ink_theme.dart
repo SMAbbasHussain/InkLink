@@ -29,10 +29,12 @@ class InkTheme {
       colorScheme: (isDark ? const ColorScheme.dark() : const ColorScheme.light())
           .copyWith(
             primary: tokens.accent,
+            primaryContainer: tokens.accentSoft,
             secondary: tokens.accent,
             surface: tokens.paper,
             error: tokens.danger,
             onPrimary: Colors.white,
+            onPrimaryContainer: tokens.accentText,
             onSurface: tokens.ink,
           ),
       textTheme: textTheme,

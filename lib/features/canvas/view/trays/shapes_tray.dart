@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../ui/theme/ink_theme.dart';
@@ -78,7 +79,10 @@ class ShapesTray extends StatelessWidget {
           final item = items[i];
           final selected = selectedType == item.type;
           return InkWell(
-            onTap: () => onSelectShapeForDrawing(item.type),
+            onTap: () {
+              HapticFeedback.selectionClick();
+              onSelectShapeForDrawing(item.type);
+            },
             borderRadius: BorderRadius.circular(10),
             child: Container(
               decoration: BoxDecoration(

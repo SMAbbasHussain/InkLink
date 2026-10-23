@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/ink_theme.dart';
 import '../theme/ink_tokens.dart';
@@ -47,6 +48,7 @@ class _InkSegmentedState extends State<InkSegmented>
 
   void _onTap(int index) {
     if (_currentSelectedIndex != index) {
+      HapticFeedback.selectionClick();
       setState(() {
         _currentSelectedIndex = index;
       });

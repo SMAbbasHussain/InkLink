@@ -121,10 +121,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   void _openTray(String tray) {
     if (_canvasBloc.state.activeTray == tray) return;
+    HapticFeedback.lightImpact();
     _canvasBloc.add(CanvasToggleTray(tray));
   }
 
   void _toggleTray(String tray) {
+    HapticFeedback.lightImpact();
     _canvasBloc.add(CanvasToggleTray(tray));
   }
 
@@ -949,11 +951,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   },
                 ),
                 const SizedBox(height: 12),
-                SwitchListTile(
+                SwitchListTile.adaptive(
+                  activeColor: _tokens.accent,
                   title: const Text('Arrowhead End'),
                   value: hasArrowhead,
                   contentPadding: EdgeInsets.zero,
-                  onChanged: (v) => setDialogState(() => hasArrowhead = v),
+                  onChanged: (v) {
+                    HapticFeedback.lightImpact();
+                    setDialogState(() => hasArrowhead = v);
+                  },
                 ),
                 if (linkable.length >= 2) ...[
                   const SizedBox(height: 12),
@@ -2579,11 +2585,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   ),
                   const SizedBox(height: 4),
                   SwitchListTile.adaptive(
+                    activeColor: _tokens.accent,
                     dense: true,
                     contentPadding: EdgeInsets.zero,
                     value: state.selectedShapeIsFilled,
                     title: const Text('Filled', style: TextStyle(fontSize: 13)),
-                    onChanged: _deferredSetSelectedShapeFill,
+                    onChanged: (v) {
+                      HapticFeedback.lightImpact();
+                      _deferredSetSelectedShapeFill(v);
+                    },
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -2951,7 +2961,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
             top: 2,
             right: 2,
             child: GestureDetector(
-              onTap: () => _canvasBloc.add(CanvasDeleteElement(shape.id)),
+              onTap: () {
+                HapticFeedback.mediumImpact();
+                _canvasBloc.add(CanvasDeleteElement(shape.id));
+              },
               child: Container(
                 width: 28,
                 height: 28,

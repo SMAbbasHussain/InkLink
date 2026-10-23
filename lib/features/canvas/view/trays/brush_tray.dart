@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../widgets/sliding_tray.dart';
 import '../../../../ui/theme/ink_theme.dart';
@@ -111,6 +112,7 @@ class _BrushTrayState extends State<BrushTray> {
   }
 
   void _onBrushTypeSelected(String type) {
+    HapticFeedback.selectionClick();
     widget.onBrushTypeChanged(type);
     switch (type) {
       case 'eraser':
@@ -314,8 +316,12 @@ class _BrushTrayState extends State<BrushTray> {
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
           dense: true,
+          activeColor: tokens.accent,
           value: widget.eraserEraseEverything,
-          onChanged: widget.onEraserEraseEverythingChanged,
+          onChanged: (v) {
+            HapticFeedback.lightImpact();
+            widget.onEraserEraseEverythingChanged(v);
+          },
           title: Text('Erase everything it touches', style: InkType.body(tokens.ink)),
           subtitle: Text('Off = erase brush strokes only', style: InkType.caption(tokens.inkMuted)),
         ),
@@ -334,8 +340,14 @@ class _BrushTrayState extends State<BrushTray> {
             children: [
               Text('Smooth Doodles', style: InkType.label(tokens.inkSecondary)),
               Switch.adaptive(
+                activeColor: tokens.accent,
                 value: widget.smoothDoodlesEnabled,
-                onChanged: widget.onSmoothDoodlesChanged,
+                onChanged: widget.onSmoothDoodlesChanged == null
+                    ? null
+                    : (v) {
+                        HapticFeedback.lightImpact();
+                        widget.onSmoothDoodlesChanged!(v);
+                      },
               ),
             ],
           ),
@@ -358,7 +370,10 @@ class _BrushTrayState extends State<BrushTray> {
                   (c) => Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: InkWell(
-                      onTap: () => widget.onColorSelected(c),
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        widget.onColorSelected(c);
+                      },
                       borderRadius: BorderRadius.circular(20),
                       child: Padding(
                         padding: EdgeInsets.all(widget.selectedColor == c ? 2 : 0),
