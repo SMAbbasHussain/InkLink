@@ -46,10 +46,14 @@ class NotificationRepositoryImpl implements NotificationRepository {
           );
         })
         .map((snapshot) {
-          // Sync to local cache on each update
-          _syncNotificationsToLocal(uid, snapshot.docs);
+          final filteredDocs = snapshot.docs
+              .where((doc) => doc.data()['type'] != 'chat_message')
+              .toList();
 
-          return snapshot.docs
+          // Sync to local cache on each update
+          _syncNotificationsToLocal(uid, filteredDocs);
+
+          return filteredDocs
               .map((doc) => {'id': doc.id, ...doc.data()})
               .toList();
         });

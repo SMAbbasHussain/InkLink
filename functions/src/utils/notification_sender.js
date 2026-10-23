@@ -51,25 +51,29 @@ async function sendUserNotification({
 
   const tokens = [...new Set(tokenCandidates.filter((token) => !!token))];
 
-  const notificationPayload = {
-    recipientUid,
-    [FirestorePaths.TYPE]: type,
-    [FirestorePaths.TITLE]: title,
-    [FirestorePaths.BODY]: body,
-    [FirestorePaths.ACTION]: action || null,
-    [FirestorePaths.TARGET_ID]: targetId || null,
-    [FirestorePaths.FROM_UID]: senderUid || null,
-    [FirestorePaths.SENDER_NAME]: senderName || null,
-    [FirestorePaths.SENDER_PIC]: senderPhotoUrl || null,
-    [FirestorePaths.GROUPING_KEY]: groupingKey || null,
-    [FirestorePaths.STATUS]: actionStatus,
-    extraData,
-    [FirestorePaths.TIMESTAMP]: admin.firestore.FieldValue.serverTimestamp(),
-  };
+  let notificationId = `push_${Date.now()}`;
+  if (!isPushOnly && type !== 'chat_message') {
+    const notificationPayload = {
+      recipientUid,
+      [FirestorePaths.TYPE]: type,
+      [FirestorePaths.TITLE]: title,
+      [FirestorePaths.BODY]: body,
+      [FirestorePaths.ACTION]: action || null,
+      [FirestorePaths.TARGET_ID]: targetId || null,
+      [FirestorePaths.FROM_UID]: senderUid || null,
+      [FirestorePaths.SENDER_NAME]: senderName || null,
+      [FirestorePaths.SENDER_PIC]: senderPhotoUrl || null,
+      [FirestorePaths.GROUPING_KEY]: groupingKey || null,
+      [FirestorePaths.STATUS]: actionStatus,
+      extraData,
+      [FirestorePaths.TIMESTAMP]: admin.firestore.FieldValue.serverTimestamp(),
+    };
 
-  const notificationRef = await userRef
-    .collection(FirestorePaths.NOTIFICATIONS_SUBCOLLECTION)
-    .add(notificationPayload);
+    const notificationRef = await userRef
+      .collection(FirestorePaths.NOTIFICATIONS_SUBCOLLECTION)
+      .add(notificationPayload);
+    notificationId = notificationRef.id;
+  }
 
   const notificationPrefs = userData.notificationPreferences || {};
   if (notificationPrefs.pushNotificationsEnabled === false) {

@@ -721,6 +721,7 @@ class AgoraChatServiceImpl implements ChatService {
         'senderUid': user?.uid ?? '',
         'senderName': user?.displayName ?? 'InkLink User',
         'senderPhotoUrl': user?.photoURL,
+        'isPushOnly': true,
         'extraData': {'isGroup': isGroup.toString()},
       });
     } catch (e) {
