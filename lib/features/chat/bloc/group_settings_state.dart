@@ -1,3 +1,4 @@
+import '../../../../core/database/collections/local_profile.dart';
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 
 abstract class GroupSettingsState {
@@ -16,22 +17,26 @@ class GroupSettingsLoaded extends GroupSettingsState {
   final ChatConversationModel group;
   final bool isOwner;
   final bool isAdmin;
+  final Map<String, LocalProfile> memberProfiles;
 
   const GroupSettingsLoaded({
     required this.group,
     required this.isOwner,
     required this.isAdmin,
+    this.memberProfiles = const {},
   });
 
   GroupSettingsLoaded copyWith({
     ChatConversationModel? group,
     bool? isOwner,
     bool? isAdmin,
+    Map<String, LocalProfile>? memberProfiles,
   }) {
     return GroupSettingsLoaded(
       group: group ?? this.group,
       isOwner: isOwner ?? this.isOwner,
       isAdmin: isAdmin ?? this.isAdmin,
+      memberProfiles: memberProfiles ?? this.memberProfiles,
     );
   }
 }

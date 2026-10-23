@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/database/local_database_service.dart';
 import '../../../../core/services/auth_service.dart';
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 import '../../../../domain/services/chat/chat_service.dart';
 import '../../friends/bloc/friends_bloc.dart';
+import '../../profile/view/profile_route.dart';
 import '../bloc/group_settings_bloc.dart';
 import '../bloc/group_settings_event.dart';
 import '../bloc/group_settings_state.dart';
@@ -17,10 +19,12 @@ class GroupSettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final currentUid = context.read<AuthService>().getCurrentUserId() ?? '';
+    final localDb = context.read<LocalDatabaseService>();
     return BlocProvider(
       create: (context) => GroupSettingsBloc(
         chatService: context.read<ChatService>(),
         currentUid: currentUid,
+        localDbService: localDb,
       )..add(LoadGroupSettings(groupId)),
       child: const _GroupSettingsView(),
     );
@@ -172,18 +176,52 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
                       final isMemberOwner = group.isUserOwner(memberId);
                       final isMemberAdmin = group.isUserAdmin(memberId);
                       final isSelf = memberId == context.read<AuthService>().getCurrentUserId();
+                      final profile = state.memberProfiles[memberId];
+                      final safeFallback = memberId.length > 5 ? memberId.substring(0, 5) : memberId;
+                      final displayName = isSelf
+                          ? 'You'
+                          : ((profile != null && profile.displayName.isNotEmpty)
+                              ? profile.displayName
+                              : 'User $safeFallback');
+                      final avatarUrl = profile?.photoURL;
+                      final canManage = !isSelf && (isOwner || (isAdmin && !isMemberAdmin && !isMemberOwner));
 
                       return ListTile(
+                        onTap: isSelf
+                            ? null
+                            : () {
+                                Navigator.push(context, buildProfileRoute(context, userId: memberId));
+                              },
                         leading: CircleAvatar(
                           radius: 18,
                           backgroundColor: colors.surfaceElevated,
-                          child: Icon(Icons.person, color: colors.textSecondary, size: 20),
+                          backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
+                              ? NetworkImage(avatarUrl)
+                              : null,
+                          child: (avatarUrl == null || avatarUrl.isEmpty)
+                              ? Text(
+                                  displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+                                  style: TextStyle(
+                                    color: colors.textPrimary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                )
+                              : null,
                         ),
                         title: Row(
                           children: [
-                            Text(
-                              isSelf ? 'You' : 'User ${memberId.substring(0, 5)}',
-                              style: TextStyle(color: colors.textPrimary, fontSize: 14),
+                            Expanded(
+                              child: Text(
+                                displayName,
+                                style: TextStyle(
+                                  color: colors.textPrimary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                             const SizedBox(width: 8),
                             if (isMemberOwner)
@@ -194,7 +232,15 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
                               _buildRoleBadge('MEMBER', colors.textSecondary),
                           ],
                         ),
-                        trailing: (isOwner && !isMemberOwner)
+                        subtitle: (profile?.email != null && profile!.email!.isNotEmpty && !isSelf)
+                            ? Text(
+                                profile.email!,
+                                style: TextStyle(color: colors.textSecondary, fontSize: 11),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              )
+                            : null,
+                        trailing: canManage
                             ? PopupMenuButton<String>(
                                 icon: Icon(Icons.more_vert, color: colors.textSecondary, size: 20),
                                 color: colors.surfaceElevated,
@@ -218,12 +264,25 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
                                   }
                                 },
                                 itemBuilder: (_) => [
-                                  if (!isMemberAdmin)
-                                    PopupMenuItem(value: 'promote', child: Text('Promote to Admin', style: TextStyle(color: colors.textPrimary))),
-                                  if (isMemberAdmin && !isMemberOwner)
-                                    PopupMenuItem(value: 'demote', child: Text('Demote from Admin', style: TextStyle(color: colors.textPrimary))),
-                                  PopupMenuItem(value: 'transfer', child: Text('Transfer Ownership', style: TextStyle(color: colors.textPrimary))),
-                                  const PopupMenuItem(value: 'remove', child: Text('Remove from Group', style: TextStyle(color: Colors.redAccent))),
+                                  if (isOwner && !isMemberAdmin)
+                                    PopupMenuItem(
+                                      value: 'promote',
+                                      child: Text('Promote to Admin', style: TextStyle(color: colors.textPrimary)),
+                                    ),
+                                  if (isOwner && isMemberAdmin && !isMemberOwner)
+                                    PopupMenuItem(
+                                      value: 'demote',
+                                      child: Text('Demote from Admin', style: TextStyle(color: colors.textPrimary)),
+                                    ),
+                                  if (isOwner)
+                                    PopupMenuItem(
+                                      value: 'transfer',
+                                      child: Text('Transfer Ownership', style: TextStyle(color: colors.textPrimary)),
+                                    ),
+                                  const PopupMenuItem(
+                                    value: 'remove',
+                                    child: Text('Remove from Group', style: TextStyle(color: Colors.redAccent)),
+                                  ),
                                 ],
                               )
                             : null,

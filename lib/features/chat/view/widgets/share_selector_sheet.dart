@@ -32,8 +32,9 @@ class _ShareSelectorSheetState extends State<ShareSelectorSheet> with SingleTick
   @override
   Widget build(BuildContext context) {
     final colors = ChatTheme.colorsOf(context);
+    final responsiveHeight = (MediaQuery.of(context).size.height * 0.65).clamp(380.0, 620.0);
     return Container(
-      height: 480,
+      height: responsiveHeight,
       decoration: BoxDecoration(
         color: colors.surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),

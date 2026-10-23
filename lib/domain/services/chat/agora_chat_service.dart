@@ -10,9 +10,11 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/database/collections/local_chat_conversation.dart';
 import '../../../core/database/collections/local_chat_message.dart';
+import '../../../core/database/collections/local_profile.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/cloud_functions_service.dart';
+import '../../../core/services/local_notification_service.dart';
 import '../../models/chat/chat_conversation_model.dart';
 import '../../models/chat/chat_message_model.dart';
 import '../../models/chat/chat_share_payload.dart';
@@ -68,7 +70,7 @@ class AgoraChatServiceImpl implements ChatService {
       await ChatClient.getInstance.init(options);
       await ChatClient.getInstance.startCallback();
 
-      // Register listener for incoming Agora Chat messages
+      // Register listener for incoming Agora Chat messages & lifecycle events
       ChatClient.getInstance.chatManager.addEventHandler(
         'inklink_chat_handler',
         ChatEventHandler(
@@ -77,7 +79,31 @@ class AgoraChatServiceImpl implements ChatService {
               await _handleIncomingAgoraMessage(msg);
             }
           },
+          onMessagesDelivered: (List<ChatMessage> messages) async {
+            for (final msg in messages) {
+              await _updateMessageStatus(msg.msgId, ChatMessageStatus.delivered);
+              _notifyThreadUpdated(msg.conversationId ?? msg.to ?? '');
+            }
+          },
+          onMessagesRead: (List<ChatMessage> messages) async {
+            for (final msg in messages) {
+              await _updateMessageStatus(msg.msgId, ChatMessageStatus.read);
+              _notifyThreadUpdated(msg.conversationId ?? msg.to ?? '');
+            }
+          },
+          onMessagesRecalled: (List<ChatMessage> messages) async {
+            for (final msg in messages) {
+              final conversationId = msg.conversationId ?? msg.to ?? '';
+              await deleteMessage(
+                conversationId: conversationId,
+                messageId: msg.msgId,
+              );
+            }
+          },
           onMessageReactionDidChange: (List<ChatMessageReactionEvent> list) async {
+            for (final event in list) {
+              _notifyThreadUpdated(event.conversationId);
+            }
             await _syncConversationsFromLocal();
           },
         ),
@@ -99,7 +125,18 @@ class AgoraChatServiceImpl implements ChatService {
     final agoraUsername = _sanitizeAgoraUid(userId);
     try {
       final isLoggedIn = await ChatClient.getInstance.isLoginBefore();
-      if (!isLoggedIn) {
+      if (isLoggedIn) {
+        final currentLoggedIn = await ChatClient.getInstance.getCurrentUserId() ??
+            ChatClient.getInstance.currentUserId;
+        if (currentLoggedIn != null &&
+            currentLoggedIn.isNotEmpty &&
+            currentLoggedIn != agoraUsername) {
+          await ChatClient.getInstance.logout(true);
+        }
+      }
+
+      final stillLoggedIn = await ChatClient.getInstance.isLoginBefore();
+      if (!stillLoggedIn) {
         // Attempt login with token if available or fallback
         final token = dotenv.env['AGORA_CHAT_TOKEN'] ?? agoraUsername;
         await ChatClient.getInstance.loginWithAgoraToken(agoraUsername, token);
@@ -170,6 +207,38 @@ class AgoraChatServiceImpl implements ChatService {
       );
 
       await _persistMessageLocally(model, isGroup: isGroup);
+
+      // Dispatch local foreground notification if receiver is not sender and chat is not muted
+      final currentUid = _authService.getCurrentUserId();
+      if (model.senderId != currentUid) {
+        final isar = await _localDbService.database;
+        final conv = await isar.localChatConversations
+            .filter()
+            .conversationIdEqualTo(conversationId)
+            .findFirst();
+        final isMuted = conv?.isMuted ?? false;
+        if (!isMuted) {
+          final notifyTitle = isGroup
+              ? (conv != null && conv.name.isNotEmpty
+                  ? '${conv.name} (${model.senderName})'
+                  : model.senderName)
+              : model.senderName;
+          final notifyBody = model.type == ChatMessageType.text
+              ? model.content
+              : '[${model.type.name}]';
+          await LocalNotificationService.showNotification(
+            title: notifyTitle,
+            body: notifyBody,
+            largeIcon: model.senderAvatar,
+            payload: {
+              'type': 'chat_message',
+              'targetId': conversationId,
+              'senderName': isGroup ? (conv?.name ?? 'Group') : model.senderName,
+              'isGroup': isGroup.toString(),
+            },
+          );
+        }
+      }
     } catch (e) {
       developer.log('Error handling incoming Agora message: $e', name: 'AgoraChatService');
     }
@@ -220,7 +289,7 @@ class AgoraChatServiceImpl implements ChatService {
       if (conversationName != null && conversationName.isNotEmpty) {
         conv.name = conversationName;
       } else if (conv.name.isEmpty) {
-        conv.name = model.senderName;
+        conv.name = isGroup ? 'Group Chat' : model.senderName;
       }
       if (conversationAvatar != null && conversationAvatar.isNotEmpty) {
         conv.avatarUrl = conversationAvatar;
@@ -273,22 +342,50 @@ class AgoraChatServiceImpl implements ChatService {
         .sortByUpdatedAtDesc()
         .findAll();
 
-    return locals.map((c) {
-      return ChatConversationModel(
-        id: c.conversationId,
-        name: c.name,
-        avatarUrl: c.avatarUrl,
-        isGroup: c.isGroup,
-        lastMessage: c.lastMessage,
-        lastMessageTimestamp: c.lastMessageTimestamp,
-        unreadCount: c.unreadCount,
-        isMuted: c.isMuted,
-        memberIds: List.from(c.memberIds),
-        adminIds: List.from(c.adminIds),
-        ownerId: c.ownerId,
-        description: c.description,
+    final results = <ChatConversationModel>[];
+    for (final c in locals) {
+      String resolvedName = c.name;
+      String? resolvedAvatar = c.avatarUrl;
+
+      // If DM and name or avatar is missing or generic, resolve from cached LocalProfile
+      if (!c.isGroup &&
+          (resolvedName.isEmpty ||
+              resolvedName == 'User' ||
+              resolvedAvatar == null ||
+              resolvedAvatar.isEmpty)) {
+        final profile = await isar.localProfiles
+            .filter()
+            .uidEqualTo(c.conversationId)
+            .findFirst();
+        if (profile != null) {
+          if (profile.displayName.isNotEmpty) {
+            resolvedName = profile.displayName;
+          }
+          if (profile.photoURL != null && profile.photoURL!.isNotEmpty) {
+            resolvedAvatar = profile.photoURL;
+          }
+        }
+      }
+
+      results.add(
+        ChatConversationModel(
+          id: c.conversationId,
+          name: resolvedName.isNotEmpty ? resolvedName : (c.isGroup ? 'Group Chat' : 'User'),
+          avatarUrl: resolvedAvatar,
+          isGroup: c.isGroup,
+          lastMessage: c.lastMessage,
+          lastMessageTimestamp: c.lastMessageTimestamp,
+          unreadCount: c.unreadCount,
+          isMuted: c.isMuted,
+          memberIds: List.from(c.memberIds),
+          adminIds: List.from(c.adminIds),
+          ownerId: c.ownerId,
+          description: c.description,
+        ),
       );
-    }).toList();
+    }
+
+    return results;
   }
 
   @override

@@ -12,11 +12,13 @@ import '../../theme/chat_theme.dart';
 class AnimatedMessageBubble extends StatefulWidget {
   final Widget child;
   final bool isMe;
+  final bool enabled;
 
   const AnimatedMessageBubble({
     super.key,
     required this.child,
     required this.isMe,
+    this.enabled = true,
   });
 
   @override
@@ -25,7 +27,7 @@ class AnimatedMessageBubble extends StatefulWidget {
 
 class _AnimatedMessageBubbleState extends State<AnimatedMessageBubble>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
+  AnimationController? _controller;
   late final Animation<double> _scaleAnimation;
   late final Animation<Offset> _slideAnimation;
   late final Animation<double> _fadeAnimation;
@@ -33,6 +35,8 @@ class _AnimatedMessageBubbleState extends State<AnimatedMessageBubble>
   @override
   void initState() {
     super.initState();
+    if (!widget.enabled) return;
+
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 280),
@@ -40,7 +44,7 @@ class _AnimatedMessageBubbleState extends State<AnimatedMessageBubble>
 
     _scaleAnimation = Tween<double>(begin: 0.88, end: 1.0).animate(
       CurvedAnimation(
-        parent: _controller,
+        parent: _controller!,
         curve: Curves.easeOutBack,
       ),
     );
@@ -50,27 +54,31 @@ class _AnimatedMessageBubbleState extends State<AnimatedMessageBubble>
       end: Offset.zero,
     ).animate(
       CurvedAnimation(
-        parent: _controller,
+        parent: _controller!,
         curve: Curves.easeOutCubic,
       ),
     );
 
     _fadeAnimation = CurvedAnimation(
-      parent: _controller,
+      parent: _controller!,
       curve: Curves.easeOut,
     );
 
-    _controller.forward();
+    _controller!.forward();
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.enabled || _controller == null) {
+      return widget.child;
+    }
+
     return FadeTransition(
       opacity: _fadeAnimation,
       child: SlideTransition(
@@ -129,12 +137,14 @@ class ChatBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = ChatTheme.colorsOf(context);
+    final isRecent = DateTime.now().difference(message.timestamp).inSeconds < 4;
 
     return AnimatedMessageBubble(
       isMe: isMe,
+      enabled: isRecent,
       child: Padding(
         padding: EdgeInsets.only(
-          top: showHeader ? 8.0 : 2.0,
+          top: showHeader ? 8.0 : (message.reactions.isNotEmpty ? 10.0 : 2.0),
           bottom: 2.0,
           left: isMe ? 56.0 : 12.0,
           right: isMe ? 12.0 : 56.0,
@@ -206,8 +216,8 @@ class ChatBubble extends StatelessWidget {
                     ),
                     decoration: BoxDecoration(
                       gradient: isMe
-                          ? const LinearGradient(
-                              colors: [Color(0xFF6200EE), Color(0xFF7C4DFF)],
+                          ? LinearGradient(
+                              colors: [colors.accent, colors.accentAlt],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                             )
@@ -453,18 +463,43 @@ class ChatBubble extends StatelessWidget {
           ),
           if (payload.joinCode.isNotEmpty) ...[
             const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                'Join Code: ${payload.joinCode}',
-                style: TextStyle(
-                  color: isMe ? Colors.white70 : colors.textSecondary,
-                  fontSize: 11,
-                  fontFamily: 'monospace',
+            InkWell(
+              borderRadius: BorderRadius.circular(6),
+              onTap: () {
+                HapticFeedback.selectionClick();
+                Clipboard.setData(ClipboardData(text: payload.joinCode));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Board join code ${payload.joinCode} copied!'),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Join Code: ${payload.joinCode}',
+                      style: TextStyle(
+                        color: isMe ? Colors.white70 : colors.textSecondary,
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.copy_rounded,
+                      size: 11,
+                      color: isMe ? Colors.white70 : colors.textSecondary,
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -476,7 +511,7 @@ class ChatBubble extends StatelessWidget {
             child: ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
                 backgroundColor: isMe ? Colors.white : colors.accent,
-                foregroundColor: isMe ? const Color(0xFF6200EE) : Colors.white,
+                foregroundColor: isMe ? colors.accent : Colors.white,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 elevation: 0,
                 padding: EdgeInsets.zero,
@@ -536,6 +571,49 @@ class ChatBubble extends StatelessWidget {
               ),
             ],
           ),
+          if (payload.joinCode.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            InkWell(
+              borderRadius: BorderRadius.circular(6),
+              onTap: () {
+                HapticFeedback.selectionClick();
+                Clipboard.setData(ClipboardData(text: payload.joinCode));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Workspace join code ${payload.joinCode} copied!'),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Code: ${payload.joinCode}',
+                      style: TextStyle(
+                        color: isMe ? Colors.white70 : colors.textSecondary,
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.copy_rounded,
+                      size: 11,
+                      color: isMe ? Colors.white70 : colors.textSecondary,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           if (payload.memberCount > 0) ...[
             const SizedBox(height: 4),
             Text(
@@ -550,7 +628,7 @@ class ChatBubble extends StatelessWidget {
             child: ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
                 backgroundColor: isMe ? Colors.white : colors.accent,
-                foregroundColor: isMe ? const Color(0xFF6200EE) : Colors.white,
+                foregroundColor: isMe ? colors.accent : Colors.white,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 elevation: 0,
                 padding: EdgeInsets.zero,

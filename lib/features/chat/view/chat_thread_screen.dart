@@ -75,68 +75,86 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
           onPressed: () => Navigator.pop(context),
         ),
         titleSpacing: 0,
-        title: Row(
-          children: [
-            Stack(
-              children: [
-                CircleAvatar(
-                  radius: 19,
-                  backgroundColor: colors.surfaceElevated,
-                  backgroundImage: conv.avatarUrl != null && conv.avatarUrl!.isNotEmpty
-                      ? NetworkImage(conv.avatarUrl!)
-                      : null,
-                  child: conv.avatarUrl == null || conv.avatarUrl!.isEmpty
-                      ? Icon(
-                          conv.isGroup ? Icons.groups_rounded : Icons.person_rounded,
-                          color: colors.textSecondary,
-                          size: 20,
-                        )
-                      : null,
+        title: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () {
+            if (conv.isGroup) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => GroupSettingsScreen(groupId: conv.id),
                 ),
-                if (!conv.isGroup)
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: conv.isOnline ? colors.statusOnline : colors.statusOffline,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: colors.surface, width: 2),
-                      ),
+              );
+            } else {
+              Navigator.push(context, buildProfileRoute(context, userId: conv.id));
+            }
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+            child: Row(
+              children: [
+                Stack(
+                  children: [
+                    CircleAvatar(
+                      radius: 19,
+                      backgroundColor: colors.surfaceElevated,
+                      backgroundImage: conv.avatarUrl != null && conv.avatarUrl!.isNotEmpty
+                          ? NetworkImage(conv.avatarUrl!)
+                          : null,
+                      child: conv.avatarUrl == null || conv.avatarUrl!.isEmpty
+                          ? Icon(
+                              conv.isGroup ? Icons.groups_rounded : Icons.person_rounded,
+                              color: colors.textSecondary,
+                              size: 20,
+                            )
+                          : null,
                     ),
+                    if (!conv.isGroup)
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: conv.isOnline ? colors.statusOnline : colors.statusOffline,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: colors.surface, width: 2),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        conv.name,
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        conv.isGroup
+                            ? '${conv.memberIds.length} members'
+                            : (conv.isOnline ? 'Active now' : 'Offline'),
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
                   ),
+                ),
               ],
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    conv.name,
-                    style: TextStyle(
-                      color: colors.textPrimary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(
-                    conv.isGroup
-                        ? '${conv.memberIds.length} members'
-                        : (conv.isOnline ? 'Active now' : 'Offline'),
-                    style: TextStyle(
-                      color: colors.textSecondary,
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
         actions: [
           if (conv.isGroup)

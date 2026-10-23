@@ -356,8 +356,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             gradient: _hasText
-                                ? const LinearGradient(
-                                    colors: [Color(0xFF6200EE), Color(0xFF7C4DFF)],
+                                ? LinearGradient(
+                                    colors: [colors.accent, colors.accentAlt],
                                     begin: Alignment.topLeft,
                                     end: Alignment.bottomRight,
                                   )

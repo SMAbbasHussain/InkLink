@@ -131,4 +131,26 @@ class LocalNotificationService {
       actionButtons: [NotificationActionButton(key: 'OPEN', label: 'Open')],
     );
   }
+
+  static Future<void> showNotification({
+    required String title,
+    required String body,
+    Map<String, String>? payload,
+    String? largeIcon,
+  }) async {
+    if (!_initialized || kIsWeb) return;
+
+    await AwesomeNotifications().createNotification(
+      content: NotificationContent(
+        id: DateTime.now().millisecondsSinceEpoch % 100000,
+        channelKey: 'inklink_notifications',
+        title: title,
+        body: body,
+        largeIcon: largeIcon,
+        notificationLayout: NotificationLayout.Messaging,
+        payload: payload,
+      ),
+      actionButtons: [NotificationActionButton(key: 'OPEN', label: 'Open')],
+    );
+  }
 }
