@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:mocktail/mocktail.dart';
+import 'package:inklink/domain/models/chat/chat_conversation_model.dart';
 import 'package:inklink/domain/services/chat/chat_service.dart';
 import 'package:inklink/features/chat/view/chat_inbox_screen.dart';
 import 'package:inklink/features/chat/bloc/chat_inbox_bloc.dart';
@@ -9,13 +9,20 @@ import 'package:inklink/features/chat/bloc/chat_inbox_event.dart';
 import 'package:inklink/ui/theme/ink_theme.dart';
 import 'package:inklink/ui/widgets/empty_state.dart';
 
-class MockChatService extends Mock implements ChatService {}
+class MockChatService implements ChatService {
+  @override
+  Future<List<ChatConversationModel>> getConversations() async => [];
+
+  @override
+  Stream<List<ChatConversationModel>> watchConversations() => const Stream.empty();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   testWidgets('ChatInboxScreen empty state renders cleanly with Desk theme', (tester) async {
     final mockService = MockChatService();
-    when(() => mockService.getConversations()).thenAnswer((_) async => []);
-    when(() => mockService.watchConversations()).thenAnswer((_) => const Stream.empty());
 
     await tester.pumpWidget(
       MultiRepositoryProvider(
@@ -55,8 +62,6 @@ void main() {
 
   testWidgets('ChatInboxScreen app bar has friend request and new conversation buttons', (tester) async {
     final mockService = MockChatService();
-    when(() => mockService.getConversations()).thenAnswer((_) async => []);
-    when(() => mockService.watchConversations()).thenAnswer((_) => const Stream.empty());
 
     await tester.pumpWidget(
       MultiRepositoryProvider(
