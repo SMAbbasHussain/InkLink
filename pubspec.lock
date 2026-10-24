@@ -17,6 +17,38 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.3.71"
+  agora_chat_sdk:
+    dependency: "direct main"
+    description:
+      name: agora_chat_sdk
+      sha256: "9ea671b5ee1c523a62445f760f10103fc47defd137ff293a6ee270dabdcba825"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.4.0+1"
+  agora_chat_sdk_android:
+    dependency: transitive
+    description:
+      name: agora_chat_sdk_android
+      sha256: "638ee6dd4f81de2a44eb5d8930c4f92f67fed1110fa9b89de6bb88ab3b363b30"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.4.0+1"
+  agora_chat_sdk_interface:
+    dependency: transitive
+    description:
+      name: agora_chat_sdk_interface
+      sha256: "373c57c949b6fa013c4c4d435f231217d806a88035fdec2ed27b4e0a4d997699"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.4.0+1"
+  agora_chat_sdk_ios:
+    dependency: transitive
+    description:
+      name: agora_chat_sdk_ios
+      sha256: "7f848f5402a3457d257d81ada8585adb0f190193a6fbfd6bc8f78762fa4e4e7d"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.4.0+1"
   analyzer:
     dependency: transitive
     description:

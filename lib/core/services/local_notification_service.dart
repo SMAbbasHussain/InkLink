@@ -6,10 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../domain/services/invitation/invitation_service.dart';
+import '../../domain/models/chat/chat_conversation_model.dart';
 import '../../features/friends/view/friend_requests_screen.dart';
 import '../../features/board_invitations/bloc/board_invitations_bloc.dart';
 import '../../features/board_invitations/view/board_invites_screen.dart';
 import '../../features/workspaces/view/workspace_invites_screen.dart';
+import '../../features/chat/view/chat_thread_route.dart';
 
 class LocalNotificationService {
   static bool _initialized = false;
@@ -70,6 +72,21 @@ class LocalNotificationService {
       navigator.push(
         MaterialPageRoute(builder: (_) => const WorkspaceInvitesScreen()),
       );
+      return;
+    }
+
+    if (type == 'chat_message') {
+      final conversationId = receivedAction.payload?['targetId'] ?? '';
+      final senderName = receivedAction.payload?['senderName'] ?? 'Chat';
+      final isGroup = receivedAction.payload?['isGroup'] == 'true';
+      final conv = ChatConversationModel(
+        id: conversationId,
+        name: senderName,
+        isGroup: isGroup,
+      );
+      navigator.push(
+        buildChatThreadRoute(context, conversation: conv),
+      );
     }
   }
 
@@ -108,6 +125,28 @@ class LocalNotificationService {
         payload: message.data.map(
           (key, value) => MapEntry(key, value.toString()),
         ),
+      ),
+      actionButtons: [NotificationActionButton(key: 'OPEN', label: 'Open')],
+    );
+  }
+
+  static Future<void> showNotification({
+    required String title,
+    required String body,
+    Map<String, String>? payload,
+    String? largeIcon,
+  }) async {
+    if (!_initialized || kIsWeb) return;
+
+    await AwesomeNotifications().createNotification(
+      content: NotificationContent(
+        id: DateTime.now().millisecondsSinceEpoch % 100000,
+        channelKey: 'inklink_notifications',
+        title: title,
+        body: body,
+        largeIcon: largeIcon,
+        notificationLayout: NotificationLayout.Messaging,
+        payload: payload,
       ),
       actionButtons: [NotificationActionButton(key: 'OPEN', label: 'Open')],
     );

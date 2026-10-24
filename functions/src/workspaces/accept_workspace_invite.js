@@ -104,6 +104,7 @@ module.exports = async (request) => {
         transaction.set(
           workspaceRef,
           {
+            members: admin.firestore.FieldValue.arrayUnion(uid),
             memberCount: admin.firestore.FieldValue.increment(1),
             [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
           },

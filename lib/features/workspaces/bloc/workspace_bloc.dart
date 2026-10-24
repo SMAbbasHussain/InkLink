@@ -125,6 +125,12 @@ class RemoveWorkspaceMemberRequested extends WorkspaceEvent {
 
 class LoadIncomingInvitesRequested extends WorkspaceEvent {}
 
+class JoinWorkspaceRequested extends WorkspaceEvent {
+  final String workspaceId;
+
+  JoinWorkspaceRequested(this.workspaceId);
+}
+
 class AcceptWorkspaceInviteRequested extends WorkspaceEvent {
   final String inviteId;
 
@@ -270,6 +276,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     on<LeaveWorkspaceRequested>(_onLeaveWorkspaceRequested);
     on<RemoveWorkspaceMemberRequested>(_onRemoveWorkspaceMemberRequested);
     on<LoadIncomingInvitesRequested>(_onLoadIncomingInvitesRequested);
+    on<JoinWorkspaceRequested>(_onJoinWorkspaceRequested);
     on<AcceptWorkspaceInviteRequested>(_onAcceptWorkspaceInviteRequested);
     on<RejectWorkspaceInviteRequested>(_onRejectWorkspaceInviteRequested);
     on<AddBoardToWorkspaceRequested>(_onAddBoardToWorkspaceRequested);
@@ -683,6 +690,43 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     Emitter<WorkspaceState> emit,
   ) async {
     // Invites are driven by stream subscriptions started in _onLoadWorkspacesRequested.
+  }
+
+  Future<void> _onJoinWorkspaceRequested(
+    JoinWorkspaceRequested event,
+    Emitter<WorkspaceState> emit,
+  ) async {
+    final service = _workspaceService;
+    if (service == null) return;
+
+    try {
+      await service.joinWorkspace(event.workspaceId);
+      add(LoadWorkspacesRequested());
+      final current = state;
+      if (current is WorkspaceLoaded) {
+        emit(
+          current.copyWith(
+            actionInfo: 'Joined workspace successfully!',
+            actionError: null,
+          ),
+        );
+      }
+    } catch (e, st) {
+      developer.log(
+        'Failed to join workspace ${event.workspaceId}: $e',
+        name: 'WorkspaceBloc',
+        error: e,
+        stackTrace: st,
+      );
+      final current = state;
+      if (current is WorkspaceLoaded) {
+        emit(
+          current.copyWith(
+            actionError: 'Failed to join workspace: $e',
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _onAcceptWorkspaceInviteRequested(

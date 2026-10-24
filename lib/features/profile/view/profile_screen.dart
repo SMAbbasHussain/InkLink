@@ -15,10 +15,12 @@ import '../../../ui/widgets/ink_dialog.dart';
 import '../../../ui/widgets/ink_initials.dart';
 import '../../../ui/widgets/ink_text_field.dart';
 import '../../../ui/widgets/paper_card.dart';
-import '../../../ui/widgets/status_chip.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../../friends/view/blocked_users_screen.dart';
 import '../../friends/view/friend_requests_screen.dart';
+import 'widgets/friends_collapsible_card.dart';
+import '../../../domain/models/chat/chat_conversation_model.dart';
+import '../../chat/view/chat_thread_route.dart';
 
 class ProfileScreen extends StatelessWidget {
   final String userId;
@@ -180,8 +182,12 @@ class ProfileScreen extends StatelessWidget {
                     const SizedBox(height: InkSpacing.s12),
                     if (isPrivateToViewer)
                       _buildPrivateProfileBanner(context)
-                    else
+                    else ...[
                       _buildBioSection(context, user),
+                      const SizedBox(height: InkSpacing.s12),
+                      if (state.isSelf)
+                        FriendsCollapsibleCard(isSelf: true, isDark: tokens.isDark),
+                    ],
                     const SizedBox(height: InkSpacing.s32),
                     _buildActionButtons(context, state),
                     const SizedBox(height: InkSpacing.s32 + 8),
@@ -517,10 +523,6 @@ class ProfileScreen extends StatelessWidget {
           }
 
           final incomingRequestId = incomingForProfile?['id']?.toString() ?? '';
-          final outgoingRequestId =
-              outgoingForProfile?['requestId']?.toString() ??
-              outgoingForProfile?['id']?.toString() ??
-              '';
 
           final isAccepting =
               incomingRequestId.isNotEmpty &&
@@ -529,10 +531,6 @@ class ProfileScreen extends StatelessWidget {
           final isDeclining =
               incomingRequestId.isNotEmpty &&
               (loaded?.decliningRequestIds.contains(incomingRequestId) ??
-                  false);
-          final isCanceling =
-              outgoingRequestId.isNotEmpty &&
-              (loaded?.cancelingRequestIds.contains(outgoingRequestId) ??
                   false);
           final isSending =
               loaded?.sendingRequestTargetUids.contains(userId) ?? false;
@@ -590,26 +588,11 @@ class ProfileScreen extends StatelessWidget {
           }
 
           if (!effectiveIsFriend && outgoingForProfile != null) {
-            return Row(
-              children: [
-                Expanded(
-                  child: InkButton.secondary(
-                    label: isCanceling ? 'Canceling...' : 'Request pending',
-                    onPressed: isCanceling
-                        ? null
-                        : () {
-                            context.read<FriendsBloc>().add(
-                              CancelFriendRequestRequested(
-                                outgoingRequestId,
-                                userId,
-                              ),
-                            );
-                          },
-                  ),
-                ),
-                const SizedBox(width: InkSpacing.s8 + 2),
-                const StatusChip(status: InkStatus.pending),
-              ],
+            return InkButton.success(
+              label: 'Request Sent',
+              icon: const Icon(LucideIcons.check, color: Colors.white, size: 18),
+              expand: true,
+              onPressed: null,
             );
           }
 
@@ -637,8 +620,15 @@ class ProfileScreen extends StatelessWidget {
                 : Icon(effectiveIsFriend ? LucideIcons.messageCircle : LucideIcons.userPlus),
             onPressed: () {
               if (effectiveIsFriend) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Messaging is coming soon.')),
+                final friendConv = ChatConversationModel(
+                  id: userId,
+                  name: state.userData['displayName']?.toString() ?? 'Friend',
+                  avatarUrl: state.userData['photoURL']?.toString(),
+                  isGroup: false,
+                );
+                Navigator.push(
+                  context,
+                  buildChatThreadRoute(context, conversation: friendConv),
                 );
                 return;
               }
@@ -649,6 +639,21 @@ class ProfileScreen extends StatelessWidget {
 
               context.read<FriendsBloc>().add(
                 SendFriendRequestRequested(userId),
+              );
+
+              final recipientName = state.userData['displayName']?.toString() ?? 'collaborator';
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Row(
+                    children: [
+                      const Icon(LucideIcons.checkCircle2, color: Colors.white, size: 18),
+                      const SizedBox(width: 8),
+                      Text('Friend request sent to $recipientName!'),
+                    ],
+                  ),
+                  backgroundColor: const Color(0xFF16A34A),
+                  behavior: SnackBarBehavior.floating,
+                ),
               );
             },
           );

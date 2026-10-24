@@ -27,6 +27,7 @@ module.exports = async (request) => {
       senderPhotoUrl,
       groupingKey,
       extraData,
+      isPushOnly,
     } = data;
 
     validateUID(recipientUid, 'recipientUid');
@@ -51,6 +52,7 @@ module.exports = async (request) => {
       senderPhotoUrl,
       groupingKey,
       extraData,
+      isPushOnly,
     });
 
     return { success: true, ...result };

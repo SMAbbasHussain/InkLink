@@ -15,6 +15,9 @@ import '../../friends/view/friend_requests_screen.dart';
 import '../../profile/view/profile_route.dart';
 import '../../board_invitations/bloc/board_invitations_bloc.dart';
 import '../../board_invitations/view/board_invites_screen.dart';
+import '../../workspaces/bloc/workspace_bloc.dart';
+import '../../workspaces/view/workspace_detail_route.dart';
+import '../../workspaces/view/workspaces_screen.dart';
 import '../bloc/notifications_bloc.dart';
 
 class NotificationsScreen extends StatelessWidget {
@@ -214,6 +217,33 @@ class NotificationsScreen extends StatelessWidget {
                                 builder: (_) => const FriendRequestsScreen(),
                               ),
                             );
+                            return;
+                          }
+
+                          if (type == 'workspace_invite' ||
+                              type == 'workspace_invite_accepted') {
+                            final workspaceId =
+                                item['extraData']?['workspaceId']?.toString() ??
+                                item['targetId']?.toString() ??
+                                '';
+
+                            final isAcceptedInvite =
+                                status == 'accepted' ||
+                                type == 'workspace_invite_accepted';
+
+                            if (isAcceptedInvite && workspaceId.isNotEmpty) {
+                              Navigator.push(
+                                context,
+                                buildWorkspaceDetailRoute(context, workspaceId),
+                              );
+                              return;
+                            }
+
+                            Navigator.push(
+                              context,
+                              buildWorkspaceInvitesRoute(context),
+                            );
+                            return;
                           }
                         },
                         child: PaperCard(
@@ -401,6 +431,63 @@ class NotificationsScreen extends StatelessWidget {
                                                   requestId,
                                                 ),
                                               );
+                                            },
+                                          ),
+                                        ] else if (isActionablePending &&
+                                            type == 'workspace_invite') ...[
+                                          _actionButton(
+                                            icon: LucideIcons.check,
+                                            color: tokens.success,
+                                            onTap: () {
+                                              final inviteId =
+                                                  item['extraData']?['inviteId']
+                                                      ?.toString() ??
+                                                  item['targetId']?.toString() ??
+                                                  item['id']?.toString() ??
+                                                  '';
+                                              if (inviteId.isEmpty) {
+                                                return;
+                                              }
+                                              context
+                                                  .read<NotificationsBloc>()
+                                                  .markNotificationRead(
+                                                    notificationId,
+                                                  );
+                                              context
+                                                  .read<WorkspaceBloc>()
+                                                  .add(
+                                                    AcceptWorkspaceInviteRequested(
+                                                      inviteId,
+                                                    ),
+                                                  );
+                                            },
+                                          ),
+                                          const SizedBox(width: InkSpacing.s8),
+                                          _actionButton(
+                                            icon: LucideIcons.x,
+                                            color: tokens.danger,
+                                            onTap: () {
+                                              final inviteId =
+                                                  item['extraData']?['inviteId']
+                                                      ?.toString() ??
+                                                  item['targetId']?.toString() ??
+                                                  item['id']?.toString() ??
+                                                  '';
+                                              if (inviteId.isEmpty) {
+                                                return;
+                                              }
+                                              context
+                                                  .read<NotificationsBloc>()
+                                                  .markNotificationRead(
+                                                    notificationId,
+                                                  );
+                                              context
+                                                  .read<WorkspaceBloc>()
+                                                  .add(
+                                                    RejectWorkspaceInviteRequested(
+                                                      inviteId,
+                                                    ),
+                                                  );
                                             },
                                           ),
                                         ],

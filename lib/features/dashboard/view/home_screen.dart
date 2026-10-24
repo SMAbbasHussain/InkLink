@@ -366,7 +366,7 @@ class _HomeScreenState extends State<HomeScreen>
             IconButton(
               tooltip: isDark ? 'Switch to light mode' : 'Switch to dark mode',
               icon: Icon(isDark ? LucideIcons.sun : LucideIcons.moon, color: tokens.ink),
-              onPressed: () => context.read<ThemeBloc>().add(ToggleTheme()),
+              onPressed: () => context.read<ThemeBloc>().add(ToggleTheme(isCurrentlyDark: isDark)),
             ),
             BlocBuilder<NotificationsBloc, NotificationsState>(
               builder: (context, state) {

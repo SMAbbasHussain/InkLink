@@ -92,6 +92,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     112,
                   ),
                   children: [
+
                     _buildProfileHeader(tokens, authUser),
                     const SizedBox(height: InkSpacing.s24),
 
@@ -104,9 +105,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         title: 'Dark Mode',
                         trailing: Switch.adaptive(
                           value: isDark,
-                          onChanged: (_) {
+                          onChanged: (val) {
                             HapticFeedback.lightImpact();
-                            context.read<ThemeBloc>().add(ToggleTheme());
+                            context.read<ThemeBloc>().add(SetThemeMode(val ? ThemeMode.dark : ThemeMode.light));
                           },
                         ),
                       ),

@@ -30,6 +30,12 @@ abstract class FriendsService {
   Future<void> unfriendUser(String targetUid);
   Future<void> blockUser(String targetUid, {String? reason});
   Future<void> reportUser(String targetUid, {String? reason});
+  String? get currentUserId;
+  Future<void> cacheOutgoingFriendRequestLocally({
+    required String targetUid,
+    String? recipientName,
+    String? recipientPic,
+  });
   Future<void> unblockUser(String targetUid);
 }
 
@@ -57,8 +63,12 @@ class FriendsServiceImpl implements FriendsService {
         List<Map<String, dynamic>> incomingRequests,
         List<Map<String, dynamic>> outgoingRequests,
       ) {
+        final currentUid = _authService.getCurrentUserId();
+        final filteredFriends = currentUid == null
+            ? friends
+            : friends.where((f) => f['uid'] != currentUid).toList();
         return FriendsInfoSnapshot(
-          friends: friends,
+          friends: filteredFriends,
           incomingRequests: incomingRequests,
           outgoingRequests: outgoingRequests,
         );
@@ -72,12 +82,17 @@ class FriendsServiceImpl implements FriendsService {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> searchUsersByEmail(String email) {
+  Future<List<Map<String, dynamic>>> searchUsersByEmail(String email) async {
     final normalizedEmail = email.trim().toLowerCase();
     if (normalizedEmail.isEmpty) {
-      return Future.value(<Map<String, dynamic>>[]);
+      return <Map<String, dynamic>>[];
     }
-    return _friendsRepository.searchUsersByEmail(normalizedEmail);
+    final results = await _friendsRepository.searchUsersByEmail(normalizedEmail);
+    final currentUid = _authService.getCurrentUserId();
+    if (currentUid != null) {
+      return results.where((u) => u['uid'] != currentUid).toList();
+    }
+    return results;
   }
 
   @override
@@ -91,6 +106,21 @@ class FriendsServiceImpl implements FriendsService {
   }
 
   @override
+  String? get currentUserId => _authService.getCurrentUserId();
+
+  @override
+  Future<void> cacheOutgoingFriendRequestLocally({
+    required String targetUid,
+    String? recipientName,
+    String? recipientPic,
+  }) =>
+      _friendsRepository.cacheOutgoingFriendRequestLocally(
+        targetUid: targetUid,
+        recipientName: recipientName,
+        recipientPic: recipientPic,
+      );
+
+  @override
   Future<void> sendFriendRequest(String targetUid) async {
     final normalizedTargetUid = targetUid.trim();
     if (normalizedTargetUid.isEmpty) return;
@@ -99,6 +129,11 @@ class FriendsServiceImpl implements FriendsService {
     if (currentUid != null && currentUid == normalizedTargetUid) {
       return;
     }
+
+    // Cache the outgoing request locally in Isar immediately
+    await _friendsRepository.cacheOutgoingFriendRequestLocally(
+      targetUid: normalizedTargetUid,
+    );
 
     await _ensureOnlineForActions();
 

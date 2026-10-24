@@ -9,6 +9,8 @@ import 'collections/local_invitation.dart';
 import 'collections/local_notification.dart';
 import 'collections/local_profile.dart';
 import 'collections/local_workspace.dart';
+import 'collections/local_chat_conversation.dart';
+import 'collections/local_chat_message.dart';
 
 class LocalDatabaseService {
   late Future<Isar> db;
@@ -32,6 +34,8 @@ class LocalDatabaseService {
           LocalNotificationSchema,
           LocalWorkspaceSchema,
           LocalWorkspaceInviteSchema,
+          LocalChatConversationSchema,
+          LocalChatMessageSchema,
         ],
         directory: dir.path,
         inspector: true,
@@ -42,7 +46,7 @@ class LocalDatabaseService {
 
   Future<Isar> get database async => await db;
 
-  Future<void> clearLocalCache() async {
+  Future<void> clearLocalCache({bool clearChats = false}) async {
     final isar = await database;
     await isar.writeTxn(() async {
       await isar.localBoards.clear();
@@ -55,6 +59,10 @@ class LocalDatabaseService {
       await isar.localNotifications.clear();
       await isar.localWorkspaces.clear();
       await isar.localWorkspaceInvites.clear();
+      if (clearChats) {
+        await isar.localChatConversations.clear();
+        await isar.localChatMessages.clear();
+      }
     });
   }
 }

@@ -34,6 +34,7 @@ abstract class WorkspaceService {
     required String workspaceId,
     required String memberUid,
   });
+  Future<void> joinWorkspace(String workspaceId);
   Stream<List<WorkspaceInvite>> getIncomingWorkspaceInvites();
   Future<void> acceptWorkspaceInvite(String inviteId);
   Future<void> rejectWorkspaceInvite(String inviteId);
@@ -158,6 +159,13 @@ class WorkspaceServiceImpl implements WorkspaceService {
     workspaceId: workspaceId,
     memberUid: memberUid,
   );
+
+  @override
+  Future<void> joinWorkspace(String workspaceId) async {
+    await _cloudFunctionsService.httpsCallable('joinWorkspace').call({
+      'workspaceId': workspaceId,
+    });
+  }
 
   @override
   Stream<List<WorkspaceInvite>> getIncomingWorkspaceInvites() =>

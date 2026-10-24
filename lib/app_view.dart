@@ -14,8 +14,8 @@ import 'features/notifications/bloc/notifications_bloc.dart';
 import 'features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'features/friends/bloc/friends_bloc.dart';
 import 'core/services/data_prefetch_service.dart';
-
 import 'domain/services/auth/auth_session_service.dart';
+import 'domain/services/chat/chat_service.dart';
 
 class AppView extends StatefulWidget {
   const AppView({super.key});
@@ -51,6 +51,7 @@ class _AppViewState extends State<AppView> {
     final dashboardBloc = context.read<DashboardBloc>();
     final notificationsBloc = context.read<NotificationsBloc>();
     final boardInvitationsBloc = context.read<BoardInvitationsBloc>();
+    final chatService = context.read<ChatService>();
 
     await Future.wait([
       friendsBloc.stopForLogout(),
@@ -58,6 +59,7 @@ class _AppViewState extends State<AppView> {
       dashboardBloc.stopForLogout(),
       notificationsBloc.stopForLogout(),
       boardInvitationsBloc.stopForLogout(),
+      chatService.logout(),
     ]);
   }
 
@@ -95,6 +97,7 @@ class _AppViewState extends State<AppView> {
             const BoardInvitationsLoadRequested(),
           );
           context.read<FriendsBloc>().add(LoadFriendsInfo());
+          context.read<ChatService>().login(state.uid);
         } else if (state is Unauthenticated) {
           // Extra safety in case logout happened outside standard authSessionService.signOut
           Navigator.of(context, rootNavigator: true)

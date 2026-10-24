@@ -87,6 +87,28 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           .where((uid) => uid.isNotEmpty)
           .toSet();
 
+      final current = state;
+      if (current is EmailSearchResultsLoaded) {
+        final friendUids = event.friends
+            .map((f) => f['uid']?.toString() ?? '')
+            .where((uid) => uid.isNotEmpty)
+            .toSet();
+        emit(
+          EmailSearchResultsLoaded(
+            result: current.result,
+            friendUids: friendUids,
+            pendingOutgoingUids: _pendingOutgoingTargetUids,
+            sendingRequestTargetUids: _sendingRequestTargetUids,
+            isOffline: _isOffline,
+          ),
+        );
+        return;
+      }
+
+      if (current is EmailSearchInProgress || current is EmailSearchEmpty) {
+        return;
+      }
+
       final blockedUsers = state is FriendsLoaded
           ? (state as FriendsLoaded).blockedUsers
           : const <Map<String, dynamic>>[];
@@ -311,10 +333,27 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
       }
       _sendingRequestTargetUids = Set<String>.from(_sendingRequestTargetUids)
         ..add(event.targetUid);
+      _pendingOutgoingTargetUids = Set<String>.from(_pendingOutgoingTargetUids)
+        ..add(event.targetUid);
+
       final before = state;
       if (before is FriendsLoaded) {
+        final updatedOutgoing = List<Map<String, dynamic>>.from(before.outgoingRequests);
+        if (!updatedOutgoing.any((r) => r['toUid'] == event.targetUid)) {
+          updatedOutgoing.add({
+            'requestId': '${friendsService.currentUserId ?? ''}_${event.targetUid}',
+            'id': '${friendsService.currentUserId ?? ''}_${event.targetUid}',
+            'fromUid': friendsService.currentUserId ?? '',
+            'toUid': event.targetUid,
+            'status': 'pending',
+            'timestamp': DateTime.now().toIso8601String(),
+          });
+        }
         emit(
-          before.copyWith(sendingRequestTargetUids: _sendingRequestTargetUids),
+          before.copyWith(
+            outgoingRequests: updatedOutgoing,
+            sendingRequestTargetUids: _sendingRequestTargetUids,
+          ),
         );
       }
       if (before is EmailSearchResultsLoaded) {
@@ -322,7 +361,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           EmailSearchResultsLoaded(
             result: before.result,
             friendUids: before.friendUids,
-            pendingOutgoingUids: before.pendingOutgoingUids,
+            pendingOutgoingUids: _pendingOutgoingTargetUids,
             sendingRequestTargetUids: _sendingRequestTargetUids,
             isOffline: before.isOffline,
           ),
@@ -344,8 +383,20 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           ..remove(event.targetUid);
         final current = state;
         if (current is FriendsLoaded) {
+          final updatedOutgoing = List<Map<String, dynamic>>.from(current.outgoingRequests);
+          if (!updatedOutgoing.any((r) => r['toUid'] == event.targetUid)) {
+            updatedOutgoing.add({
+              'requestId': '${friendsService.currentUserId ?? ''}_${event.targetUid}',
+              'id': '${friendsService.currentUserId ?? ''}_${event.targetUid}',
+              'fromUid': friendsService.currentUserId ?? '',
+              'toUid': event.targetUid,
+              'status': 'pending',
+              'timestamp': DateTime.now().toIso8601String(),
+            });
+          }
           emit(
             current.copyWith(
+              outgoingRequests: updatedOutgoing,
               sendingRequestTargetUids: _sendingRequestTargetUids,
             ),
           );
@@ -355,7 +406,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
             EmailSearchResultsLoaded(
               result: current.result,
               friendUids: current.friendUids,
-              pendingOutgoingUids: current.pendingOutgoingUids,
+              pendingOutgoingUids: _pendingOutgoingTargetUids,
               sendingRequestTargetUids: _sendingRequestTargetUids,
               isOffline: current.isOffline,
             ),

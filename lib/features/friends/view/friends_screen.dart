@@ -1,20 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:inklink/features/auth/bloc/auth_bloc.dart';
+import 'package:inklink/features/auth/bloc/auth_state.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:inklink/features/friends/view/widgets/friend_request_banner.dart';
 import 'package:inklink/features/friends/view/widgets/friend_presence_avatar.dart';
+import 'package:inklink/features/friends/view/widgets/add_friend_sheet.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
 import '../../../ui/widgets/desk_background.dart';
 import '../../../ui/widgets/empty_state.dart';
 import '../../../ui/widgets/glass_panel.dart';
-import '../../../ui/widgets/ink_avatar.dart';
-import '../../../ui/widgets/ink_button.dart';
-import '../../../ui/widgets/ink_initials.dart';
 import '../../../ui/widgets/ink_text_field.dart';
 import '../../../ui/widgets/paper_card.dart';
-import '../../../ui/widgets/status_chip.dart';
 import '../bloc/friends_bloc.dart';
 import '../../profile/view/profile_route.dart';
 
@@ -27,7 +26,6 @@ class FriendsScreen extends StatefulWidget {
 
 class _FriendsScreenState extends State<FriendsScreen> {
   final TextEditingController _searchController = TextEditingController();
-  final TextEditingController _globalSearchController = TextEditingController();
 
   @override
   void initState() {
@@ -40,7 +38,6 @@ class _FriendsScreenState extends State<FriendsScreen> {
   void dispose() {
     // FIX: Properly cleaning up listeners
     _searchController.dispose();
-    _globalSearchController.dispose();
     super.dispose();
   }
 
@@ -176,7 +173,11 @@ class _FriendsScreenState extends State<FriendsScreen> {
     }
 
     if (state is FriendsLoaded) {
+      final myUid = context.select<AuthBloc, String?>(
+        (b) => b.state is Authenticated ? (b.state as Authenticated).uid : null,
+      );
       final filteredList = state.friends.where((f) {
+        if (myUid != null && f['uid'] == myUid) return false;
         final name = f['displayName']?.toString().toLowerCase() ?? "";
         return name.contains(_searchController.text.toLowerCase());
       }).toList();
@@ -261,202 +262,6 @@ class _FriendsScreenState extends State<FriendsScreen> {
   }
 
   void _showAddFriendDialog(BuildContext context) {
-    final tokens = context.ink;
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(
-          InkSpacing.s16,
-          InkSpacing.s8,
-          InkSpacing.s16,
-          InkSpacing.s24,
-        ),
-        child: SizedBox(
-          height: MediaQuery.of(context).size.height * 0.75,
-          child: GlassPanel(
-            radius: InkRadii.bottomSheet,
-            padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s24, vertical: InkSpacing.s20),
-            child: Column(
-              children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: InkSpacing.s20),
-                  decoration: BoxDecoration(
-                    color: tokens.inkMuted.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                Text("Add Collaborator", style: InkType.headline(tokens.ink).copyWith(fontSize: 22)),
-                const SizedBox(height: InkSpacing.s8),
-                Text(
-                  "Search for your teammates by their exact email",
-                  textAlign: TextAlign.center,
-                  style: InkType.body(tokens.inkMuted),
-                ),
-                const SizedBox(height: InkSpacing.s24),
-                InkTextField(
-                  controller: _globalSearchController,
-                  keyboardType: TextInputType.emailAddress,
-                  textInputAction: TextInputAction.search,
-                  hintText: "example@email.com",
-                  leadingIcon: LucideIcons.mail,
-                  suffixIcon: IconButton(
-                    tooltip: 'Search',
-                    icon: Icon(LucideIcons.search, color: tokens.inkMuted),
-                    onPressed: () {
-                      if (_globalSearchController.text.isNotEmpty) {
-                        context.read<FriendsBloc>().add(
-                          SearchUserByEmailRequested(
-                            _globalSearchController.text.trim(),
-                          ),
-                        );
-                      }
-                    },
-                  ),
-                  onSubmitted: (val) {
-                    if (val.isNotEmpty) {
-                      context.read<FriendsBloc>().add(
-                        SearchUserByEmailRequested(val.trim()),
-                      );
-                    }
-                  },
-                ),
-                const SizedBox(height: InkSpacing.s32 - 2),
-                Expanded(
-                  child: BlocBuilder<FriendsBloc, FriendsState>(
-                    builder: (context, state) {
-                      if (state is EmailSearchInProgress) {
-                        return Center(child: CircularProgressIndicator(color: tokens.accent));
-                      }
-
-                      if (state is EmailSearchEmpty) {
-                        return Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(LucideIcons.search, size: 60, color: tokens.inkMuted),
-                            const SizedBox(height: InkSpacing.s16),
-                            Text(
-                              "No user found with this email.",
-                              style: InkType.body(tokens.inkMuted),
-                            ),
-                          ],
-                        );
-                      }
-
-                      if (state is EmailSearchResultsLoaded) {
-                        if (state.isOffline) {
-                          return Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(LucideIcons.wifiOff, size: 52, color: tokens.inkMuted),
-                              const SizedBox(height: InkSpacing.s12),
-                              Text('Offline mode', style: InkType.bodyStrong(tokens.ink)),
-                              const SizedBox(height: InkSpacing.s4),
-                              Text(
-                                'Search requires internet. Cached friends and requests are still available.',
-                                textAlign: TextAlign.center,
-                                style: InkType.caption(tokens.inkMuted),
-                              ),
-                              const SizedBox(height: InkSpacing.s24),
-                            ],
-                          );
-                        }
-
-                        final user = state.result;
-                        final String name = user['displayName'] ?? "Creator";
-                        final String? photoUrl = user['photoURL'];
-                        final isAlreadyFriend = state.friendUids.contains(user['uid']);
-                        final isPending = state.pendingOutgoingUids.contains(user['uid']);
-                        final isSending = state.sendingRequestTargetUids.contains(user['uid']);
-
-                        return PaperCard(
-                          padding: const EdgeInsets.all(InkSpacing.s16),
-                          child: InkWell(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                buildProfileRoute(context, userId: user['uid']),
-                              );
-                            },
-                            child: Row(
-                              children: [
-                                InkAvatar(
-                                  imageUrl: photoUrl,
-                                  initials: inkInitialsFor(name),
-                                  id: user['uid']?.toString() ?? '',
-                                  size: 55,
-                                ),
-                                const SizedBox(width: InkSpacing.s16),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(name, style: InkType.bodyStrong(tokens.ink)),
-                                      Text(
-                                        user['email'] ?? "",
-                                        style: InkType.caption(tokens.inkMuted),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                isPending
-                                    ? const StatusChip(status: InkStatus.pending)
-                                    : InkButton.primary(
-                                        label: isSending
-                                            ? ''
-                                            : (isAlreadyFriend ? "Message" : "Add"),
-                                        compact: true,
-                                        expand: false,
-                                        icon: isSending
-                                            ? const SizedBox(
-                                                width: 16,
-                                                height: 16,
-                                                child: CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                  color: Colors.white,
-                                                ),
-                                              )
-                                            : null,
-                                        onPressed: (isAlreadyFriend || isSending)
-                                            ? null
-                                            : () {
-                                                context.read<FriendsBloc>().add(
-                                                  SendFriendRequestRequested(user['uid']),
-                                                );
-                                              },
-                                      ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }
-
-                      if (state is SearchResultsLoaded) {
-                        return const SizedBox.shrink();
-                      }
-
-                      return Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(LucideIcons.userPlus, size: 80, color: tokens.inkMuted.withValues(alpha: 0.4)),
-                          const SizedBox(height: InkSpacing.s16),
-                          Text(
-                            "Ready to build together?",
-                            style: InkType.bodyStrong(tokens.inkMuted),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
+    AddFriendSheet.show(context);
   }
 }

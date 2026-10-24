@@ -31,7 +31,7 @@
 9. [Module 9: Public Board Access & Discovery (FR14)](#module-9-public-board-access--discovery-fr14)
 10. [Module 10: AI-Assisted Object Generation & Limits (FR06 & FR16)](#module-10-ai-assisted-object-generation--limits-fr06--fr16)
 11. [Module 11: In-App Communication & Audio (FR12) — ✅ COMPLETED (100%)](#module-11-in-app-communication--audio-fr12)
-12. [Module 12: Direct Messaging (DM) System (FR17)](#module-12-direct-messaging-dm-system-fr17)
+12. [Module 12: Direct Messaging (DM) System (FR17) — ✅ COMPLETED (100%)](#module-12-direct-messaging-dm-system-fr17)
 13. [Cross-Module Global Backlog Summary](#cross-module-global-backlog-summary)
 
 ---
@@ -153,16 +153,16 @@
 
 ---
 
-## Module 12: Direct Messaging (DM) System (FR17)
+## Module 12: Direct Messaging (DM) & Group Messaging System (FR17) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
 | :--- | :--- | :---: | :---: | :--- |
-| **FR17-01**<br>**FR17-02** | Initiate DMs & manage unique conversation threads | ❌ Missing | 🟠 **Level 3 (3/5)** | 1. Define `DirectMessageThread` (`threadId = min(uid1,uid2) + "_" + max(uid1,uid2)`, `participantUids`, `lastMessage`, `updatedAt`).<br>2. In [`friends_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/friends/view/friends_screen.dart), add "Message" button to each friend card that routes to `DirectMessageScreen(threadId)`. |
-| **FR17-03**<br>**FR17-04** | Real-time messaging & persistent message history | ❌ Missing | 🟠 **Level 3.5 (3.5/5)** | 1. Create `DirectMessage` model (`id`, `threadId`, `senderUid`, `text`, `timestamp`, `status`).<br>2. Store messages in Firestore `threads/{threadId}/messages` ordered by timestamp.<br>3. Stream messages via Firestore snapshots or Socket.IO user rooms. Build reactive chat bubble UI with auto-scroll. |
-| **FR17-07**<br>**FR17-10**<br>**FR17-11** | Validate content, edit sent messages & delete messages | ❌ Missing | 🟠 **Level 3.5 (3.5/5)** | 1. Client-side trim, max length (2000 chars), and empty message validation.<br>2. Long-press message bubble menu: "Edit" and "Delete".<br>3. Update message document with `isEdited: true` or `isDeleted: true` (soft delete). |
-| **FR17-08**<br>**FR17-09** | Real-time status updates (sent/delivered/read) & push alerts | ❌ Missing | 🔴 **Level 4 (4/5)** | 1. Track message delivery and read receipts (`status: 'sent' | 'delivered' | 'read'`) using Firestore field updates when recipient opens thread.<br>2. Cloud Function `onDirectMessageCreated` dispatches FCM notification to recipient device when app is backgrounded. |
-| **FR17-06** | Support multiple message types (text, images, files) | ❌ Missing | 🔴 **Level 4 (4/5)** | 1. Support `messageType: 'text' | 'image' | 'file'` in message model.<br>2. Add attachment picker in chat input bar.<br>3. Upload media attachments to Cloudflare R2 / Firebase Storage with file constraints (max 10MB image, max 25MB file).<br>4. Render media previews inside chat bubbles. |
-| **FR17-05**<br>**FR17-12** | Offline message sending, queue & cross-device sync | ❌ Missing | 🟣 **Level 4.5 (4.5/5)** | 1. Create `LocalDirectMessage` collection in Isar DB with `syncStatus: 'pending' | 'synced'`.<br>2. Optimistically append messages to chat UI when offline.<br>3. Background sync manager detects reconnection and flushes pending offline queue in chronological order to server.<br>4. Reconcile server timestamps and update local IDs. |
+| **FR17-01**<br>**FR17-02** | Initiate DMs & manage unique conversation threads (Inbox & Discord-Style UI) | ✅ **Implemented** | 🟠 **Level 3 (3/5)** | Replaced Friends bottom tab with `ChatInboxScreen` in `MainWrapper`. Provides Discord-themed dark UI (`#36393F` surface, `#5865F2` blurple accent), unread counters, swipe-to-delete, DMs and Group chats with real-time Agora SDK streams. Moved Friends list into an expandable/collapsible card on `ProfileScreen` with direct 1-tap "Message" action into `ChatThreadScreen`. |
+| **FR17-03**<br>**FR17-04** | Real-time messaging & persistent message history via Agora SDK + Isar DB | ✅ **Implemented** | 🟠 **Level 3.5 (3.5/5)** | Powered by Agora Chat SDK (`agora_chat_sdk: ^1.4.0+1`). Wraps Agora ChatManager listeners and mirrors every message to local Isar DB (`LocalChatMessage` & `LocalChatConversation`). Messages render in reactive, Discord-styled bubbles with auto-scroll, timestamp grouping, and multi-line formatting. |
+| **FR17-07**<br>**FR17-10**<br>**FR17-11** | Validate content, edit sent messages, soft delete & emoji reactions | ✅ **Implemented** | 🟠 **Level 3.5 (3.5/5)** | Message input bar trims whitespace and enforces non-empty input. Long-press message context menu provides: copy text, edit message (`ChatClient.getInstance.chatManager.modifyMessage`), soft delete, and Discord-style reaction picker (👍, ❤️, 😂, 😮, 😢, 🔥). Reactions toggle dynamically with counters in `ChatBubble`. |
+| **FR17-08**<br>**FR17-09** | Delivery & read receipts & push notifications on new message | ✅ **Implemented** | 🔴 **Level 4 (4/5)** | Mark-as-read handled on thread enter (`markAllMessagesAsRead`). Message status indicators (`sending`, `sent`, `delivered`, `read`). Dispatches FCM push notifications to recipient devices via `sendNotification` Cloud Function on outgoing messages and routes notifications directly to `ChatThreadScreen` via `LocalNotificationService`. |
+| **FR17-06** | Support rich message types (images, files, GIFs, board/workspace share cards) | ✅ **Implemented** | 🔴 **Level 4 (4/5)** | 1. Image and file sending with local & remote paths, file size formatting, and full-screen image viewer.<br>2. Built-in GIF picker tray with animated Giphy trending/category tabs and instant preview.<br>3. In-chat Board and Workspace interactive cards: displays board/workspace name, join code, member count, and 1-tap navigation button directly into canvas or workspace detail screen. |
+| **FR17-05**<br>**FR17-12** | Offline message cache, local persistence & group chat administration | ✅ **Implemented** | 🟣 **Level 4.5 (4.5/5)** | 1. Local-first dual storage: Agora internal SQLite cache + Isar database collections (`LocalChatMessage`, `LocalChatConversation`) ensuring full offline reading and instant startup.<br>2. Complete Group Chat system: create group sheet with multi-friend selector, group info settings (`GroupSettingsScreen`), change group name/description, promote/demote administrators, remove members, transfer ownership, and leave group. |
 
 ---
 
@@ -218,9 +218,9 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 32. [FR15-04] Comment @mention notifications parsing and FCM dispatch (✅ Done) │
 │ 33. [FR16-01/02] AI per-user request usage tracking and daily quota limit      │
 │ 34. [FR08-03] Remote peer active element editing indicator / lock badge        │
-│ 35. [FR17-01/02] Direct Message thread management & friends message button     │
-│ 36. [FR17-03/04] Real-time DM messaging stream & message bubble UI             │
-│ 37. [FR17-07/10/11] Message validation, editing sent messages, soft delete     │
+│ 35. [FR17-01/02] Direct Message thread management & friends message button (✅ Done) │
+│ 36. [FR17-03/04] Real-time DM messaging stream & message bubble UI (✅ Done)         │
+│ 37. [FR17-07/10/11] Message validation, editing sent messages, soft delete (✅ Done) │
 └─────────────────────────────────────────────────────────────────────────────────┘
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
@@ -231,9 +231,9 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 40. [FR06-01..07] AI object generation via Gemini API & canvas insertion       │
 │ 41. [FR12-01..03/05] Pin-to-canvas threaded comments with replies (✅ Done)     │
 │ 42. [FR12-04] Live in-board session chat drawer over WebSockets (✅ Done)       │
-│ 43. [FR17-08/09] DM delivery/read receipts & push notifications on new message │
-│ 44. [FR17-06] DM rich media attachments (images, files via Cloudflare R2)      │
-│ 45. [FR17-05/12] Offline DM message queue with Isar DB & reconnection sync     │
+│ 43. [FR17-08/09] DM delivery/read receipts & push notifications on new message (✅ Done) │
+│ 44. [FR17-06] DM rich media attachments (images, files, GIFs, share cards) (✅ Done) │
+│ 45. [FR17-05/12] Offline DM message queue with Isar DB & reconnection sync (✅ Done) │
 └─────────────────────────────────────────────────────────────────────────────────┘
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐

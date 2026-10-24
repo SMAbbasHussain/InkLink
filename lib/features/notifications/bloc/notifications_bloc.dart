@@ -151,6 +151,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     List<Map<String, dynamic>> notifications,
   ) {
     return notifications
+        .where((item) => item['type'] != 'chat_message')
         .map(
           (item) => {
             ...item,
