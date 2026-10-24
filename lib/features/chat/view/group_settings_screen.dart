@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../../core/database/local_database_service.dart';
-import '../../../../core/services/auth_service.dart';
 import '../../../../domain/models/chat/chat_conversation_model.dart';
-import '../../../../domain/services/chat/chat_service.dart';
+import '../../auth/bloc/auth_bloc.dart';
+import '../../auth/bloc/auth_state.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../../profile/view/profile_route.dart';
 import '../bloc/group_settings_bloc.dart';
@@ -18,16 +17,7 @@ class GroupSettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final currentUid = context.read<AuthService>().getCurrentUserId() ?? '';
-    final localDb = context.read<LocalDatabaseService>();
-    return BlocProvider(
-      create: (context) => GroupSettingsBloc(
-        chatService: context.read<ChatService>(),
-        currentUid: currentUid,
-        localDbService: localDb,
-      )..add(LoadGroupSettings(groupId)),
-      child: const _GroupSettingsView(),
-    );
+    return const _GroupSettingsView();
   }
 }
 
@@ -175,7 +165,10 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
                       final memberId = group.memberIds[index];
                       final isMemberOwner = group.isUserOwner(memberId);
                       final isMemberAdmin = group.isUserAdmin(memberId);
-                      final isSelf = memberId == context.read<AuthService>().getCurrentUserId();
+                      final currentUid = context.select<AuthBloc, String>(
+                        (b) => b.state is Authenticated ? (b.state as Authenticated).uid : '',
+                      );
+                      final isSelf = memberId == currentUid;
                       final profile = state.memberProfiles[memberId];
                       final safeFallback = memberId.length > 5 ? memberId.substring(0, 5) : memberId;
                       final displayName = isSelf

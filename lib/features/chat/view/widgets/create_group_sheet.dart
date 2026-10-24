@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:inklink/features/auth/bloc/auth_bloc.dart';
+import 'package:inklink/features/auth/bloc/auth_state.dart';
 import '../../../../domain/services/chat/chat_service.dart';
 import '../../../friends/bloc/friends_bloc.dart';
 import '../../theme/chat_theme.dart';
@@ -171,7 +172,8 @@ class _CreateGroupSheetState extends State<CreateGroupSheet> {
 
                 List<Map<String, dynamic>> friends = [];
                 if (friendsState is FriendsLoaded) {
-                  final myUid = FirebaseAuth.instance.currentUser?.uid;
+                  final authState = context.read<AuthBloc>().state;
+                  final myUid = authState is Authenticated ? authState.uid : null;
                   friends = myUid == null
                       ? friendsState.friends
                       : friendsState.friends.where((f) => f['uid'] != myUid).toList();

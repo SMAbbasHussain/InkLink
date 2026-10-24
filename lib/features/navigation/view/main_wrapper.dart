@@ -7,6 +7,9 @@ import 'package:inklink/domain/services/profile/profile_service.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../ui/widgets/glass_nav_bar.dart';
 import '../../chat/view/chat_inbox_screen.dart';
+import '../../chat/bloc/chat_inbox_bloc.dart';
+import '../../chat/bloc/chat_inbox_event.dart';
+import '../../../domain/services/chat/chat_service.dart';
 import '../../settings/bloc/settings_bloc.dart';
 import '../../settings/view/settings_screen.dart';
 import '../../dashboard/view/home_screen.dart';
@@ -107,7 +110,12 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final List<Widget> screens = [
       const HomeScreen(),
-      const ChatInboxScreen(),
+      BlocProvider(
+        create: (context) => ChatInboxBloc(
+          chatService: context.read<ChatService>(),
+        )..add(const LoadChatInbox()),
+        child: const ChatInboxScreen(),
+      ),
       const WorkspacesScreen(),
       BlocProvider(
         create: (context) =>

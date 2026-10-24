@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import '../../auth/bloc/auth_bloc.dart';
+import '../../auth/bloc/auth_state.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../domain/models/chat/chat_conversation_model.dart';
-import '../../../../domain/services/chat/chat_service.dart';
+import 'chat_thread_route.dart';
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_tokens.dart';
 import '../../../../ui/theme/ink_type.dart';
@@ -25,12 +26,7 @@ class ChatInboxScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (context) => ChatInboxBloc(
-        chatService: context.read<ChatService>(),
-      )..add(const LoadChatInbox()),
-      child: const _ChatInboxView(),
-    );
+    return const _ChatInboxView();
   }
 }
 
@@ -89,7 +85,9 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
                     builder: (_, friendsState) {
                       List<Map<String, dynamic>> friends = [];
                       if (friendsState is FriendsLoaded) {
-                        final myUid = FirebaseAuth.instance.currentUser?.uid;
+                        final myUid = sheetCtx.select<AuthBloc, String?>(
+                          (b) => b.state is Authenticated ? (b.state as Authenticated).uid : null,
+                        );
                         friends = myUid == null
                             ? friendsState.friends
                             : friendsState.friends.where((f) => f['uid'] != myUid).toList();
@@ -143,9 +141,7 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
                               );
                               await Navigator.push(
                                 this.context,
-                                MaterialPageRoute(
-                                  builder: (_) => ChatThreadScreen(conversation: conv),
-                                ),
+                                buildChatThreadRoute(this.context, conversation: conv),
                               );
                               if (mounted) {
                                 this.context.read<ChatInboxBloc>().add(const LoadChatInbox());

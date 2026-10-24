@@ -13,7 +13,7 @@ import '../../../../ui/widgets/ink_button.dart';
 import '../../../../ui/widgets/ink_initials.dart';
 import '../../../../ui/widgets/ink_text_field.dart';
 import '../../../../ui/widgets/paper_card.dart';
-import '../../../chat/view/chat_thread_screen.dart';
+import '../../../chat/view/chat_thread_route.dart';
 import '../../../profile/view/profile_route.dart';
 import '../../bloc/friends_bloc.dart';
 
@@ -262,9 +262,7 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
                                       );
                                       Navigator.push(
                                         context,
-                                        MaterialPageRoute(
-                                          builder: (_) => ChatThreadScreen(conversation: conv),
-                                        ),
+                                        buildChatThreadRoute(context, conversation: conv),
                                       );
                                     },
                                   )

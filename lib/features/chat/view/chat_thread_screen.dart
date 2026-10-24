@@ -1,18 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../../core/services/auth_service.dart';
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 import '../../../../domain/models/chat/chat_message_model.dart';
-import '../../../../domain/services/chat/chat_service.dart';
 import '../../../../domain/models/chat/chat_share_payload.dart';
-import '../../../../domain/services/workspace/workspace_service.dart';
+import '../../auth/bloc/auth_bloc.dart';
+import '../../auth/bloc/auth_state.dart';
 import '../../profile/view/profile_route.dart';
+import '../../workspaces/bloc/workspace_bloc.dart';
 import '../bloc/chat_thread_bloc.dart';
 import '../bloc/chat_thread_event.dart';
 import '../bloc/chat_thread_state.dart';
 import '../theme/chat_theme.dart';
-import 'group_settings_screen.dart';
+import 'group_settings_route.dart';
 import 'widgets/chat_bubble.dart';
 import 'widgets/chat_input_bar.dart';
 
@@ -23,14 +23,7 @@ class ChatThreadScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final currentUid = context.read<AuthService>().getCurrentUserId() ?? '';
-    return BlocProvider(
-      create: (context) => ChatThreadBloc(
-        chatService: context.read<ChatService>(),
-        currentUid: currentUid,
-      )..add(LoadChatThread(conversation.id)),
-      child: _ChatThreadView(conversation: conversation),
-    );
+    return _ChatThreadView(conversation: conversation);
   }
 }
 
@@ -66,7 +59,9 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
   @override
   Widget build(BuildContext context) {
     final colors = ChatTheme.colorsOf(context);
-    final currentUid = context.read<AuthService>().getCurrentUserId() ?? '';
+    final currentUid = context.select<AuthBloc, String>(
+      (b) => b.state is Authenticated ? (b.state as Authenticated).uid : '',
+    );
     final conv = widget.conversation;
 
     return Scaffold(
@@ -85,9 +80,7 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
             if (conv.isGroup) {
               Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (_) => GroupSettingsScreen(groupId: conv.id),
-                ),
+                buildGroupSettingsRoute(context, groupId: conv.id),
               );
             } else {
               Navigator.push(context, buildProfileRoute(context, userId: conv.id));
@@ -168,9 +161,7 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
               onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => GroupSettingsScreen(groupId: conv.id),
-                  ),
+                  buildGroupSettingsRoute(context, groupId: conv.id),
                 );
               },
             )
@@ -337,12 +328,12 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
             },
             onSendSharePayload: (payload, {replyToId, replyToSender, replyToText}) {
               if (payload.type == ChatShareType.workspace && !conv.isGroup && conv.id.isNotEmpty) {
-                try {
-                  context.read<WorkspaceService>().inviteToWorkspace(
+                context.read<WorkspaceBloc>().add(
+                  InviteToWorkspaceRequested(
                     workspaceId: payload.targetId,
                     invitedUserIds: [conv.id],
-                  );
-                } catch (_) {}
+                  ),
+                );
               }
               context.read<ChatThreadBloc>().add(
                 SendShareCardRequested(

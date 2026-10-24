@@ -20,7 +20,7 @@ import '../../friends/view/blocked_users_screen.dart';
 import '../../friends/view/friend_requests_screen.dart';
 import 'widgets/friends_collapsible_card.dart';
 import '../../../domain/models/chat/chat_conversation_model.dart';
-import '../../chat/view/chat_thread_screen.dart';
+import '../../chat/view/chat_thread_route.dart';
 
 class ProfileScreen extends StatelessWidget {
   final String userId;
@@ -628,9 +628,7 @@ class ProfileScreen extends StatelessWidget {
                 );
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => ChatThreadScreen(conversation: friendConv),
-                  ),
+                  buildChatThreadRoute(context, conversation: friendConv),
                 );
                 return;
               }

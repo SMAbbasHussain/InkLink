@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:inklink/domain/services/chat/chat_service.dart';
 import 'package:inklink/features/chat/view/chat_inbox_screen.dart';
+import 'package:inklink/features/chat/bloc/chat_inbox_bloc.dart';
+import 'package:inklink/features/chat/bloc/chat_inbox_event.dart';
 import 'package:inklink/ui/theme/ink_theme.dart';
 import 'package:inklink/ui/widgets/empty_state.dart';
 
@@ -21,9 +22,12 @@ void main() {
         providers: [
           RepositoryProvider<ChatService>.value(value: mockService),
         ],
-        child: MaterialApp(
-          theme: InkTheme.light(),
-          home: const ChatInboxScreen(),
+        child: BlocProvider(
+          create: (_) => ChatInboxBloc(chatService: mockService)..add(const LoadChatInbox()),
+          child: MaterialApp(
+            theme: InkTheme.light(),
+            home: const ChatInboxScreen(),
+          ),
         ),
       ),
     );
@@ -59,9 +63,12 @@ void main() {
         providers: [
           RepositoryProvider<ChatService>.value(value: mockService),
         ],
-        child: MaterialApp(
-          theme: InkTheme.light(),
-          home: const ChatInboxScreen(),
+        child: BlocProvider(
+          create: (_) => ChatInboxBloc(chatService: mockService)..add(const LoadChatInbox()),
+          child: MaterialApp(
+            theme: InkTheme.light(),
+            home: const ChatInboxScreen(),
+          ),
         ),
       ),
     );

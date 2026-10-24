@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:inklink/features/auth/bloc/auth_bloc.dart';
+import 'package:inklink/features/auth/bloc/auth_state.dart';
+import '../../../chat/view/chat_thread_route.dart';
 
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 import '../../../../ui/theme/ink_colors.dart';
 import '../../../chat/theme/chat_theme.dart';
-import '../../../chat/view/chat_thread_screen.dart';
 import '../../../friends/bloc/friends_bloc.dart';
 import '../../../friends/view/friends_screen.dart';
 import '../../../friends/view/friend_requests_screen.dart';
@@ -44,7 +45,8 @@ class _FriendsCollapsibleCardState extends State<FriendsCollapsibleCard> {
         int pendingRequestsCount = 0;
 
         if (state is FriendsLoaded) {
-          final myUid = FirebaseAuth.instance.currentUser?.uid;
+          final authState = context.read<AuthBloc>().state;
+          final myUid = authState is Authenticated ? authState.uid : null;
           friends = myUid == null
               ? state.friends
               : state.friends.where((f) => f['uid'] != myUid).toList();
@@ -325,9 +327,7 @@ class _FriendsCollapsibleCardState extends State<FriendsCollapsibleCard> {
                                         );
                                         Navigator.push(
                                           context,
-                                          MaterialPageRoute(
-                                            builder: (_) => ChatThreadScreen(conversation: conv),
-                                          ),
+                                          buildChatThreadRoute(context, conversation: conv),
                                         );
                                       },
                                     ),

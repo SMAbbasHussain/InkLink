@@ -11,7 +11,7 @@ import '../../features/friends/view/friend_requests_screen.dart';
 import '../../features/board_invitations/bloc/board_invitations_bloc.dart';
 import '../../features/board_invitations/view/board_invites_screen.dart';
 import '../../features/workspaces/view/workspace_invites_screen.dart';
-import '../../features/chat/view/chat_thread_screen.dart';
+import '../../features/chat/view/chat_thread_route.dart';
 
 class LocalNotificationService {
   static bool _initialized = false;
@@ -85,9 +85,7 @@ class LocalNotificationService {
         isGroup: isGroup,
       );
       navigator.push(
-        MaterialPageRoute(
-          builder: (_) => ChatThreadScreen(conversation: conv),
-        ),
+        buildChatThreadRoute(context, conversation: conv),
       );
     }
   }
