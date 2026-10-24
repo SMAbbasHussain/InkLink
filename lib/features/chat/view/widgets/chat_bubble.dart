@@ -7,6 +7,9 @@ import '../../../../domain/models/chat/chat_message_model.dart';
 import '../../../../domain/services/board/board_service.dart';
 import '../../../canvas/view/canvas_route.dart';
 import '../../../workspaces/view/workspace_detail_screen.dart';
+import '../../../workspaces/bloc/workspace_bloc.dart';
+import '../../../../domain/models/chat/chat_share_payload.dart';
+import '../../../../domain/services/workspace/workspace_service.dart';
 import '../../theme/chat_theme.dart';
 import 'message_reactions_sheet.dart';
 
@@ -727,119 +730,10 @@ class ChatBubble extends StatelessWidget {
     if (payload == null) {
       return Text('Shared Workspace', style: TextStyle(color: isMe ? Colors.white : colors.textPrimary));
     }
-
-    return Container(
-      width: 240,
-      padding: const EdgeInsets.all(10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: Colors.teal.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(Icons.workspaces_rounded, color: Colors.teal, size: 16),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  payload.title,
-                  style: TextStyle(
-                    color: isMe ? Colors.white : colors.textPrimary,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          if (payload.joinCode.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            InkWell(
-              borderRadius: BorderRadius.circular(6),
-              onTap: () {
-                HapticFeedback.selectionClick();
-                Clipboard.setData(ClipboardData(text: payload.joinCode));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Workspace join code ${payload.joinCode} copied!'),
-                    duration: const Duration(seconds: 2),
-                  ),
-                );
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Code: ${payload.joinCode}',
-                      style: TextStyle(
-                        color: isMe ? Colors.white70 : colors.textSecondary,
-                        fontSize: 11,
-                        fontFamily: 'monospace',
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.copy_rounded,
-                      size: 11,
-                      color: isMe ? Colors.white70 : colors.textSecondary,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-          if (payload.memberCount > 0) ...[
-            const SizedBox(height: 4),
-            Text(
-              '${payload.memberCount} members',
-              style: TextStyle(color: isMe ? Colors.white70 : colors.textSecondary, fontSize: 11),
-            ),
-          ],
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            height: 32,
-            child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: isMe ? Colors.white : colors.accent,
-                foregroundColor: isMe ? colors.accent : Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                elevation: 0,
-                padding: EdgeInsets.zero,
-              ),
-              icon: const Icon(Icons.workspaces_rounded, size: 14),
-              label: const Text('Open Workspace', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-              onPressed: () {
-                final boardService = context.read<BoardService>();
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => WorkspaceDetailScreen(
-                      workspaceId: payload.targetId,
-                      ownedBoardsStream: boardService.getOwnedBoards(),
-                      joinedBoardsStream: boardService.getJoinedBoards(),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
+    return _WorkspaceShareCard(
+      payload: payload,
+      isMe: isMe,
+      colors: colors,
     );
   }
 
@@ -1103,5 +997,200 @@ class ChatBubble extends StatelessWidget {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+}
+
+
+class _WorkspaceShareCard extends StatefulWidget {
+  final ChatSharePayload payload;
+  final bool isMe;
+  final ChatColors colors;
+
+  const _WorkspaceShareCard({
+    required this.payload,
+    required this.isMe,
+    required this.colors,
+  });
+
+  @override
+  State<_WorkspaceShareCard> createState() => _WorkspaceShareCardState();
+}
+
+class _WorkspaceShareCardState extends State<_WorkspaceShareCard> {
+  bool _isJoining = false;
+
+  void _openWorkspace(BuildContext context) {
+    final boardService = context.read<BoardService>();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => WorkspaceDetailScreen(
+          workspaceId: widget.payload.targetId,
+          ownedBoardsStream: boardService.getOwnedBoards(),
+          joinedBoardsStream: boardService.getJoinedBoards(),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _joinAndOpenWorkspace(BuildContext context) async {
+    setState(() => _isJoining = true);
+    try {
+      await context.read<WorkspaceService>().joinWorkspace(widget.payload.targetId);
+      if (!context.mounted) return;
+      context.read<WorkspaceBloc>().add(LoadWorkspacesRequested());
+      _openWorkspace(context);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to join workspace: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isJoining = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final payload = widget.payload;
+    final isMe = widget.isMe;
+    final colors = widget.colors;
+
+    final workspaceState = context.watch<WorkspaceBloc>().state;
+    final bool isMember = isMe || (workspaceState is WorkspaceLoaded &&
+        (workspaceState.ownedWorkspaces.any((w) => w.id == payload.targetId) ||
+         workspaceState.memberWorkspaces.any((w) => w.id == payload.targetId)));
+
+    return Container(
+      width: 240,
+      padding: const EdgeInsets.all(10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.teal.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.workspaces_rounded, color: Colors.teal, size: 16),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  payload.title,
+                  style: TextStyle(
+                    color: isMe ? Colors.white : colors.textPrimary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          if (payload.joinCode.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            InkWell(
+              borderRadius: BorderRadius.circular(6),
+              onTap: () {
+                HapticFeedback.selectionClick();
+                Clipboard.setData(ClipboardData(text: payload.joinCode));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Workspace join code ${payload.joinCode} copied!'),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Code: ${payload.joinCode}',
+                      style: TextStyle(
+                        color: isMe ? Colors.white70 : colors.textSecondary,
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.copy_rounded,
+                      size: 11,
+                      color: isMe ? Colors.white70 : colors.textSecondary,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          if (payload.memberCount > 0) ...[
+            const SizedBox(height: 4),
+            Text(
+              '${payload.memberCount} members',
+              style: TextStyle(color: isMe ? Colors.white70 : colors.textSecondary, fontSize: 11),
+            ),
+          ],
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 32,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isMe ? Colors.white : colors.accent,
+                foregroundColor: isMe ? colors.accent : Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                elevation: 0,
+                padding: EdgeInsets.zero,
+              ),
+              icon: _isJoining
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: isMe ? colors.accent : Colors.white,
+                      ),
+                    )
+                  : Icon(
+                      isMember ? Icons.workspaces_rounded : Icons.group_add_rounded,
+                      size: 14,
+                    ),
+              label: Text(
+                _isJoining
+                    ? 'Joining...'
+                    : (isMember ? 'Open Workspace' : 'Join Workspace'),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+              onPressed: _isJoining
+                  ? null
+                  : () {
+                      if (isMember) {
+                        _openWorkspace(context);
+                      } else {
+                        _joinAndOpenWorkspace(context);
+                      }
+                    },
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

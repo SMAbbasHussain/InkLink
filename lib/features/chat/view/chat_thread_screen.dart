@@ -5,6 +5,8 @@ import '../../../../core/services/auth_service.dart';
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 import '../../../../domain/models/chat/chat_message_model.dart';
 import '../../../../domain/services/chat/chat_service.dart';
+import '../../../../domain/models/chat/chat_share_payload.dart';
+import '../../../../domain/services/workspace/workspace_service.dart';
 import '../../profile/view/profile_route.dart';
 import '../bloc/chat_thread_bloc.dart';
 import '../bloc/chat_thread_event.dart';
@@ -334,6 +336,14 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
               );
             },
             onSendSharePayload: (payload, {replyToId, replyToSender, replyToText}) {
+              if (payload.type == ChatShareType.workspace && !conv.isGroup && conv.id.isNotEmpty) {
+                try {
+                  context.read<WorkspaceService>().inviteToWorkspace(
+                    workspaceId: payload.targetId,
+                    invitedUserIds: [conv.id],
+                  );
+                } catch (_) {}
+              }
               context.read<ChatThreadBloc>().add(
                 SendShareCardRequested(
                   payload: payload,
