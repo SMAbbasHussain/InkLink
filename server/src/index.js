@@ -7,8 +7,23 @@ const cors = require('cors');
 const Y = require('yjs');
 require('dotenv').config();
 
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
+  : ['http://localhost:3000', 'https://inklink.web.app', 'https://inklink.app'];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (such as mobile apps or curl) or matched origins
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+};
+
 const app = express();
-app.use(cors());
+app.use(cors(corsOptions));
 
 app.get('/health', (req, res) => {
   console.log("Ping Test");
@@ -20,7 +35,7 @@ app.get('/health', (req, res) => {
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: process.env.CORS_ORIGIN || '*' },
+  cors: corsOptions,
 });
 
 function loadFirebaseServiceAccount() {
@@ -485,12 +500,16 @@ io.use(async (socket, next) => {
     const { token } = socket.handshake.auth;
     if (!token) return next(new Error('Authentication error: Token missing'));
 
-    if (db) {
-      const decodedToken = await admin.auth().verifyIdToken(token);
-      socket.data.uid = decodedToken.uid;
-    } else {
-      socket.data.uid = socket.handshake.auth.uid || "test-user";
+    if (!db || !admin.apps || !admin.apps.length) {
+      if (process.env.NODE_ENV === 'development' && process.env.ALLOW_DEV_AUTH === 'true') {
+        socket.data.uid = socket.handshake.auth.uid || "test-user";
+        return next();
+      }
+      return next(new Error('Authentication service unavailable'));
     }
+
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    socket.data.uid = decodedToken.uid;
     next();
   } catch (error) {
     next(new Error('Authentication error: Invalid Token'));

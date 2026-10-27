@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:isar_community/isar.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
@@ -65,7 +66,10 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     final token = await _authService.getIdToken();
     if (token == null) return false;
 
-    final serverUrl = dotenv.env['WEBSOCKET_URL'] ?? 'http://10.0.2.2:3000';
+    final configuredUrl = dotenv.env['WEBSOCKET_URL'];
+    final serverUrl = configuredUrl != null && configuredUrl.isNotEmpty
+        ? configuredUrl
+        : (kReleaseMode ? 'https://inklink.app' : 'http://10.0.2.2:3000');
     _socket = io.io(
       serverUrl,
       io.OptionBuilder()
@@ -316,8 +320,10 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         if (_socket == null || !_socket!.connected) {
           final token = await _authService.getIdToken();
           if (token != null) {
-            final serverUrl =
-                dotenv.env['WEBSOCKET_URL'] ?? 'http://10.0.2.2:3000';
+            final configuredUrl = dotenv.env['WEBSOCKET_URL'];
+            final serverUrl = configuredUrl != null && configuredUrl.isNotEmpty
+                ? configuredUrl
+                : (kReleaseMode ? 'https://inklink.app' : 'http://10.0.2.2:3000');
             _socket = io.io(
               serverUrl,
               io.OptionBuilder()
