@@ -46,4 +46,16 @@ abstract class BoardRepository {
   });
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes);
   Stream<String?> watchBoardPreview(String boardId);
+
+  Future<PublicBoardsPage> getPublicBoards({
+    String? tag,
+    PublicBoardSort sort = PublicBoardSort.recent,
+    dynamic lastDocCursor,
+    int limit = 20,
+  });
+
+  Future<List<Board>> getRecommendedPublicBoards({
+    required List<String> preferredTags,
+    int limit = 10,
+  });
 }

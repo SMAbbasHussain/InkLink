@@ -64,6 +64,9 @@ module.exports = async (request) => {
       try {
         await doc.ref.update({
           members: admin.firestore.FieldValue.arrayRemove(uid),
+          [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(-1),
+          membersCount: admin.firestore.FieldValue.increment(-1),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         await doc.ref.collection(FirestorePaths.BOARD_MEMBERS_SUBCOLLECTION).doc(uid).delete();
       } catch (err) {

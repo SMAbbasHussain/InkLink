@@ -53,6 +53,7 @@ module.exports = async (request) => {
       transaction.update(boardRef, {
         members: admin.firestore.FieldValue.arrayRemove(targetUid.trim()),
         [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(-1),
+        membersCount: admin.firestore.FieldValue.increment(-1),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 

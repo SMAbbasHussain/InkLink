@@ -14,6 +14,7 @@ import 'features/notifications/bloc/notifications_bloc.dart';
 import 'features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'features/friends/bloc/friends_bloc.dart';
 import 'core/services/data_prefetch_service.dart';
+import 'core/services/deep_link_service.dart';
 import 'domain/services/auth/auth_session_service.dart';
 import 'domain/services/chat/chat_service.dart';
 
@@ -98,6 +99,16 @@ class _AppViewState extends State<AppView> {
           );
           context.read<FriendsBloc>().add(LoadFriendsInfo());
           context.read<ChatService>().login(state.uid);
+
+          // Route to pending deep-linked board if user launched with a deep link
+          final pendingBoardId = DeepLinkService.instance.consumePendingBoardId();
+          if (pendingBoardId != null && pendingBoardId.isNotEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                DeepLinkService.instance.navigateToBoard(pendingBoardId, context: context);
+              }
+            });
+          }
         } else if (state is Unauthenticated) {
           // Extra safety in case logout happened outside standard authSessionService.signOut
           Navigator.of(context, rootNavigator: true)

@@ -66,6 +66,28 @@ abstract class BoardService {
     required String targetRole,
     int inviteExpiryHours,
   });
+  Future<PublicBoardsPage> getPublicBoards({
+    String? tag,
+    PublicBoardSort sort = PublicBoardSort.recent,
+    dynamic lastDocCursor,
+    int limit = 20,
+  });
+  Future<List<Board>> getRecommendedPublicBoards({
+    required List<String> preferredTags,
+    int limit = 10,
+  });
+  Future<void> requestBoardAccess({
+    required String boardId,
+    required String requestType,
+    String? message,
+  });
+  Future<void> respondToBoardAccessRequest({
+    required String boardId,
+    required String requesterUid,
+    required String notificationId,
+    required String action,
+    required String requestType,
+  });
 }
 
 class BoardServiceImpl implements BoardService {
@@ -316,5 +338,76 @@ class BoardServiceImpl implements BoardService {
         data['unresolvedEmails'] ?? const <String>[],
       ),
     );
+  }
+
+  @override
+  Future<PublicBoardsPage> getPublicBoards({
+    String? tag,
+    PublicBoardSort sort = PublicBoardSort.recent,
+    dynamic lastDocCursor,
+    int limit = 20,
+  }) {
+    return _boardRepository.getPublicBoards(
+      tag: tag,
+      sort: sort,
+      lastDocCursor: lastDocCursor,
+      limit: limit,
+    );
+  }
+
+  @override
+  Future<List<Board>> getRecommendedPublicBoards({
+    required List<String> preferredTags,
+    int limit = 10,
+  }) {
+    return _boardRepository.getRecommendedPublicBoards(
+      preferredTags: preferredTags,
+      limit: limit,
+    );
+  }
+
+  @override
+  Future<void> requestBoardAccess({
+    required String boardId,
+    required String requestType,
+    String? message,
+  }) async {
+    try {
+      await _cloudFunctionsService.httpsCallable('requestBoardAccess').call({
+        'boardId': boardId.trim(),
+        'requestType': requestType.trim(),
+        if (message != null && message.trim().isNotEmpty)
+          'message': message.trim(),
+      });
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? 'Failed to send access request.');
+    } catch (e) {
+      throw Exception('Failed to send access request. Please try again.');
+    }
+  }
+
+  @override
+  Future<void> respondToBoardAccessRequest({
+    required String boardId,
+    required String requesterUid,
+    required String notificationId,
+    required String action,
+    required String requestType,
+  }) async {
+    try {
+      await _cloudFunctionsService
+          .httpsCallable('respondToBoardAccessRequest')
+          .call({
+            'boardId': boardId.trim(),
+            'requesterUid': requesterUid.trim(),
+            'notificationId': notificationId.trim(),
+            'action': action.trim(),
+            'requestType': requestType.trim(),
+          });
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? 'Failed to process request.');
+    } catch (e) {
+      throw Exception('Failed to process request. Please try again.');
+    }
   }
 }

@@ -66,13 +66,17 @@ class NotificationsScreen extends StatelessWidget {
               const NotificationsLoadRequested(),
             );
             return Scaffold(
-              body: Center(child: CircularProgressIndicator(color: tokens.accent)),
+              body: Center(
+                child: CircularProgressIndicator(color: tokens.accent),
+              ),
             );
           }
 
           if (state is NotificationsLoading) {
             return Scaffold(
-              body: Center(child: CircularProgressIndicator(color: tokens.accent)),
+              body: Center(
+                child: CircularProgressIndicator(color: tokens.accent),
+              ),
             );
           }
 
@@ -83,7 +87,12 @@ class NotificationsScreen extends StatelessWidget {
                 backgroundColor: tokens.paper,
                 title: Text('Notifications', style: InkType.title(tokens.ink)),
               ),
-              body: Center(child: Text(state.message, style: InkType.body(tokens.inkMuted))),
+              body: Center(
+                child: Text(
+                  state.message,
+                  style: InkType.body(tokens.inkMuted),
+                ),
+              ),
             );
           }
 
@@ -127,7 +136,8 @@ class NotificationsScreen extends StatelessWidget {
                       vertical: InkSpacing.s12,
                     ),
                     itemCount: state.notifications.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: InkSpacing.s12 - 2),
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(height: InkSpacing.s12 - 2),
                     itemBuilder: (context, index) {
                       final item = state.notifications[index];
                       final senderName =
@@ -141,7 +151,10 @@ class NotificationsScreen extends StatelessWidget {
                       final unread = item['isRead'] != true;
                       final isActionablePending =
                           (type == 'board_invite' ||
-                              type == 'friend_request') &&
+                              type == 'friend_request' ||
+                              type == 'workspace_invite' ||
+                              type == 'board_access_request' ||
+                              type == 'board_edit_request') &&
                           status == 'pending';
 
                       final timestamp = _readTimestamp(item);
@@ -154,6 +167,27 @@ class NotificationsScreen extends StatelessWidget {
                             context
                                 .read<NotificationsBloc>()
                                 .markNotificationRead(notificationId);
+                          }
+
+                          if (type == 'board_access_request' ||
+                              type == 'board_edit_request' ||
+                              type == 'board_access_accepted' ||
+                              type == 'board_edit_accepted') {
+                            final boardId =
+                                item['extraData']?['boardId']?.toString() ??
+                                item['targetId']?.toString() ??
+                                '';
+                            if (boardId.isNotEmpty) {
+                              Navigator.push(
+                                context,
+                                buildCanvasRoute(
+                                  context,
+                                  boardId: boardId,
+                                  showTrayTipsOnEntry: true,
+                                ),
+                              );
+                              return;
+                            }
                           }
 
                           if (type == 'board_invite' ||
@@ -255,7 +289,10 @@ class NotificationsScreen extends StatelessWidget {
                                 Container(
                                   width: 6,
                                   height: 6,
-                                  margin: const EdgeInsets.only(top: 6, right: InkSpacing.s8),
+                                  margin: const EdgeInsets.only(
+                                    top: 6,
+                                    right: InkSpacing.s8,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: tokens.accent,
                                     shape: BoxShape.circle,
@@ -272,16 +309,29 @@ class NotificationsScreen extends StatelessWidget {
                                         InkAvatar(
                                           imageUrl: senderPic,
                                           initials: inkInitialsFor(senderName),
-                                          id: item['fromUid']?.toString() ?? senderName,
+                                          id:
+                                              item['fromUid']?.toString() ??
+                                              senderName,
                                           size: 40,
                                         ),
                                         const SizedBox(width: InkSpacing.s12),
                                         Expanded(
                                           child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             children: [
-                                              Text(senderName, style: InkType.bodyStrong(tokens.ink)),
-                                              Text(timeLabel, style: InkType.caption(tokens.inkMuted)),
+                                              Text(
+                                                senderName,
+                                                style: InkType.bodyStrong(
+                                                  tokens.ink,
+                                                ),
+                                              ),
+                                              Text(
+                                                timeLabel,
+                                                style: InkType.caption(
+                                                  tokens.inkMuted,
+                                                ),
+                                              ),
                                             ],
                                           ),
                                         ),
@@ -289,24 +339,36 @@ class NotificationsScreen extends StatelessWidget {
                                           width: 30,
                                           height: 30,
                                           decoration: BoxDecoration(
-                                            color: (unread ? tokens.pending : tokens.accent)
-                                                .withValues(alpha: 0.12),
+                                            color:
+                                                (unread
+                                                        ? tokens.pending
+                                                        : tokens.accent)
+                                                    .withValues(alpha: 0.12),
                                             shape: BoxShape.circle,
                                           ),
                                           child: Icon(
-                                            unread ? LucideIcons.mailWarning : _iconForType(type),
+                                            unread
+                                                ? LucideIcons.mailWarning
+                                                : _iconForType(type),
                                             size: 16,
-                                            color: unread ? tokens.pending : tokens.accent,
+                                            color: unread
+                                                ? tokens.pending
+                                                : tokens.accent,
                                           ),
                                         ),
                                       ],
                                     ),
                                     const SizedBox(height: InkSpacing.s12),
-                                    Text(title, style: InkType.bodyStrong(tokens.ink)),
+                                    Text(
+                                      title,
+                                      style: InkType.bodyStrong(tokens.ink),
+                                    ),
                                     const SizedBox(height: InkSpacing.s4),
                                     Text(
                                       body,
-                                      style: InkType.body(tokens.inkSecondary).copyWith(height: 1.35),
+                                      style: InkType.body(
+                                        tokens.inkSecondary,
+                                      ).copyWith(height: 1.35),
                                     ),
                                     const SizedBox(height: InkSpacing.s12),
                                     Row(
@@ -322,13 +384,15 @@ class NotificationsScreen extends StatelessWidget {
                                               final inviteId =
                                                   item['extraData']?['inviteId']
                                                       ?.toString() ??
-                                                  item['targetId']?.toString() ??
+                                                  item['targetId']
+                                                      ?.toString() ??
                                                   item['id']?.toString() ??
                                                   '';
                                               final boardId =
                                                   item['extraData']?['boardId']
                                                       ?.toString() ??
-                                                  item['targetId']?.toString() ??
+                                                  item['targetId']
+                                                      ?.toString() ??
                                                   '';
                                               if (inviteId.isEmpty ||
                                                   boardId.isEmpty) {
@@ -357,7 +421,8 @@ class NotificationsScreen extends StatelessWidget {
                                               final inviteId =
                                                   item['extraData']?['inviteId']
                                                       ?.toString() ??
-                                                  item['targetId']?.toString() ??
+                                                  item['targetId']
+                                                      ?.toString() ??
                                                   item['id']?.toString() ??
                                                   '';
                                               if (inviteId.isEmpty) {
@@ -386,11 +451,13 @@ class NotificationsScreen extends StatelessWidget {
                                               final requestId =
                                                   item['extraData']?['requestId']
                                                       ?.toString() ??
-                                                  item['targetId']?.toString() ??
+                                                  item['targetId']
+                                                      ?.toString() ??
                                                   item['id']?.toString() ??
                                                   '';
                                               final senderUid =
-                                                  item['fromUid']?.toString() ?? '';
+                                                  item['fromUid']?.toString() ??
+                                                  '';
                                               if (requestId.isEmpty) {
                                                 return;
                                               }
@@ -415,7 +482,8 @@ class NotificationsScreen extends StatelessWidget {
                                               final requestId =
                                                   item['extraData']?['requestId']
                                                       ?.toString() ??
-                                                  item['targetId']?.toString() ??
+                                                  item['targetId']
+                                                      ?.toString() ??
                                                   item['id']?.toString() ??
                                                   '';
                                               if (requestId.isEmpty) {
@@ -442,7 +510,8 @@ class NotificationsScreen extends StatelessWidget {
                                               final inviteId =
                                                   item['extraData']?['inviteId']
                                                       ?.toString() ??
-                                                  item['targetId']?.toString() ??
+                                                  item['targetId']
+                                                      ?.toString() ??
                                                   item['id']?.toString() ??
                                                   '';
                                               if (inviteId.isEmpty) {
@@ -453,13 +522,11 @@ class NotificationsScreen extends StatelessWidget {
                                                   .markNotificationRead(
                                                     notificationId,
                                                   );
-                                              context
-                                                  .read<WorkspaceBloc>()
-                                                  .add(
-                                                    AcceptWorkspaceInviteRequested(
-                                                      inviteId,
-                                                    ),
-                                                  );
+                                              context.read<WorkspaceBloc>().add(
+                                                AcceptWorkspaceInviteRequested(
+                                                  inviteId,
+                                                ),
+                                              );
                                             },
                                           ),
                                           const SizedBox(width: InkSpacing.s8),
@@ -470,7 +537,8 @@ class NotificationsScreen extends StatelessWidget {
                                               final inviteId =
                                                   item['extraData']?['inviteId']
                                                       ?.toString() ??
-                                                  item['targetId']?.toString() ??
+                                                  item['targetId']
+                                                      ?.toString() ??
                                                   item['id']?.toString() ??
                                                   '';
                                               if (inviteId.isEmpty) {
@@ -481,13 +549,120 @@ class NotificationsScreen extends StatelessWidget {
                                                   .markNotificationRead(
                                                     notificationId,
                                                   );
+                                              context.read<WorkspaceBloc>().add(
+                                                RejectWorkspaceInviteRequested(
+                                                  inviteId,
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        ] else if (isActionablePending &&
+                                            (type == 'board_access_request' ||
+                                                type ==
+                                                    'board_edit_request')) ...[
+                                          _actionButton(
+                                            icon: LucideIcons.check,
+                                            color: tokens.success,
+                                            onTap: () {
+                                              final boardId =
+                                                  item['extraData']?['boardId']
+                                                      ?.toString() ??
+                                                  item['targetId']
+                                                      ?.toString() ??
+                                                  '';
+                                              final requesterUid =
+                                                  item['extraData']?['requesterUid']
+                                                      ?.toString() ??
+                                                  item['fromUid']?.toString() ??
+                                                  '';
+                                              final requestType =
+                                                  item['extraData']?['requestType']
+                                                      ?.toString() ??
+                                                  (type == 'board_edit_request'
+                                                      ? 'edit'
+                                                      : 'join');
+                                              if (boardId.isEmpty ||
+                                                  requesterUid.isEmpty) {
+                                                return;
+                                              }
                                               context
-                                                  .read<WorkspaceBloc>()
-                                                  .add(
-                                                    RejectWorkspaceInviteRequested(
-                                                      inviteId,
-                                                    ),
+                                                  .read<NotificationsBloc>()
+                                                  .markNotificationRead(
+                                                    notificationId,
                                                   );
+                                              context.read<NotificationsBloc>().add(
+                                                NotificationRespondToAccessRequest(
+                                                  notificationId:
+                                                      notificationId,
+                                                  boardId: boardId,
+                                                  requesterUid: requesterUid,
+                                                  action: 'accept',
+                                                  requestType: requestType,
+                                                ),
+                                              );
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    requestType == 'edit'
+                                                        ? 'Edit access approved for $senderName.'
+                                                        : 'Join request approved for $senderName.',
+                                                  ),
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                          const SizedBox(width: InkSpacing.s8),
+                                          _actionButton(
+                                            icon: LucideIcons.x,
+                                            color: tokens.danger,
+                                            onTap: () {
+                                              final boardId =
+                                                  item['extraData']?['boardId']
+                                                      ?.toString() ??
+                                                  item['targetId']
+                                                      ?.toString() ??
+                                                  '';
+                                              final requesterUid =
+                                                  item['extraData']?['requesterUid']
+                                                      ?.toString() ??
+                                                  item['fromUid']?.toString() ??
+                                                  '';
+                                              final requestType =
+                                                  item['extraData']?['requestType']
+                                                      ?.toString() ??
+                                                  (type == 'board_edit_request'
+                                                      ? 'edit'
+                                                      : 'join');
+                                              if (boardId.isEmpty ||
+                                                  requesterUid.isEmpty) {
+                                                return;
+                                              }
+                                              context
+                                                  .read<NotificationsBloc>()
+                                                  .markNotificationRead(
+                                                    notificationId,
+                                                  );
+                                              context.read<NotificationsBloc>().add(
+                                                NotificationRespondToAccessRequest(
+                                                  notificationId:
+                                                      notificationId,
+                                                  boardId: boardId,
+                                                  requesterUid: requesterUid,
+                                                  action: 'decline',
+                                                  requestType: requestType,
+                                                ),
+                                              );
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text(
+                                                    'Request declined.',
+                                                  ),
+                                                ),
+                                              );
                                             },
                                           ),
                                         ],
@@ -572,7 +747,14 @@ class NotificationsScreen extends StatelessWidget {
       case 'friend_request_accepted':
         return LucideIcons.users;
       case 'board_invite':
+      case 'board_invite_accepted':
         return LucideIcons.penLine;
+      case 'board_access_request':
+      case 'board_access_accepted':
+        return LucideIcons.userPlus;
+      case 'board_edit_request':
+      case 'board_edit_accepted':
+        return LucideIcons.pencil;
       default:
         return LucideIcons.bell;
     }
@@ -596,7 +778,10 @@ class NotificationsScreen extends StatelessWidget {
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s8 + 2, vertical: 5),
+      padding: const EdgeInsets.symmetric(
+        horizontal: InkSpacing.s8 + 2,
+        vertical: 5,
+      ),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
@@ -610,7 +795,10 @@ class NotificationsScreen extends StatelessWidget {
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 6),
-          Text(status.toUpperCase(), style: InkType.caption(color).copyWith(fontWeight: FontWeight.w700)),
+          Text(
+            status.toUpperCase(),
+            style: InkType.caption(color).copyWith(fontWeight: FontWeight.w700),
+          ),
         ],
       ),
     );

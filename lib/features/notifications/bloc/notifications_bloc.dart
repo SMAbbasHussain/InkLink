@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/utils/notification_preferences.dart';
+import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/notification/notification_service.dart';
 
 abstract class NotificationsEvent {
@@ -17,6 +18,22 @@ class NotificationsDeleteRequested extends NotificationsEvent {
   final String notificationId;
 
   const NotificationsDeleteRequested(this.notificationId);
+}
+
+class NotificationRespondToAccessRequest extends NotificationsEvent {
+  final String notificationId;
+  final String boardId;
+  final String requesterUid;
+  final String action;
+  final String requestType;
+
+  const NotificationRespondToAccessRequest({
+    required this.notificationId,
+    required this.boardId,
+    required this.requesterUid,
+    required this.action,
+    required this.requestType,
+  });
 }
 
 class _NotificationsUpdated extends NotificationsEvent {
@@ -58,6 +75,7 @@ class NotificationsError extends NotificationsState {
 class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
   final NotificationService _notificationService;
   final NotificationPreferences _notificationPreferences;
+  final BoardService? _boardService;
   StreamSubscription<List<Map<String, dynamic>>>? _notificationsSub;
   Set<String> _readIds = <String>{};
   List<Map<String, dynamic>> _rawNotifications = <Map<String, dynamic>>[];
@@ -65,13 +83,16 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
   NotificationsBloc({
     required NotificationService notificationService,
     required NotificationPreferences notificationPreferences,
+    BoardService? boardService,
   }) : _notificationService = notificationService,
        _notificationPreferences = notificationPreferences,
+       _boardService = boardService,
        super(const NotificationsInitial()) {
     on<NotificationsLoadRequested>(_onLoadRequested);
     on<_NotificationsUpdated>(_onNotificationsUpdated);
     on<_NotificationsErrorOccurred>(_onErrorOccurred);
     on<NotificationsDeleteRequested>(_onDeleteRequested);
+    on<NotificationRespondToAccessRequest>(_onRespondToAccessRequest);
   }
 
   Future<void> _onLoadRequested(
@@ -144,6 +165,41 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
       add(_NotificationsUpdated(_normalizeNotifications(_rawNotifications)));
     } catch (_) {
       emit(const NotificationsError('Failed to delete notification'));
+    }
+  }
+
+  Future<void> _onRespondToAccessRequest(
+    NotificationRespondToAccessRequest event,
+    Emitter<NotificationsState> emit,
+  ) async {
+    final boardService = _boardService;
+    if (boardService == null) return;
+    try {
+      await boardService.respondToBoardAccessRequest(
+        boardId: event.boardId,
+        requesterUid: event.requesterUid,
+        notificationId: event.notificationId,
+        action: event.action,
+        requestType: event.requestType,
+      );
+
+      final updatedRaw = _rawNotifications.map((item) {
+        if (item['id']?.toString() == event.notificationId) {
+          return {
+            ...item,
+            'status': event.action == 'accept' ? 'accepted' : 'declined',
+          };
+        }
+        return item;
+      }).toList();
+      _rawNotifications = updatedRaw;
+      add(_NotificationsUpdated(_normalizeNotifications(_rawNotifications)));
+    } catch (e) {
+      emit(
+        NotificationsError(
+          'Failed to process request: ${e.toString().replaceAll('Exception: ', '')}',
+        ),
+      );
     }
   }
 

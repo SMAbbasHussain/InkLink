@@ -28,7 +28,7 @@
 6. [Module 6: Notifications & Preferences (FR15) — ✅ COMPLETED (100%)](#module-6-notifications--preferences-fr15)
 7. [Module 7: Presence & Live Awareness (FR08)](#module-7-presence--live-awareness-fr08)
 8. [Module 8: Board Export & File Sharing (FR11) — ✅ COMPLETED (100%)](#module-8-board-export--file-sharing-fr11)
-9. [Module 9: Public Board Access & Discovery (FR14)](#module-9-public-board-access--discovery-fr14)
+9. [Module 9: Public Board Access & Discovery (FR14) — ✅ COMPLETED (100%)](#module-9-public-board-access--discovery-fr14)
 10. [Module 10: AI-Assisted Object Generation & Limits (FR06 & FR16)](#module-10-ai-assisted-object-generation--limits-fr06--fr16)
 11. [Module 11: In-App Communication & Audio (FR12) — ✅ COMPLETED (100%)](#module-11-in-app-communication--audio-fr12)
 12. [Module 12: Direct Messaging (DM) System (FR17) — ✅ COMPLETED (100%)](#module-12-direct-messaging-dm-system-fr17)
@@ -120,16 +120,17 @@
 
 ---
 
-## Module 9: Public Board Access & Discovery (FR14)
+## Module 9: Public Board Access & Discovery (FR14) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
 | :--- | :--- | :---: | :---: | :--- |
-| **FR14-02** | Deep link routing for public boards | ⚠️ Partial | 🟡 **Level 2.5 (2.5/5)** | Configure deep linking schemes in `AndroidManifest.xml` and `Info.plist` (e.g. `inklink://board/:id` or Universal Links). Parse incoming link on app start and route directly to `CanvasRoute(boardId)`. |
-| **FR14-11**<br>**FR14-12** | Index tags to support efficient public filtering | ⚠️ Partial | 🟡 **Level 2.5 (2.5/5)** | Update [`firestore.indexes.json`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/firestore.indexes.json) with compound index on `boards` for `visibility == 'public'` + `tags` (array-contains) + `createdAt` (descending). |
-| **FR14-04**<br>**FR14-05** | Dedicated screen for browsing public boards | ❌ Missing | 🟠 **Level 3 (3/5)** | Create `PublicBoardDiscoveryScreen` in `features/dashboard/view/` or navigation bar. Query Firestore `boards` collection where `visibility == 'public'` with pagination. Render public board cards with thumbnails, tags, and member count. |
-| **FR14-06**<br>**FR14-07** | Search & filter public boards by title, keywords & tags | ❌ Missing | 🟠 **Level 3 (3/5)** | Add search bar and horizontal filter chip list of popular tags at the top of the discovery screen. Query by search keywords array or tag filter selection. |
-| **FR14-16** | Sort public boards (most popular, most recent) | ❌ Missing | 🟠 **Level 3 (3/5)** | Add sorting dropdown (Recent: `createdAt DESC`, Popular: `membersCount DESC`). Maintain `membersCount` integer field on boards for indexed order-by queries. |
-| **FR14-08**<br>**FR14-09**<br>**FR14-10** | Tag-based board recommendation feed | ❌ Missing | 🟠 **Level 3.5 (3.5/5)** | In `PublicBoardsBloc`, fetch user's `preferredTags` (FR02-12). Query public boards matching user's preferred tags using `array-contains-any`. Rank matching boards at top of discovery feed; refresh dynamically when user updates tag preferences. |
+| **FR14-02** | Deep link routing for public boards | ✅ **Implemented** | 🟡 **Level 2.5 (2.5/5)** | 1. Built [`deep_link_service.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/core/services/deep_link_service.dart) handling custom schemes (`inklink://board/:id`), relative paths (`/board/:id`), and App Links (`https://inklink.web.app/board/:id`, `https://inklink.app/board/:id`) with query param / slash sanitization.<br>2. Configured intent-filters in [`AndroidManifest.xml`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/android/app/src/main/AndroidManifest.xml) and URL schemes in [`Info.plist`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/ios/Runner/Info.plist).<br>3. Handles cold starts and warm starts via `WidgetsBindingObserver`, and queues `pendingBoardId` through [`app_view.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/app_view.dart) so routes are preserved across authentication cycles.<br>4. Added 1-tap "Copy Deep Link" action with snackbar feedback on discovery cards. |
+| **FR14-11**<br>**FR14-12** | Index tags to support efficient public filtering | ✅ **Implemented** | 🟡 **Level 2.5 (2.5/5)** | Configured compound indexes in [`firestore.indexes.json`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/firestore.indexes.json) on `boards` for `visibility == 'public'` + `tags` (array-contains) + `createdAt` (descending), and `visibility == 'public'` + `membersCount` (descending). Synced `membersCount` across join, remove, and account deletion functions. |
+| **FR14-04**<br>**FR14-05** | Dedicated screen for browsing public boards | ✅ **Implemented** | 🟠 **Level 3 (3/5)** | Created [`public_board_discovery_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/public_board_discovery_screen.dart) and [`public_board_discovery_route.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/public_board_discovery_route.dart) accessible via compass action buttons on [`home_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/home_screen.dart). Queries Firestore `boards` where `visibility == 'public'` with cursor pagination, rendering preview thumbnails, tags, and member counters. |
+| **FR14-06**<br>**FR14-07** | Search & filter public boards by title, keywords & tags | ✅ **Implemented** | 🟠 **Level 3 (3/5)** | Built real-time debounced search bar and horizontal category chip list for instant filtering by title, keywords, and tags in [`public_board_discovery_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/public_board_discovery_screen.dart) and `PublicBoardsBloc`. |
+| **FR14-16** | Sort public boards (most popular, most recent) | ✅ **Implemented** | 🟠 **Level 3 (3/5)** | Added sorting dropdown selector supporting "Most Recent" (`createdAt DESC`) and "Most Popular" (`membersCount DESC`) wired to indexed Firestore queries and in-memory fallback sorting. |
+| **FR14-08**<br>**FR14-09**<br>**FR14-10** | Tag-based board recommendation feed with dynamic updates | ✅ **Implemented** | 🟠 **Level 3.5 (3.5/5)** | In [`public_boards_bloc.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/bloc/public_boards/public_boards_bloc.dart), fetches user's `preferredTags` from `ProfileService` and queries matching boards via `array-contains-any`. Ranks boards with highest tag intersection at the top of horizontal recommendation tray. Dynamically subscribes to `watchUserById` so recommendations update in real time when user preferences change. |
+| **FR14-13**<br>**FR14-14** | Join public boards directly with default viewer role | ✅ **Implemented** | 🟡 **Level 2.5 (2.5/5)** | 1. Added 1-tap "Join Board" option in card context menu wired to `_boardService.joinBoard(boardId)` and [`join_board_by_code.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/boards/join_board_by_code.js) which defaults to viewer role (FR14-14) or owner-configured default join role (FR14-15).<br>2. Added "Request Edit Access" dialog allowing viewers to request editor rights from the board owner via Cloud Functions and notifications. |
 
 ---
 
@@ -200,8 +201,8 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 19. [FR08-01] Active online peers indicator in MembersTray                     │
 │ 20. [FR08-04/05] User join/leave toast notifications over WebSockets           │
 │ 21. [FR11-01/04] Export canvas as high-resolution PNG image (✅ Done)           │
-│ 22. [FR14-02] Public board deep linking scheme (inklink://board/:id)           │
-│ 23. [FR14-11/12] Compound indexing for public boards & tags in firestore       │
+│ 22. [FR14-02] Public board deep linking scheme (inklink://board/:id) (✅ Done)   │
+│ 23. [FR14-11/12] Compound indexing for public boards & tags in firestore (✅ Done)│
 └─────────────────────────────────────────────────────────────────────────────────┘
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
@@ -211,10 +212,10 @@ Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complex
 │ 25. [FR05-09] Canvas Sticky Note visual elements with text wrapping (✅ Done)   │
 │ 26. [FR11-02] Export canvas as paginated PDF document (✅ Done)                 │
 │ 27. [FR11-05] Vector SVG serialization and export pipeline (✅ Done)            │
-│ 28. [FR14-04/05] Dedicated Public Board Discovery Screen & feed                │
-│ 29. [FR14-06/07] Public board search and tag filter chips                      │
-│ 30. [FR14-16] Public board sorting (most popular, most recent)                 │
-│ 31. [FR14-08..10] Preferred tag-based public board recommendations feed        │
+│ 28. [FR14-04/05] Dedicated Public Board Discovery Screen & feed (✅ Done)       │
+│ 29. [FR14-06/07] Public board search and tag filter chips (✅ Done)             │
+│ 30. [FR14-16] Public board sorting (most popular, most recent) (✅ Done)        │
+│ 31. [FR14-08..10] Preferred tag-based public board recommendations feed (✅ Done)│
 │ 32. [FR15-04] Comment @mention notifications parsing and FCM dispatch (✅ Done) │
 │ 33. [FR16-01/02] AI per-user request usage tracking and daily quota limit      │
 │ 34. [FR08-03] Remote peer active element editing indicator / lock badge        │
