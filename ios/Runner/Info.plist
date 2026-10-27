@@ -47,6 +47,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>com.googleusercontent.apps.817415815905-hm0ojvasv4ocgccfshj2508lmuthneng</string>
+				<string>inklink</string>
 			</array>
 		</dict>
 	</array>

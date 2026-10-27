@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:isar_community/isar.dart';
+import 'package:isar_community/isar.dart' hide Query;
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/database/collections/local_board.dart';
@@ -797,6 +797,7 @@ class FirestoreBoardRepository implements BoardRepository {
       'ownerId': uid,
       'members': [uid],
       'memberCount': 1,
+      'membersCount': 1,
       'engine': crdtEngine,
       'visibility': normalizedVisibility,
       'privateJoinPolicy': normalizedPrivatePolicy,
@@ -895,6 +896,8 @@ class FirestoreBoardRepository implements BoardRepository {
 
         transaction.update(docRef, {
           'members': FieldValue.arrayUnion([uid]),
+          'memberCount': FieldValue.increment(1),
+          'membersCount': FieldValue.increment(1),
           'updatedAt': FieldValue.serverTimestamp(),
         });
 
@@ -1403,6 +1406,109 @@ class FirestoreBoardRepository implements BoardRepository {
       return Board.roleViewer;
     } catch (_) {
       return Board.roleViewer;
+    }
+  }
+
+  @override
+  Future<PublicBoardsPage> getPublicBoards({
+    String? tag,
+    PublicBoardSort sort = PublicBoardSort.recent,
+    dynamic lastDocCursor,
+    int limit = 20,
+  }) async {
+    Query<Map<String, dynamic>> query = _firestoreService
+        .collection('boards')
+        .where('visibility', isEqualTo: Board.visibilityPublic);
+
+    final normalizedTag = tag?.trim().toLowerCase();
+    if (normalizedTag != null && normalizedTag.isNotEmpty) {
+      query = query.where('tags', arrayContains: normalizedTag);
+    }
+
+    if (sort == PublicBoardSort.popular) {
+      query = query
+          .orderBy('membersCount', descending: true)
+          .orderBy('createdAt', descending: true);
+    } else {
+      query = query.orderBy('createdAt', descending: true);
+    }
+
+    if (lastDocCursor is DocumentSnapshot<Map<String, dynamic>>) {
+      query = query.startAfterDocument(lastDocCursor);
+    }
+
+    query = query.limit(limit);
+
+    final snapshot = await query.get();
+    final boards = snapshot.docs
+        .map((doc) => Board.fromMap(doc.data(), doc.id))
+        .where((b) => !b.isArchived)
+        .toList();
+
+    final nextCursor = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
+    final hasMore = snapshot.docs.length >= limit;
+
+    return PublicBoardsPage(
+      boards: boards,
+      lastDocCursor: nextCursor,
+      hasMore: hasMore,
+    );
+  }
+
+  @override
+  Future<List<Board>> getRecommendedPublicBoards({
+    required List<String> preferredTags,
+    int limit = 10,
+  }) async {
+    final cleanedTags = preferredTags
+        .map((t) => t.trim().toLowerCase())
+        .where((t) => t.isNotEmpty)
+        .take(10)
+        .toList();
+
+    if (cleanedTags.isEmpty) {
+      final page = await getPublicBoards(limit: limit);
+      return page.boards;
+    }
+
+    try {
+      final query = _firestoreService
+          .collection('boards')
+          .where('visibility', isEqualTo: Board.visibilityPublic)
+          .where('tags', arrayContainsAny: cleanedTags)
+          .limit(limit * 2);
+
+      final snapshot = await query.get();
+      final boards = snapshot.docs
+          .map((doc) => Board.fromMap(doc.data(), doc.id))
+          .where((b) => !b.isArchived)
+          .toList();
+
+      final allUserTagsSet =
+          preferredTags.map((t) => t.trim().toLowerCase()).toSet();
+      boards.sort((a, b) {
+        final aMatches = a.tags
+            .where((t) => allUserTagsSet.contains(t.toLowerCase()))
+            .length;
+        final bMatches = b.tags
+            .where((t) => allUserTagsSet.contains(t.toLowerCase()))
+            .length;
+        if (bMatches != aMatches) {
+          return bMatches.compareTo(aMatches);
+        }
+        return b.membersCount.compareTo(a.membersCount);
+      });
+
+      return boards.take(limit).toList();
+    } catch (e, st) {
+      developer.log(
+        'Failed to fetch recommended boards: $e',
+        name: 'BoardRepo',
+        error: e,
+        stackTrace: st,
+      );
+      final fallback = await getPublicBoards(limit: limit);
+      return fallback.boards;
     }
   }
 }

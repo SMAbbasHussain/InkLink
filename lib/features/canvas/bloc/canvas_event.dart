@@ -609,3 +609,15 @@ class CanvasVoiceSpeakingChanged extends CanvasEvent {
   const CanvasVoiceSpeakingChanged(this.isSpeaking);
 }
 
+/// Request edit access from the board owner
+class CanvasRequestEditAccess extends CanvasEvent {
+  final String? message;
+  const CanvasRequestEditAccess({this.message});
+}
+
+/// Consume info message
+class CanvasConsumeInfoMessage extends CanvasEvent {
+  const CanvasConsumeInfoMessage();
+}
+
+

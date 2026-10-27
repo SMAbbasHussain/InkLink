@@ -152,6 +152,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasCancelShapeDraw>(_onCancelShapeDraw);
     on<CanvasExportBoardRequested>(_onExportBoardRequested);
     on<CanvasConsumeExportMessage>(_onConsumeExportMessage);
+    on<CanvasRequestEditAccess>(_onRequestEditAccess);
+    on<CanvasConsumeInfoMessage>(_onConsumeInfoMessage);
     // Module 11 Event Handlers
     on<CanvasCommentsUpdated>(_onCanvasCommentsUpdated);
     on<CanvasChatMessagesUpdated>(_onCanvasChatMessagesUpdated);
@@ -2175,6 +2177,35 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     emit(state.copyWith(exportSuccessMessage: null));
+  }
+
+  Future<void> _onRequestEditAccess(
+    CanvasRequestEditAccess event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final boardService = _boardService;
+    if (boardService == null || _boardId.isEmpty) return;
+    try {
+      await boardService.requestBoardAccess(
+        boardId: _boardId,
+        requestType: 'edit',
+        message: event.message,
+      );
+      emit(state.copyWith(
+        infoMessage: 'Edit access request sent to board owner.',
+      ));
+    } catch (e) {
+      emit(state.copyWith(
+        error: e.toString().replaceAll('Exception: ', ''),
+      ));
+    }
+  }
+
+  void _onConsumeInfoMessage(
+    CanvasConsumeInfoMessage event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(infoMessage: null));
   }
 
   // ──────────────────────────────────────────────

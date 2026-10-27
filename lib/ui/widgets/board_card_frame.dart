@@ -173,7 +173,13 @@ class _GlassLabel extends StatelessWidget {
                 ),
               ),
               if (menuButton != null)
-                SizedBox(width: 34, height: 34, child: menuButton),
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: SizedBox(
+                    height: 34,
+                    child: Center(child: menuButton!),
+                  ),
+                ),
             ],
           ),
         ),

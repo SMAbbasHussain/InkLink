@@ -22,6 +22,7 @@ class CanvasState {
   final bool showTrayTips;
   final bool isLoading;
   final String? error;
+  final String? infoMessage;
   final String currentUserRole;
   final String currentUserId;
   final List<BoardMember> boardMembers;
@@ -65,6 +66,7 @@ class CanvasState {
     this.showTrayTips = false,
     this.isLoading = false,
     this.error,
+    this.infoMessage,
     this.currentUserRole = 'viewer',
     this.currentUserId = '',
     this.boardMembers = const [],
@@ -111,6 +113,7 @@ class CanvasState {
     bool? showTrayTips,
     bool? isLoading,
     Object? error = _unset,
+    Object? infoMessage = _unset,
     String? currentUserRole,
     String? currentUserId,
     List<BoardMember>? boardMembers,
@@ -159,6 +162,8 @@ class CanvasState {
       showTrayTips: showTrayTips ?? this.showTrayTips,
       isLoading: isLoading ?? this.isLoading,
       error: error == _unset ? this.error : error as String?,
+      infoMessage:
+          infoMessage == _unset ? this.infoMessage : infoMessage as String?,
       currentUserRole: currentUserRole ?? this.currentUserRole,
       currentUserId: currentUserId ?? this.currentUserId,
       boardMembers: boardMembers ?? this.boardMembers,

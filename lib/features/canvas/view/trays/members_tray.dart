@@ -172,6 +172,51 @@ class _MembersTrayState extends State<MembersTray> {
                   ),
                 ),
 
+              if (state.currentUserRole == Board.roleViewer)
+                Container(
+                  margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: tokens.pending.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border:
+                        Border.all(color: tokens.pending.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(LucideIcons.lock, size: 14, color: tokens.pending),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'You have view-only access.',
+                          style: InkType.caption(tokens.inkSecondary),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          context
+                              .read<CanvasBloc>()
+                              .add(const CanvasRequestEditAccess());
+                        },
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: Text(
+                          'Request Edit',
+                          style: InkType.caption(tokens.accentText)
+                              .copyWith(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
               /// Members list grouped by role
               Expanded(
                 child: filteredMembers.isEmpty

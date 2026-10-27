@@ -14,6 +14,7 @@ import '../../theme/bloc/theme_bloc.dart';
 import '../../dashboard/bloc/dashboard_bloc.dart';
 import '../../dashboard/view/create_board_route.dart';
 import '../../dashboard/view/board_settings_route.dart';
+import '../../dashboard/view/public_board_discovery_route.dart';
 import '../../dashboard/view/widgets/board_card.dart';
 import '../../../ui/theme/ink_colors.dart';
 import '../../../ui/theme/ink_theme.dart';
@@ -323,6 +324,16 @@ class _HomeScreenState extends State<HomeScreen>
                       },
                       trailing: [
                         CommandBarAction(
+                          icon: LucideIcons.compass,
+                          tooltip: 'Explore Public Boards',
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              buildPublicBoardDiscoveryRoute(context),
+                            );
+                          },
+                        ),
+                        CommandBarAction(
                           icon: LucideIcons.logIn,
                           tooltip: 'Join Board',
                           onPressed: _showJoinDialog,
@@ -367,6 +378,16 @@ class _HomeScreenState extends State<HomeScreen>
               tooltip: isDark ? 'Switch to light mode' : 'Switch to dark mode',
               icon: Icon(isDark ? LucideIcons.sun : LucideIcons.moon, color: tokens.ink),
               onPressed: () => context.read<ThemeBloc>().add(ToggleTheme(isCurrentlyDark: isDark)),
+            ),
+            IconButton(
+              tooltip: 'Explore Public Boards',
+              icon: Icon(LucideIcons.compass, color: tokens.ink),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  buildPublicBoardDiscoveryRoute(context),
+                );
+              },
             ),
             BlocBuilder<NotificationsBloc, NotificationsState>(
               builder: (context, state) {

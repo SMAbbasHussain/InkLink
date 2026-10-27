@@ -38,6 +38,7 @@ class Board {
   bool get isArchived => _isArchived ?? false;
   final bool? _allowMembersToCopy;
   bool get allowMembersToCopy => _allowMembersToCopy ?? false;
+  final int membersCount;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -56,18 +57,26 @@ class Board {
     this.currentUserRole = roleViewer,
     bool isArchived = false,
     bool allowMembersToCopy = false,
+    int? membersCount,
     required this.createdAt,
     required this.updatedAt,
   }) : _isArchived = isArchived,
-       _allowMembersToCopy = allowMembersToCopy;
+       _allowMembersToCopy = allowMembersToCopy,
+       membersCount = membersCount ?? members.length;
 
   factory Board.fromMap(Map<String, dynamic> map, String id) {
     final invitePolicy = map['invitePolicy'] as Map<String, dynamic>?;
+    final membersList = List<String>.from(map['members'] ?? []);
+    final rawCount = map['membersCount'] ?? map['memberCount'];
+    final membersCount = rawCount is int
+        ? rawCount
+        : (rawCount is num ? rawCount.toInt() : membersList.length);
+
     return Board(
       id: id,
       title: map['title'] ?? 'Untitled Board',
       ownerId: map['ownerId'] ?? '',
-      members: List<String>.from(map['members'] ?? []),
+      members: membersList,
       previewPath: map['previewPath'] as String?,
       visibility: (map['visibility'] as String?) ?? visibilityPrivate,
       privateJoinPolicy:
@@ -81,6 +90,7 @@ class Board {
       currentUserRole: (map['currentUserRole'] as String?) ?? roleViewer,
       isArchived: (map['isArchived'] as bool?) ?? false,
       allowMembersToCopy: (map['allowMembersToCopy'] as bool?) ?? false,
+      membersCount: membersCount,
       createdAt: _parseDate(map['createdAt']),
       updatedAt: _parseDate(map['updatedAt']),
     );
@@ -101,6 +111,7 @@ class Board {
     String? currentUserRole,
     bool? isArchived,
     bool? allowMembersToCopy,
+    int? membersCount,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -119,6 +130,7 @@ class Board {
       currentUserRole: currentUserRole ?? this.currentUserRole,
       isArchived: isArchived ?? this.isArchived,
       allowMembersToCopy: allowMembersToCopy ?? this.allowMembersToCopy,
+      membersCount: membersCount ?? this.membersCount,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -129,6 +141,8 @@ class Board {
       'title': title,
       'ownerId': ownerId,
       'members': members,
+      'memberCount': membersCount,
+      'membersCount': membersCount,
       'previewPath': previewPath,
       'visibility': visibility,
       'tags': tags,
@@ -180,4 +194,21 @@ class BoardMember {
     }
     return uid;
   }
+}
+
+enum PublicBoardSort {
+  recent,
+  popular,
+}
+
+class PublicBoardsPage {
+  final List<Board> boards;
+  final dynamic lastDocCursor;
+  final bool hasMore;
+
+  const PublicBoardsPage({
+    required this.boards,
+    this.lastDocCursor,
+    required this.hasMore,
+  });
 }

@@ -10,6 +10,7 @@ import 'package:inklink/core/services/firestore_service.dart';
 import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/services/cloud_functions_service.dart';
 import 'package:inklink/core/services/local_notification_service.dart';
+import 'package:inklink/core/services/deep_link_service.dart';
 import 'package:inklink/core/services/messaging_service.dart';
 import 'package:inklink/core/services/data_prefetch_service.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -67,6 +68,7 @@ import 'package:inklink/features/workspaces/bloc/workspace_bloc.dart';
 import 'package:inklink/features/theme/bloc/theme_bloc.dart';
 import 'package:inklink/features/notifications/bloc/notifications_bloc.dart';
 import 'package:inklink/features/board_invitations/bloc/board_invitations_bloc.dart';
+import 'package:inklink/features/canvas/view/canvas_route.dart';
 import 'package:inklink/firebase_options.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -94,6 +96,7 @@ void main() async {
   }
   final messagingService = MessagingServiceImpl();
   await LocalNotificationService.initialize(navigatorKey: appNavigatorKey);
+  DeepLinkService.instance.initialize(navigatorKey: appNavigatorKey);
   messagingService.onMessage.listen(
     LocalNotificationService.showFromRemoteMessage,
   );
@@ -332,6 +335,7 @@ void main() async {
             create: (context) => NotificationsBloc(
               notificationService: context.read<NotificationService>(),
               notificationPreferences: NotificationPreferences(prefs: sharedPreferences),
+              boardService: context.read<BoardService>(),
             )..add(const NotificationsLoadRequested()),
           ),
           BlocProvider(
@@ -383,6 +387,18 @@ class MyApp extends StatelessWidget {
           // This allows the app to respect System, Light, or Dark mode
           themeMode: themeMode,
           home: const AppView(),
+          onGenerateRoute: (settings) {
+            final name = settings.name;
+            if (name == null || name.isEmpty) return null;
+            final boardId = DeepLinkService.instance.extractBoardId(name);
+            if (boardId != null && boardId.isNotEmpty) {
+              return buildCanvasRoute(
+                appNavigatorKey.currentContext ?? context,
+                boardId: boardId,
+              );
+            }
+            return null;
+          },
           debugShowCheckedModeBanner: false,
         );
       },

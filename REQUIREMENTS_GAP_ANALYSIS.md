@@ -217,26 +217,26 @@ A comprehensive line-by-line audit was conducted comparing the **Software Requir
 
 ---
 
-### FR14: Public Board Access & Discovery
+### FR14: Public Board Access & Discovery — ✅ COMPLETED (100%)
 
 | Req ID | Specification | Status | Implementation Evidence & Gap Details |
 | :--- | :--- | :---: | :--- |
 | **FR14-01** | Mark board as public | ✅ **Fully Implemented** | Visibility toggled in [`create_board_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/create_board_screen.dart) and [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart). |
-| **FR14-02** | Users with public link view board | ⚠️ **Partially Implemented** | Board can be joined if board ID/code is entered manually, but deep link handling (`inklink://board/...`) is not configured. |
+| **FR14-02** | Users with public link view board | ✅ **Fully Implemented** | Handled by [`deep_link_service.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/core/services/deep_link_service.dart), Android intent filters, iOS URL types, and `WidgetsBindingObserver` routing to `buildCanvasRoute` across cold-start and warm-start cycles. 1-tap "Copy Deep Link" available on cards. |
 | **FR14-03** | Disable public access | ✅ **Fully Implemented** | Owner can toggle visibility back to `private`. |
-| **FR14-04** | Dedicated screen for browsing public boards | ❌ **Missing** | No Public Board Discovery screen exists in the app. [`main_wrapper.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/navigation/view/main_wrapper.dart) only includes Home, Workspaces, Friends, and Profile tabs. |
-| **FR14-05** | Display list of all public boards | ❌ **Missing** | Public boards are never queried or listed across the system. |
-| **FR14-06** | Search public boards by title or keywords | ❌ **Missing** | No search screen or query for public boards. |
-| **FR14-07** | Filter public boards based on tags | ❌ **Missing** | No public tag filtering. |
-| **FR14-08** | Recommend public boards based on preferred tags | ❌ **Missing** | No recommendation algorithm or discovery feed. |
-| **FR14-09** | Prioritize boards with matching tags in discovery feed | ❌ **Missing** | No discovery feed exists. |
-| **FR14-10** | Update recommendations dynamically when user preferences change | ❌ **Missing** | Not implemented. |
-| **FR14-11** | Associate each public board with one or more tags | ⚠️ **Partially Implemented** | `tags` field exists on `Board` model, but is not connected to public board indexing. |
-| **FR14-12** | Index tags to support efficient filtering and retrieval | ⚠️ **Partially Implemented** | Firestore indexes (`firestore.indexes.json`) do **not** contain compound indexes for `tags` with `visibility == 'public'`. |
-| **FR14-13** | Any authenticated user join public board | ⚠️ **Partially Implemented** | Works via manual board ID entry, but not discoverable from UI. |
-| **FR14-14** | Assign default role (Viewer) when joining public board | ✅ **Fully Implemented** | Default role set to `roleViewer` in [`board.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/models/board.dart#L51). |
-| **FR14-15** | Owners configure default roles for public joins | ✅ **Fully Implemented** | Configurable via dropdown in [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart). |
-| **FR14-16** | Sort public boards (most popular, most recent) | ❌ **Missing** | No sorting mechanisms for public boards. |
+| **FR14-04** | Dedicated screen for browsing public boards | ✅ **Fully Implemented** | Built [`public_board_discovery_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/public_board_discovery_screen.dart) accessible via Compass icon button from [`home_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/home_screen.dart). |
+| **FR14-05** | Display list of all public boards | ✅ **Fully Implemented** | Queries Firestore `boards` where `visibility == 'public'` with cursor pagination, displaying thumbnails, title, tags, and member counters. |
+| **FR14-06** | Search public boards by title or keywords | ✅ **Fully Implemented** | Debounced search field filters boards in real-time by title and keyword tokens. |
+| **FR14-07** | Filter public boards based on tags | ✅ **Fully Implemented** | Horizontal tag chips filter Firestore queries by tag (`array-contains`). |
+| **FR14-08** | Recommend public boards based on preferred tags | ✅ **Fully Implemented** | `getRecommendedPublicBoards` queries boards matching user's preferred tags via `array-contains-any`. |
+| **FR14-09** | Prioritize boards with matching tags in discovery feed | ✅ **Fully Implemented** | Sorts recommendations by highest number of matching tag intersections first, then by popularity (`membersCount`). |
+| **FR14-10** | Update recommendations dynamically when user preferences change | ✅ **Fully Implemented** | `PublicBoardsBloc` listens to `_profileService.watchUserById` and dispatches `PublicBoardsUserPreferencesChanged` when preferred tags change, dynamically refreshing recommended boards. |
+| **FR14-11** | Associate each public board with one or more tags | ✅ **Fully Implemented** | `tags` field persisted on board documents and displayed as chips on discovery cards. |
+| **FR14-12** | Index tags to support efficient filtering and retrieval | ✅ **Fully Implemented** | Compound indexes added to [`firestore.indexes.json`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/firestore.indexes.json) for `visibility == 'public'` + `tags` (array-contains) + `createdAt`/`membersCount` (descending). |
+| **FR14-13** | Any authenticated user join public board | ✅ **Fully Implemented** | 1-tap "Join Board" option on public board discovery card triggers `PublicBoardsJoinBoard` -> `_boardService.joinBoard(boardId)` -> adds user to members and updates dashboard. |
+| **FR14-14** | Assign default role (Viewer) when joining public board | ✅ **Fully Implemented** | Default role set to `roleViewer` in [`board.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/domain/models/board.dart#L51) and resolved in [`join_board_by_code.js`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/functions/src/boards/join_board_by_code.js). |
+| **FR14-15** | Owners configure default roles for public joins | ✅ **Fully Implemented** | Configurable via dropdown in [`board_settings_screen.dart`](file:///c:/Users/highh/OneDrive/Documents/GitHub/InkLink/lib/features/dashboard/view/board_settings_screen.dart) and stored in `invitePolicy.defaultLinkJoinRole`. |
+| **FR14-16** | Sort public boards (most popular, most recent) | ✅ **Fully Implemented** | Dropdown supporting "Most Recent" (`createdAt DESC`) and "Most Popular" (`membersCount DESC`) wired to indexed Firestore queries. |
 
 ---
 

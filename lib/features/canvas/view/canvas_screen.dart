@@ -1340,6 +1340,24 @@ class _CanvasScreenState extends State<CanvasScreen> {
             context.read<CanvasBloc>().add(const CanvasConsumeExportMessage());
           }
 
+          if (state.infoMessage != null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(LucideIcons.checkCircle2, size: 16, color: _tokens.success),
+                    const SizedBox(width: InkSpacing.s8),
+                    Flexible(child: Text(state.infoMessage!)),
+                  ],
+                ),
+                backgroundColor: _tokens.paper,
+                duration: const Duration(seconds: 3),
+              ),
+            );
+            context.read<CanvasBloc>().add(const CanvasConsumeInfoMessage());
+          }
+
           final message = state.error;
           if (message == null || message.isEmpty) return;
 
@@ -1361,8 +1379,19 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   Flexible(child: Text(message)),
                 ],
               ),
+              action: isViewerWarning
+                  ? SnackBarAction(
+                      label: 'Request Edit',
+                      textColor: _tokens.accent,
+                      onPressed: () {
+                        context
+                            .read<CanvasBloc>()
+                            .add(const CanvasRequestEditAccess());
+                      },
+                    )
+                  : null,
               duration: isViewerWarning
-                  ? const Duration(seconds: 2)
+                  ? const Duration(seconds: 3)
                   : const Duration(seconds: 4),
             ),
           );
@@ -3130,6 +3159,44 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         ),
                       ),
                     ),
+                    if (state.currentUserRole == Board.roleViewer) ...[
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _showRequestEditDialog(context),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: tokens.pending.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: tokens.pending.withValues(alpha: 0.45),
+                              width: 0.8,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                LucideIcons.pencilLine,
+                                size: 11,
+                                color: tokens.pending,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Request Edit',
+                                style: InkType.caption(tokens.pending)
+                                    .copyWith(fontWeight: FontWeight.w700),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
                   ],
                 ),
               ),
@@ -3175,6 +3242,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     onSelected: (value) {
                       if (value == 'settings') {
                         _openSettings(state.boardTitle ?? 'Board');
+                      } else if (value == 'request_edit') {
+                        _showRequestEditDialog(context);
                       } else if (value == 'export') {
                         _showExportOptionsSheet(context);
                       } else if (value == 'share') {
@@ -3218,6 +3287,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         value: 'settings',
                         child: _menuRow(LucideIcons.slidersHorizontal, 'Board Settings', tokens.ink),
                       ),
+                      if (state.currentUserRole == Board.roleViewer)
+                        PopupMenuItem(
+                          value: 'request_edit',
+                          child: _menuRow(LucideIcons.pencilLine, 'Request Edit Access', tokens.accent),
+                        ),
                       PopupMenuItem(
                         value: 'export',
                         child: _menuRow(LucideIcons.download, 'Export Board...', tokens.ink),
@@ -3266,6 +3340,80 @@ class _CanvasScreenState extends State<CanvasScreen> {
         const SizedBox(width: 10),
         Text(label, style: TextStyle(color: color)),
       ],
+    );
+  }
+
+  void _showRequestEditDialog(BuildContext context) {
+    final tokens = _tokens;
+    final noteController = TextEditingController();
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: tokens.paper,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(LucideIcons.pencilLine, size: 20, color: tokens.accent),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Request Edit Access',
+                style: InkType.title(tokens.ink),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Send a request to the board owner to grant you editor access?',
+              style: InkType.body(tokens.inkSecondary),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: noteController,
+              maxLength: 140,
+              decoration: InputDecoration(
+                hintText: 'Optional note to owner...',
+                hintStyle: InkType.caption(tokens.inkMuted),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: tokens.glassStroke),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: Text('Cancel', style: InkType.body(tokens.inkMuted)),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: tokens.accent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            onPressed: () {
+              final note = noteController.text.trim();
+              Navigator.pop(dialogCtx);
+              context.read<CanvasBloc>().add(
+                    CanvasRequestEditAccess(
+                      message: note.isNotEmpty ? note : null,
+                    ),
+                  );
+            },
+            child:
+                Text('Send Request', style: InkType.bodyStrong(Colors.white)),
+          ),
+        ],
+      ),
     );
   }
 
