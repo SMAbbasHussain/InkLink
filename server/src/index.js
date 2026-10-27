@@ -7,14 +7,33 @@ const cors = require('cors');
 const Y = require('yjs');
 require('dotenv').config();
 
-const allowedOrigins = process.env.CORS_ORIGIN
-  ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
-  : ['http://localhost:3000', 'https://inklink.web.app', 'https://inklink.app'];
+// ============================================================
+// CORS & ORIGIN VALIDATION (Comments 2 & 3)
+// ============================================================
+const defaultAllowedOrigins = [
+  'http://localhost:3000',
+  'https://inklink.web.app',
+  'https://inklink.app',
+];
+
+// Comment 2: Do NOT treat '*' as allowed when credentials are enabled; require explicit origins.
+const configuredOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0 && s !== '*')
+  : defaultAllowedOrigins;
+
+const allowedOrigins = configuredOrigins.length > 0 ? configuredOrigins : defaultAllowedOrigins;
+
+function isOriginAllowed(origin) {
+  // Allow requests with no Origin header (such as native mobile apps or curl)
+  if (!origin) return true;
+  return allowedOrigins.includes(origin);
+}
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (such as mobile apps or curl) or matched origins
-    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+    if (isOriginAllowed(origin)) {
       return callback(null, true);
     }
     return callback(new Error('Not allowed by CORS'));
@@ -34,8 +53,18 @@ app.get('/health', (req, res) => {
 });
 
 const server = http.createServer(app);
+
+// Comment 3: Explicit origin check for Socket.IO WebSocket handshakes via Engine.IO allowRequest
 const io = new Server(server, {
   cors: corsOptions,
+  allowRequest: (req, callback) => {
+    const origin = req.headers.origin;
+    if (isOriginAllowed(origin)) {
+      return callback(null, true);
+    }
+    console.warn(`[Socket.IO handshake] Rejected unlisted origin: ${origin}`);
+    return callback('Origin not allowed by CORS policy', false);
+  },
 });
 
 function loadFirebaseServiceAccount() {
@@ -497,6 +526,13 @@ setInterval(async () => {
 // ============================================================
 io.use(async (socket, next) => {
   try {
+    // Comment 3: Validate origin during Socket.IO connection initialization
+    const origin = socket.handshake.headers.origin;
+    if (origin && !isOriginAllowed(origin)) {
+      console.warn(`[Socket.IO auth] Rejected unlisted origin: ${origin}`);
+      return next(new Error('CORS error: Origin not allowed'));
+    }
+
     const { token } = socket.handshake.auth;
     if (!token) return next(new Error('Authentication error: Token missing'));
 

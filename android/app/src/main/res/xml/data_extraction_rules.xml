@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Include local Isar database so offline canvas edits and sync states survive restore (Comment 5) -->
+        <include domain="file" path="default.isar" />
+        <include domain="file" path="default.isar.lock" />
+
+        <!-- Exclude credentials, session tokens, and shared preferences (Comment 6) -->
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="root" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <!-- Include local Isar database so unsynced CRDT updates survive device transfer (Comment 5) -->
+        <include domain="file" path="default.isar" />
+        <include domain="file" path="default.isar.lock" />
+
+        <!-- Exclude credentials, session tokens, and shared preferences from D2D transfer (Comment 6) -->
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="root" path="." />
+    </device-transfer>
+</data-extraction-rules>

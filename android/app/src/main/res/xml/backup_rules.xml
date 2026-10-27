@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Include local Isar database so offline canvas edits and sync states are preserved (Comment 5) -->
+    <include domain="file" path="default.isar" />
+    <include domain="file" path="default.isar.lock" />
+
+    <!-- Exclude sensitive auth tokens, credentials, and shared preferences from backup (Comment 6) -->
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="root" path="." />
+</full-backup-content>
