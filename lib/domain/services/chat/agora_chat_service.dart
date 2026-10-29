@@ -18,6 +18,7 @@ import '../../../core/utils/network_config.dart';
 import '../../models/chat/chat_conversation_model.dart';
 import '../../models/chat/chat_message_model.dart';
 import '../../models/chat/chat_share_payload.dart';
+import '../presence/presence_service.dart';
 import 'chat_service.dart';
 
 /// Chat transport backed *exclusively* by the Agora Chat SDK.
@@ -40,6 +41,7 @@ import 'chat_service.dart';
 class AgoraChatServiceImpl implements ChatService {
   final LocalDatabaseService _localDbService;
   final AuthService _authService;
+  final PresenceService? _presenceService;
 
   /// Resolves the device push token (FCM/APNs) for Agora offline push
   /// binding. Best-effort; null provider simply skips binding.
@@ -55,6 +57,10 @@ class AgoraChatServiceImpl implements ChatService {
   final StreamController<List<ChatConversationModel>> _conversationsController =
       StreamController<List<ChatConversationModel>>.broadcast();
   final Map<String, StreamController<List<ChatMessageModel>>> _messagesControllers = {};
+  final Map<String, String> _canonicalThreadIds = {};
+  final Map<String, String> _agoraMsgIdToLocalId = {};
+  final Map<String, StreamSubscription<UserPresence>> _presenceSubs = {};
+  final Map<String, bool> _presenceStates = {};
   final StreamController<ChatConnectionState> _connectionStateController =
       StreamController<ChatConnectionState>.broadcast();
 
@@ -72,15 +78,76 @@ class AgoraChatServiceImpl implements ChatService {
   AgoraChatServiceImpl({
     required LocalDatabaseService localDbService,
     required AuthService authService,
+    PresenceService? presenceService,
     Future<String?> Function()? pushTokenProvider,
   })  : _localDbService = localDbService,
         _authService = authService,
+        _presenceService = presenceService,
         _pushTokenProvider = pushTokenProvider;
 
   String _sanitizeAgoraUid(String uid) {
     // Agora Chat usernames accept [a-zA-Z0-9_-]+. Mirrored by the server
     // (`sanitizeAgoraUid` in server/src/index.js) — keep both in sync.
     return uid.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_').toLowerCase();
+  }
+
+  void _ensureWatchingPresence(String uid) {
+    final presenceService = _presenceService;
+    if (presenceService == null || uid.isEmpty) return;
+    if (_presenceSubs.containsKey(uid)) return;
+    final lowerKey = uid.toLowerCase();
+    _presenceSubs[uid] = presenceService.watchUserPresence(uid).listen(
+      (presence) {
+        final prev = _presenceStates[lowerKey];
+        _presenceStates[lowerKey] = presence.isOnline;
+        if (prev != presence.isOnline) {
+          unawaited(_syncConversationsFromLocal());
+        }
+      },
+      onError: (_) {},
+    );
+  }
+
+  bool _isThreadActive(String conversationId) {
+    final key = conversationId.toLowerCase();
+    final controller = _messagesControllers[key];
+    return controller != null && controller.hasListener;
+  }
+
+  Future<String> _resolveCanonicalUid(String rawId) async {
+    if (rawId.isEmpty) return rawId;
+    final currentUid = _authService.getCurrentUserId();
+    if (currentUid != null &&
+        currentUid.isNotEmpty &&
+        currentUid.toLowerCase() == rawId.toLowerCase()) {
+      return currentUid;
+    }
+    try {
+      final isar = await _localDbService.database;
+      final profile = await isar.localProfiles
+          .filter()
+          .uidEqualTo(rawId, caseSensitive: false)
+          .findFirst();
+      if (profile != null && profile.uid.isNotEmpty) {
+        return profile.uid;
+      }
+      final conv = await isar.localChatConversations
+          .filter()
+          .conversationIdEqualTo(rawId, caseSensitive: false)
+          .findFirst();
+      if (conv != null && conv.conversationId.isNotEmpty) {
+        if (conv.conversationId != rawId.toLowerCase()) {
+          return conv.conversationId;
+        }
+        for (final member in conv.memberIds) {
+          if (member.toLowerCase() == rawId.toLowerCase() &&
+              member != rawId.toLowerCase()) {
+            return member;
+          }
+        }
+      }
+    } catch (_) {}
+    return rawId;
   }
 
   // ============================================================
@@ -125,6 +192,15 @@ class AgoraChatServiceImpl implements ChatService {
     }
   }
 
+  Future<bool> _isSdkLoggedIn() async {
+    if (!_initialized) return false;
+    try {
+      return await ChatClient.getInstance.isLoginBefore();
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Initializes ChatClient exactly once per app key. Subsequent logins reuse
   /// the existing options; an app-key change goes through `changeAppKey`.
   Future<void> _ensureInitialized(String appKey) async {
@@ -143,8 +219,14 @@ class AgoraChatServiceImpl implements ChatService {
       appKey,
       autoLogin: false,
       debugMode: false,
+      requireAck: true,
+      requireDeliveryAck: true,
     );
     await ChatClient.getInstance.init(options);
+    try {
+      await ChatClient.getInstance.updateRequireAckSetting(true);
+      await ChatClient.getInstance.updateDeliveryAckSetting(true);
+    } catch (_) {}
     await ChatClient.getInstance.startCallback();
     _registerMessageHandlers();
     _initialized = true;
@@ -168,7 +250,9 @@ class AgoraChatServiceImpl implements ChatService {
         },
         onMessagesDelivered: (List<ChatMessage> messages) async {
           for (final msg in messages) {
-            final targetId = msg.attributes?['localMessageId']?.toString() ?? msg.msgId;
+            final targetId = _agoraMsgIdToLocalId[msg.msgId] ??
+                msg.attributes?['localMessageId']?.toString() ??
+                msg.msgId;
             final convId = msg.conversationId ?? msg.to ?? '';
             await _updateMessageStatus(targetId, ChatMessageStatus.delivered,
                 conversationId: convId);
@@ -176,11 +260,44 @@ class AgoraChatServiceImpl implements ChatService {
         },
         onMessagesRead: (List<ChatMessage> messages) async {
           for (final msg in messages) {
-            final targetId = msg.attributes?['localMessageId']?.toString() ?? msg.msgId;
-            final convId = msg.conversationId ?? msg.to ?? '';
+            final targetId = _agoraMsgIdToLocalId[msg.msgId] ??
+                msg.attributes?['localMessageId']?.toString() ??
+                msg.msgId;
+            final convId = msg.conversationId ?? msg.to ?? msg.from ?? '';
             await _updateMessageStatus(targetId, ChatMessageStatus.read,
                 conversationId: convId);
           }
+        },
+        onConversationRead: (String from, String to) async {
+          developer.log('Agora onConversationRead: from=$from, to=$to',
+              name: 'AgoraChatService');
+          final canonicalPeerId = await _resolveCanonicalUid(from);
+          final currentUid = _authService.getCurrentUserId() ?? '';
+          final isar = await _localDbService.database;
+          await isar.writeTxn(() async {
+            final sentMsgs = await isar.localChatMessages
+                .filter()
+                .group((q) => q
+                    .conversationIdEqualTo(canonicalPeerId, caseSensitive: false)
+                    .or()
+                    .conversationIdEqualTo(from, caseSensitive: false))
+                .and()
+                .group((q) => q
+                    .senderIdEqualTo(currentUid, caseSensitive: false)
+                    .or()
+                    .senderIdEqualTo(to, caseSensitive: false))
+                .and()
+                .not()
+                .statusEqualTo(ChatMessageStatus.read.name)
+                .findAll();
+
+            for (final msg in sentMsgs) {
+              msg.status = ChatMessageStatus.read.name;
+              await isar.localChatMessages.put(msg);
+            }
+          });
+          _notifyThreadUpdated(canonicalPeerId);
+          _notifyThreadUpdated(from);
         },
         onMessagesRecalled: (List<ChatMessage> messages) async {
           for (final msg in messages) {
@@ -316,7 +433,6 @@ class AgoraChatServiceImpl implements ChatService {
       if (creds == null) {
         // Local-first mode: everything queues in Isar until Agora is reachable.
         _setConnectionState(ChatConnectionState.unavailable);
-        await _syncFromAgora();
         await _syncConversationsFromLocal();
         return;
       }
@@ -336,7 +452,7 @@ class AgoraChatServiceImpl implements ChatService {
       final token = creds['token']?.toString() ?? '';
       // Re-login only when the account actually differs; repeated logins for
       // the same user would otherwise drop the connection needlessly.
-      final alreadyLoggedIn = await ChatClient.getInstance.isLoginBefore();
+      final alreadyLoggedIn = await _isSdkLoggedIn();
       if (alreadyLoggedIn) {
         final currentLoggedIn = await ChatClient.getInstance.getCurrentUserId() ??
             ChatClient.getInstance.currentUserId;
@@ -392,10 +508,17 @@ class AgoraChatServiceImpl implements ChatService {
   @override
   Future<void> logout() async {
     _currentUserId = null;
+    for (final sub in _presenceSubs.values) {
+      await sub.cancel();
+    }
+    _presenceSubs.clear();
+    _presenceStates.clear();
     _setConnectionState(ChatConnectionState.disconnected);
-    try {
-      await ChatClient.getInstance.logout(true);
-    } catch (_) {}
+    if (_initialized) {
+      try {
+        await ChatClient.getInstance.logout(true);
+      } catch (_) {}
+    }
   }
 
   // ============================================================
@@ -404,7 +527,7 @@ class AgoraChatServiceImpl implements ChatService {
 
   Future<void> _syncFromAgora() async {
     try {
-      final isLogged = await ChatClient.getInstance.isLoginBefore();
+      final isLogged = await _isSdkLoggedIn();
       if (!isLogged) return;
 
       List<ChatConversation> agoraConvs = [];
@@ -472,7 +595,7 @@ class AgoraChatServiceImpl implements ChatService {
       for (final g in groups) {
         final existing = await isar.localChatConversations
             .filter()
-            .conversationIdEqualTo(g.groupId)
+            .conversationIdEqualTo(g.groupId, caseSensitive: false)
             .findFirst();
         final conv = existing ?? LocalChatConversation()
           ..conversationId = g.groupId;
@@ -511,6 +634,12 @@ class AgoraChatServiceImpl implements ChatService {
 
   @override
   Stream<List<ChatConversationModel>> watchConversations() {
+    if (!_initialized && !_loginInFlight) {
+      final uid = _authService.getCurrentUserId();
+      if (uid != null && uid.isNotEmpty) {
+        unawaited(login(uid));
+      }
+    }
     _syncConversationsFromLocal();
     return _conversationsController.stream;
   }
@@ -524,26 +653,27 @@ class AgoraChatServiceImpl implements ChatService {
     if (currentUid != null && currentUid.isNotEmpty) {
       final incomingDmMessages = await isar.localChatMessages
           .filter()
-          .conversationIdEqualTo(currentUid)
+          .conversationIdEqualTo(currentUid, caseSensitive: false)
           .and()
           .not()
-          .senderIdEqualTo(currentUid)
+          .senderIdEqualTo(currentUid, caseSensitive: false)
           .findAll();
 
       final senders = <String, LocalChatMessage>{};
       for (final m in incomingDmMessages) {
-        if (!senders.containsKey(m.senderId) ||
-            m.timestamp.isAfter(senders[m.senderId]!.timestamp)) {
-          senders[m.senderId] = m;
+        final key = m.senderId.toLowerCase();
+        if (!senders.containsKey(key) ||
+            m.timestamp.isAfter(senders[key]!.timestamp)) {
+          senders[key] = m;
         }
       }
 
       for (final entry in senders.entries) {
-        final senderUid = entry.key;
         final latestMsg = entry.value;
+        final senderUid = await _resolveCanonicalUid(latestMsg.senderId);
         final existingPartnerConv = await isar.localChatConversations
             .filter()
-            .conversationIdEqualTo(senderUid)
+            .conversationIdEqualTo(senderUid, caseSensitive: false)
             .findFirst();
 
         if (existingPartnerConv == null) {
@@ -571,58 +701,84 @@ class AgoraChatServiceImpl implements ChatService {
         .findAll();
 
     final results = <ChatConversationModel>[];
+    final seenConvKeys = <String>{};
     for (final c in locals) {
       // Don't show DM with self or conversations the current user is not a participant of
       if (currentUid != null && currentUid.isNotEmpty) {
+        final lowerCurrent = currentUid.toLowerCase();
         if (!c.isGroup) {
-          if (c.conversationId == currentUid) continue;
-          if (c.memberIds.isNotEmpty && !c.memberIds.contains(currentUid)) continue;
+          if (c.conversationId.toLowerCase() == lowerCurrent) continue;
+          if (c.memberIds.isNotEmpty &&
+              !c.memberIds.any((m) => m.toLowerCase() == lowerCurrent)) {
+            continue;
+          }
         } else {
-          if (c.memberIds.isNotEmpty && !c.memberIds.contains(currentUid)) continue;
+          if (c.memberIds.isNotEmpty &&
+              !c.memberIds.any((m) => m.toLowerCase() == lowerCurrent)) {
+            continue;
+          }
         }
       }
 
+      final dedupKey = c.isGroup ? c.conversationId : c.conversationId.toLowerCase();
+      if (!seenConvKeys.add(dedupKey)) continue;
+
+      String canonicalId = c.conversationId;
       String resolvedName = c.name;
       String? resolvedAvatar = c.avatarUrl;
 
-      // If DM and name or avatar is missing or generic, resolve from cached LocalProfile
-      if (!c.isGroup &&
-          (resolvedName.isEmpty ||
-              resolvedName == 'User' ||
-              resolvedAvatar == null ||
-              resolvedAvatar.isEmpty)) {
+      // Resolve canonical UID and profile display fields for DMs
+      if (!c.isGroup) {
         final profile = await isar.localProfiles
             .filter()
-            .uidEqualTo(c.conversationId)
+            .uidEqualTo(c.conversationId, caseSensitive: false)
             .findFirst();
         if (profile != null) {
-          if (profile.displayName.isNotEmpty) {
+          if (profile.uid.isNotEmpty) {
+            canonicalId = profile.uid;
+          }
+          if ((resolvedName.isEmpty ||
+                  resolvedName == 'User' ||
+                  resolvedName.toLowerCase() == c.conversationId.toLowerCase()) &&
+              profile.displayName.isNotEmpty) {
             resolvedName = profile.displayName;
           }
-          if (profile.photoURL != null && profile.photoURL!.isNotEmpty) {
+          if ((resolvedAvatar == null || resolvedAvatar.isEmpty) &&
+              profile.photoURL != null &&
+              profile.photoURL!.isNotEmpty) {
             resolvedAvatar = profile.photoURL;
           }
-        } else {
+        } else if (resolvedName.isEmpty ||
+            resolvedName == 'User' ||
+            resolvedName.toLowerCase() == c.conversationId.toLowerCase() ||
+            resolvedAvatar == null ||
+            resolvedAvatar.isEmpty) {
           final partnerMsg = await isar.localChatMessages
               .filter()
-              .senderIdEqualTo(c.conversationId)
+              .senderIdEqualTo(c.conversationId, caseSensitive: false)
               .findFirst();
           if (partnerMsg != null && partnerMsg.senderName.isNotEmpty) {
             resolvedName = partnerMsg.senderName;
             resolvedAvatar ??= partnerMsg.senderAvatar;
           }
         }
+
+        _ensureWatchingPresence(canonicalId);
       }
+
+      final isOnline =
+          !c.isGroup && (_presenceStates[canonicalId.toLowerCase()] ?? false);
 
       results.add(
         ChatConversationModel(
-          id: c.conversationId,
+          id: canonicalId,
           name: resolvedName.isNotEmpty ? resolvedName : (c.isGroup ? 'Group Chat' : 'User'),
           avatarUrl: resolvedAvatar,
           isGroup: c.isGroup,
           lastMessage: c.lastMessage,
           lastMessageTimestamp: c.lastMessageTimestamp,
           unreadCount: c.unreadCount,
+          isOnline: isOnline,
           isMuted: c.isMuted,
           memberIds: List.from(c.memberIds),
           adminIds: List.from(c.adminIds),
@@ -639,22 +795,51 @@ class AgoraChatServiceImpl implements ChatService {
   Future<void> markConversationAsRead(String conversationId) async {
     final isar = await _localDbService.database;
     await isar.writeTxn(() async {
-      final conv = await isar.localChatConversations
+      final convs = await isar.localChatConversations
           .filter()
-          .conversationIdEqualTo(conversationId)
-          .findFirst();
-      if (conv != null) {
+          .conversationIdEqualTo(conversationId, caseSensitive: false)
+          .findAll();
+      for (final conv in convs) {
         conv.unreadCount = 0;
         await isar.localChatConversations.put(conv);
       }
     });
 
-    try {
-      final convType = await _agoraConversationType(conversationId);
-      final agoraConv = await ChatClient.getInstance.chatManager
-          .getConversation(conversationId, type: convType);
-      await agoraConv?.markAllMessagesAsRead();
-    } catch (_) {}
+    var isLogged = await _isSdkLoggedIn();
+    if (!isLogged) {
+      final uid = _authService.getCurrentUserId();
+      if (uid != null && uid.isNotEmpty) {
+        await login(uid);
+        isLogged = await _isSdkLoggedIn();
+      }
+    }
+
+    if (isLogged) {
+      try {
+        final convType = await _agoraConversationType(conversationId);
+        final agoraId = convType == ChatConversationType.GroupChat
+            ? conversationId
+            : _sanitizeAgoraUid(conversationId);
+        final agoraConv = await ChatClient.getInstance.chatManager
+            .getConversation(agoraId, type: convType);
+        await agoraConv?.markAllMessagesAsRead();
+        if (convType != ChatConversationType.GroupChat) {
+          await ChatClient.getInstance.chatManager.sendConversationReadAck(agoraId);
+          if (agoraConv != null) {
+            final unreadList = await agoraConv.loadMessages(startMsgId: '', loadCount: 20);
+            for (final m in unreadList) {
+              if (m.direction == MessageDirection.RECEIVE && !m.hasReadAck) {
+                try {
+                  await ChatClient.getInstance.chatManager.sendMessageReadAck(m);
+                } catch (_) {}
+              }
+            }
+          }
+        }
+      } catch (e) {
+        developer.log('Agora sendConversationReadAck error: $e', name: 'AgoraChatService');
+      }
+    }
 
     await _syncConversationsFromLocal();
   }
@@ -665,19 +850,22 @@ class AgoraChatServiceImpl implements ChatService {
     await isar.writeTxn(() async {
       await isar.localChatConversations
           .filter()
-          .conversationIdEqualTo(conversationId)
+          .conversationIdEqualTo(conversationId, caseSensitive: false)
           .deleteAll();
       await isar.localChatMessages
           .filter()
-          .conversationIdEqualTo(conversationId)
+          .conversationIdEqualTo(conversationId, caseSensitive: false)
           .deleteAll();
     });
 
-    try {
-      // Conversation type is inferred server-side; only the id matters.
-      await ChatClient.getInstance.chatManager
-          .deleteConversation(conversationId, deleteMessages: true);
-    } catch (_) {}
+    if (_initialized) {
+      try {
+        final isGroup = await _isGroupConversation(conversationId);
+        final agoraId = isGroup ? conversationId : _sanitizeAgoraUid(conversationId);
+        await ChatClient.getInstance.chatManager
+            .deleteConversation(agoraId, deleteMessages: true);
+      } catch (_) {}
+    }
 
     await _syncConversationsFromLocal();
     _notifyThreadUpdated(conversationId);
@@ -689,7 +877,7 @@ class AgoraChatServiceImpl implements ChatService {
     await isar.writeTxn(() async {
       final conv = await isar.localChatConversations
           .filter()
-          .conversationIdEqualTo(conversationId)
+          .conversationIdEqualTo(conversationId, caseSensitive: false)
           .findFirst();
       if (conv != null) {
         conv.isMuted = !conv.isMuted;
@@ -701,39 +889,47 @@ class AgoraChatServiceImpl implements ChatService {
 
   @override
   Stream<List<ChatMessageModel>> watchMessages(String conversationId) {
-    if (!_messagesControllers.containsKey(conversationId)) {
-      _messagesControllers[conversationId] =
+    final key = conversationId.toLowerCase();
+    _canonicalThreadIds[key] = conversationId;
+    if (!_messagesControllers.containsKey(key)) {
+      _messagesControllers[key] =
           StreamController<List<ChatMessageModel>>.broadcast();
     }
     _notifyThreadUpdated(conversationId);
-    return _messagesControllers[conversationId]!.stream;
+    return _messagesControllers[key]!.stream;
   }
 
   @override
   Future<List<ChatMessageModel>> getMessages(String conversationId) async {
     final isar = await _localDbService.database;
     final currentUid = _authService.getCurrentUserId() ?? '';
+    if (!_initialized && !_loginInFlight && currentUid.isNotEmpty) {
+      unawaited(login(currentUid));
+    }
 
     // Fetch all messages for this thread:
     // Either stored directly under conversationId,
     // or sent between conversationId and currentUid (counterpart DM)
     var locals = await isar.localChatMessages
         .filter()
-        .conversationIdEqualTo(conversationId)
+        .conversationIdEqualTo(conversationId, caseSensitive: false)
         .or()
         .group((q) => q
-            .conversationIdEqualTo(currentUid)
+            .conversationIdEqualTo(currentUid, caseSensitive: false)
             .and()
-            .senderIdEqualTo(conversationId))
+            .senderIdEqualTo(conversationId, caseSensitive: false))
         .sortByTimestamp()
         .findAll();
 
     // If local Isar has no messages, lazily fetch from Agora Chat SDK
-    if (locals.isEmpty) {
+    if (locals.isEmpty && _initialized) {
       try {
         final convType = await _agoraConversationType(conversationId);
+        final agoraId = convType == ChatConversationType.GroupChat
+            ? conversationId
+            : _sanitizeAgoraUid(conversationId);
         final conv = await ChatClient.getInstance.chatManager
-            .getConversation(conversationId, type: convType);
+            .getConversation(agoraId, type: convType);
         if (conv != null) {
           final msgs = await conv.loadMessages(startMsgId: '', loadCount: 50);
           for (final msg in msgs) {
@@ -746,12 +942,12 @@ class AgoraChatServiceImpl implements ChatService {
           }
           locals = await isar.localChatMessages
               .filter()
-              .conversationIdEqualTo(conversationId)
+              .conversationIdEqualTo(conversationId, caseSensitive: false)
               .or()
               .group((q) => q
-                  .conversationIdEqualTo(currentUid)
+                  .conversationIdEqualTo(currentUid, caseSensitive: false)
                   .and()
-                  .senderIdEqualTo(conversationId))
+                  .senderIdEqualTo(conversationId, caseSensitive: false))
               .sortByTimestamp()
               .findAll();
         }
@@ -759,6 +955,57 @@ class AgoraChatServiceImpl implements ChatService {
         developer.log('Notice loading messages on demand from Agora: $e',
             name: 'AgoraChatService');
       }
+    }
+
+    // Catch up any read acks recorded on the Agora server while offline or inactive
+    if (_initialized &&
+        locals.any((m) =>
+            m.senderId.toLowerCase() == currentUid.toLowerCase() &&
+            m.status != ChatMessageStatus.read.name)) {
+      try {
+        final convType = await _agoraConversationType(conversationId);
+        final agoraId = convType == ChatConversationType.GroupChat
+            ? conversationId
+            : _sanitizeAgoraUid(conversationId);
+        final conv = await ChatClient.getInstance.chatManager
+            .getConversation(agoraId, type: convType);
+        if (conv != null) {
+          final msgs = await conv.loadMessages(startMsgId: '', loadCount: 50);
+          bool hasUpdatedRead = false;
+          for (final msg in msgs) {
+            if (msg.hasReadAck) {
+              final targetId = _agoraMsgIdToLocalId[msg.msgId] ??
+                  msg.attributes?['localMessageId']?.toString() ??
+                  msg.msgId;
+              final match = locals.cast<LocalChatMessage?>().firstWhere(
+                    (m) =>
+                        m != null &&
+                        (m.messageId == targetId || m.messageId == msg.msgId),
+                    orElse: () => null,
+                  );
+              if (match != null && match.status != ChatMessageStatus.read.name) {
+                match.status = ChatMessageStatus.read.name;
+                await isar.writeTxn(() async {
+                  await isar.localChatMessages.put(match);
+                });
+                hasUpdatedRead = true;
+              }
+            }
+          }
+          if (hasUpdatedRead) {
+            locals = await isar.localChatMessages
+                .filter()
+                .conversationIdEqualTo(conversationId, caseSensitive: false)
+                .or()
+                .group((q) => q
+                    .conversationIdEqualTo(currentUid, caseSensitive: false)
+                    .and()
+                    .senderIdEqualTo(conversationId, caseSensitive: false))
+                .sortByTimestamp()
+                .findAll();
+          }
+        }
+      } catch (_) {}
     }
 
     return locals.map((m) {
@@ -817,8 +1064,6 @@ class AgoraChatServiceImpl implements ChatService {
     bool isGroup = false,
   }) async {
     try {
-      final conversationId = msg.conversationId ?? msg.from ?? '';
-      if (conversationId.isEmpty) return;
       String textContent = '';
       ChatMessageType msgType = ChatMessageType.text;
       String? fileName;
@@ -851,10 +1096,33 @@ class AgoraChatServiceImpl implements ChatService {
         textContent = body.params?['payload'] ?? '';
       }
 
-      final senderId = msg.from ?? '';
       // Group membership is authoritative from the wire, but keep the
       // parameter when the caller already knows the type (history sync).
       isGroup = isGroup || msg.chatType == ChatType.GroupChat;
+
+      final currentUid = _authService.getCurrentUserId();
+      final attrSenderUid = msg.attributes?['senderUid']?.toString() ?? '';
+      final rawSenderId = attrSenderUid.isNotEmpty ? attrSenderUid : (msg.from ?? '');
+      final senderId = await _resolveCanonicalUid(rawSenderId);
+
+      String conversationId;
+      if (isGroup) {
+        conversationId = msg.conversationId ?? msg.to ?? '';
+      } else {
+        final isFromSelf = currentUid != null &&
+            currentUid.isNotEmpty &&
+            senderId.toLowerCase() == currentUid.toLowerCase();
+        if (isFromSelf) {
+          final attrTargetUid = msg.attributes?['targetUid']?.toString() ?? '';
+          final rawTarget = attrTargetUid.isNotEmpty
+              ? attrTargetUid
+              : (msg.to ?? msg.conversationId ?? '');
+          conversationId = await _resolveCanonicalUid(rawTarget);
+        } else {
+          conversationId = senderId;
+        }
+      }
+      if (conversationId.isEmpty) return;
 
       // Server-authoritative reactions carried on the message itself.
       final reactions = await _reactionsFromMessage(msg);
@@ -862,13 +1130,15 @@ class AgoraChatServiceImpl implements ChatService {
       // Echoes of our own sends (multi-device sync) carry the local id used
       // at send time; map back so the original Isar row is updated instead
       // of a second row being created under the server id.
-      final currentUid = _authService.getCurrentUserId();
       final localMessageId = msg.attributes?['localMessageId']?.toString();
+      final isSelfSender = currentUid != null &&
+          currentUid.isNotEmpty &&
+          senderId.toLowerCase() == currentUid.toLowerCase();
       final messageId =
-          (senderId.isNotEmpty && senderId != currentUid || localMessageId == null)
+          (!isSelfSender || localMessageId == null)
               ? msg.msgId
               : (localMessageId.isNotEmpty ? localMessageId : msg.msgId);
-      final isOwnEcho = senderId == currentUid && localMessageId != null;
+      final isOwnEcho = isSelfSender && localMessageId != null;
 
       ChatSharePayload? sharePayload;
       if (msgType == ChatMessageType.boardShare ||
@@ -876,6 +1146,29 @@ class AgoraChatServiceImpl implements ChatService {
         try {
           sharePayload = ChatSharePayload.fromJsonString(textContent);
         } catch (_) {}
+      }
+
+      // If receiver is currently viewing this conversation, send read receipts immediately
+      final active = !isGroup && _isThreadActive(conversationId);
+      if (active) {
+        try {
+          final agoraPeerId = _sanitizeAgoraUid(conversationId);
+          await ChatClient.getInstance.chatManager.sendConversationReadAck(agoraPeerId);
+          await ChatClient.getInstance.chatManager.sendMessageReadAck(msg);
+        } catch (_) {}
+      }
+
+      final ChatMessageStatus status;
+      if (isOwnEcho) {
+        if (msg.hasReadAck) {
+          status = ChatMessageStatus.read;
+        } else if (msg.hasDeliverAck) {
+          status = ChatMessageStatus.delivered;
+        } else {
+          status = ChatMessageStatus.sent;
+        }
+      } else {
+        status = ChatMessageStatus.delivered;
       }
 
       final model = ChatMessageModel(
@@ -887,7 +1180,7 @@ class AgoraChatServiceImpl implements ChatService {
         type: msgType,
         content: textContent,
         timestamp: DateTime.fromMillisecondsSinceEpoch(msg.serverTime),
-        status: isOwnEcho ? ChatMessageStatus.sent : ChatMessageStatus.delivered,
+        status: status,
         reactions: reactions,
         fileName: fileName,
         fileSize: fileSize,
@@ -900,18 +1193,17 @@ class AgoraChatServiceImpl implements ChatService {
       await _persistMessageLocally(
         model,
         isGroup: isGroup,
-        countUnread: countUnread,
+        countUnread: countUnread && !active,
       );
 
       // Dispatch local foreground notification if receiver is not sender and chat is not muted
-      if (triggerNotification && senderId.isNotEmpty) {
-        final currentUid = _authService.getCurrentUserId();
-        if (model.senderId != currentUid &&
+      if (triggerNotification && senderId.isNotEmpty && !active) {
+        if (!isSelfSender &&
             DateTime.now().difference(model.timestamp).inMinutes.abs() < 2) {
           final isar = await _localDbService.database;
           final conv = await isar.localChatConversations
               .filter()
-              .conversationIdEqualTo(conversationId)
+              .conversationIdEqualTo(conversationId, caseSensitive: false)
               .findFirst();
           final isMuted = conv?.isMuted ?? false;
           if (!isMuted) {
@@ -985,7 +1277,7 @@ class AgoraChatServiceImpl implements ChatService {
     final isar = await _localDbService.database;
     final conv = await isar.localChatConversations
         .filter()
-        .conversationIdEqualTo(conversationId)
+        .conversationIdEqualTo(conversationId, caseSensitive: false)
         .findFirst();
     return conv?.isGroup ?? conversationId.startsWith('group_');
   }
@@ -1041,11 +1333,14 @@ class AgoraChatServiceImpl implements ChatService {
       // 2. Update conversation snippet
       final existingConv = await isar.localChatConversations
           .filter()
-          .conversationIdEqualTo(model.conversationId)
+          .conversationIdEqualTo(model.conversationId, caseSensitive: false)
           .findFirst();
 
       final conv = existingConv ?? LocalChatConversation();
-      conv.conversationId = model.conversationId;
+      if (conv.conversationId.isEmpty ||
+          model.conversationId != model.conversationId.toLowerCase()) {
+        conv.conversationId = model.conversationId;
+      }
       if (conversationName != null && conversationName.isNotEmpty) {
         conv.name = conversationName;
       } else if (conv.name.isEmpty) {
@@ -1062,7 +1357,10 @@ class AgoraChatServiceImpl implements ChatService {
       conv.updatedAt = DateTime.now();
 
       final currentUid = _authService.getCurrentUserId();
-      if (countUnread && model.senderId != currentUid) {
+      final isFromSelf = currentUid != null &&
+          currentUid.isNotEmpty &&
+          model.senderId.toLowerCase() == currentUid.toLowerCase();
+      if (countUnread && !isFromSelf) {
         conv.unreadCount = conv.unreadCount + 1;
       }
 
@@ -1086,10 +1384,14 @@ class AgoraChatServiceImpl implements ChatService {
   }
 
   void _notifyThreadUpdated(String conversationId) async {
-    final controller = _messagesControllers[conversationId];
+    final key = conversationId.toLowerCase();
+    final controller = _messagesControllers[key];
     if (controller != null && !controller.isClosed) {
-      final messages = await getMessages(conversationId);
-      controller.add(messages);
+      final canonicalId = _canonicalThreadIds[key] ?? conversationId;
+      final messages = await getMessages(canonicalId);
+      if (!controller.isClosed) {
+        controller.add(messages);
+      }
     }
   }
 
@@ -1106,16 +1408,40 @@ class AgoraChatServiceImpl implements ChatService {
     String? conversationId,
   }) async {
     final isar = await _localDbService.database;
+    final resolvedId = _agoraMsgIdToLocalId[messageId] ?? messageId;
     String? targetConvId = conversationId;
     await isar.writeTxn(() async {
-      final msg = await isar.localChatMessages
+      var msg = await isar.localChatMessages
           .filter()
-          .messageIdEqualTo(messageId)
+          .messageIdEqualTo(resolvedId)
           .findFirst();
+      if (msg == null && resolvedId != messageId) {
+        msg = await isar.localChatMessages
+            .filter()
+            .messageIdEqualTo(messageId)
+            .findFirst();
+      }
       if (msg != null) {
         msg.status = status.name;
         targetConvId ??= msg.conversationId;
         await isar.localChatMessages.put(msg);
+      } else if (status == ChatMessageStatus.read &&
+          targetConvId != null &&
+          targetConvId!.isNotEmpty) {
+        final currentUid = _authService.getCurrentUserId() ?? '';
+        final unreadMsgs = await isar.localChatMessages
+            .filter()
+            .conversationIdEqualTo(targetConvId!, caseSensitive: false)
+            .and()
+            .senderIdEqualTo(currentUid, caseSensitive: false)
+            .and()
+            .not()
+            .statusEqualTo(ChatMessageStatus.read.name)
+            .findAll();
+        for (final m in unreadMsgs) {
+          m.status = ChatMessageStatus.read.name;
+          await isar.localChatMessages.put(m);
+        }
       }
     });
 
@@ -1152,6 +1478,8 @@ class AgoraChatServiceImpl implements ChatService {
     final type = ChatMessageType.fromString(local.type);
     final chatType = isGroup ? ChatType.GroupChat : ChatType.Chat;
     final attributes = <String, dynamic>{
+      'senderUid': local.senderId,
+      'targetUid': local.conversationId,
       'senderName': local.senderName,
       'senderAvatar': local.senderAvatar ?? '',
       'localMessageId': local.messageId,
@@ -1216,7 +1544,7 @@ class AgoraChatServiceImpl implements ChatService {
   /// offer a manual retry.
   Future<void> _drainOfflineQueue() async {
     try {
-      if (!await ChatClient.getInstance.isLoginBefore()) return;
+      if (!await _isSdkLoggedIn()) return;
       if (!await ChatClient.getInstance.isConnected()) return;
 
       final isar = await _localDbService.database;
@@ -1225,7 +1553,7 @@ class AgoraChatServiceImpl implements ChatService {
 
       final queued = await isar.localChatMessages
           .filter()
-          .senderIdEqualTo(currentUid)
+          .senderIdEqualTo(currentUid, caseSensitive: false)
           .group((q) => q
               .statusEqualTo(ChatMessageStatus.sending.name)
               .or()
@@ -1234,10 +1562,16 @@ class AgoraChatServiceImpl implements ChatService {
 
       for (final local in queued) {
         final isGroup = await _isGroupConversation(local.conversationId);
-        final msg = _rebuildAgoraMessage(local, _sanitizeAgoraUid(local.conversationId), isGroup);
+        final targetId = isGroup
+            ? local.conversationId
+            : _sanitizeAgoraUid(local.conversationId);
+        final msg = _rebuildAgoraMessage(local, targetId, isGroup);
         if (msg == null) continue;
         try {
-          await ChatClient.getInstance.chatManager.sendMessage(msg);
+          final sent = await ChatClient.getInstance.chatManager.sendMessage(msg);
+          if (sent.msgId.isNotEmpty) {
+            _agoraMsgIdToLocalId[sent.msgId] = local.messageId;
+          }
           await _updateMessageStatus(local.messageId, ChatMessageStatus.sent,
               conversationId: local.conversationId);
         } catch (e) {
@@ -1258,7 +1592,14 @@ class AgoraChatServiceImpl implements ChatService {
     required ChatMessageModel model,
     required bool isGroup,
   }) async {
-    final isLogged = await ChatClient.getInstance.isLoginBefore();
+    var isLogged = await _isSdkLoggedIn();
+    if (!isLogged) {
+      final uid = _authService.getCurrentUserId();
+      if (uid != null && uid.isNotEmpty) {
+        await login(uid);
+        isLogged = await _isSdkLoggedIn();
+      }
+    }
     if (!isLogged) {
       await _updateMessageStatus(model.id, ChatMessageStatus.failed,
           conversationId: model.conversationId);
@@ -1266,17 +1607,22 @@ class AgoraChatServiceImpl implements ChatService {
     }
     try {
       final sent = await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
-      // The SDK mutates and returns the same instance; SUCCESS here means the
-      // message was accepted by the server (attachments may still upload —
-      // the global ChatMessageEvent covers that).
-      final delivered = sent.status == MessageStatus.SUCCESS;
+      if (sent.msgId.isNotEmpty) {
+        _agoraMsgIdToLocalId[sent.msgId] = model.id;
+      }
+      // `sendMessage` returns once the native SDK accepts the message into its
+      // send pipeline (status is typically PROGRESS/CREATE until the async
+      // ChatMessageEvent.onSuccess/onError callback fires). Treat any non-FAIL
+      // status as accepted (`sent`), and let ChatMessageEvent.onError mark
+      // `failed` if the server rejects it.
+      final accepted = sent.status != MessageStatus.FAIL;
       await _updateMessageStatus(
         model.id,
-        delivered ? ChatMessageStatus.sent : ChatMessageStatus.failed,
+        accepted ? ChatMessageStatus.sent : ChatMessageStatus.failed,
         conversationId: model.conversationId,
       );
       return model.copyWith(
-        status: delivered ? ChatMessageStatus.sent : ChatMessageStatus.failed,
+        status: accepted ? ChatMessageStatus.sent : ChatMessageStatus.failed,
       );
     } catch (e, st) {
       developer.log('Agora send failure: $e', name: 'AgoraChatService', stackTrace: st);
@@ -1326,11 +1672,13 @@ class AgoraChatServiceImpl implements ChatService {
     );
 
     final agoraMsg = ChatMessage.createTxtSendMessage(
-      targetId: _sanitizeAgoraUid(conversationId),
+      targetId: isGroup ? conversationId : _sanitizeAgoraUid(conversationId),
       content: text,
       chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
     );
     agoraMsg.attributes = {
+      'senderUid': currentUid,
+      'targetUid': conversationId,
       'senderName': currentName,
       'senderAvatar': currentAvatar ?? '',
       'localMessageId': messageId,
@@ -1388,12 +1736,14 @@ class AgoraChatServiceImpl implements ChatService {
     );
 
     final agoraMsg = ChatMessage.createImageSendMessage(
-      targetId: _sanitizeAgoraUid(conversationId),
+      targetId: isGroup ? conversationId : _sanitizeAgoraUid(conversationId),
       filePath: filePath,
       displayName: fileName,
       chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
     );
     agoraMsg.attributes = {
+      'senderUid': currentUid,
+      'targetUid': conversationId,
       'senderName': currentName,
       'senderAvatar': currentAvatar ?? '',
       'localMessageId': messageId,
@@ -1445,12 +1795,14 @@ class AgoraChatServiceImpl implements ChatService {
     );
 
     final agoraMsg = ChatMessage.createCustomSendMessage(
-      targetId: _sanitizeAgoraUid(conversationId),
+      targetId: isGroup ? conversationId : _sanitizeAgoraUid(conversationId),
       event: 'gif',
       params: {'payload': gifUrl},
       chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
     );
     agoraMsg.attributes = {
+      'senderUid': currentUid,
+      'targetUid': conversationId,
       'senderName': currentName,
       'senderAvatar': currentAvatar ?? '',
       'localMessageId': messageId,
@@ -1506,12 +1858,14 @@ class AgoraChatServiceImpl implements ChatService {
     );
 
     final agoraMsg = ChatMessage.createFileSendMessage(
-      targetId: _sanitizeAgoraUid(conversationId),
+      targetId: isGroup ? conversationId : _sanitizeAgoraUid(conversationId),
       filePath: filePath,
       displayName: fileName,
       chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
     );
     agoraMsg.attributes = {
+      'senderUid': currentUid,
+      'targetUid': conversationId,
       'senderName': currentName,
       'senderAvatar': currentAvatar ?? '',
       'localMessageId': messageId,
@@ -1565,12 +1919,14 @@ class AgoraChatServiceImpl implements ChatService {
     );
 
     final agoraMsg = ChatMessage.createCustomSendMessage(
-      targetId: _sanitizeAgoraUid(conversationId),
+      targetId: isGroup ? conversationId : _sanitizeAgoraUid(conversationId),
       event: isBoard ? 'board_share' : 'workspace_share',
       params: {'payload': payload.toJsonString()},
       chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
     );
     agoraMsg.attributes = {
+      'senderUid': currentUid,
+      'targetUid': conversationId,
       'senderName': currentName,
       'senderAvatar': currentAvatar ?? '',
       'localMessageId': messageId,
@@ -1592,7 +1948,7 @@ class AgoraChatServiceImpl implements ChatService {
     required String messageId,
     required String emoji,
   }) async {
-    final isLoggedIn = await ChatClient.getInstance.isLoginBefore();
+    final isLoggedIn = await _isSdkLoggedIn();
     if (isLoggedIn) {
       try {
         await ChatClient.getInstance.chatManager.addReaction(
@@ -1663,7 +2019,7 @@ class AgoraChatServiceImpl implements ChatService {
     required String messageId,
     required String emoji,
   }) async {
-    final isLoggedIn = await ChatClient.getInstance.isLoginBefore();
+    final isLoggedIn = await _isSdkLoggedIn();
     if (isLoggedIn) {
       try {
         await ChatClient.getInstance.chatManager.removeReaction(
@@ -1732,13 +2088,15 @@ class AgoraChatServiceImpl implements ChatService {
     required String messageId,
     required String newContent,
   }) async {
-    try {
-      await ChatClient.getInstance.chatManager.modifyMessage(
-        messageId: messageId,
-        msgBody: ChatTextMessageBody(content: newContent),
-      );
-    } catch (e) {
-      developer.log('Agora modifyMessage failed: $e', name: 'AgoraChatService');
+    if (_initialized) {
+      try {
+        await ChatClient.getInstance.chatManager.modifyMessage(
+          messageId: messageId,
+          msgBody: ChatTextMessageBody(content: newContent),
+        );
+      } catch (e) {
+        developer.log('Agora modifyMessage failed: $e', name: 'AgoraChatService');
+      }
     }
 
     final isar = await _localDbService.database;
@@ -1765,19 +2123,21 @@ class AgoraChatServiceImpl implements ChatService {
     // Server-side recall propagates the deletion to every member via
     // onMessagesRecalled / onMessagesRecalledInfo. Local-only deletion is the
     // fallback when the sender no longer controls the message.
-    try {
-      await ChatClient.getInstance.chatManager.recallMessage(messageId);
-    } catch (e) {
-      developer.log('Agora recallMessage fallback (local delete): $e',
-          name: 'AgoraChatService');
+    if (_initialized) {
       try {
-        final convType = await _agoraConversationType(conversationId);
-        final conv = await ChatClient.getInstance.chatManager
-            .getConversation(conversationId, type: convType);
-        if (conv != null) {
-          await conv.deleteMessage(messageId);
-        }
-      } catch (_) {}
+        await ChatClient.getInstance.chatManager.recallMessage(messageId);
+      } catch (e) {
+        developer.log('Agora recallMessage fallback (local delete): $e',
+            name: 'AgoraChatService');
+        try {
+          final convType = await _agoraConversationType(conversationId);
+          final conv = await ChatClient.getInstance.chatManager
+              .getConversation(conversationId, type: convType);
+          if (conv != null) {
+            await conv.deleteMessage(messageId);
+          }
+        } catch (_) {}
+      }
     }
 
     await _markMessageRecalledLocally(conversationId, messageId);
@@ -1797,24 +2157,26 @@ class AgoraChatServiceImpl implements ChatService {
     final currentUid = _authService.getCurrentUserId() ?? 'unknown';
 
     String? agoraGroupId;
-    try {
-      final options = ChatGroupOptions(
-        style: ChatGroupStyle.PublicJoinNeedApproval,
-        maxCount: 200,
-      );
-      final group = await ChatClient.getInstance.groupManager.createGroup(
-        groupName: name,
-        avatarUrl: iconUrl,
-        desc: description,
-        options: options,
-        inviteMembers: memberIds.map(_sanitizeAgoraUid).toList(),
-      );
-      if (group.groupId.isNotEmpty) {
-        agoraGroupId = group.groupId;
+    if (_initialized) {
+      try {
+        final options = ChatGroupOptions(
+          style: ChatGroupStyle.PublicJoinNeedApproval,
+          maxCount: 200,
+        );
+        final group = await ChatClient.getInstance.groupManager.createGroup(
+          groupName: name,
+          avatarUrl: iconUrl,
+          desc: description,
+          options: options,
+          inviteMembers: memberIds.map(_sanitizeAgoraUid).toList(),
+        );
+        if (group.groupId.isNotEmpty) {
+          agoraGroupId = group.groupId;
+        }
+      } catch (e) {
+        developer.log('Agora createGroup failed (offline fallback id): $e',
+            name: 'AgoraChatService');
       }
-    } catch (e) {
-      developer.log('Agora createGroup failed (offline fallback id): $e',
-          name: 'AgoraChatService');
     }
 
     final groupId = agoraGroupId ?? 'group_${const Uuid().v4().substring(0, 8)}';
@@ -1873,21 +2235,23 @@ class AgoraChatServiceImpl implements ChatService {
       throw StateError('Only a group owner or admin can update group info.');
     }
 
-    try {
-      if (name != null && name.isNotEmpty) {
-        await ChatClient.getInstance.groupManager.updateGroupName(groupId, name);
+    if (_initialized) {
+      try {
+        if (name != null && name.isNotEmpty) {
+          await ChatClient.getInstance.groupManager.updateGroupName(groupId, name);
+        }
+        if (description != null) {
+          await ChatClient.getInstance.groupManager.updateGroupDesc(groupId, description);
+        }
+        if (iconUrl != null && iconUrl.isNotEmpty) {
+          await ChatClient.getInstance.groupManager.updateGroupAvatar(
+            groupId: groupId,
+            avatarUrl: iconUrl,
+          );
+        }
+      } catch (e) {
+        developer.log('Agora group update failed: $e', name: 'AgoraChatService');
       }
-      if (description != null) {
-        await ChatClient.getInstance.groupManager.updateGroupDesc(groupId, description);
-      }
-      if (iconUrl != null && iconUrl.isNotEmpty) {
-        await ChatClient.getInstance.groupManager.updateGroupAvatar(
-          groupId: groupId,
-          avatarUrl: iconUrl,
-        );
-      }
-    } catch (e) {
-      developer.log('Agora group update failed: $e', name: 'AgoraChatService');
     }
 
     await isar.writeTxn(() async {
@@ -1922,13 +2286,15 @@ class AgoraChatServiceImpl implements ChatService {
       throw StateError('Only a group owner or admin can add members.');
     }
 
-    try {
-      await ChatClient.getInstance.groupManager.addMembers(
-        groupId,
-        memberIds.map(_sanitizeAgoraUid).toList(),
-      );
-    } catch (e) {
-      developer.log('Agora addMembers failed: $e', name: 'AgoraChatService');
+    if (_initialized) {
+      try {
+        await ChatClient.getInstance.groupManager.addMembers(
+          groupId,
+          memberIds.map(_sanitizeAgoraUid).toList(),
+        );
+      } catch (e) {
+        developer.log('Agora addMembers failed: $e', name: 'AgoraChatService');
+      }
     }
 
     await isar.writeTxn(() async {
@@ -1963,13 +2329,15 @@ class AgoraChatServiceImpl implements ChatService {
       throw StateError('Only a group owner or admin can remove members.');
     }
 
-    try {
-      await ChatClient.getInstance.groupManager.removeMembers(
-        groupId,
-        [_sanitizeAgoraUid(memberId)],
-      );
-    } catch (e) {
-      developer.log('Agora removeMembers failed: $e', name: 'AgoraChatService');
+    if (_initialized) {
+      try {
+        await ChatClient.getInstance.groupManager.removeMembers(
+          groupId,
+          [_sanitizeAgoraUid(memberId)],
+        );
+      } catch (e) {
+        developer.log('Agora removeMembers failed: $e', name: 'AgoraChatService');
+      }
     }
 
     await isar.writeTxn(() async {
@@ -2007,13 +2375,15 @@ class AgoraChatServiceImpl implements ChatService {
       throw StateError('Only the group owner can promote admins.');
     }
 
-    try {
-      await ChatClient.getInstance.groupManager.addAdmin(
-        groupId,
-        _sanitizeAgoraUid(memberId),
-      );
-    } catch (e) {
-      developer.log('Agora addAdmin failed: $e', name: 'AgoraChatService');
+    if (_initialized) {
+      try {
+        await ChatClient.getInstance.groupManager.addAdmin(
+          groupId,
+          _sanitizeAgoraUid(memberId),
+        );
+      } catch (e) {
+        developer.log('Agora addAdmin failed: $e', name: 'AgoraChatService');
+      }
     }
 
     await isar.writeTxn(() async {
@@ -2048,13 +2418,15 @@ class AgoraChatServiceImpl implements ChatService {
       throw StateError('Only the group owner can demote admins.');
     }
 
-    try {
-      await ChatClient.getInstance.groupManager.removeAdmin(
-        groupId,
-        _sanitizeAgoraUid(memberId),
-      );
-    } catch (e) {
-      developer.log('Agora removeAdmin failed: $e', name: 'AgoraChatService');
+    if (_initialized) {
+      try {
+        await ChatClient.getInstance.groupManager.removeAdmin(
+          groupId,
+          _sanitizeAgoraUid(memberId),
+        );
+      } catch (e) {
+        developer.log('Agora removeAdmin failed: $e', name: 'AgoraChatService');
+      }
     }
 
     await isar.writeTxn(() async {
@@ -2089,13 +2461,15 @@ class AgoraChatServiceImpl implements ChatService {
       throw StateError('Only the group owner can transfer ownership.');
     }
 
-    try {
-      await ChatClient.getInstance.groupManager.changeOwner(
-        groupId,
-        _sanitizeAgoraUid(newOwnerId),
-      );
-    } catch (e) {
-      developer.log('Agora changeOwner failed: $e', name: 'AgoraChatService');
+    if (_initialized) {
+      try {
+        await ChatClient.getInstance.groupManager.changeOwner(
+          groupId,
+          _sanitizeAgoraUid(newOwnerId),
+        );
+      } catch (e) {
+        developer.log('Agora changeOwner failed: $e', name: 'AgoraChatService');
+      }
     }
 
     await isar.writeTxn(() async {
@@ -2120,10 +2494,12 @@ class AgoraChatServiceImpl implements ChatService {
   Future<void> leaveGroup(String groupId) async {
     final currentUid = _authService.getCurrentUserId() ?? '';
 
-    try {
-      await ChatClient.getInstance.groupManager.leaveGroup(groupId);
-    } catch (e) {
-      developer.log('Agora leaveGroup failed: $e', name: 'AgoraChatService');
+    if (_initialized) {
+      try {
+        await ChatClient.getInstance.groupManager.leaveGroup(groupId);
+      } catch (e) {
+        developer.log('Agora leaveGroup failed: $e', name: 'AgoraChatService');
+      }
     }
 
     final isar = await _localDbService.database;
@@ -2159,10 +2535,12 @@ class AgoraChatServiceImpl implements ChatService {
       throw StateError('Only the group owner can destroy the group.');
     }
 
-    try {
-      await ChatClient.getInstance.groupManager.destroyGroup(groupId);
-    } catch (e) {
-      developer.log('Agora destroyGroup failed: $e', name: 'AgoraChatService');
+    if (_initialized) {
+      try {
+        await ChatClient.getInstance.groupManager.destroyGroup(groupId);
+      } catch (e) {
+        developer.log('Agora destroyGroup failed: $e', name: 'AgoraChatService');
+      }
     }
 
     await deleteConversation(groupId);

@@ -17,12 +17,14 @@ class ChatThreadLoaded extends ChatThreadState {
   final List<ChatMessageModel> messages;
   final bool isSending;
   final String? typingUser;
+  final bool? isOnline;
 
   const ChatThreadLoaded({
     required this.conversationId,
     required this.messages,
     this.isSending = false,
     this.typingUser,
+    this.isOnline,
   });
 
   ChatThreadLoaded copyWith({
@@ -30,12 +32,14 @@ class ChatThreadLoaded extends ChatThreadState {
     List<ChatMessageModel>? messages,
     bool? isSending,
     String? typingUser,
+    bool? isOnline,
   }) {
     return ChatThreadLoaded(
       conversationId: conversationId ?? this.conversationId,
       messages: messages ?? this.messages,
       isSending: isSending ?? this.isSending,
       typingUser: typingUser ?? this.typingUser,
+      isOnline: isOnline ?? this.isOnline,
     );
   }
 }

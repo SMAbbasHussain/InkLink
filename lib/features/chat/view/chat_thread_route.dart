@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 import '../../../../domain/services/chat/chat_service.dart';
+import '../../../../domain/services/presence/presence_service.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
 import '../bloc/chat_thread_bloc.dart';
@@ -15,12 +16,17 @@ Route<void> buildChatThreadRoute(
 }) {
   final authState = context.read<AuthBloc>().state;
   final currentUid = authState is Authenticated ? authState.uid : '';
+  PresenceService? presenceService;
+  try {
+    presenceService = context.read<PresenceService>();
+  } catch (_) {}
 
   return MaterialPageRoute(
     builder: (_) => BlocProvider(
       create: (_) => ChatThreadBloc(
         chatService: context.read<ChatService>(),
         currentUid: currentUid,
+        presenceService: presenceService,
       )..add(LoadChatThread(conversation.id)),
       child: ChatThreadScreen(conversation: conversation),
     ),

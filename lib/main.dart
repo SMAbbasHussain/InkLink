@@ -287,6 +287,7 @@ Future<void> _startApp() async {
           create: (context) => AgoraChatServiceImpl(
             localDbService: context.read<LocalDatabaseService>(),
             authService: context.read<AuthService>(),
+            presenceService: context.read<PresenceService>(),
             pushTokenProvider: messagingService.getToken,
           )..initialize(),
         ),
