@@ -32,6 +32,12 @@ android {
         versionName = flutter.versionName
     }
 
+    packaging {
+    jniLibs {
+        pickFirsts += setOf("**/libaosl.so")
+    }
+}
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
