@@ -537,7 +537,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final activeImageIds = elements
         .whereType<ImageElement>()
         .map((element) => element.id)
-        .toSet();
+        .toSet()
+      ..addAll(_imageDrafts.keys);
 
     _decodedImageCache.removeWhere((key, _) => !activeImageIds.contains(key));
     _decodedImageCacheKey.removeWhere(
@@ -1955,7 +1956,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
       }
 
       // 2. Apply drag/scale draft overlay edits
-      if (draft != null && result.id == draft.shapeId) {
+      final imageDraft = _imageDrafts[result.id];
+      if (imageDraft != null) {
+        result = result.copyWith(
+          center: Offset(imageDraft.cx, imageDraft.cy),
+          width: imageDraft.width,
+          height: imageDraft.height,
+        );
+      } else if (draft != null && result.id == draft.shapeId) {
         result = result.copyWith(
           center: draft.center,
           size: draft.size,
@@ -2110,6 +2118,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
     }
     if (element.kind == _ElementKind.connector) {
       return _buildConnectorSelectionOverlay(state, element);
+    }
+    if (element.kind == _ElementKind.image) {
+      return const SizedBox.shrink();
     }
     if (element.kind == _ElementKind.stickyNote) {
       return Stack(
@@ -3653,22 +3664,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
     for (final element in state.elements) {
       if (element is! ImageElement) continue;
       final imageBase64 = element.imageBase64;
-      if (imageBase64.isEmpty) continue;
 
-      final cacheKey = '${imageBase64.length}:${imageBase64.hashCode}';
       Uint8List? imageBytes = _decodedImageCache[element.id];
-      final cachedKey = _decodedImageCacheKey[element.id];
-      if (imageBytes == null || cachedKey != cacheKey) {
-        try {
-          imageBytes = base64Decode(imageBase64);
-          _decodedImageCache[element.id] = imageBytes;
-          _decodedImageCacheKey[element.id] = cacheKey;
-        } catch (_) {
-          continue;
+      if (imageBase64.isNotEmpty) {
+        final cacheKey = '${imageBase64.length}:${imageBase64.hashCode}';
+        final cachedKey = _decodedImageCacheKey[element.id];
+        if (imageBytes == null || cachedKey != cacheKey) {
+          try {
+            imageBytes = base64Decode(imageBase64);
+            _decodedImageCache[element.id] = imageBytes;
+            _decodedImageCacheKey[element.id] = cacheKey;
+          } catch (_) {}
         }
       }
 
-      if (imageBytes.isEmpty) {
+      if (imageBytes == null || imageBytes.isEmpty) {
         continue;
       }
 
@@ -3677,11 +3687,46 @@ class _CanvasScreenState extends State<CanvasScreen> {
       final width = element.width;
       final height = element.height;
 
+      final transformDraft = _shapeTransformDraft;
+      final isSelectedTransformDraft =
+          transformDraft != null && transformDraft.shapeId == element.id;
+
+      final isDraggingThisShape = _isDraggingShape &&
+          _shapeDragPreviewCenter != null &&
+          state.selectedShapeId == element.id;
+
       final draft = _imageDrafts[element.id];
-      final effectiveCx = draft?.cx ?? cx;
-      final effectiveCy = draft?.cy ?? cy;
-      final effectiveWidth = draft?.width ?? width;
-      final effectiveHeight = draft?.height ?? height;
+
+      final double effectiveCx;
+      final double effectiveCy;
+      final double effectiveWidth;
+      final double effectiveHeight;
+
+      if (draft != null) {
+        effectiveCx = draft.cx;
+        effectiveCy = draft.cy;
+        effectiveWidth = draft.width;
+        effectiveHeight = draft.height;
+      } else if (isSelectedTransformDraft) {
+        effectiveCx = transformDraft.center.dx;
+        effectiveCy = transformDraft.center.dy;
+        effectiveWidth = (transformDraft.width != null && transformDraft.width! > 0)
+            ? transformDraft.width!
+            : (element.width > 0 ? element.width : transformDraft.size);
+        effectiveHeight = (transformDraft.height != null && transformDraft.height! > 0)
+            ? transformDraft.height!
+            : (element.height > 0 ? element.height : transformDraft.size);
+      } else if (isDraggingThisShape) {
+        effectiveCx = _shapeDragPreviewCenter!.dx;
+        effectiveCy = _shapeDragPreviewCenter!.dy;
+        effectiveWidth = element.width;
+        effectiveHeight = element.height;
+      } else {
+        effectiveCx = cx;
+        effectiveCy = cy;
+        effectiveWidth = width;
+        effectiveHeight = height;
+      }
 
       final screenCenter = _toScreen(Offset(effectiveCx, effectiveCy));
       final screenWidth = effectiveWidth * _viewportScale;
@@ -3692,7 +3737,18 @@ class _CanvasScreenState extends State<CanvasScreen> {
           left: screenCenter.dx - (screenWidth / 2),
           top: screenCenter.dy - (screenHeight / 2),
           child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              if (state.selectedShapeId == element.id) {
+                _selectShape(null);
+              } else {
+                _selectShape(element.id, expandEditor: false);
+              }
+            },
             onPanStart: (_) {
+              if (state.selectedShapeId != element.id) {
+                _selectShape(element.id, expandEditor: false);
+              }
               _imageDrafts[element.id] = _ImageDraftTransform(
                 cx: effectiveCx,
                 cy: effectiveCy,
@@ -3745,16 +3801,27 @@ class _CanvasScreenState extends State<CanvasScreen> {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.memory(
-                      imageBytes,
-                      width: screenWidth,
-                      height: screenHeight,
-                      fit: BoxFit.cover,
+                  Container(
+                    width: screenWidth,
+                    height: screenHeight,
+                    decoration: state.selectedShapeId == element.id
+                        ? BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: _tokens.accent, width: 2),
+                          )
+                        : null,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(
+                        imageBytes,
+                        width: screenWidth,
+                        height: screenHeight,
+                        fit: BoxFit.cover,
+                        gaplessPlayback: true,
+                      ),
                     ),
                   ),
-                  if (state.selectedShapeId == element.id)
+                  if (state.selectedShapeId == element.id) ...[
                     Positioned(
                       top: -6,
                       right: -6,
@@ -3782,84 +3849,85 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         ),
                       ),
                     ),
-                  Positioned(
-                    right: -6,
-                    bottom: -6,
-                    child: GestureDetector(
-                      onPanStart: (_) {
-                        _imageDrafts[element.id] = _ImageDraftTransform(
-                          cx: effectiveCx,
-                          cy: effectiveCy,
-                          width: effectiveWidth,
-                          height: effectiveHeight,
-                        );
-                      },
-                      onPanUpdate: (details) {
-                        final draftNow =
-                            _imageDrafts[element.id] ??
-                            _ImageDraftTransform(
-                              cx: effectiveCx,
-                              cy: effectiveCy,
-                              width: effectiveWidth,
-                              height: effectiveHeight,
+                    Positioned(
+                      right: -6,
+                      bottom: -6,
+                      child: GestureDetector(
+                        onPanStart: (_) {
+                          _imageDrafts[element.id] = _ImageDraftTransform(
+                            cx: effectiveCx,
+                            cy: effectiveCy,
+                            width: effectiveWidth,
+                            height: effectiveHeight,
+                          );
+                        },
+                        onPanUpdate: (details) {
+                          final draftNow =
+                              _imageDrafts[element.id] ??
+                              _ImageDraftTransform(
+                                cx: effectiveCx,
+                                cy: effectiveCy,
+                                width: effectiveWidth,
+                                height: effectiveHeight,
+                              );
+                          setState(() {
+                            const minDimension = 24.0;
+                            _imageDrafts[element.id] = draftNow.copyWith(
+                              cx:
+                                  draftNow.cx +
+                                  (details.delta.dx / (_viewportScale * 2)),
+                              cy:
+                                  draftNow.cy +
+                                  (details.delta.dy / (_viewportScale * 2)),
+                              width: math.max(
+                                minDimension,
+                                draftNow.width +
+                                    (details.delta.dx / _viewportScale),
+                              ),
+                              height: math.max(
+                                minDimension,
+                                draftNow.height +
+                                    (details.delta.dy / _viewportScale),
+                              ),
                             );
-                        setState(() {
-                          const minDimension = 24.0;
-                          _imageDrafts[element.id] = draftNow.copyWith(
-                            cx:
-                                draftNow.cx +
-                                (details.delta.dx / (_viewportScale * 2)),
-                            cy:
-                                draftNow.cy +
-                                (details.delta.dy / (_viewportScale * 2)),
-                            width: math.max(
-                              minDimension,
-                              draftNow.width +
-                                  (details.delta.dx / _viewportScale),
-                            ),
-                            height: math.max(
-                              minDimension,
-                              draftNow.height +
-                                  (details.delta.dy / _viewportScale),
-                            ),
-                          );
-                        });
-                        final liveDraft = _imageDrafts[element.id];
-                        if (liveDraft != null) {
+                          });
+                          final liveDraft = _imageDrafts[element.id];
+                          if (liveDraft != null) {
+                            _canvasBloc.add(
+                              CanvasPreviewImageElement(
+                                elementId: element.id,
+                                center: Offset(liveDraft.cx, liveDraft.cy),
+                                width: liveDraft.width,
+                                height: liveDraft.height,
+                              ),
+                            );
+                          }
+                        },
+                        onPanEnd: (_) {
+                          final finalDraft = _imageDrafts.remove(element.id);
+                          if (finalDraft == null) return;
                           _canvasBloc.add(
-                            CanvasPreviewImageElement(
+                            CanvasUpdateImageElement(
                               elementId: element.id,
-                              center: Offset(liveDraft.cx, liveDraft.cy),
-                              width: liveDraft.width,
-                              height: liveDraft.height,
+                              center: Offset(finalDraft.cx, finalDraft.cy),
+                              width: finalDraft.width,
+                              height: finalDraft.height,
                             ),
                           );
-                        }
-                      },
-                      onPanEnd: (_) {
-                        final finalDraft = _imageDrafts.remove(element.id);
-                        if (finalDraft == null) return;
-                        _canvasBloc.add(
-                          CanvasUpdateImageElement(
-                            elementId: element.id,
-                            center: Offset(finalDraft.cx, finalDraft.cy),
-                            width: finalDraft.width,
-                            height: finalDraft.height,
+                        },
+                        child: Container(
+                          width: 18,
+                          height: 18,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(9),
+                            border: Border.all(color: _tokens.accent, width: 1.5),
                           ),
-                        );
-                      },
-                      child: Container(
-                        width: 18,
-                        height: 18,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(9),
-                          border: Border.all(color: _tokens.accent, width: 1.5),
+                          child: Icon(LucideIcons.maximize2, size: 12, color: _tokens.accent),
                         ),
-                        child: Icon(LucideIcons.maximize2, size: 12, color: _tokens.accent),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

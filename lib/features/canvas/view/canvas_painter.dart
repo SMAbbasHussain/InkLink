@@ -723,6 +723,11 @@ class _CanvasPainter extends CustomPainter {
   }
 
   void _paintImage(Canvas canvas, _CanvasElement element) {
+    // When image data is present, the image is rendered smoothly by the
+    // image overlay widget layer. Only draw placeholder if image data is absent.
+    if (element.imageBase64.isNotEmpty) {
+      return;
+    }
     final rect = Rect.fromCenter(
       center: element.center,
       width: element.width,
