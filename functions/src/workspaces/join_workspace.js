@@ -4,42 +4,32 @@ const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
 const { addBoardMember } = require('../utils/redis');
 
+const VISIBILITY_PUBLIC = 'public';
+
 module.exports = async (request) => {
   const uid = request.auth?.uid;
-  const rawId = request.data?.workspaceId || request.data?.joinCode;
+  const workspaceId = request.data?.workspaceId;
 
   try {
     if (!uid) {
       throw new HttpsError('unauthenticated', 'User must be logged in.');
     }
 
-    if (typeof rawId !== 'string' || rawId.trim().length === 0) {
+    if (typeof workspaceId !== 'string' || workspaceId.trim().length === 0) {
       throw new HttpsError('invalid-argument', 'workspaceId is required.');
     }
 
-    const requestedId = rawId.trim();
+    const requestedId = workspaceId.trim();
     const firestore = admin.firestore();
 
     const result = await firestore.runTransaction(async (transaction) => {
-      // 1. Locate workspace by doc ID or prefix match
-      let workspaceRef = firestore.collection(FirestorePaths.WORKSPACES).doc(requestedId);
-      let workspaceDoc = await transaction.get(workspaceRef);
+      // 1. Locate workspace by exact document ID only (no prefix matching —
+      // partial IDs would let callers enumerate workspaces).
+      const workspaceRef = firestore.collection(FirestorePaths.WORKSPACES).doc(requestedId);
+      const workspaceDoc = await transaction.get(workspaceRef);
 
       if (!workspaceDoc.exists) {
-        // Try searching by ID if joinCode was a prefix (e.g., first 8 chars)
-        const querySnapshot = await firestore
-          .collection(FirestorePaths.WORKSPACES)
-          .where(admin.firestore.FieldPath.documentId(), '>=', requestedId.toLowerCase())
-          .where(admin.firestore.FieldPath.documentId(), '<=', requestedId.toLowerCase() + '\uf8ff')
-          .limit(1)
-          .get();
-
-        if (querySnapshot.docs.length > 0) {
-          workspaceDoc = querySnapshot.docs[0];
-          workspaceRef = workspaceDoc.ref;
-        } else {
-          throw new HttpsError('not-found', 'Workspace not found.');
-        }
+        throw new HttpsError('not-found', 'Workspace not found.');
       }
 
       const workspaceId = workspaceDoc.id;
@@ -52,6 +42,25 @@ module.exports = async (request) => {
 
       if (memberDoc.exists && memberDoc.data()?.status === 'active') {
         return { success: true, workspaceId, alreadyMember: true };
+      }
+
+      // 2. Access gate: only the owner, a user with a pending invite, or a
+      // public workspace can be joined.
+      const isOwner = workspaceData.ownerId === uid;
+      const inviteRef = firestore
+        .collection(FirestorePaths.WORKSPACE_INVITES)
+        .doc(`${workspaceId}_${uid}`);
+      const inviteDoc = await transaction.get(inviteRef);
+      const hasPendingInvite =
+        inviteDoc.exists &&
+        (inviteDoc.data()?.[FirestorePaths.STATUS] ?? 'pending') === 'pending';
+      const visibility = String(workspaceData[FirestorePaths.VISIBILITY] || 'private');
+
+      if (!isOwner && !hasPendingInvite && visibility !== VISIBILITY_PUBLIC) {
+        throw new HttpsError(
+          'permission-denied',
+          'This workspace is private. You need an invite from the owner to join.',
+        );
       }
 
       const workspaceBoardsSnapshot = await transaction.get(
@@ -179,10 +188,8 @@ module.exports = async (request) => {
         );
       }
 
-      // Cleanup any pending invite
-      const inviteRef = firestore
-        .collection(FirestorePaths.WORKSPACE_INVITES)
-        .doc(`${workspaceId}_${uid}`);
+      // Cleanup any pending invite (inviteRef declared earlier in this
+      // transaction callback)
       transaction.delete(inviteRef);
 
       return {

@@ -29,11 +29,13 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _resetEmailController = TextEditingController();
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _resetEmailController.dispose();
     super.dispose();
   }
 
@@ -286,9 +288,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _showForgotPasswordDialog(BuildContext context) {
     final tokens = context.ink;
-    final resetEmailController = TextEditingController(
-      text: _emailController.text.trim(),
-    );
+    // Reuse the State-owned controller (disposed in dispose()) and re-seed it
+    // with the current login email each time the dialog opens.
+    final resetEmailController = _resetEmailController;
+    resetEmailController.text = _emailController.text.trim();
 
     showDialog(
       context: context,

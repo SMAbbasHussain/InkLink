@@ -50,6 +50,8 @@ import 'package:inklink/domain/services/theme/theme_service.dart';
 import 'package:inklink/domain/services/workspace/workspace_service.dart';
 import 'package:inklink/domain/repositories/canvas/board_comments_repository.dart';
 import 'package:inklink/domain/repositories/canvas/board_comments_repository_impl.dart';
+import 'package:inklink/domain/repositories/chat/chat_repository.dart';
+import 'package:inklink/domain/repositories/chat/chat_repository_impl.dart';
 import 'package:inklink/domain/services/canvas/board_comments_service.dart';
 import 'package:inklink/domain/services/canvas/board_comments_service_impl.dart';
 import 'package:inklink/domain/services/canvas/board_chat_service.dart';
@@ -82,6 +84,18 @@ void main() async {
   } catch (e) {
     debugPrint("Warning: Failed to load .env file: $e");
   }
+  // Any startup failure (Firebase init, SharedPreferences, theme load, or
+  // the local database init) would otherwise escape main() as an unhandled
+  // exception — blank/crashed app. Fall back to InitializationErrorApp.
+  try {
+    await _startApp();
+  } catch (e, st) {
+    debugPrint("Startup failed: $e\n$st");
+    runApp(InitializationErrorApp(error: e.toString()));
+  }
+}
+
+Future<void> _startApp() async {
   final sharedPreferences = await SharedPreferences.getInstance();
   await _ensureFirebaseInitialized();
   final rtdbUrl = dotenv.env['FIREBASE_RTDB_URL'];
@@ -197,6 +211,11 @@ void main() async {
             firestoreService: context.read<FirestoreService>(),
           ),
         ),
+        RepositoryProvider<ChatRepository>(
+          create: (context) => ChatRepositoryImpl(
+            firestoreService: context.read<FirestoreService>(),
+          ),
+        ),
         // 2. Domain services (depend on repositories)
         RepositoryProvider<PresenceService>(
           create: (context) => PresenceServiceImpl(
@@ -276,6 +295,7 @@ void main() async {
             localDbService: context.read<LocalDatabaseService>(),
             authService: context.read<AuthService>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
+            chatRepository: context.read<ChatRepository>(),
           )..initialize(),
         ),
         RepositoryProvider<WorkspaceService>(

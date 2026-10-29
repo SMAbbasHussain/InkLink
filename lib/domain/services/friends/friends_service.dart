@@ -64,9 +64,16 @@ class FriendsServiceImpl implements FriendsService {
         List<Map<String, dynamic>> outgoingRequests,
       ) {
         final currentUid = _authService.getCurrentUserId();
-        final filteredFriends = currentUid == null
-            ? friends
-            : friends.where((f) => f['uid'] != currentUid).toList();
+        final currentEmail = _authService.getCurrentUser()?.email?.trim().toLowerCase();
+        final filteredFriends = friends.where((f) {
+          final fUid = (f['uid'] ?? '').toString().trim();
+          final fEmail = (f['email'] ?? '').toString().trim().toLowerCase();
+          if (currentUid != null && fUid.isNotEmpty && fUid == currentUid.trim()) return false;
+          if (currentEmail != null && fEmail.isNotEmpty && fEmail == currentEmail) return false;
+          final status = f['friendshipStatus']?.toString().toLowerCase();
+          if (status == 'friendshipstatus.self' || status == 'self') return false;
+          return true;
+        }).toList();
         return FriendsInfoSnapshot(
           friends: filteredFriends,
           incomingRequests: incomingRequests,
@@ -89,10 +96,14 @@ class FriendsServiceImpl implements FriendsService {
     }
     final results = await _friendsRepository.searchUsersByEmail(normalizedEmail);
     final currentUid = _authService.getCurrentUserId();
-    if (currentUid != null) {
-      return results.where((u) => u['uid'] != currentUid).toList();
-    }
-    return results;
+    final currentEmail = _authService.getCurrentUser()?.email?.trim().toLowerCase();
+    return results.where((u) {
+      final uUid = (u['uid'] ?? '').toString().trim();
+      final uEmail = (u['email'] ?? '').toString().trim().toLowerCase();
+      if (currentUid != null && uUid.isNotEmpty && uUid == currentUid.trim()) return false;
+      if (currentEmail != null && uEmail.isNotEmpty && uEmail == currentEmail) return false;
+      return true;
+    }).toList();
   }
 
   @override
@@ -130,19 +141,22 @@ class FriendsServiceImpl implements FriendsService {
       return;
     }
 
-    // Cache the outgoing request locally in Isar immediately
-    await _friendsRepository.cacheOutgoingFriendRequestLocally(
-      targetUid: normalizedTargetUid,
-    );
-
-    await _ensureOnlineForActions();
-
+    // Clear any stale pending record between the pair first. It uses the
+    // same sorted-pair id as the optimistic cache entry written below, so
+    // running it after that write would instantly delete it (M2).
     if (currentUid != null) {
       await _friendsRepository.removePendingFriendRequestBetweenUsers(
         firstUid: currentUid,
         secondUid: normalizedTargetUid,
       );
     }
+
+    // Cache the outgoing request locally in Isar immediately
+    await _friendsRepository.cacheOutgoingFriendRequestLocally(
+      targetUid: normalizedTargetUid,
+    );
+
+    await _ensureOnlineForActions();
 
     await _callFriendFunction(
       functionName: 'sendFriendRequest',
@@ -264,7 +278,12 @@ class FriendsServiceImpl implements FriendsService {
         'Cloud Function Error: ${e.code} - ${e.message}',
         name: 'FriendsServiceImpl',
       );
-      throw Exception(e.message ?? 'Cloud function call failed');
+      // Surface the function's real code/message so users see the actual
+      // cause (already friends, blocked, rate-limited) instead of a
+      // generic connection error.
+      throw Exception(
+        'Request failed (${e.code}): ${e.message ?? failureMessage}',
+      );
     } catch (e) {
       throw Exception('Connection error');
     }

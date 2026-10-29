@@ -698,14 +698,18 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
             updateId: local.updateId,
             elementId: local.elementId,
           );
+          final updateData = <String, dynamic>{
+            'updateId': local.updateId,
+            'payloadBase64': local.payloadBase64,
+            'sourceClientId': userId,
+            'elementId': local.elementId,
+          };
+          if (_isSingleUserBoard) {
+            updateData['_singleUser'] = true;
+          }
           final ack = await _emitWithAck('crdt_update', {
             'boardId': boardId,
-            'update': {
-              'updateId': local.updateId,
-              'payloadBase64': local.payloadBase64,
-              'sourceClientId': userId,
-              'elementId': local.elementId,
-            },
+            'update': updateData,
           });
           if (ack != null && ack['status'] == 'success') {
             await markCrdtUpdateSynced(local.updateId);

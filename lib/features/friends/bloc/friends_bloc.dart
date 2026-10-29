@@ -82,6 +82,15 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     });
 
     on<UpdateFriendsLists>((event, emit) {
+      final currentUid = friendsService.currentUserId?.trim();
+      final sanitizedFriends = event.friends.where((f) {
+        final fUid = (f['uid'] ?? '').toString().trim();
+        if (currentUid != null && fUid.isNotEmpty && fUid == currentUid) return false;
+        final status = f['friendshipStatus']?.toString().toLowerCase();
+        if (status == 'friendshipstatus.self' || status == 'self') return false;
+        return true;
+      }).toList();
+
       _pendingOutgoingTargetUids = event.outgoingRequests
           .map((request) => request['toUid']?.toString() ?? '')
           .where((uid) => uid.isNotEmpty)
@@ -89,7 +98,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
 
       final current = state;
       if (current is EmailSearchResultsLoaded) {
-        final friendUids = event.friends
+        final friendUids = sanitizedFriends
             .map((f) => f['uid']?.toString() ?? '')
             .where((uid) => uid.isNotEmpty)
             .toSet();
@@ -114,7 +123,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
           : const <Map<String, dynamic>>[];
       emit(
         FriendsLoaded(
-          friends: event.friends,
+          friends: sanitizedFriends,
           incomingRequests: event.incomingRequests,
           outgoingRequests: event.outgoingRequests,
           sendingRequestTargetUids: _sendingRequestTargetUids,

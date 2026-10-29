@@ -13,7 +13,7 @@
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const admin = require("../../server/firebase-admin");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const { validateUID, validateString } = require("../utils/validation");
 const logger = require("../utils/logger");
 
@@ -151,6 +151,12 @@ module.exports = async (request) => {
       throw new HttpsError('invalid-argument', 'Image is too large. Maximum size is 5MB.');
     }
 
+    // Capture the previous photo URL so its R2 object can be deleted after
+    // a successful upload — objects otherwise accumulate forever and all
+    // past photos stay publicly retrievable at their old URLs.
+    const previousPhotoUrl =
+      (userDoc.data() || {}).photoURL?.toString() || '';
+
     // Initialize S3 client for Cloudflare R2
     const s3Client = new S3Client({
       region: 'auto',
@@ -201,6 +207,46 @@ module.exports = async (request) => {
     }
     const publicBase = process.env.CLOUDFLARE_R2_PUBLIC_URL.replace(/\/$/, ''); // strip trailing slash
     const photoUrl = `${publicBase}/${objectKey}`;
+
+    // Best-effort cleanup of the previous photo object. Only objects we
+    // uploaded ourselves (same public base, profiles/ prefix) are deleted;
+    // external avatar URLs (e.g. Google sign-in photos) are left alone.
+    if (previousPhotoUrl) {
+      const publicBaseWithSlash = `${publicBase}/`;
+      if (previousPhotoUrl.startsWith(publicBaseWithSlash)) {
+        const previousKey = previousPhotoUrl
+          .substring(publicBaseWithSlash.length)
+          .split('?')[0];
+        if (
+          previousKey &&
+          previousKey !== objectKey &&
+          previousKey.startsWith('profiles/')
+        ) {
+          try {
+            await s3Client.send(
+              new DeleteObjectCommand({
+                Bucket: process.env.CLOUDFLARE_R2_BUCKET,
+                Key: previousKey,
+              })
+            );
+            logger.info('Upload profile photo: Deleted previous photo', {
+              uid,
+              previousKey,
+            });
+          } catch (deleteError) {
+            // Non-fatal: the new photo is already live and returned.
+            logger.warn(
+              'Upload profile photo: Failed to delete previous photo',
+              {
+                uid,
+                previousKey,
+                error: deleteError?.message || String(deleteError),
+              }
+            );
+          }
+        }
+      }
+    }
 
     logger.info('Upload profile photo: Success', {
       uid,

@@ -77,26 +77,38 @@ module.exports = async (request) => {
         .collection(FirestorePaths.BOARD_MEMBERS_SUBCOLLECTION)
         .doc(uid);
 
-      transaction.set(memberRef, {
-        uid,
-        role: resolvedRole,
-        status: 'active',
-        joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-        invitedBy: invite[FirestorePaths.FROM_UID] || null,
-        invitedAt: invite[FirestorePaths.TIMESTAMP] || null,
-        [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
+      // Check existing membership before writing: re-accepting an old
+      // invite must not double-increment counts or demote an existing
+      // active member (e.g. owner/editor) to the invite's role.
+      const memberDoc = await transaction.get(memberRef);
+      const existingMemberData = memberDoc.exists
+        ? memberDoc.data() || {}
+        : null;
+      const alreadyActive =
+        existingMemberData != null && existingMemberData.status === 'active';
 
       const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
 
-      transaction.update(boardRef, {
-        members: admin.firestore.FieldValue.arrayUnion(uid),
-        [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(1),
-        [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      transaction.set(userRef, {
-        [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(1),
-      }, { merge: true });
+      if (!alreadyActive) {
+        transaction.set(memberRef, {
+          uid,
+          role: resolvedRole,
+          status: 'active',
+          joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+          invitedBy: invite[FirestorePaths.FROM_UID] || null,
+          invitedAt: invite[FirestorePaths.TIMESTAMP] || null,
+          [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+
+        transaction.update(boardRef, {
+          members: admin.firestore.FieldValue.arrayUnion(uid),
+          [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(1),
+          [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        transaction.set(userRef, {
+          [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(1),
+        }, { merge: true });
+      }
 
       // Also add per-user board index doc
       transaction.set(

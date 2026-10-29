@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'ui/theme/ink_theme.dart';
@@ -98,7 +99,9 @@ class _AppViewState extends State<AppView> {
             const BoardInvitationsLoadRequested(),
           );
           context.read<FriendsBloc>().add(LoadFriendsInfo());
-          context.read<ChatService>().login(state.uid);
+          context.read<ChatService>().login(state.uid).catchError((e, st) {
+            developer.log('ChatService login notice: $e', error: e, stackTrace: st, name: 'AppView');
+          });
 
           // Route to pending deep-linked board if user launched with a deep link
           final pendingBoardId = DeepLinkService.instance.consumePendingBoardId();

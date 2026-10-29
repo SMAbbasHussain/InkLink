@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:math' as math;
 
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
@@ -14,6 +15,12 @@ class BoardChatServiceImpl implements BoardChatService {
   final StreamController<BoardChatMessage> _chatMessageController =
       StreamController<BoardChatMessage>.broadcast();
 
+  /// Board whose room should be re-subscribed after a reconnect.
+  String? _watchedBoardId;
+  int _reconnectAttempts = 0;
+  bool _reconnectScheduled = false;
+  bool _disposed = false;
+
   BoardChatServiceImpl({required AuthService authService})
       : _authService = authService;
 
@@ -22,61 +29,123 @@ class BoardChatServiceImpl implements BoardChatService {
     return _chatMessageController.stream.where((m) => m.boardId == boardId);
   }
 
+  io.Socket _buildSocket(String token) {
+    final socket = io.io(
+      resolveWebSocketUrl(),
+      io.OptionBuilder()
+          .setTransports(['websocket'])
+          .setAuth({'token': token})
+          // Reconnection is owned by this service: the built-in
+          // auto-reconnect would reuse the token frozen at creation time and
+          // fail forever once that token expires.
+          .disableAutoConnect()
+          .disableReconnection()
+          .build(),
+    );
+
+    socket.on('board_chat_message', (data) {
+      try {
+        if (data is Map) {
+          final message =
+              BoardChatMessage.fromMap(Map<String, dynamic>.from(data));
+          _chatMessageController.add(message);
+        }
+      } catch (e) {
+        developer.log('Error parsing chat message: $e', name: 'BoardChatService');
+      }
+    });
+
+    socket.on('disconnect', (data) {
+      developer.log('Socket disconnected; scheduling reconnect with fresh token',
+          name: 'BoardChatService');
+      _scheduleReconnect();
+    });
+
+    socket.on('connect_error', (data) {
+      developer.log('Socket connect_error: $data; scheduling reconnect with fresh token',
+          name: 'BoardChatService');
+      _scheduleReconnect();
+    });
+
+    return socket;
+  }
+
+  /// Capped exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
+  Duration get _reconnectDelay =>
+      Duration(seconds: math.min(30, 1 << _reconnectAttempts.clamp(0, 5)));
+
+  void _scheduleReconnect() {
+    if (_disposed || _reconnectScheduled) return;
+    _reconnectScheduled = true;
+    final delay = _reconnectDelay;
+    _reconnectAttempts++;
+    Future.delayed(delay, () {
+      _reconnectScheduled = false;
+      if (_disposed) return;
+      if (_socket != null && _socket!.connected) return;
+      unawaited(_ensureConnected());
+    });
+  }
+
+  void _teardownSocket() {
+    final stale = _socket;
+    _socket = null;
+    if (stale == null) return;
+    try {
+      // dispose() disconnects and clears all listeners so stale handlers
+      // can't fire on the abandoned socket.
+      stale.dispose();
+    } catch (e) {
+      developer.log('Stale socket dispose failed: $e', name: 'BoardChatService');
+      try {
+        stale.disconnect();
+      } catch (_) {}
+    }
+  }
+
   Future<bool> _ensureConnected() async {
     if (_socket != null && _socket!.connected) return true;
+
+    // Tear down any stale socket — its auth token is frozen at creation, so
+    // reconnecting it would fail forever after the token expires.
+    _teardownSocket();
 
     final token = await _authService.getIdToken();
     if (token == null) return false;
 
-    if (_socket != null) {
-      if (!_socket!.connected) {
-        _socket!.connect();
-      }
-    } else {
-      final serverUrl = resolveWebSocketUrl();
-      _socket = io.io(
-        serverUrl,
-        io.OptionBuilder()
-            .setTransports(['websocket'])
-            .setAuth({'token': token})
-            .disableAutoConnect()
-            .build(),
-      );
-
-      _socket!.on('board_chat_message', (data) {
-        try {
-          if (data is Map) {
-            final message =
-                BoardChatMessage.fromMap(Map<String, dynamic>.from(data));
-            _chatMessageController.add(message);
-          }
-        } catch (e) {
-          developer.log('Error parsing chat message: $e', name: 'BoardChatService');
-        }
-      });
-
-      _socket!.connect();
-    }
-
-    if (_socket!.connected) return true;
+    final socket = _buildSocket(token);
+    _socket = socket;
+    socket.connect();
 
     final completer = Completer<void>();
-    void onConnectHandler(_) {
+    socket.once('connect', (_) {
       if (!completer.isCompleted) completer.complete();
-    }
-
-    _socket!.once('connect', onConnectHandler);
+    });
 
     await Future.any([
       completer.future,
       Future.delayed(const Duration(seconds: 5)),
     ]);
 
-    return _socket != null && _socket!.connected;
+    if (socket.connected) {
+      _reconnectAttempts = 0;
+      // Re-subscribe to the board room after (re)connecting — the server
+      // never re-subscribes rooms on its own, and without this the client
+      // sits "connected" but receives nothing.
+      final boardId = _watchedBoardId;
+      if (boardId != null) {
+        socket.emit('watch_board', boardId);
+      }
+      return true;
+    }
+
+    _scheduleReconnect();
+    return false;
   }
 
   @override
   Future<void> connect(String boardId) async {
+    _watchedBoardId = boardId;
     final connected = await _ensureConnected();
     if (connected && _socket != null) {
       _socket!.emit('watch_board', boardId);
@@ -179,8 +248,8 @@ class BoardChatServiceImpl implements BoardChatService {
 
   @override
   Future<void> dispose() async {
-    _socket?.disconnect();
-    _socket = null;
+    _disposed = true;
+    _teardownSocket();
     await _chatMessageController.close();
   }
 }

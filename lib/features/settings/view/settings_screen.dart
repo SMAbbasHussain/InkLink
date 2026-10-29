@@ -26,6 +26,18 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  // Reused dialog controllers, disposed with the State (see dispose()).
+  final TextEditingController _deletePasswordController =
+      TextEditingController();
+  final TextEditingController _customTagController = TextEditingController();
+
+  @override
+  void dispose() {
+    _deletePasswordController.dispose();
+    _customTagController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
@@ -593,7 +605,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     BuildContext context, {
     required bool isPasswordUser,
   }) {
-    final passwordController = TextEditingController();
+    final passwordController = _deletePasswordController..clear();
     bool obscurePassword = true;
     String? errorMessage;
 
@@ -713,7 +725,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ];
 
     final selectedTags = Set<String>.from(currentTags);
-    final customTagController = TextEditingController();
+    final customTagController = _customTagController..clear();
 
     showDialog(
       context: context,

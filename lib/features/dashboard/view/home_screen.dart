@@ -436,73 +436,94 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildGreetingRow(BuildContext context) {
     final tokens = context.ink;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 220,
+    return BlocBuilder<BoardInvitationsBloc, BoardInvitationsState>(
+      builder: (context, inviteState) {
+        final count = inviteState is BoardInvitationsLoaded
+            ? inviteState.invites.length
+            : 0;
+
+        final greetingText = SizedBox(
+          width: count == 0 ? 200 : 175,
           child: Text(
             "Ready to bring your ideas to life?",
             style: InkType.display(tokens.ink),
           ),
-        ),
-        const Spacer(),
-        BlocBuilder<BoardInvitationsBloc, BoardInvitationsState>(
-          builder: (context, inviteState) {
-            final count = inviteState is BoardInvitationsLoaded
-                ? inviteState.invites.length
-                : 0;
-            if (count == 0) return const SizedBox.shrink();
+        );
 
-            return Transform.rotate(
-              angle: 5 * 3.1415926535 / 180,
+        if (count == 0) {
+          return greetingText;
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            greetingText,
+            const SizedBox(width: InkSpacing.s8),
+            Expanded(
               child: SizedBox(
-                width: 140,
-                child: StickyNote(
-                  color: InkColors.stickyButter,
-                  showTape: true,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => BlocProvider.value(
-                          value: context.read<BoardInvitationsBloc>(),
-                          child: const BoardInvitesScreen(),
+                height: 145,
+                child: UnconstrainedBox(
+                  alignment: Alignment.centerLeft,
+                  clipBehavior: Clip.hardEdge,
+                  constrainedAxis: Axis.vertical,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 4, right: 8),
+                    child: Transform.rotate(
+                      angle: 5 * 3.1415926535 / 180,
+                      child: SizedBox(
+                        width: 130,
+                        child: StickyNote(
+                          color: InkColors.stickyButter,
+                          showTape: true,
+                          padding: const EdgeInsets.all(InkSpacing.s12),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => BlocProvider.value(
+                                value: context.read<BoardInvitationsBloc>(),
+                                child: const BoardInvitesScreen(),
+                              ),
+                            ),
+                          );
+                        },
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              count == 1
+                                  ? "You've been invited to a board!"
+                                  : "You have $count board invites waiting!",
+                              style: InkType.label(InkColors.stickyInkFor(InkColors.stickyButter)),
+                            ),
+                            const SizedBox(height: InkSpacing.s8),
+                            Row(
+                              children: [
+                                Text(
+                                  'Review',
+                                  style: InkType.bodyStrong(InkColors.stickyInkFor(InkColors.stickyButter)),
+                                ),
+                                const SizedBox(width: 4),
+                                Icon(
+                                  LucideIcons.chevronRight,
+                                  size: 14,
+                                  color: InkColors.stickyInkFor(InkColors.stickyButter),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
-                    );
-                  },
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '$count pending board invite${count > 1 ? 's' : ''} - tap to review',
-                        style: InkType.body(InkColors.stickyInkFor(InkColors.stickyButter)),
-                      ),
-                      const SizedBox(height: InkSpacing.s8),
-                      Row(
-                        children: [
-                          Text(
-                            'Review',
-                            style: InkType.bodyStrong(InkColors.stickyInkFor(InkColors.stickyButter)),
-                          ),
-                          const SizedBox(width: 4),
-                          Icon(
-                            LucideIcons.chevronRight,
-                            size: 14,
-                            color: InkColors.stickyInkFor(InkColors.stickyButter),
-                          ),
-                        ],
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),
-            );
-          },
-        ),
-      ],
+            ),
+          ),
+        ],
+      );
+      },
     );
   }
 

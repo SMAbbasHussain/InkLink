@@ -136,6 +136,8 @@ class _CanvasElement {
     required Offset center,
     required String text,
     required Color color,
+    double width = 0,
+    double height = 0,
     Map<String, dynamic> data = const {},
   }) {
     return _CanvasElement._(
@@ -145,6 +147,8 @@ class _CanvasElement {
       center: center,
       text: text,
       color: color,
+      width: width,
+      height: height,
       data: data,
     );
   }
@@ -393,7 +397,10 @@ class _CanvasPainter extends CustomPainter {
           brushType: currentBrushType,
         );
       } else if (showEraserPreview) {
-        _paintEraserPreview(canvas, currentPoints.last, currentStrokeWidth);
+        // Eraser convention: state.strokeWidth is the eraser *diameter*;
+        // the erase hit-test uses radius = strokeWidth / 2. The preview
+        // circle must show the same radius, not the full width.
+        _paintEraserPreview(canvas, currentPoints.last, currentStrokeWidth / 2);
       }
     }
 
@@ -634,6 +641,8 @@ class _CanvasPainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// Draws the eraser cursor preview. [radius] is the actual erase radius
+  /// (state.strokeWidth / 2 — strokeWidth is the eraser diameter).
   void _paintEraserPreview(Canvas canvas, Offset position, double radius) {
     final previewPaint = Paint()
       ..color = Colors.black.withOpacity(0.18)

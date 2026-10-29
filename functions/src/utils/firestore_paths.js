@@ -21,6 +21,7 @@ const FirestorePaths = {
   BOARD_MEMBERS_SUBCOLLECTION: 'members',
   WORKSPACE_MEMBERS_SUBCOLLECTION: 'members',
   WORKSPACE_BOARDS_SUBCOLLECTION: 'boards',
+  FCM_TOKENS_SUBCOLLECTION: 'fcm_tokens',
   
   // User document fields
   UID: 'uid',

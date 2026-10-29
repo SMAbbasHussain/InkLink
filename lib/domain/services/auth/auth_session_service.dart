@@ -13,6 +13,10 @@ import '../../repositories/auth/auth_repository.dart';
 import '../../repositories/canvas/canvas_sync_repository.dart';
 import '../presence/presence_service.dart';
 
+// Re-exported so feature blocs can reference the enum without importing
+// core services directly (see tool/architecture_guardrails.dart).
+export '../../../core/services/auth_service.dart' show EmailVerificationStatus;
+
 abstract class AuthSessionService {
   Stream<User?> get user;
   Future<User?> signIn(String email, String password);
@@ -23,7 +27,7 @@ abstract class AuthSessionService {
   User? get currentUser;
   Future<void> sendPasswordResetEmail(String email);
   Future<void> sendEmailVerification();
-  Future<bool> reloadAndCheckEmailVerified();
+  Future<EmailVerificationStatus> reloadAndCheckEmailVerified();
   Future<void> deleteAccount({String? password});
   Future<void> reauthenticate({String? password});
   void registerPreSignOutCallback(Future<void> Function() callback);
@@ -81,7 +85,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
   }
 
   @override
-  Future<bool> reloadAndCheckEmailVerified() {
+  Future<EmailVerificationStatus> reloadAndCheckEmailVerified() {
     return _authRepository.reloadAndCheckEmailVerified();
   }
 

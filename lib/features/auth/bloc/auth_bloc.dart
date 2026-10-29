@@ -30,11 +30,19 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       if (user != null) {
         final isPasswordProvider = user.providerData.any((p) => p.providerId == 'password');
         if (isPasswordProvider) {
-          final isVerified = await authService.reloadAndCheckEmailVerified();
-          final refreshedUser = authService.currentUser ?? user;
-          if (!isVerified) {
+          final status = await authService.reloadAndCheckEmailVerified();
+          if (status == EmailVerificationStatus.unverified) {
+            final refreshedUser = authService.currentUser ?? user;
             developer.log('AuthCheckRequested: unverified password account, emitting AuthEmailUnverified', name: 'AuthBloc');
             emit(AuthEmailUnverified(user: refreshedUser, email: refreshedUser.email ?? ''));
+            return;
+          }
+          if (status == EmailVerificationStatus.unknown) {
+            // Transient failure — never treat it as "unverified" (that would
+            // trap verified users on the verification screen); surface a
+            // retryable error instead.
+            developer.log('AuthCheckRequested: verification status unknown', name: 'AuthBloc');
+            emit(AuthError('Could not check your account status. Please check your connection and try again.'));
             return;
           }
         }
@@ -71,11 +79,16 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         // Enforce verified users only for email/password provider (FR01-06)
         final isPasswordProvider = user.providerData.any((p) => p.providerId == 'password');
         if (isPasswordProvider) {
-          final isVerified = await authService.reloadAndCheckEmailVerified();
+          final status = await authService.reloadAndCheckEmailVerified();
           final refreshedUser = authService.currentUser ?? user;
-          if (!isVerified) {
+          if (status == EmailVerificationStatus.unverified) {
             developer.log('LoginRequested: user email unverified', name: 'AuthBloc');
             emit(AuthEmailUnverified(user: refreshedUser, email: refreshedUser.email ?? event.email));
+            return;
+          }
+          if (status == EmailVerificationStatus.unknown) {
+            developer.log('LoginRequested: verification status unknown', name: 'AuthBloc');
+            emit(AuthError('Could not check your account status. Please check your connection and try again.'));
             return;
           }
         }
@@ -244,12 +257,20 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       }
 
       try {
-        final isVerified = await authService.reloadAndCheckEmailVerified();
+        final status = await authService.reloadAndCheckEmailVerified();
         final user = authService.currentUser;
-        if (user != null && isVerified) {
+        if (user != null && status == EmailVerificationStatus.verified) {
           developer.log('CheckEmailVerificationRequested: verified! Authenticating...', name: 'AuthBloc');
           await authService.onAuthenticated(user);
           emit(_toAuthenticated(user));
+        } else if (user != null && status == EmailVerificationStatus.unknown) {
+          developer.log('CheckEmailVerificationRequested: check failed (transient)', name: 'AuthBloc');
+          emit(AuthEmailUnverified(
+            user: user,
+            email: user.email ?? (current is AuthEmailUnverified ? current.email : ''),
+            message: 'Unable to check verification. Please check your connection and try again.',
+            isChecking: false,
+          ));
         } else if (user != null) {
           developer.log('CheckEmailVerificationRequested: not verified yet', name: 'AuthBloc');
           emit(AuthEmailUnverified(

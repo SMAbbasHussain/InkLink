@@ -33,14 +33,14 @@ module.exports = async (request) => {
       throw new HttpsError('failed-precondition', 'Workspace owner cannot leave. Delete workspace or transfer ownership first.');
     }
 
+    const boardsToRemoveFrom = []; // workspace-native boards
+    const importedBoardsToRemoveFrom = []; // imported boards not in keepList
+
     const result = await firestore.runTransaction(async (transaction) => {
       // Get all workspace boards
       const boardsSnapshot = await workspaceRef
         .collection(FirestorePaths.WORKSPACE_BOARDS_SUBCOLLECTION)
         .get();
-
-      const boardsToRemoveFrom = []; // workspace-native boards
-      const importedBoardsToRemoveFrom = []; // imported boards not in keepList
 
       boardsSnapshot.docs.forEach((boardDoc) => {
         const boardData = boardDoc.data() || {};
@@ -95,11 +95,19 @@ module.exports = async (request) => {
         ...importedBoardsToRemoveFrom,
       ];
 
-      allBoardsToRemoveFrom.forEach((boardId) => {
+      for (const boardId of allBoardsToRemoveFrom) {
         const boardRef = firestore.collection(FirestorePaths.BOARDS).doc(boardId);
         const memberRef = boardRef
           .collection(FirestorePaths.BOARD_MEMBERS_SUBCOLLECTION)
           .doc(uid);
+
+        // Prune the denormalized members array too — rules no longer grant
+        // access from it, but stale entries skew member counts and leak uids.
+        const boardDoc = await transaction.get(boardRef);
+        const boardData = boardDoc.data() || {};
+        const boardMembers = Array.isArray(boardData.members)
+          ? boardData.members
+          : [];
 
         transaction.delete(memberRef);
         transaction.set(
@@ -115,7 +123,16 @@ module.exports = async (request) => {
             .collection(FirestorePaths.USER_BOARDS_SUBCOLLECTION)
             .doc(boardId),
         );
-      });
+
+        if (boardMembers.includes(uid)) {
+          transaction.update(boardRef, {
+            members: admin.firestore.FieldValue.arrayRemove(uid),
+            [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(-1),
+            membersCount: admin.firestore.FieldValue.increment(-1),
+            [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+      }
 
       return {
         success: true,

@@ -87,18 +87,28 @@ module.exports = async (request) => {
         });
       }
 
-      transaction.set(
-        memberRef,
-        {
-          uid,
-          role: 'member',
-          status: 'active',
-          joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-          invitedBy: invite[FirestorePaths.FROM_UID] || null,
-          [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
+      // Skip the role write when the user is already an active member so
+      // re-accepting an old invite cannot demote existing admins.
+      const existingMemberData = memberDoc.exists
+        ? memberDoc.data() || {}
+        : null;
+      const alreadyActiveMember =
+        existingMemberData != null && existingMemberData.status === 'active';
+
+      if (!alreadyActiveMember) {
+        transaction.set(
+          memberRef,
+          {
+            uid,
+            role: 'member',
+            status: 'active',
+            joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+            invitedBy: invite[FirestorePaths.FROM_UID] || null,
+            [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
 
       if (!memberDoc.exists) {
         transaction.set(
@@ -125,44 +135,55 @@ module.exports = async (request) => {
         const boardData = target.boardDoc.data() || {};
         const boardOwnerId = boardData[FirestorePaths.OWNER_ID];
 
-        if (!target.boardMemberDoc.exists) {
+        // Skip counts/role writes for boards the user is already an
+        // active member of: re-accepting an old invite must not
+        // double-count membership.
+        const boardMemberData = target.boardMemberDoc.exists
+          ? target.boardMemberDoc.data() || {}
+          : null;
+        const alreadyActiveBoardMember =
+          boardMemberData != null && boardMemberData.status === 'active';
+
+        if (!alreadyActiveBoardMember) {
+          if (!target.boardMemberDoc.exists) {
+            transaction.set(
+              target.boardMemberRef,
+              {
+                uid,
+                role: boardOwnerId === uid ? 'owner' : 'viewer',
+                status: 'active',
+                joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+                invitedBy: invite[FirestorePaths.FROM_UID] || null,
+                [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true },
+            );
+          } else {
+            transaction.set(
+              target.boardMemberRef,
+              {
+                status: 'active',
+                [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true },
+            );
+          }
+
+          transaction.update(target.boardRef, {
+            members: admin.firestore.FieldValue.arrayUnion(uid),
+            [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(1),
+            [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
           transaction.set(
-            target.boardMemberRef,
+            userRef,
             {
-              uid,
-              role: boardOwnerId === uid ? 'owner' : 'viewer',
-              status: 'active',
-              joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-              invitedBy: invite[FirestorePaths.FROM_UID] || null,
-              [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true },
-          );
-        } else {
-          transaction.set(
-            target.boardMemberRef,
-            {
-              status: 'active',
+              [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(1),
               [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
             },
             { merge: true },
           );
         }
-
-        transaction.update(target.boardRef, {
-          members: admin.firestore.FieldValue.arrayUnion(uid),
-          [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(1),
-          [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
-        transaction.set(
-          userRef,
-          {
-            [FirestorePaths.BOARD_COUNT]: admin.firestore.FieldValue.increment(1),
-            [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true },
-        );
 
         // Also add per-user board index doc for new schema
         transaction.set(

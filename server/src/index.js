@@ -204,6 +204,11 @@ redisSub.on('message', async (channel, message) => {
     try {
       const data = JSON.parse(message);
       if (data.type === 'member_removed' && data.boardId && data.uid) {
+        // Prune the server-side membership cache immediately so a removed
+        // user can't keep socket-level access until the cache TTL expires.
+        if (redisAvailable) {
+          redis.srem(`board_members:${data.boardId}`, data.uid).catch(() => { });
+        }
         const sockets = await io.in(`board_room:${data.boardId}`).fetchSockets();
         for (const s of sockets) {
           if (s.data.uid === data.uid) {
@@ -213,6 +218,9 @@ redisSub.on('message', async (channel, message) => {
           }
         }
       } else if (data.type === 'board_deleted' && data.boardId) {
+        if (redisAvailable) {
+          redis.del(`board_members:${data.boardId}`).catch(() => { });
+        }
         io.to(`board_room:${data.boardId}`).emit('board_access_revoked', { boardId: data.boardId, reason: 'deleted' });
         io.socketsLeave(`board_room:${data.boardId}`);
         console.log(`[board_events] Evicted all users from deleted board_room:${data.boardId}`);
@@ -246,7 +254,7 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
         if (redisAvailable) {
           const p = redis.pipeline();
           p.sadd(`board_members:${boardId}`, uid);
-          p.expire(`board_members:${boardId}`, 604800);
+          p.expire(`board_members:${boardId}`, 86400);
           await p.exec().catch(() => { });
         }
         return true;
@@ -269,7 +277,7 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
       if (redisAvailable) {
         const p = redis.pipeline();
         p.sadd(`board_members:${boardId}`, uid);
-        p.expire(`board_members:${boardId}`, 604800);
+        p.expire(`board_members:${boardId}`, 86400);
         await p.exec().catch(() => { });
       }
       return true;
@@ -319,6 +327,9 @@ if seen == 0 then
 end
 redis.call('EXPIRE', KEYS[3], 3600)
 local version = redis.call('INCR', KEYS[1])
+-- Refresh the version key TTL on every append so it can never expire while
+-- the board is active (a version reset would rewind the snapshot cursor).
+redis.call('EXPIRE', KEYS[1], 604800)
 redis.call('XADD', KEYS[2], 'MAXLEN', '~', ARGV[1], '*',
   'version', version,
   'updateId', ARGV[2],
@@ -446,7 +457,9 @@ async function triggerSnapshot(boardId) {
     }
   }
   for (const entry of entries) {
-    if (!entry.payloadBase64 || entry._singleUser === true) continue;
+    // Single-user updates are persisted to the stream too — they must be
+    // included in the snapshot or solo-board content would be lost.
+    if (!entry.payloadBase64) continue;
     try {
       const buffer = Buffer.from(entry.payloadBase64, 'base64');
       Y.applyUpdate(doc, buffer);
@@ -503,6 +516,12 @@ setInterval(async () => {
   const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
   const stream = redis.scanStream({ match: 'board:lastActivity:*', count: 100 });
 
+  stream.on('error', (err) => {
+    // Without an error listener, an unhandled 'error' event on the stream
+    // throws and kills the process.
+    console.warn(`[cleanup] Scan stream error: ${err.message}`);
+  });
+
   stream.on('data', async (keys) => {
     if (!keys || keys.length === 0) return;
     try {
@@ -520,6 +539,39 @@ setInterval(async () => {
     }
   });
 }, 60 * 60 * 1000);
+
+// Snapshot worker loop — persists pending stream updates to Firestore every
+// 5 minutes. Without this, snapshots only happen on `% 100 === 0` appends or
+// after 3 days of inactivity, so a crash could lose up to ~100 acknowledged
+// updates for later joiners.
+setInterval(async () => {
+  if (!redisAvailable) return;
+  const stream = redis.scanStream({ match: 'board:lastActivity:*', count: 100 });
+
+  stream.on('error', (err) => {
+    console.warn(`[snapshot-loop] Scan stream error: ${err.message}`);
+  });
+
+  stream.on('data', async (keys) => {
+    if (!keys || keys.length === 0) return;
+    for (const key of keys) {
+      const boardId = key.replace('board:lastActivity:', '');
+      try {
+        const [verStr, snapVerStr] = await redis.mget(
+          `board:${boardId}:version`,
+          `board:lastSnapshotVersion:${boardId}`,
+        );
+        const version = parseInt(verStr || '0', 10) || 0;
+        const snapshotVersion = parseInt(snapVerStr || '0', 10) || 0;
+        if (version > snapshotVersion) {
+          await triggerSnapshot(boardId);
+        }
+      } catch (e) {
+        console.warn(`[snapshot-loop] Failed for board ${boardId}: ${e.message}`);
+      }
+    }
+  });
+}, 5 * 60 * 1000);
 
 // ============================================================
 // SOCKET.IO AUTH MIDDLEWARE
@@ -544,7 +596,23 @@ io.use(async (socket, next) => {
       return next(new Error('Authentication service unavailable'));
     }
 
-    const decodedToken = await admin.auth().verifyIdToken(token);
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(token, true);
+    } catch (error) {
+      // Fall back to a non-revocation check only when the verification
+      // backend itself is unavailable (transient errors) — genuine
+      // invalid/revoked tokens must still be rejected.
+      const transient = error && (
+        error.code === 'auth/internal-error' ||
+        error.code === 'auth/network-error' ||
+        error.code === 'auth/network-timeout' ||
+        (typeof error.message === 'string' && error.message.includes('ETIMEDOUT'))
+      );
+      if (!transient) throw error;
+      console.warn('[Socket.IO auth] Revocation check unavailable, verifying without it:', error.message);
+      decodedToken = await admin.auth().verifyIdToken(token);
+    }
     socket.data.uid = decodedToken.uid;
     next();
   } catch (error) {
@@ -634,11 +702,14 @@ io.on('connection', (socket) => {
     try {
       // -------------------------------------------------------
       // PHASE 1: Atomic append to Redis STREAM via Lua script
+      // Single-user boards are persisted the same way (skip only the
+      // broadcast below) so the snapshot worker durably stores them —
+      // acking "success" without persisting would lose all solo work.
       // -------------------------------------------------------
       let version = null;
       let isDuplicate = false;
 
-      if (redisAvailable && !isSingleUser) {
+      if (redisAvailable) {
         // Seed Redis version from Firestore if missing (handles Redis loss recovery)
         await seedRedisFromFirestore(boardId);
 
@@ -691,14 +762,6 @@ io.on('connection', (socket) => {
         }
       }
 
-      if (isSingleUser) {
-        console.log(`[crdt_update] Single-user board — saved directly, no broadcast/queue`);
-        if (typeof ack === 'function') {
-          ack({ status: 'success', updateId: update.updateId, boardId, version: version || 0 });
-        }
-        return;
-      }
-
       if (isDuplicate) {
         // Duplicate: ack success but no broadcast (already broadcast the first time)
         if (typeof ack === 'function') {
@@ -708,7 +771,7 @@ io.on('connection', (socket) => {
       }
 
       // If persistence failed (Redis unavailable or Lua error), reject so client retries
-      if (version === null && !isSingleUser) {
+      if (version === null) {
         if (typeof ack === 'function') {
           ack({ status: 'error', message: 'persistence_unavailable' });
         }
@@ -716,11 +779,15 @@ io.on('connection', (socket) => {
       }
 
       // -------------------------------------------------------
-      // Broadcast to room (with version for client cursor tracking)
+      // Broadcast to room (with version for client cursor tracking).
+      // Single-user boards skip the broadcast — no peers to relay to —
+      // but the update is already durably appended to the stream above.
       // -------------------------------------------------------
-      const broadcastPayload = { boardId, update: { ...update, version } };
-      socket.to(`board_room:${boardId}`).emit('crdt_update', broadcastPayload);
-      console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId} version=${version}`);
+      if (!isSingleUser) {
+        const broadcastPayload = { boardId, update: { ...update, version } };
+        socket.to(`board_room:${boardId}`).emit('crdt_update', broadcastPayload);
+        console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId} version=${version}`);
+      }
 
       // -------------------------------------------------------
       // Trigger snapshot every 100 updates (fire-and-forget)
@@ -757,6 +824,15 @@ io.on('connection', (socket) => {
     if (!isValidBoardId(boardId) || !isValidPreview(preview)) {
       console.warn(`[crdt_preview] Invalid payload from ${uid}`);
       if (typeof ack === 'function') ack({ status: 'error', message: 'invalid_payload' });
+      return;
+    }
+
+    // Access check — previews are relayed into the board room; without this,
+    // any connected socket could spam/deface previews on any board.
+    const hasAccess = await canUserAccessBoard(boardId, uid, false);
+    if (!hasAccess) {
+      console.warn(`[crdt_preview] Forbidden: User ${uid} cannot access board ${boardId}`);
+      if (typeof ack === 'function') ack({ status: 'error', message: 'forbidden' });
       return;
     }
 
@@ -1035,7 +1111,9 @@ io.on('connection', (socket) => {
       }
 
       const chatMessage = {
-        id: messageObj.id || data?.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        // Doc/storage id is ALWAYS generated server-side — client-supplied ids
+        // are never trusted (they could overwrite another user's message).
+        id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
         boardId,
         senderUid: uid,
         senderName: messageObj.senderName || data?.senderName || 'Anonymous',
@@ -1044,23 +1122,30 @@ io.on('connection', (socket) => {
         timestamp: messageObj.timestamp || data?.timestamp || Date.now(),
       };
 
-      // 1. Broadcast immediately to all active board viewers in real-time
+      // 1. Persist to Firestore FIRST — broadcast only after durability so
+      //    accepted messages can't be silently lost if persist fails.
+      if (db) {
+        try {
+          await db.collection('boards').doc(boardId).collection('chat_messages').doc(chatMessage.id).set({
+            ...chatMessage,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        } catch (persistError) {
+          console.error('[board_chat_message] Firestore persist failed:', persistError.message);
+          if (typeof ack === 'function') ack({ status: 'error', message: 'persist_failed' });
+          return;
+        }
+      }
+
+      // 2. Broadcast to all active board viewers in real-time
       io.to(`board_room:${boardId}`).emit('board_chat_message', chatMessage);
 
-      // 2. Cache in Redis with TTL (7 days: 604800s) for low-latency retrieval
+      // 3. Cache in Redis with TTL (7 days: 604800s) for low-latency retrieval
       if (redisAvailable) {
         const historyKey = `board_chat:${boardId}:history`;
         const payloadStr = JSON.stringify(chatMessage);
         await redis.rpush(historyKey, payloadStr);
         await redis.expire(historyKey, 604800); // 7 days TTL
-      }
-
-      // 3. Persist to Firestore so messages are never lost after Redis TTL expiry
-      if (db) {
-        await db.collection('boards').doc(boardId).collection('chat_messages').doc(chatMessage.id).set({
-          ...chatMessage,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
       }
 
       if (typeof ack === 'function') ack({ status: 'success', message: chatMessage });
@@ -1082,9 +1167,13 @@ io.on('connection', (socket) => {
         return;
       }
 
+      // Clamp to a sane range — unsanitized values (negative/NaN/huge) would
+      // be passed straight into Redis/Firestore queries.
+      const historyLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+
       if (redisAvailable) {
         const historyKey = `board_chat:${boardId}:history`;
-        const raw = await redis.lrange(historyKey, -limit, -1);
+        const raw = await redis.lrange(historyKey, -historyLimit, -1);
         if (raw && raw.length > 0) {
           const messages = raw.map(r => JSON.parse(r));
           if (typeof callback === 'function') callback({ status: 'success', messages });
@@ -1093,11 +1182,13 @@ io.on('connection', (socket) => {
       }
 
       if (db) {
+        // Fetch the NEWEST N messages (descending) and restore chronological
+        // order — ascending+limit would return the oldest messages instead.
         const snap = await db.collection('boards').doc(boardId).collection('chat_messages')
-          .orderBy('timestamp', 'asc')
-          .limit(limit)
+          .orderBy('timestamp', 'desc')
+          .limit(historyLimit)
           .get();
-        const messages = snap.docs.map(doc => doc.data());
+        const messages = snap.docs.map(doc => doc.data()).reverse();
         if (typeof callback === 'function') callback({ status: 'success', messages });
         return;
       }
@@ -1143,7 +1234,10 @@ io.on('connection', (socket) => {
       socket.join(`board_voice:${boardId}`);
       socket.data.currentVoiceBoardId = boardId;
 
-      io.to(`board_room:${boardId}`).emit('voice_participant_joined', participant);
+      // Voice events target the voice room — voice sockets only ever join
+      // `board_voice:` (they never call watch_board), so emitting to
+      // `board_room:` would leave participants blind to each other.
+      io.to(`board_voice:${boardId}`).emit('voice_participant_joined', participant);
 
       const channelName = `board_${boardId}`;
       const appId = process.env.AGORA_APP_ID || 'dummy_agora_app_id_inklink_2026';
@@ -1175,7 +1269,7 @@ io.on('connection', (socket) => {
         }
         socket.leave(`board_voice:${boardId}`);
         socket.data.currentVoiceBoardId = null;
-        io.to(`board_room:${boardId}`).emit('voice_participant_left', { uid, boardId });
+        io.to(`board_voice:${boardId}`).emit('voice_participant_left', { uid, boardId });
         console.log(`[voice] User ${uid} left voice channel board_${boardId}`);
       }
       if (typeof callback === 'function') callback({ status: 'success' });
@@ -1188,6 +1282,10 @@ io.on('connection', (socket) => {
   socket.on('voice_speaking_state', async ({ boardId, isSpeaking, isMuted }) => {
     try {
       if (!isValidBoardId(boardId)) return;
+      // Access check — without it any connected socket could spam fake
+      // speaking-state updates into any board's voice room.
+      const hasAccess = await canUserAccessBoard(boardId, uid, false);
+      if (!hasAccess) return;
       if (redisAvailable) {
         const voiceKey = `voice:board:${boardId}:participants`;
         const raw = await redis.hget(voiceKey, uid);
@@ -1198,7 +1296,7 @@ io.on('connection', (socket) => {
           await redis.hset(voiceKey, uid, JSON.stringify(p));
         }
       }
-      io.to(`board_room:${boardId}`).emit('voice_speaking_changed', {
+      io.to(`board_voice:${boardId}`).emit('voice_speaking_changed', {
         uid,
         isSpeaking: !!isSpeaking,
         isMuted: !!isMuted,
@@ -1242,7 +1340,7 @@ io.on('connection', (socket) => {
         if (redisAvailable) {
           await redis.hdel(`voice:board:${voiceBoardId}:participants`, uid);
         }
-        io.to(`board_room:${voiceBoardId}`).emit('voice_participant_left', { uid, boardId: voiceBoardId });
+        io.to(`board_voice:${voiceBoardId}`).emit('voice_participant_left', { uid, boardId: voiceBoardId });
       } catch (_) { }
     }
   });
@@ -1287,8 +1385,29 @@ server.listen(PORT, () => {
 });
 
 // Graceful shutdown
-function gracefulShutdown(signal) {
+async function gracefulShutdown(signal) {
   console.log(`\nReceived ${signal}, shutting down gracefully...`);
+
+  // Snapshot boards that still have unsnapshotted updates so acknowledged
+  // CRDT ops aren't lost between the last %100 snapshot and shutdown.
+  try {
+    if (redisAvailable) {
+      const sockets = await io.fetchSockets();
+      const boardIds = new Set(
+        sockets.map(s => s.data?.currentBoardId).filter(Boolean),
+      );
+      for (const boardId of boardIds) {
+        try {
+          await triggerSnapshot(boardId);
+        } catch (e) {
+          console.warn(`[shutdown] Snapshot failed for board ${boardId}: ${e.message}`);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`[shutdown] Pre-shutdown snapshot pass failed: ${e.message}`);
+  }
+
   server.close(() => {
     console.log('HTTP server closed');
     if (redisAvailable) {

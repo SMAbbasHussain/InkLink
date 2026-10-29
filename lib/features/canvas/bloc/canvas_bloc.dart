@@ -721,6 +721,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             (payload['cy'] as num?)?.toDouble() ?? 0.0,
           ),
           color: Color((payload['color'] as num?)?.toInt() ?? Colors.black.value),
+          width: (payload['width'] as num?)?.toDouble() ?? 0.0,
+          height: (payload['height'] as num?)?.toDouble() ?? 0.0,
         ));
         continue;
       }
@@ -963,12 +965,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final prompt = event.prompt.trim();
     if (prompt.isEmpty) return;
     final textId = _uuid.v4();
+    final measured = measureTextElementBounds(prompt);
     final textElement = TextElement(
       id: textId,
       z: _nextZIndex(),
       text: prompt,
       center: event.position,
       color: state.selectedColor,
+      width: measured.width,
+      height: measured.height,
     );
     final nextElements =
         List<CanvasElement>.from(state.elements)..add(textElement);
@@ -1239,6 +1244,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final update = adapter.undoLast(origin: 'local');
     if (update == null || update.isEmpty) return;
     await _publishCrdtUpdate(update);
+    // Undo can revert an element to a payload identical to the last one
+    // received from a peer; clear the dedup guard so the next remote
+    // update is not silently dropped.
+    _lastShapePayloadFingerprint.clear();
     _refreshFromCrdtAdapter(emit);
     emit(state.copyWith(activeTray: null));
   }
@@ -1250,6 +1259,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final update = adapter.redoLast(origin: 'local');
     if (update == null || update.isEmpty) return;
     await _publishCrdtUpdate(update);
+    // Redo can re-apply a payload identical to the last one received from
+    // a peer; clear the dedup guard so the next remote update is not
+    // silently dropped.
+    _lastShapePayloadFingerprint.clear();
     _refreshFromCrdtAdapter(emit);
     emit(state.copyWith(activeTray: null));
   }
@@ -2001,6 +2014,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final deletedIds = <String>[];
     final createdStrokes = <CanvasElement>[];
     final nextElements = <CanvasElement>[];
+    // _nextZIndex() scans state.elements, which stays frozen during this
+    // pass; seed a local counter so every fragment gets a distinct,
+    // increasing z instead of all fragments sharing one stale max-z.
+    var zCounter = _nextZIndex();
     for (final element in state.elements) {
       if (element is! StrokeElement) {
         final shouldDeleteWholeElement = eraseEverything &&
@@ -2030,7 +2047,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         if (segment.length < 2) continue;
         final replacement = StrokeElement(
           id: _uuid.v4(),
-          z: _nextZIndex(),
+          z: zCounter++,
           color: element.color,
           strokeWidth: element.strokeWidth,
           opacity: element.opacity,
@@ -2309,7 +2326,19 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasChatMessagesUpdated event,
     Emitter<CanvasState> emit,
   ) {
-    emit(state.copyWith(chatMessages: event.messages));
+    // History can resolve after live messages have already arrived; merge
+    // by id instead of replacing so messages received live are not dropped.
+    final merged = <String, BoardChatMessage>{
+      for (final m in state.chatMessages) m.id: m,
+    };
+    merged.addAll({for (final m in event.messages) m.id: m});
+    final messages = merged.values.toList()
+      ..sort((a, b) {
+        final byTime = a.timestamp.compareTo(b.timestamp);
+        if (byTime != 0) return byTime;
+        return a.id.compareTo(b.id);
+      });
+    emit(state.copyWith(chatMessages: messages));
   }
 
   void _onCanvasChatMessageReceived(

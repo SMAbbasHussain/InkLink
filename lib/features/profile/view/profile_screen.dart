@@ -123,14 +123,32 @@ class ProfileScreen extends StatelessWidget {
         ],
       ),
       extendBodyBehindAppBar: true,
-      body: BlocListener<FriendsBloc, FriendsState>(
-        listener: (context, friendsState) {
-          if (friendsState is FriendsError) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text(friendsState.message)));
-          }
-        },
+      body: MultiBlocListener(
+        listeners: [
+          BlocListener<FriendsBloc, FriendsState>(
+            listener: (context, friendsState) {
+              if (friendsState is FriendsError) {
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(friendsState.message)));
+              }
+            },
+          ),
+          BlocListener<ProfileBloc, ProfileState>(
+            // Non-fatal errors arrive on ProfileLoaded.errorMessage (M9);
+            // toast them instead of replacing the profile screen.
+            listener: (context, profileState) {
+              final message = profileState is ProfileLoaded
+                  ? profileState.errorMessage
+                  : null;
+              if (message != null) {
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(message)));
+              }
+            },
+          ),
+        ],
         child: BlocBuilder<ProfileBloc, ProfileState>(
           builder: (context, state) {
             if (state is ProfileLoading) {

@@ -18,7 +18,6 @@ import '../bloc/chat_inbox_bloc.dart';
 import '../bloc/chat_inbox_event.dart';
 import '../bloc/chat_inbox_state.dart';
 import '../theme/chat_theme.dart';
-import 'chat_thread_screen.dart';
 import 'widgets/create_group_sheet.dart';
 
 class ChatInboxScreen extends StatelessWidget {
@@ -46,16 +45,22 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
     super.dispose();
   }
 
-  void _showNewDmSheet(ChatColors colors) {
+  void _showNewDmSheet(ChatColors colors, AuthState authState) {
+    final myUid = authState is Authenticated ? authState.uid : null;
+    final myEmail = authState is Authenticated ? authState.email : null;
+    final normalizedEmail = myEmail?.trim().toLowerCase();
+
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: colors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (sheetCtx) {
         return SafeArea(
-          child: Padding(
+          child: Container(
+            height: MediaQuery.of(sheetCtx).size.height * 0.65,
             padding: const EdgeInsets.all(ChatTheme.space16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -83,21 +88,68 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
                 Expanded(
                   child: BlocBuilder<FriendsBloc, FriendsState>(
                     builder: (_, friendsState) {
+                      if (friendsState is FriendsLoading) {
+                        return Center(
+                           child: CircularProgressIndicator(color: colors.accent),
+                        );
+                      }
+
                       List<Map<String, dynamic>> friends = [];
                       if (friendsState is FriendsLoaded) {
-                        final myUid = sheetCtx.select<AuthBloc, String?>(
-                          (b) => b.state is Authenticated ? (b.state as Authenticated).uid : null,
-                        );
-                        friends = myUid == null
-                            ? friendsState.friends
-                            : friendsState.friends.where((f) => f['uid'] != myUid).toList();
+                        friends = friendsState.friends.where((f) {
+                          final fUid = (f['uid'] ?? '').toString().trim();
+                          final fEmail = (f['email'] ?? '').toString().trim().toLowerCase();
+                          if (myUid != null && fUid.isNotEmpty && fUid == myUid.trim()) return false;
+                          if (normalizedEmail != null && fEmail.isNotEmpty && fEmail == normalizedEmail) return false;
+                          return true;
+                        }).toList();
                       }
 
                       if (friends.isEmpty) {
                         return Center(
-                          child: Text(
-                            'No friends found. Add friends to start chatting!',
-                            style: TextStyle(color: colors.textSecondary),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  LucideIcons.userX,
+                                  size: 40,
+                                  color: colors.textSecondary.withValues(alpha: 0.6),
+                                ),
+                                const SizedBox(height: InkSpacing.s12),
+                                Text(
+                                  'No friends found',
+                                  style: TextStyle(
+                                    color: colors.textPrimary,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Add friends to start one-on-one direct messages!',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
+                                ),
+                                const SizedBox(height: InkSpacing.s16),
+                                InkButton.primary(
+                                  label: 'Add Friend',
+                                  icon: const Icon(LucideIcons.userPlus),
+                                  compact: true,
+                                  expand: false,
+                                  onPressed: () {
+                                    Navigator.pop(sheetCtx);
+                                    showModalBottomSheet(
+                                      context: context,
+                                      isScrollControlled: true,
+                                      backgroundColor: Colors.transparent,
+                                      builder: (_) => const AddFriendSheet(),
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
                           ),
                         );
                       }
@@ -105,48 +157,51 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
                       return ListView.separated(
                         itemCount: friends.length,
                         separatorBuilder: (_, _) => const SizedBox(height: 4),
-                        itemBuilder: (context, index) {
+                        itemBuilder: (_, index) {
                           final f = friends[index];
                           final uid = f['uid'].toString();
                           final name = f['displayName']?.toString() ?? 'User';
                           final photo = f['photoURL']?.toString();
 
-                          return ListTile(
-                            leading: CircleAvatar(
-                              radius: 20,
-                              backgroundColor: colors.surfaceElevated,
-                              backgroundImage: photo != null && photo.isNotEmpty
-                                  ? NetworkImage(photo)
-                                  : null,
-                              child: photo == null || photo.isEmpty
-                                  ? Text(
-                                      name.isNotEmpty ? name[0].toUpperCase() : '?',
-                                      style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold),
-                                    )
-                                  : null,
+                          return Material(
+                            color: Colors.transparent,
+                            child: ListTile(
+                              leading: CircleAvatar(
+                                radius: 20,
+                                backgroundColor: colors.surfaceElevated,
+                                backgroundImage: photo != null && photo.isNotEmpty
+                                    ? NetworkImage(photo)
+                                    : null,
+                                child: photo == null || photo.isEmpty
+                                    ? Text(
+                                        name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                        style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.bold),
+                                      )
+                                    : null,
+                              ),
+                              title: Text(name, style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w600)),
+                              subtitle: Text(
+                                f['email']?.toString() ?? '',
+                                style: TextStyle(color: colors.textSecondary, fontSize: 11),
+                              ),
+                              trailing: Icon(Icons.chevron_right_rounded, color: colors.textSecondary),
+                              onTap: () async {
+                                Navigator.pop(sheetCtx);
+                                final conv = ChatConversationModel(
+                                  id: uid,
+                                  name: name,
+                                  avatarUrl: photo,
+                                  isGroup: false,
+                                );
+                                await Navigator.push(
+                                  context,
+                                  buildChatThreadRoute(context, conversation: conv),
+                                );
+                                if (mounted) {
+                                  context.read<ChatInboxBloc>().add(const LoadChatInbox());
+                                }
+                              },
                             ),
-                            title: Text(name, style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w600)),
-                            subtitle: Text(
-                              f['email']?.toString() ?? '',
-                              style: TextStyle(color: colors.textSecondary, fontSize: 11),
-                            ),
-                            trailing: Icon(Icons.chevron_right_rounded, color: colors.textSecondary),
-                            onTap: () async {
-                              Navigator.pop(sheetCtx);
-                              final conv = ChatConversationModel(
-                                id: uid,
-                                name: name,
-                                avatarUrl: photo,
-                                isGroup: false,
-                              );
-                              await Navigator.push(
-                                this.context,
-                                buildChatThreadRoute(this.context, conversation: conv),
-                              );
-                              if (mounted) {
-                                this.context.read<ChatInboxBloc>().add(const LoadChatInbox());
-                              }
-                            },
                           );
                         },
                       );
@@ -171,9 +226,7 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
 
     if (createdGroup != null && mounted) {
       await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => ChatThreadScreen(conversation: createdGroup),
-        ),
+        buildChatThreadRoute(context, conversation: createdGroup),
       );
       if (mounted) {
         context.read<ChatInboxBloc>().add(const LoadChatInbox());
@@ -181,7 +234,7 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
     }
   }
 
-  void _showNewConversationSheet(ChatColors colors, InkTokens tokens) {
+  void _showNewConversationSheet(ChatColors colors, InkTokens tokens, AuthState authState) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -248,7 +301,7 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
                     subtitle: 'Chat one-on-one with a friend',
                     onTap: () {
                       Navigator.pop(sheetCtx);
-                      _showNewDmSheet(colors);
+                      _showNewDmSheet(colors, authState);
                     },
                   ),
                   const SizedBox(height: InkSpacing.s12),
@@ -283,14 +336,14 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
     required VoidCallback onTap,
   }) {
     return Material(
-      color: Colors.transparent,
+      color: colors.surfaceElevated,
+      borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Container(
           padding: const EdgeInsets.all(ChatTheme.space12),
           decoration: BoxDecoration(
-            color: colors.surfaceElevated,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: colors.divider.withValues(alpha: 0.6),
@@ -348,6 +401,7 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
   Widget build(BuildContext context) {
     final colors = ChatTheme.colorsOf(context);
     final tokens = context.ink;
+    final authState = context.watch<AuthBloc>().state;
 
     return Scaffold(
       backgroundColor: tokens.surfaceDesk,
@@ -367,7 +421,7 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
           IconButton(
             icon: Icon(LucideIcons.messageSquarePlus, color: tokens.accent, size: 20),
             tooltip: 'New Conversation',
-            onPressed: () => _showNewConversationSheet(colors, tokens),
+            onPressed: () => _showNewConversationSheet(colors, tokens, authState),
           ),
         ],
       ),
@@ -461,7 +515,7 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
                                     icon: const Icon(LucideIcons.messageSquarePlus),
                                     expand: false,
                                     compact: true,
-                                    onPressed: () => _showNewDmSheet(colors),
+                                    onPressed: () => _showNewDmSheet(colors, authState),
                                   ),
                                   const SizedBox(width: InkSpacing.s12),
                                   InkButton.secondary(
@@ -531,11 +585,13 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
                         onDismissed: (_) {
                           context.read<ChatInboxBloc>().add(DeleteConversationRequested(conv.id));
                         },
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: ChatTheme.space16,
-                            vertical: 6,
-                          ),
+                        child: Material(
+                          color: Colors.transparent,
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: ChatTheme.space16,
+                              vertical: 6,
+                            ),
                           leading: Stack(
                             children: [
                               CircleAvatar(
@@ -635,16 +691,15 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
                             context.read<ChatInboxBloc>().add(MarkConversationReadRequested(conv.id));
                             await Navigator.push(
                               context,
-                              MaterialPageRoute(
-                                builder: (_) => ChatThreadScreen(conversation: conv),
-                              ),
+                              buildChatThreadRoute(context, conversation: conv),
                             );
                             if (context.mounted) {
                               context.read<ChatInboxBloc>().add(const LoadChatInbox());
                             }
                           },
                         ),
-                      );
+                      ),
+                    );
                     },
                   );
                 }

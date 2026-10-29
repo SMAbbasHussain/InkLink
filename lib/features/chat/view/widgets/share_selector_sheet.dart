@@ -129,7 +129,7 @@ class _ShareSelectorSheetState extends State<ShareSelectorSheet> with SingleTick
                   type: ChatShareType.board,
                   targetId: board.id,
                   title: board.title.isNotEmpty ? board.title : 'Untitled Board',
-                  joinCode: board.id.length > 8 ? board.id.substring(0, 8).toUpperCase() : board.id,
+                  joinCode: board.id,
                   thumbnailUrl: board.previewPath,
                   memberCount: board.members.length,
                   description: 'Interactive canvas board',
@@ -220,7 +220,7 @@ class _ShareSelectorSheetState extends State<ShareSelectorSheet> with SingleTick
                   type: ChatShareType.workspace,
                   targetId: ws.id,
                   title: ws.name,
-                  joinCode: ws.id.length > 8 ? ws.id.substring(0, 8).toUpperCase() : ws.id,
+                  joinCode: ws.id,
                   memberCount: ws.memberCount,
                   description: ws.description,
                 );

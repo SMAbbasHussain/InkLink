@@ -111,9 +111,16 @@ module.exports = async (request) => {
     const existingPromises = boardMemberRefs.map((ref) => ref.get());
     const existingDocs = await Promise.all(existingPromises);
 
+    // Only count/role-write members that are not already active;
+    // re-adding a board to a workspace must not double-increment counts.
+    const newlyAddedUids = [];
     for (let idx = 0; idx < memberUids.length; idx++) {
       const memberUid = memberUids[idx];
       const existing = existingDocs[idx];
+      const existingData = existing.exists ? existing.data() || {} : null;
+      if (existingData != null && existingData.status === 'active') {
+        continue;
+      }
       if (existing.exists) {
         batch.set(
           boardMemberRefs[idx],
@@ -137,18 +144,19 @@ module.exports = async (request) => {
           { merge: true },
         );
       }
+      newlyAddedUids.push(memberUid);
     }
 
-    // Update board members array once with all member UIDs
-    if (memberUids.length > 0) {
+    // Update board members array once with all newly (re)activated UIDs
+    if (newlyAddedUids.length > 0) {
       batch.update(boardRef, {
-        members: admin.firestore.FieldValue.arrayUnion(...memberUids),
-        [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(memberUids.length),
+        members: admin.firestore.FieldValue.arrayUnion(...newlyAddedUids),
+        [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(newlyAddedUids.length),
         [FirestorePaths.UPDATED_AT]: now,
       });
     }
 
-    for (const memberUid of memberUids) {
+    for (const memberUid of newlyAddedUids) {
       const userRef = firestore.collection(FirestorePaths.USERS).doc(memberUid);
       // Increment user's board count
       batch.set(userRef, {

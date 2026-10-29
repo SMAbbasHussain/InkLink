@@ -47,9 +47,16 @@ class _FriendsCollapsibleCardState extends State<FriendsCollapsibleCard> {
         if (state is FriendsLoaded) {
           final authState = context.read<AuthBloc>().state;
           final myUid = authState is Authenticated ? authState.uid : null;
-          friends = myUid == null
-              ? state.friends
-              : state.friends.where((f) => f['uid'] != myUid).toList();
+          final myEmail = authState is Authenticated ? authState.email : null;
+          final normalizedEmail = myEmail?.trim().toLowerCase();
+
+          friends = state.friends.where((f) {
+            final fUid = (f['uid'] ?? '').toString().trim();
+            final fEmail = (f['email'] ?? '').toString().trim().toLowerCase();
+            if (myUid != null && fUid.isNotEmpty && fUid == myUid.trim()) return false;
+            if (normalizedEmail != null && fEmail.isNotEmpty && fEmail == normalizedEmail) return false;
+            return true;
+          }).toList();
           pendingRequestsCount = state.incomingRequests.length;
         }
 

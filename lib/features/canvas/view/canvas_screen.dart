@@ -1890,6 +1890,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 center: e.center,
                 text: e.text,
                 color: e.color,
+                width: e.width,
+                height: e.height,
               ),
             ImageElement e => _CanvasElement.image(
                 id: e.id,
@@ -2754,7 +2756,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final center = _toScreen(shape.center);
     final double rawW;
     final double rawH;
-    if (shape.kind == _ElementKind.stickyNote ||
+    if (shape.kind == _ElementKind.text) {
+      // Persisted measured text bounds; legacy elements fall back to the
+      // same 180x48 estimate used by the erase hit-test.
+      rawW = shape.width > 0 ? shape.width : 180.0;
+      rawH = shape.height > 0 ? shape.height : 48.0;
+    } else if (shape.kind == _ElementKind.stickyNote ||
         shape.kind == _ElementKind.image) {
       rawW = shape.width > 0
           ? shape.width
@@ -2779,9 +2786,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final halfH = screenH / 2;
     final rotation = (shape.data['rotation'] as num?)?.toDouble() ?? 0.0;
 
+    // Text is painted from its center point as the top-left origin, so anchor
+    // the overlay box at that corner instead of centering it on the point.
+    final isTextElement = shape.kind == _ElementKind.text;
     return Positioned(
-      left: center.dx - halfW - 16,
-      top: center.dy - halfH - 16,
+      left: (isTextElement ? center.dx : center.dx - halfW) - 16,
+      top: (isTextElement ? center.dy : center.dy - halfH) - 16,
       width: screenW + 32,
       height: screenH + 32,
       child: Stack(

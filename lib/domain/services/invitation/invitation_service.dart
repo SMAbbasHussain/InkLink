@@ -80,7 +80,11 @@ class InvitationServiceImpl implements InvitationService {
       }
       return result.data;
     } on FirebaseFunctionsException catch (e) {
-      throw Exception(e.message ?? 'Cloud function call failed');
+      // Surface the function's real code/message so users see the actual
+      // cause instead of a generic connection error.
+      throw Exception(
+        'Request failed (${e.code}): ${e.message ?? failureMessage}',
+      );
     } catch (_) {
       throw Exception('Connection error');
     }

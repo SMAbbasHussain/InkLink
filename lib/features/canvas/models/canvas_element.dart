@@ -57,6 +57,8 @@ sealed class CanvasElement {
             (data['cy'] as num).toDouble(),
           ),
           color: Color(data['color'] as int),
+          width: (data['width'] as num?)?.toDouble() ?? 0,
+          height: (data['height'] as num?)?.toDouble() ?? 0,
         );
       case 'image':
         return ImageElement(
@@ -254,6 +256,10 @@ class TextElement extends CanvasElement {
   final String text;
   final Offset center;
   final Color color;
+  // Measured layout bounds, persisted so selection/erase overlays match
+  // the drawn text; 0 means unknown (fall back to measuring).
+  final double width;
+  final double height;
 
   const TextElement({
     required super.id,
@@ -261,6 +267,8 @@ class TextElement extends CanvasElement {
     this.text = '',
     required this.center,
     required this.color,
+    this.width = 0,
+    this.height = 0,
   });
 
   @override
@@ -271,6 +279,8 @@ class TextElement extends CanvasElement {
         'cx': center.dx,
         'cy': center.dy,
         'color': color.value,
+        if (width > 0) 'width': width,
+        if (height > 0) 'height': height,
       };
 
   @override
@@ -280,11 +290,18 @@ class TextElement extends CanvasElement {
           super == other &&
           text == other.text &&
           center == other.center &&
-          color == other.color;
+          color == other.color &&
+          width == other.width &&
+          height == other.height;
 
   @override
   int get hashCode =>
-      super.hashCode ^ text.hashCode ^ center.hashCode ^ color.hashCode;
+      super.hashCode ^
+      text.hashCode ^
+      center.hashCode ^
+      color.hashCode ^
+      width.hashCode ^
+      height.hashCode;
 }
 
 class ImageElement extends CanvasElement {

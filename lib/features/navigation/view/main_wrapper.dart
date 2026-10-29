@@ -48,10 +48,15 @@ class MainWrapper extends StatefulWidget {
 
 class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
   bool _presenceActive = false;
+  PresenceService? _presenceService;
 
   @override
   void initState() {
     super.initState();
+    // Capture the service eagerly — looking it up via `context` in dispose()
+    // throws (ancestor lookup on a deactivated element), which would skip the
+    // presence-offline write entirely.
+    _presenceService = context.read<PresenceService>();
     WidgetsBinding.instance.addObserver(this);
     _setOnlineIfNeeded();
   }
@@ -79,10 +84,11 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
   }
 
   Future<void> _setOnlineIfNeeded() async {
-    if (_presenceActive || !mounted) return;
+    final presenceService = _presenceService;
+    if (_presenceActive || presenceService == null || !mounted) return;
     _presenceActive = true;
     try {
-      await context.read<PresenceService>().setUserOnline();
+      await presenceService.setUserOnline();
     } catch (e, st) {
       developer.log(
         'Lifecycle presence online update failed: $e',
@@ -93,10 +99,12 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
   }
 
   Future<void> _setOfflineIfNeeded() async {
-    if (!_presenceActive) return;
+    final presenceService = _presenceService;
+    if (!_presenceActive || presenceService == null) return;
     _presenceActive = false;
     try {
-      await context.read<PresenceService>().setUserOffline();
+      // Uses the field captured in initState — safe during dispose().
+      await presenceService.setUserOffline();
     } catch (e, st) {
       developer.log(
         'Lifecycle presence offline update failed: $e',
