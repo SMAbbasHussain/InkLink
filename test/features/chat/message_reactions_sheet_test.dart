@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:inklink/features/chat/view/widgets/message_reactions_sheet.dart';
 import 'package:inklink/core/services/auth_service.dart';
@@ -48,11 +48,11 @@ Widget createTestableWidget({
   String? senderAvatar,
   Function(String emoji)? onReactionToggled,
 }) {
-  return MultiProvider(
+  return MultiRepositoryProvider(
     providers: [
-      Provider<AuthService>(create: (_) => FakeAuthService(uid: currentUid)),
-      Provider<FirestoreService>(create: (_) => FakeFirestoreService()),
-      Provider<LocalDatabaseService>(create: (_) => FakeLocalDatabaseService()),
+      RepositoryProvider<AuthService>(create: (_) => FakeAuthService(uid: currentUid)),
+      RepositoryProvider<FirestoreService>(create: (_) => FakeFirestoreService()),
+      RepositoryProvider<LocalDatabaseService>(create: (_) => FakeLocalDatabaseService()),
     ],
     child: MaterialApp(
       home: Scaffold(

@@ -174,9 +174,9 @@ class _MessageReactionsSheetState extends State<MessageReactionsSheet> {
                     profile.friendshipStatus = existing.friendshipStatus;
                     profile.friendCount = existing.friendCount;
                     profile.boardCount = existing.boardCount;
-                    if (profile.bio == null) profile.bio = existing.bio;
-                    if (profile.email == null) profile.email = existing.email;
-                    if (profile.photoURL == null) profile.photoURL = existing.photoURL;
+                    profile.bio ??= existing.bio;
+                    profile.email ??= existing.email;
+                    profile.photoURL ??= existing.photoURL;
                   }
                   await isar.localProfiles.putByUid(profile);
                 }
