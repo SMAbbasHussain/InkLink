@@ -5,6 +5,12 @@ const Redis = require('ioredis');
 const admin = require('firebase-admin');
 const cors = require('cors');
 const Y = require('yjs');
+const crypto = require('crypto');
+// Official Agora token generator for Node. NOTE: the npm package is
+// "agora-token" (verified against registry.npmjs.org in Oct 2026 —
+// "agora-token-builder" does not exist on npm; only the Dart/Flutter and
+// Python Agora token packages use that name).
+const { RtcTokenBuilder, RtcRole } = require('agora-token');
 require('dotenv').config();
 
 // ============================================================
@@ -43,6 +49,9 @@ const corsOptions = {
 
 const app = express();
 app.use(cors(corsOptions));
+// Parse JSON bodies for the Agora token routes below (Socket.IO is attached
+// directly to the http server and is unaffected by this middleware).
+app.use(express.json());
 
 app.get('/health', (req, res) => {
   console.log("Ping Test");
@@ -50,6 +59,123 @@ app.get('/health', (req, res) => {
     status: 'ok',
     time: new Date(),
   });
+});
+
+// ============================================================
+// AGORA TOKEN HTTP ROUTES — per-user chat token + voice RTC token
+// ============================================================
+// Both routes verify a Firebase Auth ID token (same identity check as the
+// Socket.IO handshake) and never log issued tokens. Socket.IO still carries
+// live board traffic; these endpoints exist so the client can mint/renew
+// tokens for the Agora-Chat SDK and for RTC voice joins.
+
+app.post('/api/agora/chat/token', async (req, res) => {
+  try {
+    const decoded = await authenticateFirebaseRequest(req);
+    if (!decoded) {
+      console.warn('[agora-chat] /api/agora/chat/token → 401 (missing/invalid Firebase ID token)');
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
+    if (!isAgoraChatConfigured()) {
+      const cfg = getAgoraChatConfig();
+      const missing = [
+        ['AGORA_CHAT_ORG_NAME', cfg.orgName],
+        ['AGORA_CHAT_APP_NAME', cfg.appName],
+        ['AGORA_CHAT_REST_CLIENT_ID', cfg.clientId],
+        ['AGORA_CHAT_REST_CLIENT_SECRET', cfg.clientSecret],
+      ].filter(([, v]) => !v).map(([k]) => k);
+      console.warn(`[agora-chat] /api/agora/chat/token → 503 (not configured; missing env: ${missing.join(', ')})`);
+      // Client falls back to local-first chat mode when chat REST is not configured.
+      return res.status(503).json({ error: 'agora chat not configured' });
+    }
+
+    // Must mirror the client's _sanitizeAgoraUid exactly so both sides
+    // agree on the Agora Chat username.
+    const agoraUsername = sanitizeAgoraUid(decoded.uid);
+    const cacheKey = `agora_chat:token:${agoraUsername}`;
+
+    // Redis-first: serve the cached token while it is still fresh (5 min headroom).
+    if (redisAvailable) {
+      const cachedRaw = await redis.get(cacheKey).catch(() => null);
+      if (cachedRaw) {
+        try {
+          const cached = JSON.parse(cachedRaw);
+          if (cached && cached.token && cached.expiresAt > Date.now() + 600000) {
+            return res.status(200).json(cached);
+          }
+        } catch (_) { }
+      }
+    }
+
+    const config = getAgoraChatConfig();
+    const expirySeconds = config.tokenExpiryHours * 3600;
+
+    const appToken = await getAgoraChatAppToken();
+    await ensureAgoraChatUser(agoraUsername, appToken);
+    const minted = await createAgoraChatUserToken(agoraUsername, expirySeconds);
+    console.log(`[agora-chat] minted Chat user token for ${agoraUsername} (valid ${config.tokenExpiryHours}h, cache miss)`);
+
+    const payload = {
+      agoraUsername,
+      appKey: `${config.orgName}#${config.appName}`,
+      appId: process.env.AGORA_APP_ID || null,
+      token: minted.token,
+      expiresAt: minted.expiresAt,
+    };
+
+    // Cache TTL = token lifetime - 600s so the entry always outlives the token.
+    if (redisAvailable) {
+      const cacheTtl = Math.max(60, Math.floor((payload.expiresAt - Date.now()) / 1000) - 600);
+      redis.set(cacheKey, JSON.stringify(payload), 'EX', cacheTtl).catch(() => { });
+    }
+
+    return res.status(200).json(payload);
+  } catch (err) {
+    console.error('[agora/chat/token] Error:', err);
+    return res.status(502).json({ error: 'agora chat token request failed' });
+  }
+});
+
+app.post('/api/agora/rtc/token', async (req, res) => {
+  try {
+    const decoded = await authenticateFirebaseRequest(req);
+    if (!decoded) {
+      console.warn('[agora-rtc] /api/agora/rtc/token → 401 (missing/invalid Firebase ID token)');
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
+    const boardId = req.body?.boardId;
+    if (!isValidBoardId(boardId)) {
+      console.warn(`[agora-rtc] /api/agora/rtc/token → 400 (invalid board id "${boardId}")`);
+      return res.status(400).json({ error: 'invalid_board_id' });
+    }
+
+    const hasAccess = await canUserAccessBoard(boardId, decoded.uid, false);
+    if (!hasAccess) {
+      console.warn(`[agora-rtc] /api/agora/rtc/token → 403 (uid ${decoded.uid} lacks access to board ${boardId})`);
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const appId = process.env.AGORA_APP_ID;
+    const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+    if (!appId || !appCertificate) {
+      const missing = [
+        !appId ? 'AGORA_APP_ID' : null,
+        !appCertificate ? 'AGORA_APP_CERTIFICATE' : null,
+      ].filter(Boolean).join(', ');
+      console.warn(`[agora-rtc] /api/agora/rtc/token → 503 (${missing} not configured)`);
+      return res.status(503).json({ error: 'agora certificate not configured' });
+    }
+
+    const channelName = `board_${boardId}`;
+    const { token, privilegeExpiredTs } = buildAgoraRtcToken(appId, appCertificate, channelName);
+    console.log(`[agora-rtc] minted RTC token for ${decoded.uid} channel ${channelName} (valid 1h)`);
+    return res.status(200).json({ appId, token, channelName, privilegeExpiredTs });
+  } catch (err) {
+    console.error('[agora/rtc/token] Error:', err);
+    return res.status(500).json({ error: 'agora rtc token request failed' });
+  }
 });
 
 const server = http.createServer(app);
@@ -304,6 +430,264 @@ function logWsEvent(title, lines) {
 async function getConnectedSocketsInRoom(roomName) {
   const sockets = await io.in(roomName).fetchSockets();
   return sockets.map(s => s.data.uid).filter(Boolean);
+}
+
+// ============================================================
+// AGORA HELPERS — Chat REST + RTC token builder
+// ============================================================
+// Agora Chat REST credentials come from the Agora Console (Project → Chat →
+// Overview: Client ID / Client Secret). The REST base URL is host-dependent —
+// legacy apps use https://a1.easemob.com, newer apps are hosted at
+// https://a???.chat.agora.io (read the exact URL from the console and set
+// AGORA_CHAT_REST_BASE accordingly). Endpoint shapes verified against the
+// official Agora Chat REST docs (Oct 2026):
+//   App token:  POST {base}/{org}/{app}/token   {grant_type:'client_credentials', client_id, client_secret}
+//                                              → 200 {access_token, expires_in(seconds), application}
+//   Register:   POST {base}/{org}/{app}/users   body is an ARRAY [{username, password}]
+//                                              duplicate user → HTTP 400 "duplicate_unique_property_exists"
+//   User token: POST {base}/{org}/{app}/token   {grant_type:'inherit', username, autoCreateUser:true, ttl}
+//                                              → 200 {access_token, expires_in, user}
+//               (replaces the legacy form POST /{org}/{app}/users/{username}/token with {expiry})
+//   Docs: https://docs.agora.io/en/chat/restful-api/user-account (resolved via doc.easemob.com)
+// TODO: if a specific Easemob deployment (e.g. legacy/VIP5 cluster) still only
+// serves the legacy /users/{username}/token form, switch the user-token call below.
+
+// Voice-call RTC tokens live 1 hour (kept in lockstep with join_voice_call).
+const AGORA_RTC_TOKEN_TTL_SECONDS = 3600;
+// Refresh app tokens 5 minutes before their documented expiry.
+const AGORA_CHAT_APP_TOKEN_HEADROOM_MS = 300000;
+
+function getAgoraChatConfig() {
+  return {
+    restBase: process.env.AGORA_CHAT_REST_BASE || 'https://a1.easemob.com',
+    orgName: process.env.AGORA_CHAT_ORG_NAME || '',
+    appName: process.env.AGORA_CHAT_APP_NAME || '',
+    clientId: process.env.AGORA_CHAT_REST_CLIENT_ID || '',
+    clientSecret: process.env.AGORA_CHAT_REST_CLIENT_SECRET || '',
+    // Per-user chat token lifetime (env is hours; default 24h).
+    tokenExpiryHours: Math.max(1, parseInt(process.env.AGORA_CHAT_TOKEN_EXPIRY_HOURS, 10) || 24),
+  };
+}
+
+function isAgoraChatConfigured() {
+  const config = getAgoraChatConfig();
+  return Boolean(config.orgName && config.appName && config.clientId && config.clientSecret);
+}
+
+// expires_in is documented in seconds; legacy (VIP5) Easemob clusters report
+// milliseconds — treat implausibly large values as ms and normalize to seconds.
+function normalizeAgoraExpirySeconds(expiresIn) {
+  const value = Number(expiresIn);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return Math.floor(value > 31536000 ? value / 1000 : value);
+}
+
+let agoraChatAppTokenCache = null; // { token, expiresAt }
+
+async function getAgoraChatAppToken() {
+  if (!isAgoraChatConfigured()) {
+    throw new Error('agora chat not configured');
+  }
+  const config = getAgoraChatConfig();
+  const now = Date.now();
+
+  if (agoraChatAppTokenCache && agoraChatAppTokenCache.token
+    && agoraChatAppTokenCache.expiresAt > now + AGORA_CHAT_APP_TOKEN_HEADROOM_MS) {
+    return agoraChatAppTokenCache.token;
+  }
+
+  if (redisAvailable) {
+    const cachedRaw = await redis.get('agora_chat:app_token').catch(() => null);
+    if (cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw);
+        if (cached && cached.token && cached.expiresAt > now + AGORA_CHAT_APP_TOKEN_HEADROOM_MS) {
+          agoraChatAppTokenCache = cached;
+          return cached.token;
+        }
+      } catch (_) { }
+    }
+  }
+
+  // Never log client secrets or token strings — only status + truncated error body.
+  const response = await fetch(
+    `${config.restBase}/${encodeURIComponent(config.orgName)}/${encodeURIComponent(config.appName)}/token`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'client_credentials',
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const detail = (await response.text().catch(() => '')).slice(0, 300);
+    console.warn(`[agora-chat] App token request failed: HTTP ${response.status} ${detail}`);
+    throw new Error(`agora chat app token request failed (${response.status})`);
+  }
+
+  const data = await response.json();
+  const expiresIn = normalizeAgoraExpirySeconds(data.expires_in);
+  if (!data.access_token || !expiresIn) {
+    throw new Error('agora chat app token response missing access_token/expires_in');
+  }
+
+  agoraChatAppTokenCache = { token: data.access_token, expiresAt: now + expiresIn * 1000 };
+
+  // Cross-process cache: TTL = expires_in - 300s so it is refreshed before expiry.
+  if (redisAvailable) {
+    await redis.set('agora_chat:app_token', JSON.stringify(agoraChatAppTokenCache),
+      'EX', Math.max(300, expiresIn - 300)).catch(() => { });
+  }
+
+  return agoraChatAppTokenCache.token;
+}
+
+async function ensureAgoraChatUser(username, appToken) {
+  if (!isAgoraChatConfigured()) {
+    throw new Error('agora chat not configured');
+  }
+  const config = getAgoraChatConfig();
+
+  // Users log in with tokens only, so the password is a throwaway secret the
+  // server never stores (Easemob requires one for registration; ≤64 chars).
+  const password = crypto.randomBytes(24).toString('hex');
+
+  const response = await fetch(
+    `${config.restBase}/${encodeURIComponent(config.orgName)}/${encodeURIComponent(config.appName)}/users`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${appToken}`,
+      },
+      // Easemob's documented registration body is an array of users.
+      body: JSON.stringify([{ username, password }]),
+    },
+  );
+
+  if (response.ok) return true;
+
+  const detail = (await response.text().catch(() => '')).slice(0, 300);
+  let body = null;
+  try { body = JSON.parse(detail); } catch (_) { }
+  const duplicate = body?.error === 'duplicate_unique_property_exists'
+    || (typeof detail === 'string' && detail.includes('requires that property named username be unique'));
+  if (response.status === 400 && duplicate) {
+    // "User already exists" — idempotent success.
+    console.log(`[agora-chat] Chat user ${username} already registered`);
+    return true;
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    // Auth failures are NOT swallowed — the app token itself is bad/expired.
+    console.warn(`[agora-chat] User registration rejected: HTTP ${response.status} ${detail}`);
+    throw new Error(`agora chat user registration rejected (${response.status})`);
+  }
+
+  // Pessimistic-but-idempotent: other failures (transient 5xx etc.) are
+  // swallowed with a log — token minting below surfaces real problems anyway.
+  console.warn(`[agora-chat] User registration failed (HTTP ${response.status}): ${detail}`);
+  return false;
+}
+
+async function createAgoraChatUserToken(username, expirySeconds) {
+  if (!isAgoraChatConfigured()) {
+    throw new Error('agora chat not configured');
+  }
+  const config = getAgoraChatConfig();
+  const appToken = await getAgoraChatAppToken();
+
+  const response = await fetch(
+    `${config.restBase}/${encodeURIComponent(config.orgName)}/${encodeURIComponent(config.appName)}/token`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${appToken}`,
+      },
+      body: JSON.stringify({
+        grant_type: 'inherit',
+        username,
+        autoCreateUser: true,
+        ttl: expirySeconds,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const detail = (await response.text().catch(() => '')).slice(0, 300);
+    console.warn(`[agora-chat] User token request failed for ${username}: HTTP ${response.status} ${detail}`);
+    throw new Error(`agora chat user token request failed (${response.status})`);
+  }
+
+  const data = await response.json();
+  if (!data.access_token) {
+    throw new Error('agora chat user token response missing access_token');
+  }
+  // expires_in is documented in seconds (ms on legacy VIP5 clusters).
+  const expiresIn = normalizeAgoraExpirySeconds(data.expires_in) || expirySeconds;
+  return { token: data.access_token, expiresAt: Date.now() + expiresIn * 1000 };
+}
+
+// MUST mirror the client's _sanitizeAgoraUid
+// (lib/domain/services/chat/agora_chat_service.dart): replace every char
+// outside [a-zA-Z0-9_-] with '_' (the '-' sits last in the class so it stays
+// literal), then lowercase.
+function sanitizeAgoraUid(uid) {
+  return String(uid).replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+}
+
+// Server-side Firebase Auth check for the HTTP token routes — mirrors the
+// transient-error fallback behavior of the Socket.IO handshake middleware.
+async function authenticateFirebaseRequest(req) {
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Bearer ')) return null;
+  if (!db || !admin.apps || !admin.apps.length) return null;
+
+  const idToken = header.slice('Bearer '.length).trim();
+  try {
+    return await admin.auth().verifyIdToken(idToken, true);
+  } catch (error) {
+    // Same transient fallback as the socket middleware: only when the
+    // verification backend itself is unavailable, verify without the
+    // revocation check — genuine invalid/revoked tokens still fail closed.
+    const transient = error && (
+      error.code === 'auth/internal-error' ||
+      error.code === 'auth/network-error' ||
+      error.code === 'auth/network-timeout' ||
+      (typeof error.message === 'string' && error.message.includes('ETIMEDOUT'))
+    );
+    if (!transient) return null;
+    console.warn('[agora] Revocation check unavailable, verifying without it:', error.message);
+    try {
+      return await admin.auth().verifyIdToken(idToken);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+// Real RTC token for voice (replaces the old dummy token). uid 0 = wildcard:
+// the token is valid for ANY client uid in `channelName`, since clients pick
+// their own numeric uid. NOTE: agora-token@2.x (AccessToken2) interprets
+// tokenExpire/privilegeExpire as RELATIVE seconds from now — pre-2.x builders
+// took an absolute epoch there, which is why this is NOT
+// `Math.floor(Date.now()/1000) + 3600` for the builder itself.
+function buildAgoraRtcToken(appId, appCertificate, channelName) {
+  const tokenExpire = AGORA_RTC_TOKEN_TTL_SECONDS;
+  const token = RtcTokenBuilder.buildTokenWithUid(
+    appId, appCertificate, channelName, 0, RtcRole.PUBLISHER, tokenExpire, tokenExpire,
+  );
+  // Absolute epoch (seconds) at which the token/privileges lapse — returned to
+  // clients so they can renew via POST /api/agora/rtc/token.
+  const privilegeExpiredTs = Math.floor(Date.now() / 1000) + tokenExpire;
+  return { token, privilegeExpiredTs };
 }
 
 // ============================================================
@@ -1090,7 +1474,7 @@ io.on('connection', (socket) => {
   });
 
   // ============================================================
-  // board_chat_message — IN-BOARD LIVE CHAT + REDIS TTL + FIRESTORE 30-BATCH
+  // board_chat_message — IN-BOARD LIVE CHAT + REDIS HISTORY (Agora-only)
   // ============================================================
   socket.on('board_chat_message', async (data, ack) => {
     try {
@@ -1122,30 +1506,20 @@ io.on('connection', (socket) => {
         timestamp: messageObj.timestamp || data?.timestamp || Date.now(),
       };
 
-      // 1. Persist to Firestore FIRST — broadcast only after durability so
-      //    accepted messages can't be silently lost if persist fails.
-      if (db) {
-        try {
-          await db.collection('boards').doc(boardId).collection('chat_messages').doc(chatMessage.id).set({
-            ...chatMessage,
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-        } catch (persistError) {
-          console.error('[board_chat_message] Firestore persist failed:', persistError.message);
-          if (typeof ack === 'function') ack({ status: 'error', message: 'persist_failed' });
-          return;
-        }
-      }
-
-      // 2. Broadcast to all active board viewers in real-time
+      // 1. Broadcast to all active board viewers in real-time.
+      //    NOTE: board chat no longer persists to Firestore (Agora Chat
+      //    migration) — accepted messages are broadcast live and stored in
+      //    Redis history only. Redis persistence (AOF) must be enabled for
+      //    history to survive restarts.
       io.to(`board_room:${boardId}`).emit('board_chat_message', chatMessage);
 
-      // 3. Cache in Redis with TTL (7 days: 604800s) for low-latency retrieval
+      // 2. Cache in Redis with TTL (BOARD_CHAT_HISTORY_TTL_DAYS, default 90 days)
       if (redisAvailable) {
         const historyKey = `board_chat:${boardId}:history`;
+        const historyTtlDays = Math.max(1, parseInt(process.env.BOARD_CHAT_HISTORY_TTL_DAYS, 10) || 90);
         const payloadStr = JSON.stringify(chatMessage);
         await redis.rpush(historyKey, payloadStr);
-        await redis.expire(historyKey, 604800); // 7 days TTL
+        await redis.expire(historyKey, historyTtlDays * 86400);
       }
 
       if (typeof ack === 'function') ack({ status: 'success', message: chatMessage });
@@ -1168,27 +1542,15 @@ io.on('connection', (socket) => {
       }
 
       // Clamp to a sane range — unsanitized values (negative/NaN/huge) would
-      // be passed straight into Redis/Firestore queries.
+      // be passed straight into Redis queries.
       const historyLimit = Math.max(1, Math.min(200, Number(limit) || 50));
 
+      // Redis-only: board chat no longer has a Firestore fallback (Agora
+      // Chat migration). An empty/missing history list means no messages yet.
       if (redisAvailable) {
         const historyKey = `board_chat:${boardId}:history`;
         const raw = await redis.lrange(historyKey, -historyLimit, -1);
-        if (raw && raw.length > 0) {
-          const messages = raw.map(r => JSON.parse(r));
-          if (typeof callback === 'function') callback({ status: 'success', messages });
-          return;
-        }
-      }
-
-      if (db) {
-        // Fetch the NEWEST N messages (descending) and restore chronological
-        // order — ascending+limit would return the oldest messages instead.
-        const snap = await db.collection('boards').doc(boardId).collection('chat_messages')
-          .orderBy('timestamp', 'desc')
-          .limit(historyLimit)
-          .get();
-        const messages = snap.docs.map(doc => doc.data()).reverse();
+        const messages = (raw || []).map(r => JSON.parse(r));
         if (typeof callback === 'function') callback({ status: 'success', messages });
         return;
       }
@@ -1207,11 +1569,13 @@ io.on('connection', (socket) => {
     try {
       const { boardId, displayName, photoUrl } = data || {};
       if (!isValidBoardId(boardId)) {
+        console.warn(`[voice] join_voice_call rejected: invalid board id`);
         if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
         return;
       }
       const hasAccess = await canUserAccessBoard(boardId, uid, false);
       if (!hasAccess) {
+        console.warn(`[voice] join_voice_call rejected: uid ${uid} lacks access to board ${boardId}`);
         if (typeof callback === 'function') callback({ status: 'error', message: 'forbidden' });
         return;
       }
@@ -1240,8 +1604,15 @@ io.on('connection', (socket) => {
       io.to(`board_voice:${boardId}`).emit('voice_participant_joined', participant);
 
       const channelName = `board_${boardId}`;
-      const appId = process.env.AGORA_APP_ID || 'dummy_agora_app_id_inklink_2026';
-      const token = `dummy_agora_token_${channelName}_${uid}`;
+      const appId = process.env.AGORA_APP_ID;
+      const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+      if (!appId || !appCertificate) {
+        console.warn(`[voice] Agora RTC not configured (AGORA_APP_ID/AGORA_APP_CERTIFICATE); rejecting join from ${uid}`);
+        if (typeof callback === 'function') callback({ status: 'error', message: 'agora certificate not configured' });
+        return;
+      }
+
+      const { token } = buildAgoraRtcToken(appId, appCertificate, channelName);
 
       console.log(`[voice] User ${uid} joined voice channel ${channelName}`);
       if (typeof callback === 'function') {
@@ -1382,6 +1753,28 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`WebSocket server listening on port ${PORT}`);
+
+  // One-time Agora config audit so a later 503/'not configured' response is
+  // diagnosable from these logs alone. Secrets are never printed — only
+  // presence booleans (org/app names and the REST base are identifiers).
+  const rtcReady = Boolean(process.env.AGORA_APP_ID && process.env.AGORA_APP_CERTIFICATE);
+  const chatCfg = getAgoraChatConfig();
+  console.log('[agora] config audit:');
+  console.log(`  AGORA_APP_ID: ${process.env.AGORA_APP_ID ? 'set' : 'MISSING'}`);
+  console.log(`  AGORA_APP_CERTIFICATE: ${process.env.AGORA_APP_CERTIFICATE ? 'set' : 'MISSING'}`);
+  console.log(`  → RTC voice tokens: ${rtcReady ? 'ready' : 'disabled (voice joins will fail)'}`);
+  if (chatCfg.orgName || chatCfg.appName || chatCfg.clientId || chatCfg.clientSecret) {
+    console.log(`  AGORA_CHAT_REST_BASE: ${chatCfg.restBase}`);
+    console.log(`  AGORA_CHAT_ORG_NAME: ${chatCfg.orgName || 'MISSING'}`);
+    console.log(`  AGORA_CHAT_APP_NAME: ${chatCfg.appName || 'MISSING'}`);
+    console.log(`  AGORA_CHAT_REST_CLIENT_ID: ${chatCfg.clientId ? 'set' : 'MISSING'}`);
+    console.log(`  AGORA_CHAT_REST_CLIENT_SECRET: ${chatCfg.clientSecret ? 'set' : 'MISSING'}`);
+  } else {
+    console.log('  AGORA_CHAT_* (org/app/client id/secret): all absent');
+  }
+  console.log(`  → Agora Chat tokens: ${isAgoraChatConfigured()
+    ? `ready (appKey ${chatCfg.orgName}#${chatCfg.appName}, base ${chatCfg.restBase})`
+    : 'disabled (clients will run chat in local-first mode)'}`);
 });
 
 // Graceful shutdown
