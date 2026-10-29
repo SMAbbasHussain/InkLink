@@ -648,6 +648,78 @@ void main() {
       expect(movedImage.imageBase64, expectedBase64);
       await bloc.close();
     });
+
+    test('drawing a stroke over an existing image assigns higher z-index and renders above image', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+
+      final imageBytes = Uint8List.fromList([1, 2, 3, 4]);
+      bloc.add(CanvasAddImageElement(
+        imageBytes,
+        const Offset(100, 100),
+        width: 100,
+        height: 100,
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      final image = bloc.state.elements.first as ImageElement;
+
+      // Draw a stroke across the image
+      bloc.add(const CanvasStartStroke(Offset(90, 90)));
+      bloc.add(const CanvasAppendStroke(Offset(110, 110)));
+      bloc.add(const CanvasEndStroke());
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bloc.state.elements, hasLength(2));
+      final stroke = bloc.state.elements.firstWhere((e) => e is StrokeElement) as StrokeElement;
+
+      // Stroke must have higher z than image so it is rendered above the image
+      expect(stroke.z, greaterThan(image.z));
+      expect(bloc.state.elements.indexOf(stroke), greaterThan(bloc.state.elements.indexOf(image)));
+      await bloc.close();
+    });
+
+    test('moving a shape over an existing image promotes its z-index above the image', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+
+      // Add shape first (lower z)
+      bloc.add(const CanvasAddShape(
+        CanvasShapeType.rectangle,
+        Offset(50, 50),
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      // Add image (higher z initially)
+      final imageBytes = Uint8List.fromList([1, 2, 3, 4]);
+      bloc.add(CanvasAddImageElement(
+        imageBytes,
+        const Offset(100, 100),
+        width: 100,
+        height: 100,
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      final initialShape = bloc.state.elements.firstWhere((e) => e is ShapeElement);
+      final image = bloc.state.elements.firstWhere((e) => e is ImageElement);
+      expect(image.z, greaterThan(initialShape.z));
+
+      // Select and move the shape across/over the image
+      bloc.add(CanvasSelectShape(initialShape.id));
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasMoveSelectedShape(Offset(100, 100)));
+      await Future<void>.delayed(Duration.zero);
+
+      final movedShape = bloc.state.elements.firstWhere((e) => e.id == initialShape.id);
+      final currentImage = bloc.state.elements.firstWhere((e) => e.id == image.id);
+
+      // Moved shape now has higher z than image so it is rendered and dragged over the image
+      expect(movedShape.z, greaterThan(currentImage.z));
+      expect(bloc.state.elements.indexOf(movedShape), greaterThan(bloc.state.elements.indexOf(currentImage)));
+      await bloc.close();
+    });
   });
 
   group('CanvasBloc — member management & search', () {

@@ -171,6 +171,7 @@ class _CanvasElement {
       height: height,
       imageBase64: imageBase64,
       color: Colors.transparent,
+      rotation: (data['rotation'] as num?)?.toDouble() ?? 0.0,
       data: data,
     );
   }
@@ -290,6 +291,7 @@ class _CanvasElement {
 
 class _CanvasPainter extends CustomPainter {
   final List<_CanvasElement> elements;
+  final Map<String, ui.Image> decodedImages;
   final List<Offset> currentPoints;
   final Color currentColor;
   final double currentStrokeWidth;
@@ -307,6 +309,7 @@ class _CanvasPainter extends CustomPainter {
 
   const _CanvasPainter({
     required this.elements,
+    this.decodedImages = const {},
     required this.currentPoints,
     required this.currentColor,
     required this.currentStrokeWidth,
@@ -351,7 +354,7 @@ class _CanvasPainter extends CustomPainter {
           _paintText(canvas, element);
           break;
         case _ElementKind.image:
-          _paintImage(canvas, element);
+          _paintImage(canvas, element, decodedImages[element.id]);
           break;
         case _ElementKind.stickyNote:
           _paintStickyNote(canvas, element);
@@ -722,53 +725,71 @@ class _CanvasPainter extends CustomPainter {
     textPainter.paint(canvas, Offset(element.center.dx, element.center.dy));
   }
 
-  void _paintImage(Canvas canvas, _CanvasElement element) {
-    // When image data is present, the image is rendered smoothly by the
-    // image overlay widget layer. Only draw placeholder if image data is absent.
-    if (element.imageBase64.isNotEmpty) {
-      return;
-    }
+  void _paintImage(
+    Canvas canvas,
+    _CanvasElement element,
+    ui.Image? decodedImage,
+  ) {
     final rect = Rect.fromCenter(
       center: element.center,
-      width: element.width,
-      height: element.height,
+      width: element.width > 0 ? element.width : 160.0,
+      height: element.height > 0 ? element.height : 160.0,
     );
-    final fillPaint = Paint()
-      ..color = Colors.grey.withOpacity(0.18)
-      ..style = PaintingStyle.fill;
-    final borderPaint = Paint()
-      ..color = Colors.grey.withOpacity(0.5)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
+    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(8));
 
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, const Radius.circular(8)),
-      fillPaint,
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, const Radius.circular(8)),
-      borderPaint,
-    );
+    canvas.save();
+    if (element.rotation != 0.0) {
+      canvas.translate(element.center.dx, element.center.dy);
+      canvas.rotate(element.rotation);
+      canvas.translate(-element.center.dx, -element.center.dy);
+    }
 
-    final textSpan = TextSpan(
-      text: '[Image: ${element.width.toInt()}x${element.height.toInt()}]',
-      style: const TextStyle(
-        color: Colors.white70,
-        fontSize: 12,
-        fontWeight: FontWeight.w500,
-      ),
-    );
-    final textPainter = TextPainter(
-      text: textSpan,
-      textDirection: TextDirection.ltr,
-    )..layout();
-    textPainter.paint(
-      canvas,
-      Offset(
-        rect.center.dx - textPainter.width / 2,
-        rect.center.dy - textPainter.height / 2,
-      ),
-    );
+    if (decodedImage != null) {
+      final src = Rect.fromLTWH(
+        0,
+        0,
+        decodedImage.width.toDouble(),
+        decodedImage.height.toDouble(),
+      );
+      canvas.save();
+      canvas.clipRRect(rrect);
+      final paint = Paint()..filterQuality = FilterQuality.medium;
+      canvas.drawImageRect(decodedImage, src, rect, paint);
+      canvas.restore();
+    } else {
+      final fillPaint = Paint()
+        ..color = Colors.grey.withValues(alpha: 0.18)
+        ..style = PaintingStyle.fill;
+      final borderPaint = Paint()
+        ..color = Colors.grey.withValues(alpha: 0.5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+
+      canvas.drawRRect(rrect, fillPaint);
+      canvas.drawRRect(rrect, borderPaint);
+
+      final textSpan = TextSpan(
+        text: '[Image: ${element.width.toInt()}x${element.height.toInt()}]',
+        style: const TextStyle(
+          color: Colors.white70,
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+        ),
+      );
+      final textPainter = TextPainter(
+        text: textSpan,
+        textDirection: TextDirection.ltr,
+      )..layout();
+      textPainter.paint(
+        canvas,
+        Offset(
+          rect.center.dx - textPainter.width / 2,
+          rect.center.dy - textPainter.height / 2,
+        ),
+      );
+    }
+
+    canvas.restore();
   }
 
   Offset _resolveAnchor(
@@ -1030,6 +1051,7 @@ class _CanvasPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _CanvasPainter oldDelegate) {
     return oldDelegate.elements != elements ||
+        oldDelegate.decodedImages != decodedImages ||
         oldDelegate.currentPoints != currentPoints ||
         oldDelegate.currentColor != currentColor ||
         oldDelegate.currentStrokeWidth != currentStrokeWidth ||
