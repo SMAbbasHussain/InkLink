@@ -35,7 +35,18 @@ class VoiceServiceImpl implements VoiceService {
     required AuthService authService,
     RtcMediaClient? rtcMediaClient,
   })  : _authService = authService,
-        _rtcMediaClient = rtcMediaClient ?? DefaultRtcMediaClient();
+        _rtcMediaClient = rtcMediaClient ?? DefaultRtcMediaClient() {
+    // Drive local speaking state from the RTC engine's volume indication.
+    // The server broadcasts `voice_speaking_changed` to the whole voice room
+    // (including the sender), but the socket handler below only refreshes the
+    // participants list — it never re-invokes setSpeaking, so no loop forms.
+    _rtcMediaClient.setLocalSpeakingListener((speaking) {
+      if (_disposed || !_isInCall || _isMuted) return;
+      final boardId = _activeBoardId;
+      if (boardId == null) return;
+      unawaited(setSpeaking(boardId: boardId, isSpeaking: speaking));
+    });
+  }
 
   @override
   bool get isInCall => _isInCall;
@@ -325,14 +336,18 @@ class VoiceServiceImpl implements VoiceService {
 
   @override
   Future<void> leaveCall(String boardId) async {
+    // Flip local state before tearing down media: the RTC engine reports a
+    // final not-speaking event on leave, which the speaking listener must not
+    // forward (the participant is already leaving the voice room).
+    _isInCall = false;
+    _activeBoardId = null;
+
     _socket?.emit('leave_voice_call', {'boardId': boardId});
     try {
       await _rtcMediaClient.leaveSession();
     } catch (_) {}
 
-    _isInCall = false;
     _isMuted = false;
-    _activeBoardId = null;
     _participants.clear();
 
     _isInCallController.add(false);
