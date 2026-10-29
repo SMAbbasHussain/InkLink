@@ -63,5 +63,24 @@ void main() {
       expect(a.uid, b.uid);
       expect(a.displayName, isNot(b.displayName));
     });
+
+    test('profile caching preserves lastSource and timestamps for reaction sheet lookup', () {
+      final profile = LocalProfile(
+        uid: 'reactor-1',
+        displayName: 'Charlie',
+        photoURL: 'https://example.com/charlie.png',
+        email: 'charlie@example.com',
+        bio: 'Art enthusiast',
+        friendshipStatus: FriendshipStatus.nonFriend,
+        lastSource: 'message_reactions_sheet',
+      );
+
+      expect(profile.uid, 'reactor-1');
+      expect(profile.displayName, 'Charlie');
+      expect(profile.photoURL, 'https://example.com/charlie.png');
+      expect(profile.lastSource, 'message_reactions_sheet');
+      expect(profile.friendshipStatus, FriendshipStatus.nonFriend);
+      expect(profile.cachedAt, isNotNull);
+    });
   });
 }

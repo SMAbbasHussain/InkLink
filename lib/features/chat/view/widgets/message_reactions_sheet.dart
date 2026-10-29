@@ -93,63 +93,126 @@ class _MessageReactionsSheetState extends State<MessageReactionsSheet> {
       }
     }
 
-    // Sort so current user is at the top
-    items.sort((a, b) {
-      if (a.isMe && !b.isMe) return -1;
-      if (!a.isMe && b.isMe) return 1;
-      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
-    });
+    _reactors = items;
+    _sortReactors();
 
     if (mounted) {
-      setState(() {
-        _reactors = items;
-      });
+      setState(() {});
     }
 
     if (uidsToLookup.isNotEmpty) {
       final Map<String, ({String name, String? photo})> resolved = {};
 
-      // 1. Try resolving from local Isar database
+      // 1. Try resolving from local Isar database first
       try {
         final isar = await localDb.database;
         final cached = await isar.localProfiles.getAllByUid(uidsToLookup.toList());
         for (final p in cached.whereType<LocalProfile>()) {
-          resolved[p.uid] = (name: p.displayName, photo: p.photoURL);
+          if (p.displayName.trim().isNotEmpty) {
+            resolved[p.uid] = (name: p.displayName, photo: p.photoURL);
+          }
         }
       } catch (_) {}
 
-      // 2. For any still missing, try Firestore
-      final remainingUids = uidsToLookup.where((id) => !resolved.containsKey(id)).toList();
-      if (remainingUids.isNotEmpty) {
-        try {
-          for (final uid in remainingUids) {
-            final doc = await firestore.collection('users').doc(uid).get();
-            if (doc.exists && doc.data() != null) {
-              final data = doc.data()!;
-              final name = data['displayName']?.toString() ??
-                  data['name']?.toString() ??
-                  data['email']?.toString() ??
-                  'User';
-              final photo = data['photoURL']?.toString() ?? data['avatarUrl']?.toString();
-              resolved[uid] = (name: name, photo: photo);
-            }
-          }
-        } catch (_) {}
+      // Update UI immediately with profiles found in local storage
+      if (mounted && resolved.isNotEmpty) {
+        _applyResolved(resolved);
       }
 
-      // Update items with resolved details
-      if (mounted && resolved.isNotEmpty) {
-        setState(() {
-          for (final item in _reactors) {
-            if (resolved.containsKey(item.uid)) {
-              final r = resolved[item.uid]!;
-              item.displayName = r.name;
-              item.photoURL = r.photo;
-            }
+      // 2. Only call Firestore if local storage is empty (missing this profile)
+      final remainingUids = uidsToLookup.where((id) => !resolved.containsKey(id)).toList();
+      if (remainingUids.isNotEmpty) {
+        final Map<String, ({String name, String? photo})> firestoreResolved = {};
+        final List<LocalProfile> profilesToCache = [];
+
+        try {
+          await Future.wait(
+            remainingUids.map((uid) async {
+              try {
+                final doc = await firestore.collection('users').doc(uid).get();
+                if (doc.exists && doc.data() != null) {
+                  final data = doc.data()!;
+                  final name = data['displayName']?.toString() ??
+                      data['name']?.toString() ??
+                      data['email']?.toString() ??
+                      'User';
+                  final photo = data['photoURL']?.toString() ?? data['avatarUrl']?.toString();
+                  firestoreResolved[uid] = (name: name, photo: photo);
+
+                  profilesToCache.add(
+                    LocalProfile(
+                      uid: uid,
+                      displayName: name,
+                      photoURL: photo,
+                      email: data['email']?.toString(),
+                      bio: data['bio']?.toString(),
+                      friendshipStatus: FriendshipStatus.nonFriend,
+                      lastSource: 'message_reactions_sheet',
+                    ),
+                  );
+                }
+              } catch (_) {}
+            }),
+          );
+
+          // Store newly fetched profiles into Isar so subsequent lookups hit local cache
+          if (profilesToCache.isNotEmpty) {
+            try {
+              final isar = await localDb.database;
+              final existingList = await isar.localProfiles.getAllByUid(
+                profilesToCache.map((p) => p.uid).toList(),
+              );
+              final existingMap = {
+                for (final p in existingList.whereType<LocalProfile>()) p.uid: p
+              };
+
+              await isar.writeTxn(() async {
+                for (final profile in profilesToCache) {
+                  final existing = existingMap[profile.uid];
+                  if (existing != null) {
+                    profile.id = existing.id;
+                    profile.friendshipStatus = existing.friendshipStatus;
+                    profile.friendCount = existing.friendCount;
+                    profile.boardCount = existing.boardCount;
+                    if (profile.bio == null) profile.bio = existing.bio;
+                    if (profile.email == null) profile.email = existing.email;
+                    if (profile.photoURL == null) profile.photoURL = existing.photoURL;
+                  }
+                  await isar.localProfiles.putByUid(profile);
+                }
+              });
+            } catch (_) {}
           }
-        });
+        } catch (_) {}
+
+        // Update items with freshly resolved details from Firestore
+        if (mounted && firestoreResolved.isNotEmpty) {
+          _applyResolved(firestoreResolved);
+        }
       }
     }
+  }
+
+  void _applyResolved(Map<String, ({String name, String? photo})> resolved) {
+    if (!mounted || resolved.isEmpty) return;
+    setState(() {
+      for (final item in _reactors) {
+        final r = resolved[item.uid];
+        if (r != null) {
+          item.displayName = r.name;
+          item.photoURL = r.photo;
+        }
+      }
+      _sortReactors();
+    });
+  }
+
+  void _sortReactors() {
+    _reactors.sort((a, b) {
+      if (a.isMe && !b.isMe) return -1;
+      if (!a.isMe && b.isMe) return 1;
+      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+    });
   }
 
   @override
