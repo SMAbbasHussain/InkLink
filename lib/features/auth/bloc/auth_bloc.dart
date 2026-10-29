@@ -11,7 +11,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   final AuthSessionService authService;
   StreamSubscription<User?>? _authSub;
 
-  Authenticated _toAuthenticated(User user, {String? fallbackName}) {
+  static Authenticated _toAuthenticated(User user, {String? fallbackName}) {
     final isPassword =
         user.providerData.any((p) => p.providerId == 'password');
     return Authenticated(
@@ -23,13 +23,26 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     );
   }
 
-  AuthBloc({required this.authService}) : super(AuthInitial()) {
+  static AuthState _resolveInitialState(AuthSessionService authService) {
+    final user = authService.currentUser;
+    if (user == null) {
+      return AuthInitial();
+    }
+    final isPasswordProvider =
+        user.providerData.any((p) => p.providerId == 'password');
+    if (isPasswordProvider && !user.emailVerified) {
+      return AuthInitial();
+    }
+    return _toAuthenticated(user);
+  }
+
+  AuthBloc({required this.authService}) : super(_resolveInitialState(authService)) {
     on<AuthCheckRequested>((event, emit) async {
       developer.log('AuthCheckRequested: currentUser=${authService.currentUser?.uid}', name: 'AuthBloc');
       final user = authService.currentUser;
       if (user != null) {
         final isPasswordProvider = user.providerData.any((p) => p.providerId == 'password');
-        if (isPasswordProvider) {
+        if (isPasswordProvider && !user.emailVerified) {
           final status = await authService.reloadAndCheckEmailVerified();
           if (status == EmailVerificationStatus.unverified) {
             final refreshedUser = authService.currentUser ?? user;
@@ -46,9 +59,12 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
             return;
           }
         }
-        await authService.onAuthenticated(user);
-        developer.log('AuthCheckRequested: emitting Authenticated', name: 'AuthBloc');
-        emit(_toAuthenticated(user));
+        final refreshedUser = authService.currentUser ?? user;
+        if (state is! Authenticated) {
+          developer.log('AuthCheckRequested: emitting Authenticated', name: 'AuthBloc');
+          emit(_toAuthenticated(refreshedUser));
+        }
+        await authService.onAuthenticated(refreshedUser);
       } else {
         developer.log('AuthCheckRequested: emitting Unauthenticated', name: 'AuthBloc');
         emit(Unauthenticated());
@@ -78,7 +94,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
         // Enforce verified users only for email/password provider (FR01-06)
         final isPasswordProvider = user.providerData.any((p) => p.providerId == 'password');
-        if (isPasswordProvider) {
+        if (isPasswordProvider && !user.emailVerified) {
           final status = await authService.reloadAndCheckEmailVerified();
           final refreshedUser = authService.currentUser ?? user;
           if (status == EmailVerificationStatus.unverified) {
