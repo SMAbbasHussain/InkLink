@@ -62,6 +62,10 @@ dependencies:
   share_plus: ^13.3.1
   pdf: ^3.13.1
   agora_chat_sdk: ^1.4.0+1
+  # InkLink server HTTP calls (Agora Chat/RTC token endpoints)
+  http: ^1.2.2
+  # Real-time voice media (replaces the signalling-only stub)
+  agora_rtc_engine: ^6.3.0
 
   # Desk redesign (presentation-only)
   google_fonts: ^6.2.1

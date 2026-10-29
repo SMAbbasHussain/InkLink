@@ -2,10 +2,29 @@ import '../../models/chat/chat_conversation_model.dart';
 import '../../models/chat/chat_message_model.dart';
 import '../../models/chat/chat_share_payload.dart';
 
+/// Chat transport status, driven by the Agora connection lifecycle.
+enum ChatConnectionState {
+  /// No active login / transport down.
+  disconnected,
+
+  /// Connecting or renewing credentials.
+  connecting,
+
+  /// Agora transport connected — live delivery and history sync available.
+  connected,
+
+  /// Agora is unreachable / unconfigured; the service keeps messages queued
+  /// locally (Isar) and drains them automatically once it can connect.
+  unavailable,
+}
+
 abstract class ChatService {
   Future<void> initialize();
   Future<void> login(String userId);
   Future<void> logout();
+
+  /// Broadcast stream of transport state changes.
+  Stream<ChatConnectionState> get connectionState;
 
   Stream<List<ChatConversationModel>> watchConversations();
   Future<List<ChatConversationModel>> getConversations();

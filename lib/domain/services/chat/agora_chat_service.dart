@@ -4,8 +4,8 @@ import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:agora_chat_sdk/agora_chat_sdk.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:isar_community/isar.dart';
+import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
 import '../../../core/database/collections/local_chat_conversation.dart';
@@ -13,517 +13,394 @@ import '../../../core/database/collections/local_chat_message.dart';
 import '../../../core/database/collections/local_profile.dart';
 import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
-import '../../../core/services/cloud_functions_service.dart';
 import '../../../core/services/local_notification_service.dart';
+import '../../../core/utils/network_config.dart';
 import '../../models/chat/chat_conversation_model.dart';
 import '../../models/chat/chat_message_model.dart';
 import '../../models/chat/chat_share_payload.dart';
-import '../../repositories/chat/chat_repository.dart';
 import 'chat_service.dart';
 
+/// Chat transport backed *exclusively* by the Agora Chat SDK.
+///
+/// Data flow:
+/// - Sends: Isar (`sending`) -> Agora `sendMessage` -> `sent` on SDK ack,
+///   `failed` on error. Nothing is mirrored to Firestore.
+/// - Receives: Agora events (`onMessagesReceived`, delivery/read acks,
+///   recall/edit/reaction events) -> Isar.
+/// - History: Agora server conversations + local Isar cache. Catch-up happens
+///   at login via `_syncFromAgora`.
+/// - Auth: a per-user Chat token minted by the InkLink server
+///   (`POST /api/agora/chat/token`, Bearer Firebase ID token). The token is
+///   renewed on `onTokenWillExpire` / refreshed-with-login on expiry.
+///
+/// If the token endpoint is unreachable (no VPN / server down / chat not
+/// provisioned), the service stays in "local-first" mode: messages are
+/// persisted to Isar and queued, then drained automatically once Agora
+/// connects.
 class AgoraChatServiceImpl implements ChatService {
   final LocalDatabaseService _localDbService;
   final AuthService _authService;
-  final CloudFunctionsService? _cloudFunctionsService;
-  final ChatRepository _chatRepository;
+
+  /// Resolves the device push token (FCM/APNs) for Agora offline push
+  /// binding. Best-effort; null provider simply skips binding.
+  final Future<String?> Function()? _pushTokenProvider;
+
+  final http.Client _http = http.Client();
 
   bool _initialized = false;
+  String? _initAppKey;
   String? _currentUserId;
+  bool _loginInFlight = false;
 
   final StreamController<List<ChatConversationModel>> _conversationsController =
       StreamController<List<ChatConversationModel>>.broadcast();
   final Map<String, StreamController<List<ChatMessageModel>>> _messagesControllers = {};
+  final StreamController<ChatConnectionState> _connectionStateController =
+      StreamController<ChatConnectionState>.broadcast();
 
-  StreamSubscription<List<ChatDoc>>? _firestoreChatsSub;
-  final Map<String, StreamSubscription<List<ChatDocChange>>> _firestoreMessageSubs = {};
-  final Set<String> _syncedMessageIds = {};
-  // Chats whose first Firestore snapshot (history replay) has been
-  // processed; unread is not counted for that initial replay (L2).
-  final Set<String> _initialMessageSnapshotsSeen = {};
+  ChatConnectionState _connectionState = ChatConnectionState.disconnected;
+  ChatConnectionState get connectionStateValue => _connectionState;
+
+  void _setConnectionState(ChatConnectionState state) {
+    if (_connectionState == state) return;
+    _connectionState = state;
+    if (!_connectionStateController.isClosed) {
+      _connectionStateController.add(state);
+    }
+  }
 
   AgoraChatServiceImpl({
     required LocalDatabaseService localDbService,
     required AuthService authService,
-    CloudFunctionsService? cloudFunctionsService,
-    required ChatRepository chatRepository,
+    Future<String?> Function()? pushTokenProvider,
   })  : _localDbService = localDbService,
         _authService = authService,
-        _cloudFunctionsService = cloudFunctionsService,
-        _chatRepository = chatRepository;
+        _pushTokenProvider = pushTokenProvider;
 
   String _sanitizeAgoraUid(String uid) {
-    // Agora Chat usernames accept [a-zA-Z0-9_-]+
+    // Agora Chat usernames accept [a-zA-Z0-9_-]+. Mirrored by the server
+    // (`sanitizeAgoraUid` in server/src/index.js) — keep both in sync.
     return uid.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_').toLowerCase();
   }
 
-  String _getFirestoreChatId({
-    required String conversationId,
-    required bool isGroup,
-    String? currentUid,
-  }) {
-    if (isGroup) {
-      return conversationId;
+  // ============================================================
+  // AUTH — server-minted per-user Agora Chat token
+  // ============================================================
+
+  /// Fetches `{agoraUsername, appKey, appId, token, expiresAt}` from the
+  /// InkLink server. Returns null when unavailable (offline / not configured).
+  Future<Map<String, dynamic>?> _fetchAgoraCredentials() async {
+    final idToken = await _authService.getIdToken();
+    if (idToken == null || idToken.isEmpty) {
+      developer.log('No Firebase ID token available for Agora Chat auth',
+          name: 'AgoraChatService');
+      return null;
     }
-    if (conversationId.startsWith('dm_')) {
-      return conversationId;
+    try {
+      final base = resolveWebSocketUrl();
+      final res = await _http.post(
+        Uri.parse('$base/api/agora/chat/token'),
+        headers: {
+          'Authorization': 'Bearer $idToken',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({}),
+      ).timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) {
+        developer.log('Agora Chat token endpoint returned ${res.statusCode}',
+            name: 'AgoraChatService');
+        return null;
+      }
+      final body = jsonDecode(res.body);
+      if (body is Map && body['token'] != null && body['appKey'] != null) {
+        return Map<String, dynamic>.from(body);
+      }
+      developer.log('Agora Chat token endpoint returned unexpected payload',
+          name: 'AgoraChatService');
+      return null;
+    } catch (e) {
+      developer.log('Agora Chat token fetch failed (local-first mode): $e',
+          name: 'AgoraChatService');
+      return null;
     }
-    final myUid = currentUid ?? _currentUserId ?? _authService.getCurrentUserId() ?? '';
-    final parts = [myUid, conversationId]..sort();
-    return 'dm_${parts[0]}_${parts[1]}';
   }
 
-  Future<List<String>> _resolveParticipantIds({
-    required String conversationId,
-    required bool isGroup,
-    required String currentUid,
-  }) async {
-    if (!isGroup) {
-      final list = [currentUid, conversationId]..sort();
-      return list;
+  /// Initializes ChatClient exactly once per app key. Subsequent logins reuse
+  /// the existing options; an app-key change goes through `changeAppKey`.
+  Future<void> _ensureInitialized(String appKey) async {
+    if (_initialized) {
+      if (_initAppKey != appKey) {
+        try {
+          await ChatClient.getInstance.changeAppKey(newAppKey: appKey);
+          _initAppKey = appKey;
+        } catch (e) {
+          developer.log('Agora Chat changeAppKey failed: $e', name: 'AgoraChatService');
+        }
+      }
+      return;
     }
-    final isar = await _localDbService.database;
-    final conv = await isar.localChatConversations
-        .filter()
-        .conversationIdEqualTo(conversationId)
-        .findFirst();
-    if (conv != null && conv.memberIds.isNotEmpty) {
-      final set = Set<String>.from(conv.memberIds)..add(currentUid);
-      return set.toList();
-    }
-    return [currentUid];
+    final options = ChatOptions.withAppKey(
+      appKey,
+      autoLogin: false,
+      debugMode: false,
+    );
+    await ChatClient.getInstance.init(options);
+    await ChatClient.getInstance.startCallback();
+    _registerMessageHandlers();
+    _initialized = true;
+    _initAppKey = appKey;
+    developer.log('Agora Chat SDK initialized with app key', name: 'AgoraChatService');
   }
+
+  bool _handlersRegistered = false;
+
+  void _registerMessageHandlers() {
+    if (_handlersRegistered) return;
+    _handlersRegistered = true;
+
+    ChatClient.getInstance.chatManager.addEventHandler(
+      'inklink_chat_handler',
+      ChatEventHandler(
+        onMessagesReceived: (List<ChatMessage> messages) async {
+          for (final msg in messages) {
+            await _handleIncomingAgoraMessage(msg);
+          }
+        },
+        onMessagesDelivered: (List<ChatMessage> messages) async {
+          for (final msg in messages) {
+            final targetId = msg.attributes?['localMessageId']?.toString() ?? msg.msgId;
+            final convId = msg.conversationId ?? msg.to ?? '';
+            await _updateMessageStatus(targetId, ChatMessageStatus.delivered,
+                conversationId: convId);
+          }
+        },
+        onMessagesRead: (List<ChatMessage> messages) async {
+          for (final msg in messages) {
+            final targetId = msg.attributes?['localMessageId']?.toString() ?? msg.msgId;
+            final convId = msg.conversationId ?? msg.to ?? '';
+            await _updateMessageStatus(targetId, ChatMessageStatus.read,
+                conversationId: convId);
+          }
+        },
+        onMessagesRecalled: (List<ChatMessage> messages) async {
+          for (final msg in messages) {
+            final conversationId = msg.conversationId ?? msg.to ?? '';
+            await _markMessageRecalledLocally(conversationId, msg.msgId);
+          }
+        },
+        onMessagesRecalledInfo: (List<RecallMessageInfo> infos) async {
+          for (final info in infos) {
+            final conversationId =
+                info.conversationId ?? info.recallMessage?.conversationId ?? info.recallBy;
+            await _markMessageRecalledLocally(conversationId, info.recallMessageId);
+          }
+        },
+        onMessageContentChanged:
+            (ChatMessage msg, String lastModifyOperatorId, int lastModifyTime) async {
+          final conversationId = msg.conversationId ?? msg.to ?? '';
+          final isar = await _localDbService.database;
+          String content = '';
+          if (msg.body is ChatTextMessageBody) {
+            content = (msg.body as ChatTextMessageBody).content;
+          }
+          await isar.writeTxn(() async {
+            final stored = await isar.localChatMessages
+                .filter()
+                .messageIdEqualTo(msg.msgId)
+                .findFirst();
+            if (stored != null) {
+              stored.content = content;
+              stored.isEdited = true;
+              await isar.localChatMessages.put(stored);
+            }
+          });
+          _notifyThreadUpdated(conversationId);
+        },
+        onMessageReactionDidChange: (List<ChatMessageReactionEvent> events) async {
+          // Server-authoritative reaction updates (may batch several messages).
+          for (final event in events) {
+            final isar = await _localDbService.database;
+            final parsed = _reactionsFromChatReactionList(event.reactions);
+            await isar.writeTxn(() async {
+              final stored = await isar.localChatMessages
+                  .filter()
+                  .messageIdEqualTo(event.messageId)
+                  .findFirst();
+              if (stored != null) {
+                stored.reactionsJson = jsonEncode(parsed);
+                await isar.localChatMessages.put(stored);
+              }
+            });
+            _notifyThreadUpdated(event.conversationId);
+          }
+          await _syncConversationsFromLocal();
+        },
+      ),
+    );
+
+    // Send-status callbacks (attachment uploads in particular resolve
+    // asynchronously, after `sendMessage` has returned).
+    ChatClient.getInstance.chatManager.addMessageEvent(
+      'inklink_message_status',
+      ChatMessageEvent(
+        onSuccess: (String msgId, ChatMessage msg) async {
+          final localId = msg.attributes?['localMessageId']?.toString() ?? msgId;
+          await _updateMessageStatus(localId, ChatMessageStatus.sent);
+        },
+        onError: (String msgId, ChatMessage msg, ChatError error) async {
+          final localId = msg.attributes?['localMessageId']?.toString() ?? msgId;
+          developer.log('Message send failed: ${error.code} ${error.description}',
+              name: 'AgoraChatService');
+          await _updateMessageStatus(localId, ChatMessageStatus.failed);
+        },
+      ),
+    );
+
+    ChatClient.getInstance.addConnectionEventHandler(
+      'inklink_chat_connection',
+      ConnectionEventHandler(
+        onConnected: () async {
+          developer.log('Agora Chat connected', name: 'AgoraChatService');
+          _setConnectionState(ChatConnectionState.connected);
+          unawaited(_drainOfflineQueue());
+        },
+        onDisconnected: () {
+          developer.log('Agora Chat disconnected', name: 'AgoraChatService');
+          _setConnectionState(ChatConnectionState.disconnected);
+        },
+        onTokenWillExpire: () async {
+          // Renew in-place with a fresh token from the server.
+          final creds = await _fetchAgoraCredentials();
+          final token = creds?['token']?.toString();
+          if (token != null && token.isNotEmpty) {
+            try {
+              await ChatClient.getInstance.renewAgoraToken(token);
+              developer.log('Agora Chat token renewed', name: 'AgoraChatService');
+            } catch (e) {
+              developer.log('Agora Chat token renewal failed: $e',
+                  name: 'AgoraChatService');
+            }
+          }
+        },
+        onTokenDidExpire: () async {
+          developer.log('Agora Chat token expired; re-login', name: 'AgoraChatService');
+          final uid = _currentUserId;
+          if (uid != null && uid.isNotEmpty) {
+            unawaited(login(uid));
+          }
+        },
+      ),
+    );
+  }
+
+  // ============================================================
+  // LOGIN / LOGOUT
+  // ============================================================
 
   @override
   Future<void> initialize() async {
+    // Lightweight by design: the Chat SDK is initialized on first successful
+    // login, when the server has provided the Agora app key.
     if (_initialized) return;
-
-    final appKey = dotenv.env['AGORA_CHAT_APP_KEY'];
-    final appId = dotenv.env['AGORA_APP_ID'] ?? '5532d37e639245b78935fd9aebdf45a8';
-
-    try {
-      ChatOptions options;
-      if (appKey != null && appKey.isNotEmpty && appKey.contains('#')) {
-        options = ChatOptions.withAppKey(
-          appKey,
-          autoLogin: false,
-          debugMode: false,
-        );
-      } else {
-        options = ChatOptions.withAppId(
-          appId,
-          autoLogin: false,
-          debugMode: false,
-        );
-      }
-
-      await ChatClient.getInstance.init(options);
-      await ChatClient.getInstance.startCallback();
-
-      // Register listener for incoming Agora Chat messages & lifecycle events
-      ChatClient.getInstance.chatManager.addEventHandler(
-        'inklink_chat_handler',
-        ChatEventHandler(
-          onMessagesReceived: (List<ChatMessage> messages) async {
-            for (final msg in messages) {
-              await _handleIncomingAgoraMessage(msg);
-            }
-          },
-          onMessagesDelivered: (List<ChatMessage> messages) async {
-            for (final msg in messages) {
-              final targetId = msg.attributes?['localMessageId']?.toString() ?? msg.msgId;
-              final convId = msg.conversationId ?? msg.to ?? '';
-              await _updateMessageStatus(targetId, ChatMessageStatus.delivered, conversationId: convId);
-            }
-          },
-          onMessagesRead: (List<ChatMessage> messages) async {
-            for (final msg in messages) {
-              final targetId = msg.attributes?['localMessageId']?.toString() ?? msg.msgId;
-              final convId = msg.conversationId ?? msg.to ?? '';
-              await _updateMessageStatus(targetId, ChatMessageStatus.read, conversationId: convId);
-            }
-          },
-          onMessagesRecalled: (List<ChatMessage> messages) async {
-            for (final msg in messages) {
-              final conversationId = msg.conversationId ?? msg.to ?? '';
-              await deleteMessage(
-                conversationId: conversationId,
-                messageId: msg.msgId,
-              );
-            }
-          },
-          onMessageReactionDidChange: (List<ChatMessageReactionEvent> list) async {
-            for (final event in list) {
-              _notifyThreadUpdated(event.conversationId);
-            }
-            await _syncConversationsFromLocal();
-          },
-        ),
-      );
-
-      _initialized = true;
-      developer.log('Agora Chat SDK successfully initialized', name: 'AgoraChatService');
-    } catch (e, st) {
-      developer.log('Agora Chat init warning: $e', name: 'AgoraChatService', stackTrace: st);
-      // Mark initialized to allow local-first operation even if Agora servers unreachable
-      _initialized = true;
-    }
+    _setConnectionState(ChatConnectionState.disconnected);
   }
 
   @override
   Future<void> login(String userId) async {
-    await initialize();
-
-    final agoraUsername = _sanitizeAgoraUid(userId);
-    final isLoggedIn = await ChatClient.getInstance.isLoginBefore();
-    if (isLoggedIn) {
-      final currentLoggedIn = await ChatClient.getInstance.getCurrentUserId() ??
-          ChatClient.getInstance.currentUserId;
-      if (currentLoggedIn != null &&
-          currentLoggedIn.isNotEmpty &&
-          currentLoggedIn != agoraUsername) {
-        await ChatClient.getInstance.logout(true);
-      }
-    }
-
-    final stillLoggedIn = await ChatClient.getInstance.isLoginBefore();
-    if (!stillLoggedIn) {
-      final token = dotenv.env['AGORA_CHAT_TOKEN']?.trim();
-      if (token == null || token.isEmpty) {
-        developer.log(
-          'Agora Chat authentication token not configured in .env (AGORA_CHAT_TOKEN). Operating in offline/local-first mode.',
-          name: 'AgoraChatService',
-        );
-      } else {
-        try {
-          await ChatClient.getInstance.loginWithAgoraToken(agoraUsername, token);
-          developer.log('Logged into Agora Chat as: $agoraUsername', name: 'AgoraChatService');
-        } catch (e, st) {
-          developer.log(
-            'Failed to log into Agora Chat server: $e. Operating in local-first mode.',
-            name: 'AgoraChatService',
-            stackTrace: st,
-          );
-        }
-      }
-    } else {
-      developer.log('Already logged into Agora Chat as: $agoraUsername', name: 'AgoraChatService');
-    }
-
-    // Start Cloud Firestore real-time sync for live messaging
-    _startFirestoreSync(userId);
-
-    // Sync conversations and messages from Agora Chat SDK into local database (if available)
-    await _syncFromAgora();
-    await _syncConversationsFromLocal();
-  }
-
-  void _startFirestoreSync(String userId) {
-    _firestoreChatsSub?.cancel();
-    for (final sub in _firestoreMessageSubs.values) {
-      sub.cancel();
-    }
-    _firestoreMessageSubs.clear();
-
+    if (_loginInFlight) return;
+    _loginInFlight = true;
     try {
-      _firestoreChatsSub = _chatRepository.watchChatsForUser(userId).listen(
-        (chatDocs) async {
-          await _handleFirestoreChatsSnapshot(chatDocs, userId);
-        },
-        onError: (e, st) {
-          developer.log('Firestore chat sync listener warning: $e',
-              name: 'AgoraChatService', error: e, stackTrace: st);
-        },
-      );
-    } catch (e, st) {
-      developer.log('Failed to start Firestore chat sync: $e',
-          name: 'AgoraChatService', error: e, stackTrace: st);
-    }
-  }
+      _currentUserId = userId;
 
-  Future<void> _handleFirestoreChatsSnapshot(
-    List<ChatDoc> chatDocs,
-    String currentUid,
-  ) async {
-    final isar = await _localDbService.database;
-
-    for (final doc in chatDocs) {
-      final data = doc.data;
-      final chatId = doc.id;
-      final isGroup = data['isGroup'] == true;
-      final participantIds = List<String>.from(data['participantIds'] ?? []);
-
-      String localConvId;
-      if (isGroup) {
-        localConvId = chatId;
-      } else {
-        final partnerUid = participantIds.firstWhere(
-          (id) => id != currentUid,
-          orElse: () => '',
-        );
-        if (partnerUid.isEmpty) continue;
-        localConvId = partnerUid;
+      final creds = await _fetchAgoraCredentials();
+      if (creds == null) {
+        // Local-first mode: everything queues in Isar until Agora is reachable.
+        _setConnectionState(ChatConnectionState.unavailable);
+        await _syncFromAgora();
+        await _syncConversationsFromLocal();
+        return;
       }
 
-      String? partnerName;
-      String? partnerAvatar;
-      if (!isGroup) {
-        if (data['senderNames'] is Map) {
-          partnerName = data['senderNames'][localConvId]?.toString();
-        }
-        if (data['senderAvatars'] is Map) {
-          partnerAvatar = data['senderAvatars'][localConvId]?.toString();
-        }
+      _setConnectionState(ChatConnectionState.connecting);
+      try {
+        await _ensureInitialized(creds['appKey'].toString());
+      } catch (e, st) {
+        developer.log('Agora Chat init failure: $e', name: 'AgoraChatService',
+            stackTrace: st);
+        _setConnectionState(ChatConnectionState.unavailable);
+        await _syncConversationsFromLocal();
+        return;
       }
 
-      final groupName = data['name']?.toString() ?? 'Group Chat';
-      final groupAvatar = data['avatarUrl']?.toString();
-      final lastMsg = data['lastMessage']?.toString() ?? '';
-      DateTime? lastMsgTime;
-      if (data['lastMessageTimestamp'] is DateTime) {
-        lastMsgTime = data['lastMessageTimestamp'] as DateTime;
-      } else if (data['lastMessageTimestamp'] is String) {
-        lastMsgTime = DateTime.tryParse(data['lastMessageTimestamp']);
+      final agoraUsername = creds['agoraUsername']?.toString() ?? _sanitizeAgoraUid(userId);
+      final token = creds['token']?.toString() ?? '';
+      // Re-login only when the account actually differs; repeated logins for
+      // the same user would otherwise drop the connection needlessly.
+      final alreadyLoggedIn = await ChatClient.getInstance.isLoginBefore();
+      if (alreadyLoggedIn) {
+        final currentLoggedIn = await ChatClient.getInstance.getCurrentUserId() ??
+            ChatClient.getInstance.currentUserId;
+        if (currentLoggedIn != null &&
+            currentLoggedIn.isNotEmpty &&
+            currentLoggedIn != agoraUsername) {
+          try {
+            await ChatClient.getInstance.logout(true);
+          } catch (_) {}
+        }
       }
-
-      await isar.writeTxn(() async {
-        final existingConv = await isar.localChatConversations
-            .filter()
-            .conversationIdEqualTo(localConvId)
-            .findFirst();
-
-        final conv = existingConv ?? LocalChatConversation();
-        conv.conversationId = localConvId;
-        if (isGroup) {
-          conv.name = groupName;
-          conv.avatarUrl = groupAvatar;
-          conv.isGroup = true;
-          conv.ownerId = data['ownerId']?.toString();
-          conv.adminIds = List<String>.from(data['adminIds'] ?? []);
-          conv.memberIds = participantIds;
-          conv.description = data['description']?.toString();
-        } else {
-          if (partnerName != null && partnerName.isNotEmpty) {
-            conv.name = partnerName;
-          } else if (conv.name.isEmpty || conv.name == 'User') {
-            conv.name = 'User';
-          }
-          if (partnerAvatar != null && partnerAvatar.isNotEmpty) {
-            conv.avatarUrl = partnerAvatar;
-          }
-          conv.isGroup = false;
-          final members = Set<String>.from(conv.memberIds)
-            ..add(currentUid)
-            ..add(localConvId);
-          conv.memberIds = members.toList();
-        }
-
-        if (lastMsg.isNotEmpty) {
-          conv.lastMessage = lastMsg;
-        }
-        if (lastMsgTime != null) {
-          conv.lastMessageTimestamp = lastMsgTime;
-          conv.updatedAt = lastMsgTime;
-        }
-
-        await isar.localChatConversations.put(conv);
-      });
-
-      _subscribeToFirestoreMessages(
-        chatId: chatId,
-        localConvId: localConvId,
-        isGroup: isGroup,
-        currentUid: currentUid,
-      );
-    }
-
-    await _syncConversationsFromLocal();
-  }
-
-  void _subscribeToFirestoreMessages({
-    required String chatId,
-    required String localConvId,
-    required bool isGroup,
-    required String currentUid,
-  }) {
-    if (_firestoreMessageSubs.containsKey(chatId)) return;
-
-    final sub = _chatRepository.watchMessages(chatId).listen(
-      (changes) async {
-        await _handleFirestoreMessagesSnapshot(
-          changes: changes,
-          chatId: chatId,
-          localConvId: localConvId,
-          isGroup: isGroup,
-          currentUid: currentUid,
-        );
-      },
-      onError: (e, st) {
-        developer.log('Firestore messages listener error for $chatId: $e',
+      try {
+        await ChatClient.getInstance.loginWithToken(agoraUsername, token);
+        developer.log('Logged into Agora Chat as: $agoraUsername',
             name: 'AgoraChatService');
-      },
-    );
+      } catch (e, st) {
+        developer.log(
+          'Failed to log into Agora Chat: $e. Operating in local-first mode.',
+          name: 'AgoraChatService',
+          stackTrace: st,
+        );
+        _setConnectionState(ChatConnectionState.unavailable);
+        await _syncConversationsFromLocal();
+        return;
+      }
 
-    _firestoreMessageSubs[chatId] = sub;
+      await _bindPushTokenBestEffort();
+
+      await _syncFromAgora();
+      await _syncConversationsFromLocal();
+      if (await ChatClient.getInstance.isConnected()) {
+        _setConnectionState(ChatConnectionState.connected);
+        unawaited(_drainOfflineQueue());
+      }
+    } finally {
+      _loginInFlight = false;
+    }
   }
 
-  Future<void> _handleFirestoreMessagesSnapshot({
-    required List<ChatDocChange> changes,
-    required String chatId,
-    required String localConvId,
-    required String currentUid,
-    required bool isGroup,
-  }) async {
-    final isar = await _localDbService.database;
-
-    // The first snapshot for a chat replays the entire history as `added`
-    // events; counting unread for them inflates the badge on every cold
-    // start until it is manually cleared. Only count unread after the
-    // initial replay has been processed.
-    final isInitialReplay = !_initialMessageSnapshotsSeen.contains(chatId);
-
-    for (final change in changes) {
-      final doc = change.doc;
-      if (doc == null) continue;
-      final data = doc.data;
-
-      final msgId = data['id']?.toString() ?? doc.id;
-      final senderId = data['senderId']?.toString() ?? '';
-      final senderName = data['senderName']?.toString() ?? 'User';
-      final senderAvatar = data['senderAvatar']?.toString();
-      final type = ChatMessageType.fromString(data['type']?.toString() ?? 'text');
-      final content = data['content']?.toString() ?? '';
-      final isEdited = data['isEdited'] == true;
-      final isDeleted = data['isDeleted'] == true;
-
-      DateTime ts = DateTime.now();
-      if (data['timestamp'] is DateTime) {
-        ts = data['timestamp'] as DateTime;
-      } else if (data['timestamp'] is String) {
-        ts = DateTime.tryParse(data['timestamp']) ?? DateTime.now();
-      }
-
-      Map<String, List<String>> parsedReactions = {};
-      if (data['reactions'] is Map) {
-        final rMap = data['reactions'] as Map;
-        rMap.forEach((k, v) {
-          if (v is List) {
-            parsedReactions[k.toString()] = v.map((e) => e.toString()).toList();
-          }
-        });
-      }
-
-      ChatSharePayload? sharePayload;
-      if (data['sharePayload'] is Map) {
-        try {
-          sharePayload = ChatSharePayload.fromMap(
-            Map<String, dynamic>.from(data['sharePayload']),
-          );
-        } catch (_) {}
-      }
-
-      if (change.type == ChatDocChangeType.modified) {
-        await isar.writeTxn(() async {
-          final existing = await isar.localChatMessages
-              .filter()
-              .messageIdEqualTo(msgId)
-              .findFirst();
-          if (existing != null) {
-            existing.content = content;
-            existing.isEdited = isEdited;
-            existing.isDeleted = isDeleted;
-            existing.reactionsJson = jsonEncode(parsedReactions);
-            existing.status = ChatMessageStatus.delivered.name;
-            await isar.localChatMessages.put(existing);
-          }
-        });
-        _notifyThreadUpdated(localConvId);
-        continue;
-      }
-
-      if (change.type == ChatDocChangeType.removed) {
-        await isar.writeTxn(() async {
-          final existing = await isar.localChatMessages
-              .filter()
-              .messageIdEqualTo(msgId)
-              .findFirst();
-          if (existing != null) {
-            existing.isDeleted = true;
-            existing.content = 'This message was deleted';
-            await isar.localChatMessages.put(existing);
-          }
-        });
-        _notifyThreadUpdated(localConvId);
-        continue;
-      }
-
-      // Handle added / initial message
-      final model = ChatMessageModel(
-        id: msgId,
-        conversationId: localConvId,
-        senderId: senderId,
-        senderName: senderName,
-        senderAvatar: senderAvatar,
-        type: type,
-        content: content,
-        timestamp: ts,
-        status: senderId == currentUid ? ChatMessageStatus.sent : ChatMessageStatus.delivered,
-        reactions: parsedReactions,
-        isEdited: isEdited,
-        isDeleted: isDeleted,
-        fileName: data['fileName']?.toString(),
-        fileSize: data['fileSize'] is int ? data['fileSize'] as int : null,
-        sharePayload: sharePayload,
-        replyToId: data['replyToId']?.toString(),
-        replyToSender: data['replyToSender']?.toString(),
-        replyToText: data['replyToText']?.toString(),
-      );
-
-      final isNewToSession = _syncedMessageIds.add(msgId);
-
-      await _persistMessageLocally(
-        model,
-        isGroup: isGroup,
-        countUnread: !isInitialReplay,
-      );
-
-      // Trigger local foreground notification for incoming messages from others
-      if (isNewToSession && senderId != currentUid && DateTime.now().difference(ts).inMinutes < 2) {
-        final conv = await isar.localChatConversations
-            .filter()
-            .conversationIdEqualTo(localConvId)
-            .findFirst();
-        final isMuted = conv?.isMuted ?? false;
-        if (!isMuted) {
-          final notifyTitle = isGroup
-              ? (conv != null && conv.name.isNotEmpty
-                  ? '${conv.name} ($senderName)'
-                  : senderName)
-              : senderName;
-          final notifyBody = type == ChatMessageType.text ? content : '[${type.name}]';
-          await LocalNotificationService.showNotification(
-            title: notifyTitle,
-            body: notifyBody,
-            largeIcon: senderAvatar,
-            payload: {
-              'type': 'chat_message',
-              'targetId': localConvId,
-              'senderName': isGroup ? (conv?.name ?? 'Group') : senderName,
-              'isGroup': isGroup.toString(),
-            },
-          );
-        }
-      }
+  Future<void> _bindPushTokenBestEffort() async {
+    try {
+      final pushToken = await _pushTokenProvider?.call();
+      if (pushToken == null || pushToken.isEmpty) return;
+      final notifier = Platform.isAndroid ? 'FCM' : 'APNs';
+      await ChatClient.getInstance.pushManager
+          .bindDeviceToken(notifierName: notifier, deviceToken: pushToken);
+      developer.log('Agora Chat push token bound ($notifier)', name: 'AgoraChatService');
+    } catch (e) {
+      developer.log('Agora Chat push binding skipped: $e', name: 'AgoraChatService');
     }
-
-    // The initial replay has been processed; subsequent snapshots may
-    // count unread.
-    if (isInitialReplay) {
-      _initialMessageSnapshotsSeen.add(chatId);
-    }
-
-    _notifyThreadUpdated(localConvId);
-    await _syncConversationsFromLocal();
   }
+
+  @override
+  Future<void> logout() async {
+    _currentUserId = null;
+    _setConnectionState(ChatConnectionState.disconnected);
+    try {
+      await ChatClient.getInstance.logout(true);
+    } catch (_) {}
+  }
+
+  // ============================================================
+  // HISTORY SYNC — Agora server -> Isar
+  // ============================================================
 
   Future<void> _syncFromAgora() async {
     try {
@@ -546,17 +423,28 @@ class AgoraChatServiceImpl implements ChatService {
           }
         }
       } catch (e) {
-        developer.log('Agora getConversationsFromServer notice (local-first): $e', name: 'AgoraChatService');
+        developer.log('Agora getConversationsFromServer notice: $e', name: 'AgoraChatService');
       }
+
+      // Group discovery: pulls in groups this user was invited/added to on
+      // any device (replaces the old Firestore chats-doc fan-out).
+      await _syncJoinedGroups();
 
       for (final conv in agoraConvs) {
         try {
+          final isGroup = conv.type == ChatConversationType.GroupChat;
           final messages = await conv.loadMessages(startMsgId: '', loadCount: 50);
           for (final msg in messages) {
-            await _handleIncomingAgoraMessage(msg, triggerNotification: false);
+            await _handleIncomingAgoraMessage(
+              msg,
+              triggerNotification: false,
+              countUnread: false,
+              isGroup: isGroup,
+            );
           }
         } catch (e) {
-          developer.log('Error loading messages for conv ${conv.id}: $e', name: 'AgoraChatService');
+          developer.log('Error loading messages for conv ${conv.id}: $e',
+              name: 'AgoraChatService');
         }
       }
     } catch (e) {
@@ -564,251 +452,62 @@ class AgoraChatServiceImpl implements ChatService {
     }
   }
 
-  @override
-  Future<void> logout() async {
-    _currentUserId = null;
-    await _firestoreChatsSub?.cancel();
-    _firestoreChatsSub = null;
-    for (final sub in _firestoreMessageSubs.values) {
-      await sub.cancel();
-    }
-    _firestoreMessageSubs.clear();
-    _syncedMessageIds.clear();
-    _initialMessageSnapshotsSeen.clear();
-
+  /// Mirrors every group the current user belongs to into Isar so the inbox
+  /// lists it even without messages.
+  Future<void> _syncJoinedGroups() async {
     try {
-      await ChatClient.getInstance.logout(true);
-    } catch (_) {}
-  }
-
-  Future<void> _handleIncomingAgoraMessage(
-    ChatMessage msg, {
-    bool triggerNotification = true,
-  }) async {
-    try {
-      final conversationId = msg.conversationId ?? msg.from ?? '';
-      String textContent = '';
-      ChatMessageType msgType = ChatMessageType.text;
-      String? fileName;
-      int? fileSize;
-
-      if (msg.body is ChatTextMessageBody) {
-        final body = msg.body as ChatTextMessageBody;
-        textContent = body.content;
-      } else if (msg.body is ChatImageMessageBody) {
-        final body = msg.body as ChatImageMessageBody;
-        textContent = body.remotePath ?? body.localPath;
-        msgType = ChatMessageType.image;
-        fileName = body.displayName;
-        fileSize = body.fileSize;
-      } else if (msg.body is ChatFileMessageBody) {
-        final body = msg.body as ChatFileMessageBody;
-        textContent = body.remotePath ?? body.localPath;
-        msgType = ChatMessageType.file;
-        fileName = body.displayName;
-        fileSize = body.fileSize;
-      } else if (msg.body is ChatCustomMessageBody) {
-        final body = msg.body as ChatCustomMessageBody;
-        if (body.event == 'board_share') {
-          msgType = ChatMessageType.boardShare;
-        } else if (body.event == 'workspace_share') {
-          msgType = ChatMessageType.workspaceShare;
-        } else if (body.event == 'gif') {
-          msgType = ChatMessageType.gif;
-        }
-        textContent = body.params?['payload'] ?? '';
-      }
-
-      final isGroup = msg.chatType == ChatType.GroupChat;
-      final model = ChatMessageModel(
-        id: msg.msgId,
-        conversationId: conversationId,
-        senderId: msg.from ?? '',
-        senderName: msg.attributes?['senderName']?.toString() ?? msg.from ?? 'User',
-        senderAvatar: msg.attributes?['senderAvatar']?.toString(),
-        type: msgType,
-        content: textContent,
-        timestamp: DateTime.fromMillisecondsSinceEpoch(msg.serverTime),
-        status: ChatMessageStatus.delivered,
-        fileName: fileName,
-        fileSize: fileSize,
-        replyToId: msg.attributes?['replyToId']?.toString(),
-        replyToSender: msg.attributes?['replyToSender']?.toString(),
-        replyToText: msg.attributes?['replyToText']?.toString(),
+      final groups = await ChatClient.getInstance.groupManager.fetchJoinedGroupsFromServer(
+        needRole: true,
       );
-
-      await _persistMessageLocally(model, isGroup: isGroup);
-
-      // Dispatch local foreground notification if receiver is not sender and chat is not muted
-      if (triggerNotification) {
-        final currentUid = _authService.getCurrentUserId();
-        if (model.senderId != currentUid) {
-          final isar = await _localDbService.database;
-          final conv = await isar.localChatConversations
-              .filter()
-              .conversationIdEqualTo(conversationId)
-              .findFirst();
-          final isMuted = conv?.isMuted ?? false;
-          if (!isMuted) {
-            final notifyTitle = isGroup
-                ? (conv != null && conv.name.isNotEmpty
-                    ? '${conv.name} (${model.senderName})'
-                    : model.senderName)
-                : model.senderName;
-            final notifyBody = model.type == ChatMessageType.text
-                ? model.content
-                : '[${model.type.name}]';
-            await LocalNotificationService.showNotification(
-              title: notifyTitle,
-              body: notifyBody,
-              largeIcon: model.senderAvatar,
-              payload: {
-                'type': 'chat_message',
-                'targetId': conversationId,
-                'senderName': isGroup ? (conv?.name ?? 'Group') : model.senderName,
-                'isGroup': isGroup.toString(),
-              },
-            );
-          }
-        }
-      }
+      await _ingestGroups(groups);
     } catch (e) {
-      developer.log('Error handling incoming Agora message: $e', name: 'AgoraChatService');
+      developer.log('Agora fetchJoinedGroupsFromServer error: $e', name: 'AgoraChatService');
     }
   }
 
-  Future<void> _persistMessageLocally(
-    ChatMessageModel model, {
-    bool isGroup = false,
-    String? conversationName,
-    String? conversationAvatar,
-    bool countUnread = true,
-  }) async {
+  Future<void> _ingestGroups(List<ChatGroup> groups) async {
+    if (groups.isEmpty) return;
     final isar = await _localDbService.database;
-
     await isar.writeTxn(() async {
-      // 1. Save or update message
-      final existingMsg = await isar.localChatMessages
-          .filter()
-          .messageIdEqualTo(model.id)
-          .findFirst();
-
-      final localMsg = existingMsg ?? LocalChatMessage();
-      localMsg.messageId = model.id;
-      localMsg.conversationId = model.conversationId;
-      localMsg.senderId = model.senderId;
-      localMsg.senderName = model.senderName;
-      localMsg.senderAvatar = model.senderAvatar;
-      localMsg.type = model.type.asString;
-      localMsg.content = model.content;
-      localMsg.timestamp = model.timestamp;
-      localMsg.status = model.status.name;
-      localMsg.reactionsJson = jsonEncode(model.reactions);
-      localMsg.isEdited = model.isEdited;
-      localMsg.isDeleted = model.isDeleted;
-      localMsg.fileName = model.fileName;
-      localMsg.fileSize = model.fileSize;
-      localMsg.sharePayloadJson = model.sharePayload?.toJsonString();
-      localMsg.replyToId = model.replyToId;
-      localMsg.replyToSender = model.replyToSender;
-      localMsg.replyToText = model.replyToText;
-
-      await isar.localChatMessages.put(localMsg);
-
-      // 2. Update conversation snippet
-      final existingConv = await isar.localChatConversations
-          .filter()
-          .conversationIdEqualTo(model.conversationId)
-          .findFirst();
-
-      final conv = existingConv ?? LocalChatConversation();
-      conv.conversationId = model.conversationId;
-      if (conversationName != null && conversationName.isNotEmpty) {
-        conv.name = conversationName;
-      } else if (conv.name.isEmpty) {
-        conv.name = isGroup ? 'Group Chat' : model.senderName;
-      }
-      if (conversationAvatar != null && conversationAvatar.isNotEmpty) {
-        conv.avatarUrl = conversationAvatar;
-      }
-      conv.isGroup = isGroup || conv.isGroup;
-      conv.lastMessage = model.type == ChatMessageType.text
-          ? model.content
-          : '[${model.type.name}]';
-      conv.lastMessageTimestamp = model.timestamp;
-      conv.updatedAt = DateTime.now();
-
-      final currentUid = _authService.getCurrentUserId();
-      if (countUnread && model.senderId != currentUid) {
-        conv.unreadCount = conv.unreadCount + 1;
-      }
-
-      // Track participants for DMs so we know which user owns this conversation
-      if (!conv.isGroup) {
-        final members = Set<String>.from(conv.memberIds);
-        if (currentUid != null && currentUid.isNotEmpty) members.add(currentUid);
-        if (model.conversationId.isNotEmpty) members.add(model.conversationId);
-        if (model.senderId.isNotEmpty) members.add(model.senderId);
-        conv.memberIds = members.toList();
-      }
-
-      await isar.localChatConversations.put(conv);
-
-      // 3. For DMs, also materialize counterpart conversation row for the recipient
-      if (!isGroup && model.senderId.isNotEmpty && model.conversationId.isNotEmpty) {
-        final counterpartConvId = model.senderId;
-        final existingCounterpart = await isar.localChatConversations
+      for (final g in groups) {
+        final existing = await isar.localChatConversations
             .filter()
-            .conversationIdEqualTo(counterpartConvId)
+            .conversationIdEqualTo(g.groupId)
             .findFirst();
-
-        final counterpart = existingCounterpart ?? LocalChatConversation();
-        counterpart.conversationId = counterpartConvId;
-        if (counterpart.name.isEmpty || counterpart.name == 'User') {
-          counterpart.name = model.senderName.isNotEmpty ? model.senderName : 'User';
+        final conv = existing ?? LocalChatConversation()
+          ..conversationId = g.groupId;
+        conv
+          ..isGroup = true
+          ..lastMessage = existing?.lastMessage ?? 'Group chat'
+          ..lastMessageTimestamp = existing?.lastMessageTimestamp ?? DateTime.now()
+          ..updatedAt = existing?.updatedAt ?? DateTime.now()
+          ..unreadCount = existing?.unreadCount ?? 0
+          ..isMuted = existing?.isMuted ?? false;
+        if (g.groupName != null && g.groupName!.isNotEmpty) conv.name = g.groupName!;
+        if (g.avatarUrl != null && g.avatarUrl!.isNotEmpty) conv.avatarUrl = g.avatarUrl;
+        if (g.desc != null) conv.description = g.desc;
+        final ownerId = g.owner;
+        if (ownerId != null && ownerId.isNotEmpty) conv.ownerId = ownerId;
+        final admins = g.adminList;
+        if (admins != null) {
+          conv.adminIds = [...admins];
+        } else if (existing != null) {
+          conv.adminIds = [...existing.adminIds];
         }
-        if (model.senderAvatar != null && model.senderAvatar!.isNotEmpty) {
-          counterpart.avatarUrl = model.senderAvatar;
+        final members = g.memberList;
+        if (members != null && members.isNotEmpty) {
+          conv.memberIds = members.toSet().toList();
+        } else if (existing != null) {
+          conv.memberIds = [...existing.memberIds];
         }
-        counterpart.isGroup = false;
-        counterpart.lastMessage = model.type == ChatMessageType.text
-            ? model.content
-            : '[${model.type.name}]';
-        counterpart.lastMessageTimestamp = model.timestamp;
-        counterpart.updatedAt = DateTime.now();
-        if (model.senderId == currentUid) {
-          counterpart.unreadCount = counterpart.unreadCount + 1;
-        }
-        final cMembers = Set<String>.from(counterpart.memberIds);
-        cMembers.add(model.senderId);
-        cMembers.add(model.conversationId);
-        counterpart.memberIds = cMembers.toList();
-
-        await isar.localChatConversations.put(counterpart);
+        await isar.localChatConversations.put(conv);
       }
     });
-
-    await _syncConversationsFromLocal();
-    _notifyThreadUpdated(model.conversationId);
-    if (!isGroup && model.senderId.isNotEmpty) {
-      _notifyThreadUpdated(model.senderId);
-    }
   }
 
-  void _notifyThreadUpdated(String conversationId) async {
-    final controller = _messagesControllers[conversationId];
-    if (controller != null && !controller.isClosed) {
-      final messages = await getMessages(conversationId);
-      controller.add(messages);
-    }
-  }
-
-  Future<void> _syncConversationsFromLocal() async {
-    final conversations = await getConversations();
-    if (!_conversationsController.isClosed) {
-      _conversationsController.add(conversations);
-    }
-  }
+  // ============================================================
+  // INBOX / THREAD (Isar-backed, unchanged public behaviour)
+  // ============================================================
 
   @override
   Stream<List<ChatConversationModel>> watchConversations() {
@@ -951,7 +650,9 @@ class AgoraChatServiceImpl implements ChatService {
     });
 
     try {
-      final agoraConv = await ChatClient.getInstance.chatManager.getConversation(conversationId);
+      final convType = await _agoraConversationType(conversationId);
+      final agoraConv = await ChatClient.getInstance.chatManager
+          .getConversation(conversationId, type: convType);
       await agoraConv?.markAllMessagesAsRead();
     } catch (_) {}
 
@@ -973,7 +674,9 @@ class AgoraChatServiceImpl implements ChatService {
     });
 
     try {
-      await ChatClient.getInstance.chatManager.deleteConversation(conversationId);
+      // Conversation type is inferred server-side; only the id matters.
+      await ChatClient.getInstance.chatManager
+          .deleteConversation(conversationId, deleteMessages: true);
     } catch (_) {}
 
     await _syncConversationsFromLocal();
@@ -1028,11 +731,18 @@ class AgoraChatServiceImpl implements ChatService {
     // If local Isar has no messages, lazily fetch from Agora Chat SDK
     if (locals.isEmpty) {
       try {
-        final conv = await ChatClient.getInstance.chatManager.getConversation(conversationId);
+        final convType = await _agoraConversationType(conversationId);
+        final conv = await ChatClient.getInstance.chatManager
+            .getConversation(conversationId, type: convType);
         if (conv != null) {
           final msgs = await conv.loadMessages(startMsgId: '', loadCount: 50);
           for (final msg in msgs) {
-            await _handleIncomingAgoraMessage(msg, triggerNotification: false);
+            await _handleIncomingAgoraMessage(
+              msg,
+              triggerNotification: false,
+              countUnread: false,
+              isGroup: convType == ChatConversationType.GroupChat,
+            );
           }
           locals = await isar.localChatMessages
               .filter()
@@ -1046,7 +756,8 @@ class AgoraChatServiceImpl implements ChatService {
               .findAll();
         }
       } catch (e) {
-        developer.log('Notice loading messages on demand from Agora: $e', name: 'AgoraChatService');
+        developer.log('Notice loading messages on demand from Agora: $e',
+            name: 'AgoraChatService');
       }
     }
 
@@ -1095,31 +806,483 @@ class AgoraChatServiceImpl implements ChatService {
     }).toList();
   }
 
-  Future<void> _dispatchPushNotification({
-    required String recipientUid,
-    required String title,
-    required String body,
-    required String conversationId,
+  // ============================================================
+  // INCOMING MESSAGE HANDLER
+  // ============================================================
+
+  Future<void> _handleIncomingAgoraMessage(
+    ChatMessage msg, {
+    bool triggerNotification = true,
+    bool countUnread = true,
     bool isGroup = false,
   }) async {
-    if (_cloudFunctionsService == null) return;
     try {
-      final user = _authService.getCurrentUser();
-      await _cloudFunctionsService.httpsCallable('sendNotification').call({
-        'recipientUid': recipientUid,
-        'title': title,
-        'body': body,
-        'type': 'chat_message',
-        'action': 'open_chat',
-        'targetId': conversationId,
-        'senderUid': user?.uid ?? '',
-        'senderName': user?.displayName ?? 'InkLink User',
-        'senderPhotoUrl': user?.photoURL,
-        'isPushOnly': true,
-        'extraData': {'isGroup': isGroup.toString()},
-      });
+      final conversationId = msg.conversationId ?? msg.from ?? '';
+      if (conversationId.isEmpty) return;
+      String textContent = '';
+      ChatMessageType msgType = ChatMessageType.text;
+      String? fileName;
+      int? fileSize;
+
+      if (msg.body is ChatTextMessageBody) {
+        final body = msg.body as ChatTextMessageBody;
+        textContent = body.content;
+      } else if (msg.body is ChatImageMessageBody) {
+        final body = msg.body as ChatImageMessageBody;
+        textContent = body.remotePath ?? body.localPath;
+        msgType = ChatMessageType.image;
+        fileName = body.displayName;
+        fileSize = body.fileSize;
+      } else if (msg.body is ChatFileMessageBody) {
+        final body = msg.body as ChatFileMessageBody;
+        textContent = body.remotePath ?? body.localPath;
+        msgType = ChatMessageType.file;
+        fileName = body.displayName;
+        fileSize = body.fileSize;
+      } else if (msg.body is ChatCustomMessageBody) {
+        final body = msg.body as ChatCustomMessageBody;
+        if (body.event == 'board_share') {
+          msgType = ChatMessageType.boardShare;
+        } else if (body.event == 'workspace_share') {
+          msgType = ChatMessageType.workspaceShare;
+        } else if (body.event == 'gif') {
+          msgType = ChatMessageType.gif;
+        }
+        textContent = body.params?['payload'] ?? '';
+      }
+
+      final senderId = msg.from ?? '';
+      // Group membership is authoritative from the wire, but keep the
+      // parameter when the caller already knows the type (history sync).
+      isGroup = isGroup || msg.chatType == ChatType.GroupChat;
+
+      // Server-authoritative reactions carried on the message itself.
+      final reactions = await _reactionsFromMessage(msg);
+
+      // Echoes of our own sends (multi-device sync) carry the local id used
+      // at send time; map back so the original Isar row is updated instead
+      // of a second row being created under the server id.
+      final currentUid = _authService.getCurrentUserId();
+      final localMessageId = msg.attributes?['localMessageId']?.toString();
+      final messageId =
+          (senderId.isNotEmpty && senderId != currentUid || localMessageId == null)
+              ? msg.msgId
+              : (localMessageId.isNotEmpty ? localMessageId : msg.msgId);
+      final isOwnEcho = senderId == currentUid && localMessageId != null;
+
+      ChatSharePayload? sharePayload;
+      if (msgType == ChatMessageType.boardShare ||
+          msgType == ChatMessageType.workspaceShare) {
+        try {
+          sharePayload = ChatSharePayload.fromJsonString(textContent);
+        } catch (_) {}
+      }
+
+      final model = ChatMessageModel(
+        id: messageId,
+        conversationId: conversationId,
+        senderId: senderId,
+        senderName: msg.attributes?['senderName']?.toString() ?? senderId,
+        senderAvatar: msg.attributes?['senderAvatar']?.toString(),
+        type: msgType,
+        content: textContent,
+        timestamp: DateTime.fromMillisecondsSinceEpoch(msg.serverTime),
+        status: isOwnEcho ? ChatMessageStatus.sent : ChatMessageStatus.delivered,
+        reactions: reactions,
+        fileName: fileName,
+        fileSize: fileSize,
+        sharePayload: sharePayload,
+        replyToId: msg.attributes?['replyToId']?.toString(),
+        replyToSender: msg.attributes?['replyToSender']?.toString(),
+        replyToText: msg.attributes?['replyToText']?.toString(),
+      );
+
+      await _persistMessageLocally(
+        model,
+        isGroup: isGroup,
+        countUnread: countUnread,
+      );
+
+      // Dispatch local foreground notification if receiver is not sender and chat is not muted
+      if (triggerNotification && senderId.isNotEmpty) {
+        final currentUid = _authService.getCurrentUserId();
+        if (model.senderId != currentUid &&
+            DateTime.now().difference(model.timestamp).inMinutes.abs() < 2) {
+          final isar = await _localDbService.database;
+          final conv = await isar.localChatConversations
+              .filter()
+              .conversationIdEqualTo(conversationId)
+              .findFirst();
+          final isMuted = conv?.isMuted ?? false;
+          if (!isMuted) {
+            final notifyTitle = isGroup
+                ? (conv != null && conv.name.isNotEmpty
+                    ? '${conv.name} (${model.senderName})'
+                    : model.senderName)
+                : model.senderName;
+            final notifyBody = model.type == ChatMessageType.text
+                ? model.content
+                : '[${model.type.name}]';
+            await LocalNotificationService.showNotification(
+              title: notifyTitle,
+              body: notifyBody,
+              largeIcon: model.senderAvatar,
+              payload: {
+                'type': 'chat_message',
+                'targetId': conversationId,
+                'senderName': isGroup ? (conv?.name ?? 'Group') : model.senderName,
+                'isGroup': isGroup.toString(),
+              },
+            );
+          }
+        }
+      }
     } catch (e) {
-      developer.log('Chat push dispatch notice: $e', name: 'AgoraChatService');
+      developer.log('Error handling incoming Agora message: $e', name: 'AgoraChatService');
+    }
+  }
+
+  /// Maps the reactions carried on a received `ChatMessage` into the Isar
+  /// shape `{emoji: [userIds]}`. Offline-safe: no extra network call.
+  ///
+  /// Note: the wire only reports up to three users per reaction
+  /// (`ChatMessageReaction.userList`); the reaction sheet may therefore show
+  /// fewer names than `userCount`. Counts remain correct because agggregation
+  /// on the server keeps `userCount` authoritative for display purposes.
+  /// Maps the reactions of a received `ChatMessage` into the Isar shape
+  /// `{emoji: [userIds]}`. `reactionList()` is a per-message native lookup;
+  /// failures degrade to "no reactions" rather than blocking ingestion.
+  Future<Map<String, List<String>>> _reactionsFromMessage(ChatMessage msg) async {
+    try {
+      return _reactionsFromChatReactionList(await msg.reactionList());
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Map<String, List<String>> _reactionsFromChatReactionList(
+    List<ChatMessageReaction>? reactList,
+  ) {
+    final parsed = <String, List<String>>{};
+    if (reactList == null) return parsed;
+    for (final r in reactList) {
+      if (r.userCount <= 0) continue;
+      // userList is non-nullable per the SDK model; count stays authoritative.
+      final users = r.userList.toList();
+      if (users.isEmpty) {
+        // The wire omits user ids in rare cases (only the count is known).
+        // Pad with a stable placeholder so the bubble count matches the
+        // authoritative server count.
+        parsed[r.reaction] = List.filled(r.userCount, 'unknown-user');
+      } else {
+        parsed[r.reaction] = users;
+      }
+    }
+    return parsed;
+  }
+
+  Future<bool> _isGroupConversation(String conversationId) async {
+    final isar = await _localDbService.database;
+    final conv = await isar.localChatConversations
+        .filter()
+        .conversationIdEqualTo(conversationId)
+        .findFirst();
+    return conv?.isGroup ?? conversationId.startsWith('group_');
+  }
+
+  Future<ChatConversationType> _agoraConversationType(String conversationId) async {
+    return (await _isGroupConversation(conversationId))
+        ? ChatConversationType.GroupChat
+        : ChatConversationType.Chat;
+  }
+
+  // ============================================================
+  // LOCAL PERSISTENCE (Isar)
+  // ============================================================
+
+  Future<void> _persistMessageLocally(
+    ChatMessageModel model, {
+    bool isGroup = false,
+    String? conversationName,
+    String? conversationAvatar,
+    bool countUnread = true,
+  }) async {
+    final isar = await _localDbService.database;
+
+    await isar.writeTxn(() async {
+      // 1. Save or update message
+      final existingMsg = await isar.localChatMessages
+          .filter()
+          .messageIdEqualTo(model.id)
+          .findFirst();
+
+      final localMsg = existingMsg ?? LocalChatMessage();
+      localMsg.messageId = model.id;
+      localMsg.conversationId = model.conversationId;
+      localMsg.senderId = model.senderId;
+      localMsg.senderName = model.senderName;
+      localMsg.senderAvatar = model.senderAvatar;
+      localMsg.type = model.type.asString;
+      localMsg.content = model.content;
+      localMsg.timestamp = model.timestamp;
+      localMsg.status = model.status.name;
+      localMsg.reactionsJson = jsonEncode(model.reactions);
+      localMsg.isEdited = model.isEdited;
+      localMsg.isDeleted = model.isDeleted;
+      localMsg.fileName = model.fileName;
+      localMsg.fileSize = model.fileSize;
+      localMsg.sharePayloadJson = model.sharePayload?.toJsonString();
+      localMsg.replyToId = model.replyToId;
+      localMsg.replyToSender = model.replyToSender;
+      localMsg.replyToText = model.replyToText;
+
+      await isar.localChatMessages.put(localMsg);
+
+      // 2. Update conversation snippet
+      final existingConv = await isar.localChatConversations
+          .filter()
+          .conversationIdEqualTo(model.conversationId)
+          .findFirst();
+
+      final conv = existingConv ?? LocalChatConversation();
+      conv.conversationId = model.conversationId;
+      if (conversationName != null && conversationName.isNotEmpty) {
+        conv.name = conversationName;
+      } else if (conv.name.isEmpty) {
+        conv.name = isGroup ? 'Group Chat' : model.senderName;
+      }
+      if (conversationAvatar != null && conversationAvatar.isNotEmpty) {
+        conv.avatarUrl = conversationAvatar;
+      }
+      conv.isGroup = isGroup || conv.isGroup;
+      conv.lastMessage = model.type == ChatMessageType.text
+          ? model.content
+          : '[${model.type.name}]';
+      conv.lastMessageTimestamp = model.timestamp;
+      conv.updatedAt = DateTime.now();
+
+      final currentUid = _authService.getCurrentUserId();
+      if (countUnread && model.senderId != currentUid) {
+        conv.unreadCount = conv.unreadCount + 1;
+      }
+
+      // Track participants for DMs so we know which user owns this conversation
+      if (!conv.isGroup) {
+        final members = Set<String>.from(conv.memberIds);
+        if (currentUid != null && currentUid.isNotEmpty) members.add(currentUid);
+        if (model.conversationId.isNotEmpty) members.add(model.conversationId);
+        if (model.senderId.isNotEmpty) members.add(model.senderId);
+        conv.memberIds = members.toList();
+      }
+
+      await isar.localChatConversations.put(conv);
+    });
+
+    await _syncConversationsFromLocal();
+    _notifyThreadUpdated(model.conversationId);
+    if (!isGroup && model.senderId.isNotEmpty) {
+      _notifyThreadUpdated(model.senderId);
+    }
+  }
+
+  void _notifyThreadUpdated(String conversationId) async {
+    final controller = _messagesControllers[conversationId];
+    if (controller != null && !controller.isClosed) {
+      final messages = await getMessages(conversationId);
+      controller.add(messages);
+    }
+  }
+
+  Future<void> _syncConversationsFromLocal() async {
+    final conversations = await getConversations();
+    if (!_conversationsController.isClosed) {
+      _conversationsController.add(conversations);
+    }
+  }
+
+  Future<void> _updateMessageStatus(
+    String messageId,
+    ChatMessageStatus status, {
+    String? conversationId,
+  }) async {
+    final isar = await _localDbService.database;
+    String? targetConvId = conversationId;
+    await isar.writeTxn(() async {
+      final msg = await isar.localChatMessages
+          .filter()
+          .messageIdEqualTo(messageId)
+          .findFirst();
+      if (msg != null) {
+        msg.status = status.name;
+        targetConvId ??= msg.conversationId;
+        await isar.localChatMessages.put(msg);
+      }
+    });
+
+    if (targetConvId != null && targetConvId!.isNotEmpty) {
+      _notifyThreadUpdated(targetConvId!);
+    }
+  }
+
+  Future<void> _markMessageRecalledLocally(
+    String conversationId,
+    String messageId,
+  ) async {
+    final isar = await _localDbService.database;
+    await isar.writeTxn(() async {
+      final msg = await isar.localChatMessages
+          .filter()
+          .messageIdEqualTo(messageId)
+          .findFirst();
+      if (msg != null) {
+        msg.isDeleted = true;
+        msg.content = 'This message was deleted';
+        await isar.localChatMessages.put(msg);
+      }
+      // A recall may arrive before we ever stored the message (fresh room);
+      // nothing to do in that case — the text message event will still apply
+      // its own state and the deleted marker only matters for stored rows.
+    });
+    _notifyThreadUpdated(conversationId);
+  }
+
+  /// Rebuilds an Agora `ChatMessage` from a locally stored row so queued
+  /// (`sending`/`failed`) messages can be replayed after reconnect.
+  ChatMessage? _rebuildAgoraMessage(LocalChatMessage local, String targetId, bool isGroup) {
+    final type = ChatMessageType.fromString(local.type);
+    final chatType = isGroup ? ChatType.GroupChat : ChatType.Chat;
+    final attributes = <String, dynamic>{
+      'senderName': local.senderName,
+      'senderAvatar': local.senderAvatar ?? '',
+      'localMessageId': local.messageId,
+      if (local.replyToId != null) 'replyToId': local.replyToId,
+      if (local.replyToSender != null) 'replyToSender': local.replyToSender,
+      if (local.replyToText != null) 'replyToText': local.replyToText,
+    };
+    try {
+      final ChatMessage msg;
+      switch (type) {
+        case ChatMessageType.text:
+          msg = ChatMessage.createTxtSendMessage(
+            targetId: targetId,
+            content: local.content,
+            chatType: chatType,
+          );
+          break;
+        case ChatMessageType.image:
+          msg = ChatMessage.createImageSendMessage(
+            targetId: targetId,
+            filePath: local.content,
+            displayName: local.fileName,
+            chatType: chatType,
+          );
+          break;
+        case ChatMessageType.gif:
+          msg = ChatMessage.createCustomSendMessage(
+            targetId: targetId,
+            event: 'gif',
+            params: {'payload': local.content},
+            chatType: chatType,
+          );
+          break;
+        case ChatMessageType.file:
+          msg = ChatMessage.createFileSendMessage(
+            targetId: targetId,
+            filePath: local.content,
+            displayName: local.fileName ?? local.content.split('/').last,
+            chatType: chatType,
+          );
+          break;
+        case ChatMessageType.boardShare:
+        case ChatMessageType.workspaceShare:
+          msg = ChatMessage.createCustomSendMessage(
+            targetId: targetId,
+            event: type == ChatMessageType.boardShare ? 'board_share' : 'workspace_share',
+            params: {'payload': local.content},
+            chatType: chatType,
+          );
+          break;
+      }
+      msg.attributes = attributes;
+      return msg;
+    } catch (e) {
+      developer.log('Failed to rebuild message for retry: $e', name: 'AgoraChatService');
+      return null;
+    }
+  }
+
+  /// Sends queued (`sending`) and failed messages when the connection returns.
+  /// A message that fails permanently stays marked `failed` so the UI can
+  /// offer a manual retry.
+  Future<void> _drainOfflineQueue() async {
+    try {
+      if (!await ChatClient.getInstance.isLoginBefore()) return;
+      if (!await ChatClient.getInstance.isConnected()) return;
+
+      final isar = await _localDbService.database;
+      final currentUid = _authService.getCurrentUserId();
+      if (currentUid == null || currentUid.isEmpty) return;
+
+      final queued = await isar.localChatMessages
+          .filter()
+          .senderIdEqualTo(currentUid)
+          .group((q) => q
+              .statusEqualTo(ChatMessageStatus.sending.name)
+              .or()
+              .statusEqualTo(ChatMessageStatus.failed.name))
+          .findAll();
+
+      for (final local in queued) {
+        final isGroup = await _isGroupConversation(local.conversationId);
+        final msg = _rebuildAgoraMessage(local, _sanitizeAgoraUid(local.conversationId), isGroup);
+        if (msg == null) continue;
+        try {
+          await ChatClient.getInstance.chatManager.sendMessage(msg);
+          await _updateMessageStatus(local.messageId, ChatMessageStatus.sent,
+              conversationId: local.conversationId);
+        } catch (e) {
+          developer.log('Queued message retry failed: $e', name: 'AgoraChatService');
+        }
+      }
+    } catch (e) {
+      developer.log('Offline queue drain error: $e', name: 'AgoraChatService');
+    }
+  }
+
+  // ============================================================
+  // SEND PATHS — Agora-only
+  // ============================================================
+
+  Future<ChatMessageModel> _send({
+    required ChatMessage agoraMsg,
+    required ChatMessageModel model,
+    required bool isGroup,
+  }) async {
+    final isLogged = await ChatClient.getInstance.isLoginBefore();
+    if (!isLogged) {
+      await _updateMessageStatus(model.id, ChatMessageStatus.failed,
+          conversationId: model.conversationId);
+      return model.copyWith(status: ChatMessageStatus.failed);
+    }
+    try {
+      final sent = await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
+      // The SDK mutates and returns the same instance; SUCCESS here means the
+      // message was accepted by the server (attachments may still upload —
+      // the global ChatMessageEvent covers that).
+      final delivered = sent.status == MessageStatus.SUCCESS;
+      await _updateMessageStatus(
+        model.id,
+        delivered ? ChatMessageStatus.sent : ChatMessageStatus.failed,
+        conversationId: model.conversationId,
+      );
+      return model.copyWith(
+        status: delivered ? ChatMessageStatus.sent : ChatMessageStatus.failed,
+      );
+    } catch (e, st) {
+      developer.log('Agora send failure: $e', name: 'AgoraChatService', stackTrace: st);
+      await _updateMessageStatus(model.id, ChatMessageStatus.failed,
+          conversationId: model.conversationId);
+      return model.copyWith(status: ChatMessageStatus.failed);
     }
   }
 
@@ -1155,7 +1318,6 @@ class AgoraChatServiceImpl implements ChatService {
       replyToText: replyToText,
     );
 
-    _syncedMessageIds.add(messageId);
     await _persistMessageLocally(
       model,
       isGroup: isGroup,
@@ -1163,125 +1325,21 @@ class AgoraChatServiceImpl implements ChatService {
       conversationAvatar: conversationAvatar,
     );
 
-    final firestoreChatId = _getFirestoreChatId(
-      conversationId: conversationId,
-      isGroup: isGroup,
-      currentUid: currentUid,
+    final agoraMsg = ChatMessage.createTxtSendMessage(
+      targetId: _sanitizeAgoraUid(conversationId),
+      content: text,
+      chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
     );
-    final participants = await _resolveParticipantIds(
-      conversationId: conversationId,
-      isGroup: isGroup,
-      currentUid: currentUid,
-    );
+    agoraMsg.attributes = {
+      'senderName': currentName,
+      'senderAvatar': currentAvatar ?? '',
+      'localMessageId': messageId,
+      if (replyToId != null) 'replyToId': replyToId,
+      if (replyToSender != null) 'replyToSender': replyToSender,
+      if (replyToText != null) 'replyToText': replyToText,
+    };
 
-    // Sync to Cloud Firestore for real-time delivery
-    bool firestorePersisted = false;
-    try {
-      const now = chatServerTimestamp;
-      await _chatRepository.mergeChat(firestoreChatId, {
-        'id': firestoreChatId,
-        'isGroup': isGroup,
-        'participantIds': participants,
-        'lastMessage': text,
-        'lastMessageTimestamp': now,
-        'lastSenderId': currentUid,
-        'lastSenderName': currentName,
-        'updatedAt': now,
-        'senderNames': {currentUid: currentName},
-        if (currentAvatar != null && currentAvatar.isNotEmpty)
-          'senderAvatars': {currentUid: currentAvatar},
-        if (conversationName != null && conversationName.isNotEmpty)
-          'name': conversationName,
-        if (conversationAvatar != null && conversationAvatar.isNotEmpty)
-          'avatarUrl': conversationAvatar,
-      });
-
-      await _chatRepository.setMessage(firestoreChatId, messageId, {
-        'id': messageId,
-        'conversationId': conversationId,
-        'senderId': currentUid,
-        'senderName': currentName,
-        if (currentAvatar != null) 'senderAvatar': currentAvatar,
-        'type': 'text',
-        'content': text,
-        'timestamp': now,
-        'status': 'sent',
-        'participantIds': participants,
-        'reactions': {},
-        'isEdited': false,
-        'isDeleted': false,
-        if (replyToId != null) 'replyToId': replyToId,
-        if (replyToSender != null) 'replyToSender': replyToSender,
-        if (replyToText != null) 'replyToText': replyToText,
-      });
-
-      firestorePersisted = true;
-      await _updateMessageStatus(messageId, ChatMessageStatus.sent, conversationId: conversationId);
-    } catch (e, st) {
-      developer.log('Firestore send text warning: $e',
-          name: 'AgoraChatService', error: e, stackTrace: st);
-    }
-
-    // Agora Chat SDK Send (parallel transport / local-first fallback)
-    try {
-      final agoraMsg = ChatMessage.createTxtSendMessage(
-        targetId: _sanitizeAgoraUid(conversationId),
-        content: text,
-        chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
-      );
-      agoraMsg.attributes = {
-        'senderName': currentName,
-        'senderAvatar': currentAvatar ?? '',
-        'localMessageId': messageId,
-        if (replyToId != null) 'replyToId': replyToId,
-        if (replyToSender != null) 'replyToSender': replyToSender,
-        if (replyToText != null) 'replyToText': replyToText,
-      };
-      final isLogged = await ChatClient.getInstance.isLoginBefore();
-      if (isLogged) {
-        try {
-          await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
-        } catch (e) {
-          developer.log('Agora send text warning: $e', name: 'AgoraChatService');
-        }
-      }
-      await _updateMessageStatus(
-        messageId,
-        firestorePersisted ? ChatMessageStatus.sent : ChatMessageStatus.failed,
-        conversationId: conversationId,
-      );
-
-      if (!isGroup) {
-        _dispatchPushNotification(
-          recipientUid: conversationId,
-          title: currentName,
-          body: text,
-          conversationId: conversationId,
-        );
-      }
-
-      // Only report sent when the durable store (Firestore) persisted the
-      // message; otherwise mark failed so the UI can offer a retry.
-      return model.copyWith(
-        status: firestorePersisted
-            ? ChatMessageStatus.sent
-            : ChatMessageStatus.failed,
-      );
-    } catch (e) {
-      developer.log('Agora send text failure: $e', name: 'AgoraChatService');
-      if (!firestorePersisted) {
-        await _updateMessageStatus(
-          messageId,
-          ChatMessageStatus.failed,
-          conversationId: conversationId,
-        );
-      }
-      return model.copyWith(
-        status: firestorePersisted
-            ? ChatMessageStatus.sent
-            : ChatMessageStatus.failed,
-      );
-    }
+    return _send(agoraMsg: agoraMsg, model: model, isGroup: isGroup);
   }
 
   @override
@@ -1322,7 +1380,6 @@ class AgoraChatServiceImpl implements ChatService {
       replyToText: replyToText,
     );
 
-    _syncedMessageIds.add(messageId);
     await _persistMessageLocally(
       model,
       isGroup: isGroup,
@@ -1330,127 +1387,22 @@ class AgoraChatServiceImpl implements ChatService {
       conversationAvatar: conversationAvatar,
     );
 
-    final firestoreChatId = _getFirestoreChatId(
-      conversationId: conversationId,
-      isGroup: isGroup,
-      currentUid: currentUid,
+    final agoraMsg = ChatMessage.createImageSendMessage(
+      targetId: _sanitizeAgoraUid(conversationId),
+      filePath: filePath,
+      displayName: fileName,
+      chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
     );
-    final participants = await _resolveParticipantIds(
-      conversationId: conversationId,
-      isGroup: isGroup,
-      currentUid: currentUid,
-    );
+    agoraMsg.attributes = {
+      'senderName': currentName,
+      'senderAvatar': currentAvatar ?? '',
+      'localMessageId': messageId,
+      if (replyToId != null) 'replyToId': replyToId,
+      if (replyToSender != null) 'replyToSender': replyToSender,
+      if (replyToText != null) 'replyToText': replyToText,
+    };
 
-    // Sync to Cloud Firestore
-    bool firestorePersisted = false;
-    try {
-      const now = chatServerTimestamp;
-      await _chatRepository.mergeChat(firestoreChatId, {
-        'id': firestoreChatId,
-        'isGroup': isGroup,
-        'participantIds': participants,
-        'lastMessage': '[image]',
-        'lastMessageTimestamp': now,
-        'lastSenderId': currentUid,
-        'lastSenderName': currentName,
-        'updatedAt': now,
-        'senderNames': {currentUid: currentName},
-        if (currentAvatar != null && currentAvatar.isNotEmpty)
-          'senderAvatars': {currentUid: currentAvatar},
-        if (conversationName != null && conversationName.isNotEmpty)
-          'name': conversationName,
-        if (conversationAvatar != null && conversationAvatar.isNotEmpty)
-          'avatarUrl': conversationAvatar,
-      });
-
-      await _chatRepository.setMessage(firestoreChatId, messageId, {
-        'id': messageId,
-        'conversationId': conversationId,
-        'senderId': currentUid,
-        'senderName': currentName,
-        if (currentAvatar != null) 'senderAvatar': currentAvatar,
-        'type': 'image',
-        'content': filePath,
-        'timestamp': now,
-        'status': 'sent',
-        'participantIds': participants,
-        'reactions': {},
-        'isEdited': false,
-        'isDeleted': false,
-        if (fileName.isNotEmpty) 'fileName': fileName,
-        if (fileSize != null) 'fileSize': fileSize,
-        if (replyToId != null) 'replyToId': replyToId,
-        if (replyToSender != null) 'replyToSender': replyToSender,
-        if (replyToText != null) 'replyToText': replyToText,
-      });
-
-      firestorePersisted = true;
-      await _updateMessageStatus(messageId, ChatMessageStatus.sent, conversationId: conversationId);
-    } catch (e, st) {
-      developer.log('Firestore send image warning: $e',
-          name: 'AgoraChatService', error: e, stackTrace: st);
-    }
-
-    try {
-      final agoraMsg = ChatMessage.createImageSendMessage(
-        targetId: _sanitizeAgoraUid(conversationId),
-        filePath: filePath,
-        displayName: fileName,
-        chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
-      );
-      agoraMsg.attributes = {
-        'senderName': currentName,
-        'senderAvatar': currentAvatar ?? '',
-        'localMessageId': messageId,
-        if (replyToId != null) 'replyToId': replyToId,
-        if (replyToSender != null) 'replyToSender': replyToSender,
-        if (replyToText != null) 'replyToText': replyToText,
-      };
-      final isLogged = await ChatClient.getInstance.isLoginBefore();
-      if (isLogged) {
-        try {
-          await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
-        } catch (e) {
-          developer.log('Agora send image warning: $e', name: 'AgoraChatService');
-        }
-      }
-      await _updateMessageStatus(
-        messageId,
-        firestorePersisted ? ChatMessageStatus.sent : ChatMessageStatus.failed,
-        conversationId: conversationId,
-      );
-
-      if (!isGroup) {
-        _dispatchPushNotification(
-          recipientUid: conversationId,
-          title: currentName,
-          body: '📷 Sent an image',
-          conversationId: conversationId,
-        );
-      }
-
-      // Only report sent when the durable store (Firestore) persisted the
-      // message; otherwise mark failed so the UI can offer a retry.
-      return model.copyWith(
-        status: firestorePersisted
-            ? ChatMessageStatus.sent
-            : ChatMessageStatus.failed,
-      );
-    } catch (e) {
-      developer.log('Agora send image failure: $e', name: 'AgoraChatService');
-      if (!firestorePersisted) {
-        await _updateMessageStatus(
-          messageId,
-          ChatMessageStatus.failed,
-          conversationId: conversationId,
-        );
-      }
-      return model.copyWith(
-        status: firestorePersisted
-            ? ChatMessageStatus.sent
-            : ChatMessageStatus.failed,
-      );
-    }
+    return _send(agoraMsg: agoraMsg, model: model, isGroup: isGroup);
   }
 
   @override
@@ -1485,7 +1437,6 @@ class AgoraChatServiceImpl implements ChatService {
       replyToText: replyToText,
     );
 
-    _syncedMessageIds.add(messageId);
     await _persistMessageLocally(
       model,
       isGroup: isGroup,
@@ -1493,125 +1444,22 @@ class AgoraChatServiceImpl implements ChatService {
       conversationAvatar: conversationAvatar,
     );
 
-    final firestoreChatId = _getFirestoreChatId(
-      conversationId: conversationId,
-      isGroup: isGroup,
-      currentUid: currentUid,
+    final agoraMsg = ChatMessage.createCustomSendMessage(
+      targetId: _sanitizeAgoraUid(conversationId),
+      event: 'gif',
+      params: {'payload': gifUrl},
+      chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
     );
-    final participants = await _resolveParticipantIds(
-      conversationId: conversationId,
-      isGroup: isGroup,
-      currentUid: currentUid,
-    );
+    agoraMsg.attributes = {
+      'senderName': currentName,
+      'senderAvatar': currentAvatar ?? '',
+      'localMessageId': messageId,
+      if (replyToId != null) 'replyToId': replyToId,
+      if (replyToSender != null) 'replyToSender': replyToSender,
+      if (replyToText != null) 'replyToText': replyToText,
+    };
 
-    // Sync to Cloud Firestore
-    bool firestorePersisted = false;
-    try {
-      const now = chatServerTimestamp;
-      await _chatRepository.mergeChat(firestoreChatId, {
-        'id': firestoreChatId,
-        'isGroup': isGroup,
-        'participantIds': participants,
-        'lastMessage': '[gif]',
-        'lastMessageTimestamp': now,
-        'lastSenderId': currentUid,
-        'lastSenderName': currentName,
-        'updatedAt': now,
-        'senderNames': {currentUid: currentName},
-        if (currentAvatar != null && currentAvatar.isNotEmpty)
-          'senderAvatars': {currentUid: currentAvatar},
-        if (conversationName != null && conversationName.isNotEmpty)
-          'name': conversationName,
-        if (conversationAvatar != null && conversationAvatar.isNotEmpty)
-          'avatarUrl': conversationAvatar,
-      });
-
-      await _chatRepository.setMessage(firestoreChatId, messageId, {
-        'id': messageId,
-        'conversationId': conversationId,
-        'senderId': currentUid,
-        'senderName': currentName,
-        if (currentAvatar != null) 'senderAvatar': currentAvatar,
-        'type': 'gif',
-        'content': gifUrl,
-        'timestamp': now,
-        'status': 'sent',
-        'participantIds': participants,
-        'reactions': {},
-        'isEdited': false,
-        'isDeleted': false,
-        if (replyToId != null) 'replyToId': replyToId,
-        if (replyToSender != null) 'replyToSender': replyToSender,
-        if (replyToText != null) 'replyToText': replyToText,
-      });
-
-      firestorePersisted = true;
-      await _updateMessageStatus(messageId, ChatMessageStatus.sent, conversationId: conversationId);
-    } catch (e, st) {
-      developer.log('Firestore send GIF warning: $e',
-          name: 'AgoraChatService', error: e, stackTrace: st);
-    }
-
-    try {
-      final agoraMsg = ChatMessage.createCustomSendMessage(
-        targetId: _sanitizeAgoraUid(conversationId),
-        event: 'gif',
-        params: {'payload': gifUrl},
-        chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
-      );
-      agoraMsg.attributes = {
-        'senderName': currentName,
-        'senderAvatar': currentAvatar ?? '',
-        'localMessageId': messageId,
-        if (replyToId != null) 'replyToId': replyToId,
-        if (replyToSender != null) 'replyToSender': replyToSender,
-        if (replyToText != null) 'replyToText': replyToText,
-      };
-      final isLogged = await ChatClient.getInstance.isLoginBefore();
-      if (isLogged) {
-        try {
-          await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
-        } catch (e) {
-          developer.log('Agora send gif warning: $e', name: 'AgoraChatService');
-        }
-      }
-      await _updateMessageStatus(
-        messageId,
-        firestorePersisted ? ChatMessageStatus.sent : ChatMessageStatus.failed,
-        conversationId: conversationId,
-      );
-
-      if (!isGroup) {
-        _dispatchPushNotification(
-          recipientUid: conversationId,
-          title: currentName,
-          body: '🎬 Sent a GIF',
-          conversationId: conversationId,
-        );
-      }
-
-      // Only report sent when the durable store (Firestore) persisted the
-      // message; otherwise mark failed so the UI can offer a retry.
-      return model.copyWith(
-        status: firestorePersisted
-            ? ChatMessageStatus.sent
-            : ChatMessageStatus.failed,
-      );
-    } catch (e) {
-      developer.log('Agora send GIF failure: $e', name: 'AgoraChatService');
-      if (!firestorePersisted) {
-        await _updateMessageStatus(
-          messageId,
-          ChatMessageStatus.failed,
-          conversationId: conversationId,
-        );
-      }
-      return model.copyWith(
-        status: firestorePersisted
-            ? ChatMessageStatus.sent
-            : ChatMessageStatus.failed,
-      );
-    }
+    return _send(agoraMsg: agoraMsg, model: model, isGroup: isGroup);
   }
 
   @override
@@ -1650,7 +1498,6 @@ class AgoraChatServiceImpl implements ChatService {
       replyToText: replyToText,
     );
 
-    _syncedMessageIds.add(messageId);
     await _persistMessageLocally(
       model,
       isGroup: isGroup,
@@ -1658,127 +1505,22 @@ class AgoraChatServiceImpl implements ChatService {
       conversationAvatar: conversationAvatar,
     );
 
-    final firestoreChatId = _getFirestoreChatId(
-      conversationId: conversationId,
-      isGroup: isGroup,
-      currentUid: currentUid,
+    final agoraMsg = ChatMessage.createFileSendMessage(
+      targetId: _sanitizeAgoraUid(conversationId),
+      filePath: filePath,
+      displayName: fileName,
+      chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
     );
-    final participants = await _resolveParticipantIds(
-      conversationId: conversationId,
-      isGroup: isGroup,
-      currentUid: currentUid,
-    );
+    agoraMsg.attributes = {
+      'senderName': currentName,
+      'senderAvatar': currentAvatar ?? '',
+      'localMessageId': messageId,
+      if (replyToId != null) 'replyToId': replyToId,
+      if (replyToSender != null) 'replyToSender': replyToSender,
+      if (replyToText != null) 'replyToText': replyToText,
+    };
 
-    // Sync to Cloud Firestore
-    bool firestorePersisted = false;
-    try {
-      const now = chatServerTimestamp;
-      await _chatRepository.mergeChat(firestoreChatId, {
-        'id': firestoreChatId,
-        'isGroup': isGroup,
-        'participantIds': participants,
-        'lastMessage': '[file] $fileName',
-        'lastMessageTimestamp': now,
-        'lastSenderId': currentUid,
-        'lastSenderName': currentName,
-        'updatedAt': now,
-        'senderNames': {currentUid: currentName},
-        if (currentAvatar != null && currentAvatar.isNotEmpty)
-          'senderAvatars': {currentUid: currentAvatar},
-        if (conversationName != null && conversationName.isNotEmpty)
-          'name': conversationName,
-        if (conversationAvatar != null && conversationAvatar.isNotEmpty)
-          'avatarUrl': conversationAvatar,
-      });
-
-      await _chatRepository.setMessage(firestoreChatId, messageId, {
-        'id': messageId,
-        'conversationId': conversationId,
-        'senderId': currentUid,
-        'senderName': currentName,
-        if (currentAvatar != null) 'senderAvatar': currentAvatar,
-        'type': 'file',
-        'content': filePath,
-        'timestamp': now,
-        'status': 'sent',
-        'participantIds': participants,
-        'reactions': {},
-        'isEdited': false,
-        'isDeleted': false,
-        'fileName': fileName,
-        if (fileSize != null) 'fileSize': fileSize,
-        if (replyToId != null) 'replyToId': replyToId,
-        if (replyToSender != null) 'replyToSender': replyToSender,
-        if (replyToText != null) 'replyToText': replyToText,
-      });
-
-      firestorePersisted = true;
-      await _updateMessageStatus(messageId, ChatMessageStatus.sent, conversationId: conversationId);
-    } catch (e, st) {
-      developer.log('Firestore send file warning: $e',
-          name: 'AgoraChatService', error: e, stackTrace: st);
-    }
-
-    try {
-      final agoraMsg = ChatMessage.createFileSendMessage(
-        targetId: _sanitizeAgoraUid(conversationId),
-        filePath: filePath,
-        displayName: fileName,
-        chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
-      );
-      agoraMsg.attributes = {
-        'senderName': currentName,
-        'senderAvatar': currentAvatar ?? '',
-        'localMessageId': messageId,
-        if (replyToId != null) 'replyToId': replyToId,
-        if (replyToSender != null) 'replyToSender': replyToSender,
-        if (replyToText != null) 'replyToText': replyToText,
-      };
-      final isLogged = await ChatClient.getInstance.isLoginBefore();
-      if (isLogged) {
-        try {
-          await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
-        } catch (e) {
-          developer.log('Agora send file warning: $e', name: 'AgoraChatService');
-        }
-      }
-      await _updateMessageStatus(
-        messageId,
-        firestorePersisted ? ChatMessageStatus.sent : ChatMessageStatus.failed,
-        conversationId: conversationId,
-      );
-
-      if (!isGroup) {
-        _dispatchPushNotification(
-          recipientUid: conversationId,
-          title: currentName,
-          body: '📎 Sent a file: $fileName',
-          conversationId: conversationId,
-        );
-      }
-
-      // Only report sent when the durable store (Firestore) persisted the
-      // message; otherwise mark failed so the UI can offer a retry.
-      return model.copyWith(
-        status: firestorePersisted
-            ? ChatMessageStatus.sent
-            : ChatMessageStatus.failed,
-      );
-    } catch (e) {
-      developer.log('Agora send file failure: $e', name: 'AgoraChatService');
-      if (!firestorePersisted) {
-        await _updateMessageStatus(
-          messageId,
-          ChatMessageStatus.failed,
-          conversationId: conversationId,
-        );
-      }
-      return model.copyWith(
-        status: firestorePersisted
-            ? ChatMessageStatus.sent
-            : ChatMessageStatus.failed,
-      );
-    }
+    return _send(agoraMsg: agoraMsg, model: model, isGroup: isGroup);
   }
 
   @override
@@ -1815,7 +1557,6 @@ class AgoraChatServiceImpl implements ChatService {
       replyToText: replyToText,
     );
 
-    _syncedMessageIds.add(messageId);
     await _persistMessageLocally(
       model,
       isGroup: isGroup,
@@ -1823,155 +1564,27 @@ class AgoraChatServiceImpl implements ChatService {
       conversationAvatar: conversationAvatar,
     );
 
-    final firestoreChatId = _getFirestoreChatId(
-      conversationId: conversationId,
-      isGroup: isGroup,
-      currentUid: currentUid,
+    final agoraMsg = ChatMessage.createCustomSendMessage(
+      targetId: _sanitizeAgoraUid(conversationId),
+      event: isBoard ? 'board_share' : 'workspace_share',
+      params: {'payload': payload.toJsonString()},
+      chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
     );
-    final participants = await _resolveParticipantIds(
-      conversationId: conversationId,
-      isGroup: isGroup,
-      currentUid: currentUid,
-    );
+    agoraMsg.attributes = {
+      'senderName': currentName,
+      'senderAvatar': currentAvatar ?? '',
+      'localMessageId': messageId,
+      if (replyToId != null) 'replyToId': replyToId,
+      if (replyToSender != null) 'replyToSender': replyToSender,
+      if (replyToText != null) 'replyToText': replyToText,
+    };
 
-    // Sync to Cloud Firestore
-    bool firestorePersisted = false;
-    try {
-      const now = chatServerTimestamp;
-      await _chatRepository.mergeChat(firestoreChatId, {
-        'id': firestoreChatId,
-        'isGroup': isGroup,
-        'participantIds': participants,
-        'lastMessage': isBoard
-            ? '🎨 Shared board: ${payload.title}'
-            : '💼 Shared workspace: ${payload.title}',
-        'lastMessageTimestamp': now,
-        'lastSenderId': currentUid,
-        'lastSenderName': currentName,
-        'updatedAt': now,
-        'senderNames': {currentUid: currentName},
-        if (currentAvatar != null && currentAvatar.isNotEmpty)
-          'senderAvatars': {currentUid: currentAvatar},
-        if (conversationName != null && conversationName.isNotEmpty)
-          'name': conversationName,
-        if (conversationAvatar != null && conversationAvatar.isNotEmpty)
-          'avatarUrl': conversationAvatar,
-      });
-
-      await _chatRepository.setMessage(firestoreChatId, messageId, {
-        'id': messageId,
-        'conversationId': conversationId,
-        'senderId': currentUid,
-        'senderName': currentName,
-        if (currentAvatar != null) 'senderAvatar': currentAvatar,
-        'type': isBoard ? 'board_share' : 'workspace_share',
-        'content': payload.toJsonString(),
-        'sharePayload': payload.toMap(),
-        'timestamp': now,
-        'status': 'sent',
-        'participantIds': participants,
-        'reactions': {},
-        'isEdited': false,
-        'isDeleted': false,
-        if (replyToId != null) 'replyToId': replyToId,
-        if (replyToSender != null) 'replyToSender': replyToSender,
-        if (replyToText != null) 'replyToText': replyToText,
-      });
-
-      firestorePersisted = true;
-      await _updateMessageStatus(messageId, ChatMessageStatus.sent, conversationId: conversationId);
-    } catch (e, st) {
-      developer.log('Firestore send share warning: $e',
-          name: 'AgoraChatService', error: e, stackTrace: st);
-    }
-
-    try {
-      final agoraMsg = ChatMessage.createCustomSendMessage(
-        targetId: _sanitizeAgoraUid(conversationId),
-        event: isBoard ? 'board_share' : 'workspace_share',
-        params: {'payload': payload.toJsonString()},
-        chatType: isGroup ? ChatType.GroupChat : ChatType.Chat,
-      );
-      agoraMsg.attributes = {
-        'senderName': currentName,
-        'senderAvatar': currentAvatar ?? '',
-        'localMessageId': messageId,
-        if (replyToId != null) 'replyToId': replyToId,
-        if (replyToSender != null) 'replyToSender': replyToSender,
-        if (replyToText != null) 'replyToText': replyToText,
-      };
-      final isLogged = await ChatClient.getInstance.isLoginBefore();
-      if (isLogged) {
-        try {
-          await ChatClient.getInstance.chatManager.sendMessage(agoraMsg);
-        } catch (e) {
-          developer.log('Agora send share warning: $e', name: 'AgoraChatService');
-        }
-      }
-      await _updateMessageStatus(
-        messageId,
-        firestorePersisted ? ChatMessageStatus.sent : ChatMessageStatus.failed,
-        conversationId: conversationId,
-      );
-
-      if (!isGroup) {
-        _dispatchPushNotification(
-          recipientUid: conversationId,
-          title: currentName,
-          body: isBoard
-              ? '🎨 Shared board: ${payload.title}'
-              : '💼 Shared workspace: ${payload.title}',
-          conversationId: conversationId,
-        );
-      }
-
-      // Only report sent when the durable store (Firestore) persisted the
-      // message; otherwise mark failed so the UI can offer a retry.
-      return model.copyWith(
-        status: firestorePersisted
-            ? ChatMessageStatus.sent
-            : ChatMessageStatus.failed,
-      );
-    } catch (e) {
-      developer.log('Agora send share card failure: $e', name: 'AgoraChatService');
-      if (!firestorePersisted) {
-        await _updateMessageStatus(
-          messageId,
-          ChatMessageStatus.failed,
-          conversationId: conversationId,
-        );
-      }
-      return model.copyWith(
-        status: firestorePersisted
-            ? ChatMessageStatus.sent
-            : ChatMessageStatus.failed,
-      );
-    }
+    return _send(agoraMsg: agoraMsg, model: model, isGroup: isGroup);
   }
 
-  Future<void> _updateMessageStatus(
-    String messageId,
-    ChatMessageStatus status, {
-    String? conversationId,
-  }) async {
-    final isar = await _localDbService.database;
-    String? targetConvId = conversationId;
-    await isar.writeTxn(() async {
-      final msg = await isar.localChatMessages
-          .filter()
-          .messageIdEqualTo(messageId)
-          .findFirst();
-      if (msg != null) {
-        msg.status = status.name;
-        targetConvId ??= msg.conversationId;
-        await isar.localChatMessages.put(msg);
-      }
-    });
-
-    if (targetConvId != null && targetConvId!.isNotEmpty) {
-      _notifyThreadUpdated(targetConvId!);
-    }
-  }
+  // ============================================================
+  // REACTIONS / EDIT / DELETE — Agora-authoritative
+  // ============================================================
 
   @override
   Future<void> addReaction({
@@ -1986,7 +1599,9 @@ class AgoraChatServiceImpl implements ChatService {
           messageId: messageId,
           reaction: emoji,
         );
-      } catch (_) {}
+      } catch (e) {
+        developer.log('Agora addReaction failed: $e', name: 'AgoraChatService');
+      }
     }
 
     final currentUid = _authService.getCurrentUserId() ?? 'me';
@@ -2031,18 +1646,6 @@ class AgoraChatServiceImpl implements ChatService {
       }
     });
 
-    final firestoreChatId = _getFirestoreChatId(
-      conversationId: conversationId,
-      isGroup: conversationId.startsWith('group_'),
-      currentUid: currentUid,
-    );
-    try {
-      await _chatRepository
-          .updateMessage(firestoreChatId, messageId, {'reactions': reactions});
-    } catch (e) {
-      developer.log('Firestore reaction sync warning: $e', name: 'AgoraChatService');
-    }
-
     _notifyThreadUpdated(conversationId);
     if (targetMsg != null) {
       if (targetMsg!.conversationId.isNotEmpty && targetMsg!.conversationId != conversationId) {
@@ -2067,7 +1670,9 @@ class AgoraChatServiceImpl implements ChatService {
           messageId: messageId,
           reaction: emoji,
         );
-      } catch (_) {}
+      } catch (e) {
+        developer.log('Agora removeReaction failed: $e', name: 'AgoraChatService');
+      }
     }
 
     final currentUid = _authService.getCurrentUserId() ?? 'me';
@@ -2110,18 +1715,6 @@ class AgoraChatServiceImpl implements ChatService {
       }
     });
 
-    final firestoreChatId = _getFirestoreChatId(
-      conversationId: conversationId,
-      isGroup: conversationId.startsWith('group_'),
-      currentUid: currentUid,
-    );
-    try {
-      await _chatRepository
-          .updateMessage(firestoreChatId, messageId, {'reactions': reactions});
-    } catch (e) {
-      developer.log('Firestore remove reaction warning: $e', name: 'AgoraChatService');
-    }
-
     _notifyThreadUpdated(conversationId);
     if (targetMsg != null) {
       if (targetMsg!.conversationId.isNotEmpty && targetMsg!.conversationId != conversationId) {
@@ -2144,7 +1737,9 @@ class AgoraChatServiceImpl implements ChatService {
         messageId: messageId,
         msgBody: ChatTextMessageBody(content: newContent),
       );
-    } catch (_) {}
+    } catch (e) {
+      developer.log('Agora modifyMessage failed: $e', name: 'AgoraChatService');
+    }
 
     final isar = await _localDbService.database;
     await isar.writeTxn(() async {
@@ -2159,20 +1754,6 @@ class AgoraChatServiceImpl implements ChatService {
       }
     });
 
-    final firestoreChatId = _getFirestoreChatId(
-      conversationId: conversationId,
-      isGroup: conversationId.startsWith('group_'),
-    );
-    try {
-      await _chatRepository
-          .updateMessage(firestoreChatId, messageId, {
-        'content': newContent,
-        'isEdited': true,
-      });
-    } catch (e) {
-      developer.log('Firestore edit sync warning: $e', name: 'AgoraChatService');
-    }
-
     _notifyThreadUpdated(conversationId);
   }
 
@@ -2181,46 +1762,31 @@ class AgoraChatServiceImpl implements ChatService {
     required String conversationId,
     required String messageId,
   }) async {
+    // Server-side recall propagates the deletion to every member via
+    // onMessagesRecalled / onMessagesRecalledInfo. Local-only deletion is the
+    // fallback when the sender no longer controls the message.
     try {
-      final conv = await ChatClient.getInstance.chatManager.getConversation(conversationId);
-      if (conv != null) {
-        await conv.deleteMessage(messageId);
-      }
-    } catch (_) {}
-
-    final isar = await _localDbService.database;
-    await isar.writeTxn(() async {
-      final msg = await isar.localChatMessages
-          .filter()
-          .messageIdEqualTo(messageId)
-          .findFirst();
-      if (msg != null) {
-        msg.isDeleted = true;
-        msg.content = 'This message was deleted';
-        await isar.localChatMessages.put(msg);
-      }
-    });
-
-    final firestoreChatId = _getFirestoreChatId(
-      conversationId: conversationId,
-      isGroup: conversationId.startsWith('group_'),
-    );
-    try {
-      await _chatRepository
-          .updateMessage(firestoreChatId, messageId, {
-        'content': 'This message was deleted',
-        'isDeleted': true,
-      });
+      await ChatClient.getInstance.chatManager.recallMessage(messageId);
     } catch (e) {
-      developer.log('Firestore delete sync warning: $e', name: 'AgoraChatService');
+      developer.log('Agora recallMessage fallback (local delete): $e',
+          name: 'AgoraChatService');
+      try {
+        final convType = await _agoraConversationType(conversationId);
+        final conv = await ChatClient.getInstance.chatManager
+            .getConversation(conversationId, type: convType);
+        if (conv != null) {
+          await conv.deleteMessage(messageId);
+        }
+      } catch (_) {}
     }
 
-    _notifyThreadUpdated(conversationId);
+    await _markMessageRecalledLocally(conversationId, messageId);
   }
 
   // ============================================================
-  // GROUP CHAT MANAGEMENT
+  // GROUP MANAGEMENT — Agora groups are the source of truth
   // ============================================================
+
   @override
   Future<ChatConversationModel> createGroup({
     required String name,
@@ -2238,6 +1804,7 @@ class AgoraChatServiceImpl implements ChatService {
       );
       final group = await ChatClient.getInstance.groupManager.createGroup(
         groupName: name,
+        avatarUrl: iconUrl,
         desc: description,
         options: options,
         inviteMembers: memberIds.map(_sanitizeAgoraUid).toList(),
@@ -2246,7 +1813,8 @@ class AgoraChatServiceImpl implements ChatService {
         agoraGroupId = group.groupId;
       }
     } catch (e) {
-      developer.log('Agora createGroup notice (fallback to Firestore): $e', name: 'AgoraChatService');
+      developer.log('Agora createGroup failed (offline fallback id): $e',
+          name: 'AgoraChatService');
     }
 
     final groupId = agoraGroupId ?? 'group_${const Uuid().v4().substring(0, 8)}';
@@ -2271,25 +1839,6 @@ class AgoraChatServiceImpl implements ChatService {
 
       await isar.localChatConversations.put(groupConv);
     });
-
-    try {
-      const now = chatServerTimestamp;
-      await _chatRepository.setChat(groupId, {
-        'id': groupId,
-        'isGroup': true,
-        'name': name,
-        'description': description,
-        if (iconUrl != null && iconUrl.isNotEmpty) 'avatarUrl': iconUrl,
-        'ownerId': currentUid,
-        'adminIds': [currentUid],
-        'participantIds': allMembers,
-        'lastMessage': 'Group created',
-        'lastMessageTimestamp': now,
-        'updatedAt': now,
-      });
-    } catch (e) {
-      developer.log('Firestore createGroup warning: $e', name: 'AgoraChatService');
-    }
 
     await _syncConversationsFromLocal();
 
@@ -2326,12 +1875,20 @@ class AgoraChatServiceImpl implements ChatService {
 
     try {
       if (name != null && name.isNotEmpty) {
-        await ChatClient.getInstance.groupManager.changeGroupName(groupId, name);
+        await ChatClient.getInstance.groupManager.updateGroupName(groupId, name);
       }
       if (description != null) {
-        await ChatClient.getInstance.groupManager.changeGroupDescription(groupId, description);
+        await ChatClient.getInstance.groupManager.updateGroupDesc(groupId, description);
       }
-    } catch (_) {}
+      if (iconUrl != null && iconUrl.isNotEmpty) {
+        await ChatClient.getInstance.groupManager.updateGroupAvatar(
+          groupId: groupId,
+          avatarUrl: iconUrl,
+        );
+      }
+    } catch (e) {
+      developer.log('Agora group update failed: $e', name: 'AgoraChatService');
+    }
 
     await isar.writeTxn(() async {
       final target = await isar.localChatConversations
@@ -2346,18 +1903,6 @@ class AgoraChatServiceImpl implements ChatService {
         await isar.localChatConversations.put(target);
       }
     });
-
-    try {
-      final updates = <String, dynamic>{
-        'updatedAt': chatServerTimestamp,
-      };
-      if (name != null && name.isNotEmpty) updates['name'] = name;
-      if (description != null) updates['description'] = description;
-      if (iconUrl != null && iconUrl.isNotEmpty) updates['avatarUrl'] = iconUrl;
-      await _chatRepository.updateChat(groupId, updates);
-    } catch (e) {
-      developer.log('Firestore updateGroupInfo warning: $e', name: 'AgoraChatService');
-    }
 
     await _syncConversationsFromLocal();
   }
@@ -2382,7 +1927,9 @@ class AgoraChatServiceImpl implements ChatService {
         groupId,
         memberIds.map(_sanitizeAgoraUid).toList(),
       );
-    } catch (_) {}
+    } catch (e) {
+      developer.log('Agora addMembers failed: $e', name: 'AgoraChatService');
+    }
 
     await isar.writeTxn(() async {
       final target = await isar.localChatConversations
@@ -2397,15 +1944,6 @@ class AgoraChatServiceImpl implements ChatService {
         await isar.localChatConversations.put(target);
       }
     });
-
-    try {
-      await _chatRepository.updateChat(groupId, {
-        'participantIds': ChatArrayOp.union(memberIds),
-        'updatedAt': chatServerTimestamp,
-      });
-    } catch (e) {
-      developer.log('Firestore addGroupMembers warning: $e', name: 'AgoraChatService');
-    }
 
     await _syncConversationsFromLocal();
   }
@@ -2430,7 +1968,9 @@ class AgoraChatServiceImpl implements ChatService {
         groupId,
         [_sanitizeAgoraUid(memberId)],
       );
-    } catch (_) {}
+    } catch (e) {
+      developer.log('Agora removeMembers failed: $e', name: 'AgoraChatService');
+    }
 
     await isar.writeTxn(() async {
       final target = await isar.localChatConversations
@@ -2448,16 +1988,6 @@ class AgoraChatServiceImpl implements ChatService {
         await isar.localChatConversations.put(target);
       }
     });
-
-    try {
-      await _chatRepository.updateChat(groupId, {
-        'participantIds': ChatArrayOp.remove([memberId]),
-        'adminIds': ChatArrayOp.remove([memberId]),
-        'updatedAt': chatServerTimestamp,
-      });
-    } catch (e) {
-      developer.log('Firestore removeGroupMember warning: $e', name: 'AgoraChatService');
-    }
 
     await _syncConversationsFromLocal();
   }
@@ -2482,7 +2012,9 @@ class AgoraChatServiceImpl implements ChatService {
         groupId,
         _sanitizeAgoraUid(memberId),
       );
-    } catch (_) {}
+    } catch (e) {
+      developer.log('Agora addAdmin failed: $e', name: 'AgoraChatService');
+    }
 
     await isar.writeTxn(() async {
       final target = await isar.localChatConversations
@@ -2497,15 +2029,6 @@ class AgoraChatServiceImpl implements ChatService {
         await isar.localChatConversations.put(target);
       }
     });
-
-    try {
-      await _chatRepository.updateChat(groupId, {
-        'adminIds': ChatArrayOp.union([memberId]),
-        'updatedAt': chatServerTimestamp,
-      });
-    } catch (e) {
-      developer.log('Firestore promoteAdmin warning: $e', name: 'AgoraChatService');
-    }
 
     await _syncConversationsFromLocal();
   }
@@ -2530,7 +2053,9 @@ class AgoraChatServiceImpl implements ChatService {
         groupId,
         _sanitizeAgoraUid(memberId),
       );
-    } catch (_) {}
+    } catch (e) {
+      developer.log('Agora removeAdmin failed: $e', name: 'AgoraChatService');
+    }
 
     await isar.writeTxn(() async {
       final target = await isar.localChatConversations
@@ -2545,15 +2070,6 @@ class AgoraChatServiceImpl implements ChatService {
         await isar.localChatConversations.put(target);
       }
     });
-
-    try {
-      await _chatRepository.updateChat(groupId, {
-        'adminIds': ChatArrayOp.remove([memberId]),
-        'updatedAt': chatServerTimestamp,
-      });
-    } catch (e) {
-      developer.log('Firestore demoteAdmin warning: $e', name: 'AgoraChatService');
-    }
 
     await _syncConversationsFromLocal();
   }
@@ -2578,7 +2094,9 @@ class AgoraChatServiceImpl implements ChatService {
         groupId,
         _sanitizeAgoraUid(newOwnerId),
       );
-    } catch (_) {}
+    } catch (e) {
+      developer.log('Agora changeOwner failed: $e', name: 'AgoraChatService');
+    }
 
     await isar.writeTxn(() async {
       final target = await isar.localChatConversations
@@ -2595,16 +2113,6 @@ class AgoraChatServiceImpl implements ChatService {
       }
     });
 
-    try {
-      await _chatRepository.updateChat(groupId, {
-        'ownerId': newOwnerId,
-        'adminIds': ChatArrayOp.union([newOwnerId]),
-        'updatedAt': chatServerTimestamp,
-      });
-    } catch (e) {
-      developer.log('Firestore transferGroupOwner warning: $e', name: 'AgoraChatService');
-    }
-
     await _syncConversationsFromLocal();
   }
 
@@ -2614,7 +2122,9 @@ class AgoraChatServiceImpl implements ChatService {
 
     try {
       await ChatClient.getInstance.groupManager.leaveGroup(groupId);
-    } catch (_) {}
+    } catch (e) {
+      developer.log('Agora leaveGroup failed: $e', name: 'AgoraChatService');
+    }
 
     final isar = await _localDbService.database;
     await isar.writeTxn(() async {
@@ -2634,16 +2144,6 @@ class AgoraChatServiceImpl implements ChatService {
       }
     });
 
-    try {
-      await _chatRepository.updateChat(groupId, {
-        'participantIds': ChatArrayOp.remove([currentUid]),
-        'adminIds': ChatArrayOp.remove([currentUid]),
-        'updatedAt': chatServerTimestamp,
-      });
-    } catch (e) {
-      developer.log('Firestore leaveGroup warning: $e', name: 'AgoraChatService');
-    }
-
     await _syncConversationsFromLocal();
   }
 
@@ -2661,17 +2161,16 @@ class AgoraChatServiceImpl implements ChatService {
 
     try {
       await ChatClient.getInstance.groupManager.destroyGroup(groupId);
-    } catch (_) {}
-
-    try {
-      await _chatRepository.deleteChat(groupId);
     } catch (e) {
-      developer.log('Firestore destroyGroup warning: $e', name: 'AgoraChatService');
+      developer.log('Agora destroyGroup failed: $e', name: 'AgoraChatService');
     }
 
     await deleteConversation(groupId);
     await _syncConversationsFromLocal();
   }
+
+  @override
+  Stream<ChatConnectionState> get connectionState => _connectionStateController.stream;
 
   @override
   Future<void> dispose() async {
@@ -2681,5 +2180,7 @@ class AgoraChatServiceImpl implements ChatService {
       await c.close();
     }
     _messagesControllers.clear();
+    await _connectionStateController.close();
+    _http.close();
   }
 }
