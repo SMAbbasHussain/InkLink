@@ -10,7 +10,7 @@ const crypto = require('crypto');
 // "agora-token" (verified against registry.npmjs.org in Oct 2026 —
 // "agora-token-builder" does not exist on npm; only the Dart/Flutter and
 // Python Agora token packages use that name).
-const { RtcTokenBuilder, RtcRole } = require('agora-token');
+const { RtcTokenBuilder, RtcRole, ChatTokenBuilder } = require('agora-token');
 require('dotenv').config();
 
 // ============================================================
@@ -459,9 +459,9 @@ const AGORA_CHAT_APP_TOKEN_HEADROOM_MS = 300000;
 
 function getAgoraChatConfig() {
   return {
-    restBase: process.env.AGORA_CHAT_REST_BASE || 'https://a1.easemob.com',
-    orgName: process.env.AGORA_CHAT_ORG_NAME || '',
-    appName: process.env.AGORA_CHAT_APP_NAME || '',
+    restBase: (process.env.AGORA_CHAT_REST_BASE && process.env.AGORA_CHAT_REST_BASE !== 'https://a1.easemob.com') ? process.env.AGORA_CHAT_REST_BASE : (((process.env.AGORA_CHAT_APP_NAME || '').startsWith('61') || (process.env.AGORA_CHAT_ORG_NAME || '').startsWith('61')) ? 'https://a61.chat.agora.io' : (process.env.AGORA_CHAT_REST_BASE || 'https://a1.easemob.com')),
+    orgName: (process.env.AGORA_CHAT_APP_NAME || '').includes('#') ? process.env.AGORA_CHAT_APP_NAME.split('#')[0] : (process.env.AGORA_CHAT_ORG_NAME || ''),
+    appName: (process.env.AGORA_CHAT_APP_NAME || '').includes('#') ? process.env.AGORA_CHAT_APP_NAME.split('#')[1] : (process.env.AGORA_CHAT_APP_NAME || ''),
     clientId: process.env.AGORA_CHAT_REST_CLIENT_ID || '',
     clientSecret: process.env.AGORA_CHAT_REST_CLIENT_SECRET || '',
     // Per-user chat token lifetime (env is hours; default 24h).
@@ -509,6 +509,16 @@ async function getAgoraChatAppToken() {
     }
   }
 
+  // Prefer local Agora AppToken generation via ChatTokenBuilder when AGORA_APP_ID & AGORA_APP_CERTIFICATE are set.
+  if (process.env.AGORA_APP_ID && process.env.AGORA_APP_CERTIFICATE) {
+    const ttlSeconds = 86400;
+    const token = ChatTokenBuilder.buildAppToken(process.env.AGORA_APP_ID, process.env.AGORA_APP_CERTIFICATE, ttlSeconds);
+    agoraChatAppTokenCache = { token, expiresAt: now + ttlSeconds * 1000 };
+    if (redisAvailable) {
+      await redis.set('agora_chat:app_token', JSON.stringify(agoraChatAppTokenCache), 'EX', ttlSeconds - 300).catch(() => { });
+    }
+    return token;
+  }
   // Never log client secrets or token strings — only status + truncated error body.
   const response = await fetch(
     `${config.restBase}/${encodeURIComponent(config.orgName)}/${encodeURIComponent(config.appName)}/token`,
