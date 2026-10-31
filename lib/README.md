@@ -1,158 +1,156 @@
-# InkLink lib/ Architecture
+# InkLink Client (`lib/`) Architecture
 
-This document captures the current Flutter client structure in lib/.
+This document outlines the design patterns, layer contracts, state management, and file structure of the InkLink Flutter client codebase in `lib/`.
 
-## High-Level Layering
+---
 
-Dependency flow:
+## Architectural Flow & Layer Contracts
 
-UI (screens/widgets) -> BLoC -> Domain Service -> Repository -> Backend/DB
+InkLink follows an explicit layered architecture with strict separation of concerns:
 
-Key contract:
+```
+[ UI Layer (Screens & Widgets) ]
+               │
+               ▼ (Dispatches Events / Renders States)
+        [ BLoC Layer ]
+               │
+               ▼ (Calls Domain Methods)
+     [ Domain Service Layer ]  <── Orchestrates business logic, multi-repo sync
+               │
+               ▼ (Calls Data Contracts)
+     [ Repository Layer ]      <── Pure data access & schema transformations
+               │
+               ▼
+  [ Data Sources / Drivers ]   <── Firestore, Isar, Agora SDK, WebSocket, HTTP
+```
 
-- Screen files are UI-only and dispatch events.
-- BLoCs coordinate state and call domain services.
-- Domain services own orchestration and business rules.
-- Repositories are data-access only.
+### Layer Rules (Enforced by `tool/architecture_guardrails.dart`)
+1. **Screen Files (`lib/features/**/view/*.dart`):**
+   - Strictly presentational.
+   - May only depend on BLoCs or UI models/tokens.
+   - Never import repositories, database drivers, or domain services directly.
+2. **BLoCs (`lib/features/**/bloc/*.dart`):**
+   - State management via `flutter_bloc`.
+   - Depend only on Domain Services.
+   - Never directly import Repositories or core Database clients.
+3. **Domain Services (`lib/domain/services/**/*.dart`):**
+   - Own business logic, state aggregation, caching policies, and multi-source synchronization.
+   - Abstract third-party hardware/APIs (Agora, Voice, Push notifications).
+4. **Repositories (`lib/domain/repositories/**/*.dart`):**
+   - CRUD and data-fetching operations only.
+   - Transform external data structures into domain entities.
+   - Never import Domain Services or invoke Cloud Functions directly.
+5. **Core Wrappers (`lib/core/services/*.dart`):**
+   - Encapsulate external Firebase and platform singletons (`FirestoreService`, `AuthService`, `CloudFunctionsService`, `LocalDatabaseService`).
 
-Guardrails are enforced by tool/architecture_guardrails.dart.
+---
 
-## Folder Structure
+## Directory Organization
 
 ```text
 lib/
-|-- main.dart
-|-- app_view.dart
-|-- firebase_options.dart
-|-- core/
-|   |-- constants/
-|   |-- crdt/
-|   |-- database/
-|   |-- services/
-|   |   |-- auth_service.dart
-|   |   |-- cloud_functions_service.dart
-|   |   |-- firestore_service.dart
-|   |   |-- local_notification_service.dart
-|   |   `-- messaging_service.dart
-|   |-- theme/
-|   `-- utils/
-|-- domain/
-|   |-- models/
-|   |-- repositories/
-|   |   |-- auth/
-|   |   |-- board/
-|   |   |-- canvas/
-|   |   |-- friends/
-|   |   |-- invitation/
-|   |   |-- notification/
-|   |   |-- presence/
-|   |   |-- profile/
-|   |   |-- settings/
-|   |   `-- theme/
-|   `-- services/
-|       |-- auth/
-|       |-- board/
-|       |-- canvas/
-|       |-- friends/
-|       |-- invitation/
-|       |-- notification/
-|       |-- presence/
-|       |-- profile/
-|       |-- settings/
-|       `-- theme/
-`-- features/
-    |-- auth/
-    |-- board_invitations/
-    |-- canvas/
-    |-- dashboard/
-    |-- friends/
-    |-- navigation/
-    |-- notifications/
-    |-- profile/
-    |-- settings/
-    `-- theme/
+├── main.dart                      # Composition root: wires all services, repos, and app BLoCs
+├── app_view.dart                  # Top-level routing switch (Auth, EmailVerification, MainWrapper)
+├── firebase_options.dart          # FlutterFire environment platform configurations
+│
+├── core/
+│   ├── constants/                 # Shared collections, Firestore paths, routes, and styling tokens
+│   ├── crdt/                      # Yjs & HLC implementations for conflict-free state resolution
+│   ├── database/                  # Isar schemas (LocalBoard, LocalChatMessage, LocalProfile, etc.)
+│   ├── services/                  # Low-level service adapters (Auth, Firestore, CloudFunctions, Push)
+│   ├── theme/                     # InkTheme design system, typographic scales, tokens, and dark/light modes
+│   └── utils/                     # Network resolvers, debouncers, coordinate converters, and formatters
+│
+├── domain/
+│   ├── models/                    # Immutable domain entities (Board, Message, Profile, Workspace, etc.)
+│   ├── repositories/              # Repository contracts & implementations
+│   │   ├── auth/
+│   │   ├── board/
+│   │   ├── canvas/
+│   │   ├── friends/
+│   │   ├── invitation/
+│   │   ├── notification/
+│   │   ├── presence/
+│   │   ├── profile/
+│   │   ├── settings/
+│   │   ├── theme/
+│   │   └── workspace/
+│   └── services/                  # Domain orchestration services
+│       ├── auth/                  # Auth session bootstrap & token lifecycle
+│       ├── board/                 # Board business rules & search
+│       ├── canvas/                # Canvas snapshotting, export & board chat
+│       ├── chat/                  # Agora Chat SDK integration & Isar message sync
+│       ├── friends/               # Social graph operations
+│       ├── invitation/            # Inbound/outbound invites
+│       ├── notification/          # Notification dispatching & stream listeners
+│       ├── presence/              # Realtime presence heartbeats & online tracking
+│       ├── profile/               # User profiles & Cloudflare R2 uploads
+│       ├── settings/              # User preferences & cache invalidation
+│       ├── theme/                 # App aesthetic preferences
+│       ├── voice/                 # Agora RTC voice engine & participant tracking
+│       └── workspace/             # Multi-tenant workspace grouping & access roles
+│
+└── features/
+    ├── auth/                      # Login, Registration, Google Sign-in, and Password Reset
+    ├── board_invitations/         # Board invitation inbox & approval sheets
+    ├── canvas/                    # Collaborative drawing viewport, tools HUD, pin comments, & voice
+    ├── chat/                      # Direct messaging, group chats, reaction sheets, & media attachments
+    ├── dashboard/                 # Board gallery, recent canvases, and creation dialogs
+    ├── friends/                   # Friend list, user search, incoming requests, & block list
+    ├── navigation/                # Bottom navigation bar & MainWrapper lifecycle listener
+    ├── notifications/             # Notification feed with interactive action pills
+    ├── profile/                   # User profile editor, avatar picker, and account deletion
+    ├── settings/                  # App settings, cache cleaner, and theme selector
+    ├── theme/                     # Theme BLoC & theme switcher
+    └── workspaces/                # Workspace switcher, member roles, invite flows, & board assignment
 ```
 
-## Startup and Composition
+---
 
-main.dart is the composition root.
+## App Bootstrapping Sequence
 
-Current startup sequence:
+Located in [`lib/main.dart`](main.dart):
 
-1. Initialize Flutter bindings and load .env.
-2. Initialize Firebase via DefaultFirebaseOptions.currentPlatform.
-3. Initialize notifications (local + messaging listeners).
-4. Initialize theme and local database services.
-5. Build app providers in this order:
-   - Infrastructure services
-   - Repositories
-   - Domain services
-   - BLoCs
+1. **Platform Initialization:** Bind Flutter engine widgets, initialize `.env` configuration.
+2. **Firebase Initialization:** Configure `Firebase.initializeApp` with `DefaultFirebaseOptions`.
+3. **Core Services:** Initialize notifications (local notifications & push handlers) and open the local Isar database.
+4. **Dependency Injection Hierarchy:**
+   - **Infrastructure Services:** `FirestoreService`, `AuthService`, `CloudFunctionsService`, `LocalDatabaseService`, `ThemeService`.
+   - **Repositories:** Instantiated with their respective data wrappers.
+   - **Domain Services:** Wired with repositories and platform bridges (e.g. `AgoraChatServiceImpl`, `AgoraVoiceServiceImpl`).
+   - **App-Level BLoCs:** `AuthBloc`, `ThemeBloc`, `NavBloc`, `DashboardBloc`, `FriendsBloc`, `NotificationsBloc`, `BoardInvitationsBloc`, `WorkspaceBloc`.
 
-Important composition detail:
+---
 
-- Provider order matters for dependent services (for example PresenceService before AuthSessionService).
+## Feature Deep-Dives
 
-## App-Level Providers
+### 1. Canvas Collaboration (`features/canvas/`)
+- **CRDT Architecture:** Changes made to canvas elements produce delta packets synchronized over Socket.IO to the relay server.
+- **Export Engine:** Uses vector converters to output high-resolution PNG, PDF, or SVG formats without clipping viewport boundaries.
+- **Pin Comments:** Allows drop-pin discussions anchored to relative canvas coordinates $(x, y)$.
 
-Main app scope includes:
+### 2. Agora-Powered Chat (`features/chat/`)
+- **Zero-Firestore Chat Path:** Chat messages, group memberships, read receipts, and delivery acks run completely over the Agora Chat SDK.
+- **Local Materialization:** Incoming packets and history catches are persisted locally in Isar (`LocalChatMessage`, `LocalChatConversation`) for instantaneous offline access.
+- **Rich Payloads:** Supports image and file transfers, workspace invite cards, and interactive board links.
 
-- Infrastructure services: FirestoreService, AuthService, CloudFunctionsService, MessagingService, ThemeService, LocalDatabaseService.
-- Repositories: Auth, Presence, Friends, Profile, Board, CanvasSync, Settings, Notification, Invitation.
-- Domain services: Presence, AuthSession, Friends, Settings, Notification, Invitation, Board, Profile.
-- App-level BLoCs: ThemeBloc, NavBloc, DashboardBloc, AuthBloc, FriendsBloc, NotificationsBloc, BoardInvitationsBloc.
+### 3. Voice Calling (`domain/services/voice/`)
+- Powered by `AgoraVoiceServiceImpl` implementing the Agora RTC engine (`agora_rtc_engine`).
+- Dynamically joins room channels (`board_<boardId>`) with server-minted tokens, tracks speaking participants, and renders real-time audio rings in the canvas HUD.
 
-## Routing and Feature Composition
+---
 
-Routing entry:
+## Quality & Compliance Verification
 
-- app_view.dart routes Authenticated users to MainWrapper.
-- Unauthenticated/loading/error auth states route to LoginScreen.
-
-Main wrapper responsibilities:
-
-- Hosts Home, Friends, and Settings tabs.
-- Observes app lifecycle and updates online/offline presence.
-
-Route-level builders:
-
-- features/canvas/view/canvas_route.dart
-- features/profile/view/profile_route.dart
-- features/notifications/view/notifications_route.dart
-
-These provide feature-scoped dependencies so screen files stay focused on rendering and dispatching events.
-
-## Current Feature Coverage
-
-- Auth: session restore, email/password auth, Google sign-in, sign-out.
-- Dashboard: board list and board create/join/update/delete actions.
-- Canvas: CRDT-based board sync and session-scoped editing state.
-- Friends: search, request lifecycle, block/report/unfriend flows.
-- Invitations: board invite inbox and decisions.
-- Notifications: stream and lifecycle updates.
-- Profile: profile load/update and image upload workflow.
-- Settings: preferences and cache-related actions.
-- Theme + Navigation: app-wide visual mode and tab state.
-
-## Guardrails and Validation
-
-Architecture checks:
-
-- No direct Firebase singleton use outside approved core paths.
-- No repository/core DB imports in BLoCs.
-- No repository/service imports in feature screen files.
-- No Cloud Functions imports/calls from repository files.
-- No repository imports of domain services.
-
-Run before significant refactors:
+Run the local validation suite before creating any pull request:
 
 ```bash
+# 1. Enforce strict layered boundaries
 dart run tool/architecture_guardrails.dart
+
+# 2. Static analysis
 flutter analyze
+
+# 3. Unit and Widget test execution
 flutter test
 ```
-
-## Related Docs
-
-- Project overview and setup: ../README.md
-- Backend callable functions and conventions: ../functions/README.md
