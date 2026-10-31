@@ -57,7 +57,25 @@ String _shapeFingerprint(String shapeId, Map<String, dynamic> data) {
       .toStringAsFixed(3);
   final color = ((data['color'] as num?)?.toInt() ?? 0).toString();
   final filled = _parseBool(data['isFilled']).toString();
-  return '$shapeId|$cx|$cy|$size|$rotation|$borderRadius|$color|$filled';
+  final z = ((data['z'] as num?)?.toInt() ?? 0).toString();
+  return '$shapeId|$cx|$cy|$size|$rotation|$borderRadius|$color|$filled|$z';
+}
+
+/// Measures the on-canvas bounds of [text] using the exact style and layout
+/// constraints that CanvasPainter._paintText draws with (fontSize 16, w600,
+/// maxLines 2, ellipsis, maxWidth 220), so persisted bounds match the render.
+Size measureTextElementBounds(String text) {
+  final textSpan = TextSpan(
+    text: text,
+    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+  );
+  final textPainter = TextPainter(
+    text: textSpan,
+    textDirection: TextDirection.ltr,
+    maxLines: 2,
+    ellipsis: '...',
+  )..layout(maxWidth: 220);
+  return Size(textPainter.width, textPainter.height);
 }
 
 Rect? _elementBounds(CanvasElement element) {
@@ -65,8 +83,13 @@ Rect? _elementBounds(CanvasElement element) {
     ShapeElement e => Rect.fromCenter(
         center: e.center, width: e.size, height: e.size,
       ),
-    TextElement e => Rect.fromCenter(
-        center: e.center, width: 180, height: 48,
+    // Text is painted from its center point as the top-left origin, so the
+    // bounds rect starts there too.
+    TextElement e => Rect.fromLTWH(
+        e.center.dx,
+        e.center.dy,
+        e.width > 0 ? e.width : 180,
+        e.height > 0 ? e.height : 48,
       ),
     ImageElement e => Rect.fromCenter(
         center: e.center, width: e.width, height: e.height,

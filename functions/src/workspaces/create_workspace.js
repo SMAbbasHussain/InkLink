@@ -3,6 +3,9 @@ const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
 
+const VISIBILITY_PUBLIC = 'public';
+const VISIBILITY_PRIVATE = 'private';
+
 module.exports = async (request) => {
   const uid = request.auth?.uid;
   const rawName = request.data?.name;
@@ -19,6 +22,9 @@ module.exports = async (request) => {
 
     const name = rawName.trim();
     const description = typeof rawDescription === 'string' ? rawDescription.trim() : '';
+    const visibility = request.data?.visibility === VISIBILITY_PUBLIC
+      ? VISIBILITY_PUBLIC
+      : VISIBILITY_PRIVATE;
 
     const firestore = admin.firestore();
     const workspaceRef = firestore.collection(FirestorePaths.WORKSPACES).doc();
@@ -29,6 +35,7 @@ module.exports = async (request) => {
         ownerId: uid,
         [FirestorePaths.NAME]: name,
         [FirestorePaths.DESCRIPTION]: description,
+        [FirestorePaths.VISIBILITY]: visibility,
         memberCount: 1,
         boardCount: 0,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),

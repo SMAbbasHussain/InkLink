@@ -2,23 +2,30 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../domain/models/chat/chat_message_model.dart';
 import '../../../../domain/services/chat/chat_service.dart';
+import '../../../../domain/services/presence/presence_service.dart';
 import 'chat_thread_event.dart';
 import 'chat_thread_state.dart';
 
 class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
   final ChatService _chatService;
+  final PresenceService? _presenceService;
   final String _currentUid;
   String? _activeConversationId;
+  bool? _partnerIsOnline;
   StreamSubscription<List<ChatMessageModel>>? _sub;
+  StreamSubscription<UserPresence>? _presenceSub;
 
   ChatThreadBloc({
     required ChatService chatService,
     required String currentUid,
+    PresenceService? presenceService,
   })  : _chatService = chatService,
+        _presenceService = presenceService,
         _currentUid = currentUid,
         super(const ChatThreadInitial()) {
     on<LoadChatThread>(_onLoadChatThread);
     on<MessagesUpdated>(_onMessagesUpdated);
+    on<PartnerPresenceUpdated>(_onPartnerPresenceUpdated);
     on<SendTextMessageRequested>(_onSendTextMessage);
     on<SendImageMessageRequested>(_onSendImageMessage);
     on<SendGifMessageRequested>(_onSendGifMessage);
@@ -36,10 +43,21 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
     _activeConversationId = event.conversationId;
     emit(const ChatThreadLoading());
     await _sub?.cancel();
+    await _presenceSub?.cancel();
 
     _sub = _chatService.watchMessages(event.conversationId).listen((messages) {
       add(MessagesUpdated(messages));
     });
+
+    final presenceService = _presenceService;
+    if (presenceService != null && !event.conversationId.startsWith('group_')) {
+      _presenceSub = presenceService.watchUserPresence(event.conversationId).listen(
+        (presence) {
+          add(PartnerPresenceUpdated(presence.isOnline));
+        },
+        onError: (_) {},
+      );
+    }
 
     final initialList = await _chatService.getMessages(event.conversationId);
     add(MessagesUpdated(initialList));
@@ -54,7 +72,19 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
     emit(ChatThreadLoaded(
       conversationId: _activeConversationId!,
       messages: event.messages,
+      isOnline: _partnerIsOnline,
     ));
+    unawaited(_chatService.markConversationAsRead(_activeConversationId!));
+  }
+
+  void _onPartnerPresenceUpdated(
+    PartnerPresenceUpdated event,
+    Emitter<ChatThreadState> emit,
+  ) {
+    _partnerIsOnline = event.isOnline;
+    if (state is ChatThreadLoaded) {
+      emit((state as ChatThreadLoaded).copyWith(isOnline: event.isOnline));
+    }
   }
 
   Future<void> _onSendTextMessage(
@@ -78,6 +108,7 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
         emit(ChatThreadLoaded(
           conversationId: _activeConversationId!,
           messages: messages,
+          isOnline: _partnerIsOnline,
         ));
       }
     } catch (e) {
@@ -108,6 +139,7 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
         emit(ChatThreadLoaded(
           conversationId: _activeConversationId!,
           messages: messages,
+          isOnline: _partnerIsOnline,
         ));
       }
     } catch (e) {
@@ -254,6 +286,7 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
   @override
   Future<void> close() async {
     await _sub?.cancel();
+    await _presenceSub?.cancel();
     return super.close();
   }
 }

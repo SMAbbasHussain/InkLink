@@ -82,6 +82,18 @@ void main() async {
   } catch (e) {
     debugPrint("Warning: Failed to load .env file: $e");
   }
+  // Any startup failure (Firebase init, SharedPreferences, theme load, or
+  // the local database init) would otherwise escape main() as an unhandled
+  // exception — blank/crashed app. Fall back to InitializationErrorApp.
+  try {
+    await _startApp();
+  } catch (e, st) {
+    debugPrint("Startup failed: $e\n$st");
+    runApp(InitializationErrorApp(error: e.toString()));
+  }
+}
+
+Future<void> _startApp() async {
   final sharedPreferences = await SharedPreferences.getInstance();
   await _ensureFirebaseInitialized();
   final rtdbUrl = dotenv.env['FIREBASE_RTDB_URL'];
@@ -275,7 +287,8 @@ void main() async {
           create: (context) => AgoraChatServiceImpl(
             localDbService: context.read<LocalDatabaseService>(),
             authService: context.read<AuthService>(),
-            cloudFunctionsService: context.read<CloudFunctionsService>(),
+            presenceService: context.read<PresenceService>(),
+            pushTokenProvider: messagingService.getToken,
           )..initialize(),
         ),
         RepositoryProvider<WorkspaceService>(

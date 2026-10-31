@@ -19,6 +19,7 @@ analyzer:
     - linux/**
   errors:
     deprecated_member_use: ignore
+    use_null_aware_elements: ignore
 include: package:flutter_lints/flutter.yaml
 
 linter:

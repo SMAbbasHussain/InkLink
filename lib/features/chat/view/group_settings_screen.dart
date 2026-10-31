@@ -32,6 +32,7 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
   @override
   Widget build(BuildContext context) {
     final colors = ChatTheme.colorsOf(context);
+    final authState = context.watch<AuthBloc>().state;
     return BlocConsumer<GroupSettingsBloc, GroupSettingsState>(
       listener: (context, state) {
         if (state is GroupSettingsOperationSuccess) {
@@ -143,7 +144,7 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
                       TextButton.icon(
                         icon: Icon(Icons.person_add_outlined, size: 16, color: colors.accent),
                         label: Text('Add Member', style: TextStyle(color: colors.accent, fontSize: 12)),
-                        onPressed: () => _showAddMembersSheet(context, group),
+                        onPressed: () => _showAddMembersSheet(context, group, authState),
                       ),
                   ],
                 ),
@@ -412,7 +413,7 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
     );
   }
 
-  void _showAddMembersSheet(BuildContext context, ChatConversationModel group) {
+  void _showAddMembersSheet(BuildContext context, ChatConversationModel group, AuthState authState) {
     final colors = ChatTheme.colorsOf(context);
     final selectedUids = <String>{};
 
@@ -435,9 +436,17 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
                         builder: (context, friendsState) {
                           List<Map<String, dynamic>> friends = [];
                           if (friendsState is FriendsLoaded) {
-                            friends = friendsState.friends
-                                .where((f) => !group.memberIds.contains(f['uid']))
-                                .toList();
+                            final myUid = authState is Authenticated ? authState.uid : null;
+                            final myEmail = authState is Authenticated ? authState.email : null;
+                            final normalizedEmail = myEmail?.trim().toLowerCase();
+
+                            friends = friendsState.friends.where((f) {
+                              final fUid = (f['uid'] ?? '').toString().trim();
+                              final fEmail = (f['email'] ?? '').toString().trim().toLowerCase();
+                              if (myUid != null && fUid.isNotEmpty && fUid == myUid.trim()) return false;
+                              if (normalizedEmail != null && fEmail.isNotEmpty && fEmail == normalizedEmail) return false;
+                              return !group.memberIds.contains(fUid);
+                            }).toList();
                           }
 
                           if (friends.isEmpty) {

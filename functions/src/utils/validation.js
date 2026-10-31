@@ -51,9 +51,11 @@ function validateDifferentUIDs(uid1, uid2) {
  */
 function validateRequestId(requestId) {
   validateString(requestId, 'requestId');
-  // requestId format: "uid1_uid2" (deterministic, lowercase)
-  const parts = requestId.split('_');
-  if (parts.length !== 2 || parts.some(p => p.length < 20)) {
+  // requestId is an OPAQUE document id. Pair ids are built as
+  // `${uidA}_${uidB}` — and Firebase UIDs may legally contain '_' — so the id
+  // must NOT be parsed into parts here. The accept/decline/cancel handlers
+  // read the pair from the document's fromUid/toUid fields instead.
+  if (requestId.trim().length === 0) {
     throw new Error('requestId has invalid format');
   }
   return true;

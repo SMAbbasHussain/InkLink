@@ -1,5 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 
+/// Outcome of an email-verification reload/check.
+enum EmailVerificationStatus { verified, unverified, unknown }
+
 /// Abstract interface for Firebase Authentication operations
 /// This enables dependency injection and easier testing (can mock implementations)
 abstract class AuthService {
@@ -21,8 +24,10 @@ abstract class AuthService {
   /// Send email verification to currently logged in user (FR01-05)
   Future<void> sendEmailVerification();
 
-  /// Reload user from Firebase and return whether email is verified (FR01-06)
-  Future<bool> reloadAndCheckEmailVerified();
+  /// Reload user from Firebase and report the verification status (FR01-06).
+  /// [EmailVerificationStatus.unknown] means the check itself failed and
+  /// callers must NOT treat it as "unverified".
+  Future<EmailVerificationStatus> reloadAndCheckEmailVerified();
 
   /// Delete the current authenticated user account (FR02-06)
   Future<void> deleteAccount();
@@ -70,13 +75,16 @@ class AuthServiceImpl implements AuthService {
   }
 
   @override
-  Future<bool> reloadAndCheckEmailVerified() async {
+  Future<EmailVerificationStatus> reloadAndCheckEmailVerified() async {
     final user = _auth.currentUser;
-    if (user == null) return false;
+    if (user == null) return EmailVerificationStatus.unknown;
     await user.reload();
-    return _auth.currentUser?.emailVerified ?? false;
+    final refreshed = _auth.currentUser;
+    if (refreshed == null) return EmailVerificationStatus.unknown;
+    return refreshed.emailVerified
+        ? EmailVerificationStatus.verified
+        : EmailVerificationStatus.unverified;
   }
-
   @override
   Future<void> deleteAccount() async {
     final user = _auth.currentUser;

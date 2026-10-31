@@ -12,6 +12,7 @@ import '../../../core/services/firestore_service.dart';
 import '../../../core/services/stream_registry.dart';
 import '../../../core/utils/firestore_batch_fetcher.dart';
 import '../../models/board.dart';
+import '../../models/workspace_board.dart';
 import '../../../core/database/collections/local_profile.dart';
 import '../../models/workspace.dart';
 import 'workspace_repository.dart';
@@ -583,6 +584,81 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
     throw UnimplementedError(
       'leaveWorkspace should be called via CloudFunctionsService. Use WorkspaceService.leaveWorkspace instead.',
     );
+  }
+
+  @override
+  Future<List<({String boardId, String title})>> getImportedBoardsForLeave(
+    String workspaceId,
+  ) async {
+    final uid = currentUserId;
+    final normalizedWorkspaceId = workspaceId.trim();
+    if (uid == null || normalizedWorkspaceId.isEmpty) return const [];
+
+    final firestore = _firestoreService.getInstance();
+    final linksSnapshot = await firestore
+        .collection(FirestorePaths.workspaces)
+        .doc(normalizedWorkspaceId)
+        .collection(FirestorePaths.workspaceBoardsSubcollection)
+        .get();
+
+    // A board can only be kept if the user still belongs to it; the
+    // per-user board index is the same readability proxy that
+    // getWorkspaceBoards uses.
+    final userBoardsSnapshot = await firestore
+        .collection(FirestorePaths.users)
+        .doc(uid)
+        .collection('boards')
+        .get();
+    final readableBoardIds = <String>{};
+    for (final doc in userBoardsSnapshot.docs) {
+      final data = doc.data();
+      final boardId = (data['boardId'] as String?) ?? doc.id;
+      if (boardId.isNotEmpty) {
+        readableBoardIds.add(boardId);
+      }
+    }
+
+    final importedIds = <String>[];
+    for (final linkDoc in linksSnapshot.docs) {
+      final link = WorkspaceBoard.fromMap(linkDoc.data());
+      final boardId = link.boardId.isNotEmpty ? link.boardId : linkDoc.id;
+      if (!link.isImported) continue;
+      if (!readableBoardIds.contains(boardId)) continue;
+      importedIds.add(boardId);
+    }
+    if (importedIds.isEmpty) return const [];
+
+    // Resolve display titles from the local cache first, then Firestore.
+    final isar = await _localDatabaseService.database;
+    final localBoards = await isar.localBoards.where().anyId().findAll();
+    final titleByBoardId = <String, String>{
+      for (final localBoard in localBoards)
+        if (localBoard.title.isNotEmpty) localBoard.boardId: localBoard.title,
+    };
+    final missingTitles = importedIds
+        .where((id) => !titleByBoardId.containsKey(id))
+        .toList(growable: false);
+    if (missingTitles.isNotEmpty) {
+      final fetchResult = await _batchFetcher.fetchDocumentsByIdSet(
+        collectionPath: FirestorePaths.boards,
+        ids: missingTitles,
+        trackMissingIds: false,
+      );
+      fetchResult.docsById.forEach((id, data) {
+        final title = data['title']?.toString() ?? '';
+        if (title.isNotEmpty) {
+          titleByBoardId[id] = title;
+        }
+      });
+    }
+
+    return [
+      for (final boardId in importedIds)
+        (
+          boardId: boardId,
+          title: titleByBoardId[boardId] ?? 'Untitled Board',
+        ),
+    ];
   }
 
   @override

@@ -135,3 +135,8 @@ class DeleteMessageRequested extends ChatThreadEvent {
   final String messageId;
   const DeleteMessageRequested(this.messageId);
 }
+
+class PartnerPresenceUpdated extends ChatThreadEvent {
+  final bool isOnline;
+  const PartnerPresenceUpdated(this.isOnline);
+}

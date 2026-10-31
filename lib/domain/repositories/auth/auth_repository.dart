@@ -1,5 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 
+import '../../../core/services/auth_service.dart';
+
 abstract class AuthRepository {
   Future<User?> signIn(String email, String password);
   Future<User?> signUp(String name, String email, String password);
@@ -9,7 +11,9 @@ abstract class AuthRepository {
   User? get currentUser;
   Future<void> sendPasswordResetEmail(String email);
   Future<void> sendEmailVerification();
-  Future<bool> reloadAndCheckEmailVerified();
+  /// Returns [EmailVerificationStatus.unknown] when the check itself fails so
+  /// callers never treat a network flake as a confirmed unverified email.
+  Future<EmailVerificationStatus> reloadAndCheckEmailVerified();
   Future<Map<String, dynamic>?> getUserData(String uid);
   Future<void> upsertUserData(String uid, Map<String, dynamic> data);
   Future<void> syncFcmToken(String uid, String token);

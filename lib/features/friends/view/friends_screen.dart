@@ -173,11 +173,16 @@ class _FriendsScreenState extends State<FriendsScreen> {
     }
 
     if (state is FriendsLoaded) {
-      final myUid = context.select<AuthBloc, String?>(
-        (b) => b.state is Authenticated ? (b.state as Authenticated).uid : null,
-      );
+      final authState = context.watch<AuthBloc>().state;
+      final myUid = authState is Authenticated ? authState.uid : null;
+      final myEmail = authState is Authenticated ? authState.email : null;
+      final normalizedEmail = myEmail?.trim().toLowerCase();
+
       final filteredList = state.friends.where((f) {
-        if (myUid != null && f['uid'] == myUid) return false;
+        final fUid = (f['uid'] ?? '').toString().trim();
+        final fEmail = (f['email'] ?? '').toString().trim().toLowerCase();
+        if (myUid != null && fUid.isNotEmpty && fUid == myUid.trim()) return false;
+        if (normalizedEmail != null && fEmail.isNotEmpty && fEmail == normalizedEmail) return false;
         final name = f['displayName']?.toString().toLowerCase() ?? "";
         return name.contains(_searchController.text.toLowerCase());
       }).toList();

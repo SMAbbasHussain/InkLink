@@ -291,6 +291,21 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     on<_WorkspaceMembersUpdated>(_onWorkspaceMembersUpdated);
   }
 
+  /// Imported boards the current user can keep when leaving
+  /// [workspaceId]. Consumed by the leave-workspace dialog so the
+  /// advertised "keep imported boards" option is actually selectable.
+  Future<List<({String boardId, String title})>> importedBoardsForLeave(
+    String workspaceId,
+  ) async {
+    final service = _workspaceService;
+    if (service == null) return const [];
+    try {
+      return await service.getImportedBoardsForLeave(workspaceId);
+    } catch (_) {
+      return const [];
+    }
+  }
+
   WorkspaceLoaded _emptyLoaded() {
     return WorkspaceLoaded(
       ownedWorkspaces: const [],

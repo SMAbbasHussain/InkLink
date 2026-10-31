@@ -31,11 +31,12 @@
 9. [Module 9: Public Board Access & Discovery (FR14) — ✅ COMPLETED (100%)](#module-9-public-board-access--discovery-fr14)
 10. [Module 10: AI-Assisted Object Generation & Limits (FR06 & FR16)](#module-10-ai-assisted-object-generation--limits-fr06--fr16)
 11. [Module 11: In-App Communication & Audio (FR12) — ✅ COMPLETED (100%)](#module-11-in-app-communication--audio-fr12)
-12. [Module 12: Direct Messaging (DM) System (FR17) — ✅ COMPLETED (100%)](#module-12-direct-messaging-dm-system-fr17)
+12. [Module 12: Direct Messaging (DM) & Group Messaging System (FR17) — ✅ COMPLETED (100%)](#module-12-direct-messaging-dm-system-fr17)
 13. [Cross-Module Global Backlog Summary](#cross-module-global-backlog-summary)
 
 ---
 
+<a id="module-1-authentication--identity-fr01"></a>
 ## Module 1: Authentication & Identity (FR01) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
@@ -47,6 +48,7 @@
 
 ---
 
+<a id="module-2-user-profile--preferences-fr02"></a>
 ## Module 2: User Profile & Preferences (FR02) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
@@ -59,6 +61,7 @@
 
 ---
 
+<a id="module-3-board-creation--management-fr03"></a>
 ## Module 3: Board Creation & Management (FR03) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
@@ -70,6 +73,7 @@
 
 ---
 
+<a id="module-4-canvas-tools--visual-elements-fr05"></a>
 ## Module 4: Canvas Tools & Visual Elements (FR05) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
@@ -81,6 +85,7 @@
 
 ---
 
+<a id="module-5-board-sharing--access-control-fr07"></a>
 ## Module 5: Board Sharing & Access Control (FR07) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
@@ -89,6 +94,7 @@
 
 ---
 
+<a id="module-6-notifications--preferences-fr15"></a>
 ## Module 6: Notifications & Preferences (FR15) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
@@ -98,6 +104,7 @@
 
 ---
 
+<a id="module-7-presence--live-awareness-fr08"></a>
 ## Module 7: Presence & Live Awareness (FR08)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
@@ -109,6 +116,7 @@
 
 ---
 
+<a id="module-8-board-export--file-sharing-fr11"></a>
 ## Module 8: Board Export & File Sharing (FR11) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
@@ -120,6 +128,7 @@
 
 ---
 
+<a id="module-9-public-board-access--discovery-fr14"></a>
 ## Module 9: Public Board Access & Discovery (FR14) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
@@ -134,6 +143,7 @@
 
 ---
 
+<a id="module-10-ai-assisted-object-generation--limits-fr06--fr16"></a>
 ## Module 10: AI-Assisted Object Generation & Limits (FR06 & FR16)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
@@ -144,6 +154,7 @@
 
 ---
 
+<a id="module-11-in-app-communication--audio-fr12"></a>
 ## Module 11: In-App Communication & Audio (FR12) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
@@ -154,6 +165,8 @@
 
 ---
 
+<a id="module-12-direct-messaging-dm-system-fr17"></a>
+<a id="module-12-direct-messaging-dm--group-messaging-system-fr17---completed-100"></a>
 ## Module 12: Direct Messaging (DM) & Group Messaging System (FR17) — ✅ COMPLETED (100%)
 
 | Req ID | Requirement | Status | Complexity | Technical Scope & Implementation Steps |
@@ -167,6 +180,7 @@
 
 ---
 
+<a id="cross-module-global-backlog-summary"></a>
 ## Cross-Module Global Backlog Summary
 
 Ordered strictly from **Lowest Complexity (Quickest Wins)** to **Highest Complexity (Subsystem Engines)**:

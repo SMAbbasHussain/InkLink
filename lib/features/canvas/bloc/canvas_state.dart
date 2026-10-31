@@ -244,6 +244,7 @@ class CanvasState {
           showTrayTips == other.showTrayTips &&
           isLoading == other.isLoading &&
           error == other.error &&
+          infoMessage == other.infoMessage &&
           currentUserRole == other.currentUserRole &&
           currentUserId == other.currentUserId &&
           boardMembers == other.boardMembers &&
@@ -261,6 +262,9 @@ class CanvasState {
           isDrawingShape == other.isDrawingShape &&
           shapeDrawStart == other.shapeDrawStart &&
           shapeDrawCurrent == other.shapeDrawCurrent &&
+          isExporting == other.isExporting &&
+          exportSuccessMessage == other.exportSuccessMessage &&
+          lastExportedFilePath == other.lastExportedFilePath &&
           comments == other.comments &&
           chatMessages == other.chatMessages &&
           voiceParticipants == other.voiceParticipants &&
@@ -285,6 +289,7 @@ class CanvasState {
       showTrayTips.hashCode ^
       isLoading.hashCode ^
       error.hashCode ^
+      infoMessage.hashCode ^
       currentUserRole.hashCode ^
       currentUserId.hashCode ^
       boardMembers.hashCode ^
@@ -302,6 +307,9 @@ class CanvasState {
       isDrawingShape.hashCode ^
       shapeDrawStart.hashCode ^
       shapeDrawCurrent.hashCode ^
+      isExporting.hashCode ^
+      exportSuccessMessage.hashCode ^
+      lastExportedFilePath.hashCode ^
       comments.hashCode ^
       chatMessages.hashCode ^
       voiceParticipants.hashCode ^

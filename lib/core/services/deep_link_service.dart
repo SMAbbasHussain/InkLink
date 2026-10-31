@@ -52,11 +52,16 @@ class DeepLinkService with WidgetsBindingObserver {
   }
 
   /// Extracts the boardId from deep link URI strings.
-  /// Supported schemes:
+  /// Supported forms:
   /// - `inklink://board/<boardId>`
   /// - `https://inklink.web.app/board/<boardId>`
   /// - `https://inklink.app/board/<boardId>`
   /// - `/board/<boardId>`
+  ///
+  /// http(s) links are only accepted from the app's own allow-listed hosts;
+  /// lookalike links (e.g. `https://evil.com/?board=...`) are ignored.
+  static const Set<String> _trustedWebHosts = {'inklink.app', 'inklink.web.app'};
+
   String? extractBoardId(String? rawUri) {
     if (rawUri == null || rawUri.trim().isEmpty) return null;
     final trimmed = rawUri.trim();
@@ -77,8 +82,10 @@ class DeepLinkService with WidgetsBindingObserver {
           boardId = uri.pathSegments[1];
         }
       }
-      // Case 2: Web or app links (e.g. https://inklink.web.app/board/<id>)
-      else if (uri.scheme == 'http' || uri.scheme == 'https') {
+      // Case 2: App/web links (e.g. https://inklink.app/board/<id>) —
+      // only the app's own hosts are trusted; any other host is ignored.
+      else if (uri.scheme == 'https' &&
+          _trustedWebHosts.contains(uri.host.toLowerCase())) {
         final segments = uri.pathSegments;
         final boardIndex = segments.indexOf('board');
         if (boardIndex != -1 && boardIndex + 1 < segments.length) {

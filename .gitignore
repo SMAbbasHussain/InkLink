@@ -143,3 +143,7 @@ optimizations_plan.md
 plan.md
 firestore.indexes.json
 .opencode/
+BUG_REPORT.md
+CHAT_REMEDIATION_PLAN.md
+BOARD_EVENT_LOG_ADVANTAGES.md
+BOARD_VERSION_HISTORY_AND_AUDIT_LOG_PLAN.md

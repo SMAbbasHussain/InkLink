@@ -16,6 +16,30 @@ import '../../features/chat/view/chat_thread_route.dart';
 class LocalNotificationService {
   static bool _initialized = false;
   static GlobalKey<NavigatorState>? _navigatorKey;
+  static int _uniqueIdCounter = 0;
+
+  /// Unique-per-call id for one-shot notifications: mixes a millisecond
+  /// timestamp with a process-local counter so rapid bursts never collide.
+  /// The old `millisecondsSinceEpoch % 100000` made notifications that
+  /// arrived close together silently replace each other.
+  static int _nextUniqueNotificationId() {
+    final millis = DateTime.now().millisecondsSinceEpoch;
+    final counter = _uniqueIdCounter++ & 0xFFFF;
+    return (millis ^ (counter << 12)) & 0x7FFFFFFF;
+  }
+
+  /// Deterministic id derived from a unique key (e.g. FCM messageId), so a
+  /// re-delivered message replaces its own notification while different
+  /// messages hash to different ids. Written out as FNV-1a because
+  /// Dart's String.hashCode is randomized per app run.
+  static int _stableNotificationId(String uniqueKey) {
+    var hash = 0x811C9DC5;
+    for (final code in uniqueKey.codeUnits) {
+      hash ^= code;
+      hash = (hash * 0x01000193) & 0x7FFFFFFF;
+    }
+    return hash;
+  }
 
   static Future<void> initialize({
     required GlobalKey<NavigatorState> navigatorKey,
@@ -114,9 +138,14 @@ class LocalNotificationService {
     final title = senderName;
     final content = body;
 
+    final messageId = message.messageId;
+    final notificationId = (messageId != null && messageId.isNotEmpty)
+        ? _stableNotificationId('fcm:$messageId')
+        : _nextUniqueNotificationId();
+
     await AwesomeNotifications().createNotification(
       content: NotificationContent(
-        id: DateTime.now().millisecondsSinceEpoch % 100000,
+        id: notificationId,
         channelKey: 'inklink_notifications',
         title: title,
         body: content,
@@ -140,7 +169,7 @@ class LocalNotificationService {
 
     await AwesomeNotifications().createNotification(
       content: NotificationContent(
-        id: DateTime.now().millisecondsSinceEpoch % 100000,
+        id: _nextUniqueNotificationId(),
         channelKey: 'inklink_notifications',
         title: title,
         body: body,

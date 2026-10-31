@@ -36,9 +36,16 @@ class FriendsRepositoryImpl implements FriendsRepository {
         .get();
 
     final currentUid = _authService.getCurrentUserId();
+    final currentEmail = _authService.getCurrentUser()?.email?.trim().toLowerCase();
     final users = snap.docs
         .map((doc) => {'uid': doc.id, ...doc.data()})
-        .where((u) => u['uid'] != currentUid)
+        .where((u) {
+          final uUid = (u['uid'] ?? '').toString().trim();
+          final uEmail = (u['email'] ?? '').toString().trim().toLowerCase();
+          if (currentUid != null && uUid == currentUid.trim()) return false;
+          if (currentEmail != null && uEmail.isNotEmpty && uEmail == currentEmail) return false;
+          return true;
+        })
         .toList();
     await _cacheProfileSnapshots(users, source: 'email_search');
     return users;
@@ -376,10 +383,17 @@ class FriendsRepositoryImpl implements FriendsRepository {
             .watch(fireImmediately: true)
             .listen((items) {
               if (controller.isClosed) return;
+              final activeUid = _authService.getCurrentUserId() ?? currentUid;
+              final activeEmail = _authService.getCurrentUser()?.email?.trim().toLowerCase();
               final friends = items
-                  .where((item) =>
-                      item.uid != currentUid &&
-                      item.friendshipStatus == FriendshipStatus.friend)
+                  .where((item) {
+                    final itemUid = item.uid.trim();
+                    final itemEmail = item.email?.trim().toLowerCase();
+                    if (item.friendshipStatus != FriendshipStatus.friend) return false;
+                    if (itemUid == activeUid.trim()) return false;
+                    if (activeEmail != null && itemEmail != null && itemEmail.isNotEmpty && itemEmail == activeEmail) return false;
+                    return true;
+                  })
                   .map(_friendProfileToMap)
                   .toList();
               controller.add(
@@ -467,7 +481,10 @@ class FriendsRepositoryImpl implements FriendsRepository {
     final allProfiles = await isar.localProfiles.where().anyId().findAll();
     await isar.writeTxn(() async {
       for (final profile in allProfiles) {
-        if (profile.uid != currentUid) {
+        if (currentUid != null && profile.uid.trim() == currentUid.trim()) {
+          profile.friendshipStatus = FriendshipStatus.self;
+          await isar.localProfiles.putByUid(profile);
+        } else {
           await isar.localProfiles.deleteByUid(profile.uid);
         }
       }
@@ -533,10 +550,9 @@ class FriendsRepositoryImpl implements FriendsRepository {
     required String uid,
     required bool isIncoming,
   }) async {
-    if (requests.isEmpty) {
-      return;
-    }
-
+    // NOTE: no early return on an empty snapshot — the stale sweep below
+    // must still run so a locally-pending request that no longer exists
+    // remotely (declined/expired server-side) is reconciled and removed.
     final isar = await _localDatabaseService.database;
     final requestIds = requests
         .map((request) => request['id']?.toString())
@@ -549,11 +565,11 @@ class FriendsRepositoryImpl implements FriendsRepository {
         .where((id) => id.isNotEmpty)
         .toList(growable: false);
 
-    final existingRequests = await isar.localFriendRequests.getAllByRequestId(
-      requestIds,
-    );
+    final existingRequests = requestIds.isEmpty
+        ? <LocalFriendRequest?>[]
+        : await isar.localFriendRequests.getAllByRequestId(requestIds);
     final existingRequestMap = <String, LocalFriendRequest?>{
-      for (var i = 0; i < requestIds.length; i++)
+      for (var i = 0; i < existingRequests.length; i++)
         requestIds[i]: existingRequests[i],
     };
 
@@ -671,13 +687,23 @@ class FriendsRepositoryImpl implements FriendsRepository {
   }
 
   Future<void> _cacheFriendProfiles(List<Map<String, dynamic>> users) async {
+    final activeUid = _authService.getCurrentUserId();
+    final activeEmail = _authService.getCurrentUser()?.email?.trim().toLowerCase();
+    final sanitizedUsers = users.where((u) {
+      final uUid = (u['uid'] ?? '').toString().trim();
+      final uEmail = (u['email'] ?? '').toString().trim().toLowerCase();
+      if (activeUid != null && uUid == activeUid.trim()) return false;
+      if (activeEmail != null && uEmail.isNotEmpty && uEmail == activeEmail) return false;
+      return true;
+    }).toList();
+
     await _cacheProfileSnapshots(
-      users,
+      sanitizedUsers,
       source: 'friend_list',
       forceFriend: true,
     );
 
-    final friendUids = users
+    final friendUids = sanitizedUsers
         .map((user) => user['uid']?.toString() ?? '')
         .where((uid) => uid.isNotEmpty && uid != _currentUid)
         .toSet()
@@ -732,11 +758,14 @@ class FriendsRepositoryImpl implements FriendsRepository {
       return;
     }
 
+    final activeUid = _authService.getCurrentUserId();
+    final activeEmail = _authService.getCurrentUser()?.email?.trim().toLowerCase();
+
     final isar = await _localDatabaseService.database;
     final uids = users
-        .map((user) => user['uid']?.toString())
+        .map((user) => user['uid']?.toString().trim())
         .whereType<String>()
-        .where((uid) => uid.isNotEmpty && uid != _currentUid)
+        .where((uid) => uid.isNotEmpty && (activeUid == null || uid != activeUid.trim()))
         .toList(growable: false);
 
     if (uids.isEmpty) {
@@ -754,9 +783,11 @@ class FriendsRepositoryImpl implements FriendsRepository {
 
     await isar.writeTxn(() async {
       for (final userData in users) {
-        final uid = userData['uid']?.toString();
+        final uid = userData['uid']?.toString().trim();
+        final userEmail = userData['email']?.toString().trim().toLowerCase();
         if (uid == null || uid.isEmpty) continue;
-        if (uid == _currentUid) continue;
+        if (activeUid != null && uid == activeUid.trim()) continue;
+        if (activeEmail != null && userEmail != null && userEmail.isNotEmpty && userEmail == activeEmail) continue;
 
         seenUids.add(uid);
 

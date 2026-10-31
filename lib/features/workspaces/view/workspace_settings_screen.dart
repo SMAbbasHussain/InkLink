@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:inklink/features/auth/bloc/auth_bloc.dart';
+import 'package:inklink/features/auth/bloc/auth_state.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../core/utils/helpers.dart';
@@ -224,13 +226,23 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
   }
 
   Future<void> _leaveWorkspace() async {
-    // Show a dialog asking which imported boards to keep
-    final importedBoardsToKeep = <String>{};
     final tokens = context.ink;
+    final workspaceBloc = context.read<WorkspaceBloc>();
+
+    // Fetch the imported boards this user still has access to so the
+    // "keep imported boards" option advertised below is actually
+    // selectable (M12) instead of silently passing an empty list.
+    final importedBoards = await workspaceBloc.importedBoardsForLeave(
+      widget.workspaceId,
+    );
+    if (!mounted) return;
+
+    final importedBoardsToKeep = <String>{};
 
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => InkDialog(
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => InkDialog(
         title: 'Leave Workspace?',
         content: SingleChildScrollView(
           child: Column(
@@ -259,6 +271,50 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                   ],
                 ),
               ),
+              if (importedBoards.isNotEmpty) ...[
+                const SizedBox(height: InkSpacing.s16),
+                Text(
+                  'Keep these imported boards:',
+                  style: InkType.bodyStrong(tokens.ink),
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  decoration: BoxDecoration(
+                    color: tokens.paper,
+                    borderRadius: BorderRadius.circular(InkRadii.input),
+                    border: Border.all(color: tokens.glassStroke),
+                  ),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: importedBoards.length,
+                    separatorBuilder: (context, index) =>
+                        Divider(height: 1, color: tokens.glassStroke),
+                    itemBuilder: (context, index) {
+                      final board = importedBoards[index];
+                      return CheckboxListTile(
+                        value: importedBoardsToKeep.contains(board.boardId),
+                        onChanged: (value) {
+                          if (value == true) {
+                            importedBoardsToKeep.add(board.boardId);
+                          } else {
+                            importedBoardsToKeep.remove(board.boardId);
+                          }
+                          setDialogState(() {});
+                        },
+                        title: Text(
+                          board.title,
+                          style: InkType.body(tokens.ink),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: InkSpacing.s16,
+                          vertical: InkSpacing.s8,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
               const SizedBox(height: InkSpacing.s16),
               Text(
                 'You will no longer have access to this workspace.',
@@ -272,20 +328,21 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
             label: 'Cancel',
             expand: false,
             compact: true,
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(dialogContext, false),
           ),
           InkButton.dangerConfirm(
             label: 'Leave',
             expand: false,
             compact: true,
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogContext, true),
           ),
         ],
+        ),
       ),
     );
 
     if (confirm == true && mounted) {
-      context.read<WorkspaceBloc>().add(
+      workspaceBloc.add(
         LeaveWorkspaceRequested(
           widget.workspaceId,
           importedBoardsToKeep: importedBoardsToKeep.toList(),
@@ -314,6 +371,7 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final authState = context.watch<AuthBloc>().state;
 
     return Scaffold(
       backgroundColor: tokens.paper,
@@ -483,6 +541,11 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                         return Center(child: CircularProgressIndicator(color: tokens.accent));
                       }
 
+                      final myUid = authState is Authenticated ? authState.uid : null;
+                      final myEmail =
+                          (authState is Authenticated ? authState.email : null)
+                              ?.trim()
+                              .toLowerCase();
                       final friends = friendsState is FriendsLoaded
                           ? friendsState.friends
                           : const <Map<String, dynamic>>[];
@@ -491,10 +554,13 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                           .trim()
                           .toLowerCase();
                       final filteredFriends = friends.where((friend) {
-                        final uid = (friend['uid'] ?? '').toString();
+                        final uid = (friend['uid'] ?? '').toString().trim();
+                        final email = (friend['email'] ?? '').toString().trim().toLowerCase();
+                        if (myUid != null && uid.isNotEmpty && uid == myUid.trim()) return false;
+                        if (myEmail != null && email.isNotEmpty && email == myEmail) return false;
+
                         final displayName = (friend['displayName'] ?? '')
                             .toString();
-                        final email = (friend['email'] ?? '').toString();
                         final searchable = '$displayName $email $uid'
                             .toLowerCase();
                         return query.isEmpty || searchable.contains(query);

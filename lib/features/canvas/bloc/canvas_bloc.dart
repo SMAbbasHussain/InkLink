@@ -466,6 +466,25 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           continue;
         }
         _remotePreviewDeletedIds.remove(elementId);
+        if (type == 'image') {
+          final incomingBase64 = decoded['imageBase64'] as String?;
+          if (incomingBase64 == null || incomingBase64.isEmpty) {
+            final existing = _remotePreviewElements[elementId] ??
+                state.elements.where((e) => e.id == elementId).firstOrNull;
+            if (existing is ImageElement && existing.imageBase64.isNotEmpty) {
+              decoded['imageBase64'] = existing.imageBase64;
+            } else {
+              final adapter = _crdtAdapter;
+              if (adapter != null) {
+                final elemData = adapter.materializeElements()[elementId];
+                final base64 = elemData?['imageBase64'] as String?;
+                if (base64 != null && base64.isNotEmpty) {
+                  decoded['imageBase64'] = base64;
+                }
+              }
+            }
+          }
+        }
         _remotePreviewElements[preview.elementId!] =
             CanvasElement.fromMap(elementId, decoded);
       } catch (_) {}
@@ -559,10 +578,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
   void _refreshFromCrdtAdapter(Emitter<CanvasState> emit) {
     final adapter = _crdtAdapter;
-    if (adapter == null) return;
-    final rebuilt = _rebuildElementsFromCrdtState(
-      adapter.materializeElements(),
-    );
+    final rebuilt = adapter != null
+        ? _rebuildElementsFromCrdtState(adapter.materializeElements())
+        : state.elements;
     emit(state.copyWith(elements: _composeElementsWithPreviews(rebuilt)));
   }
 
@@ -721,6 +739,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             (payload['cy'] as num?)?.toDouble() ?? 0.0,
           ),
           color: Color((payload['color'] as num?)?.toInt() ?? Colors.black.value),
+          width: (payload['width'] as num?)?.toDouble() ?? 0.0,
+          height: (payload['height'] as num?)?.toDouble() ?? 0.0,
         ));
         continue;
       }
@@ -963,12 +983,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final prompt = event.prompt.trim();
     if (prompt.isEmpty) return;
     final textId = _uuid.v4();
+    final measured = measureTextElementBounds(prompt);
     final textElement = TextElement(
       id: textId,
       z: _nextZIndex(),
       text: prompt,
       center: event.position,
       color: state.selectedColor,
+      width: measured.width,
+      height: measured.height,
     );
     final nextElements =
         List<CanvasElement>.from(state.elements)..add(textElement);
@@ -1239,6 +1262,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final update = adapter.undoLast(origin: 'local');
     if (update == null || update.isEmpty) return;
     await _publishCrdtUpdate(update);
+    // Undo can revert an element to a payload identical to the last one
+    // received from a peer; clear the dedup guard so the next remote
+    // update is not silently dropped.
+    _lastShapePayloadFingerprint.clear();
     _refreshFromCrdtAdapter(emit);
     emit(state.copyWith(activeTray: null));
   }
@@ -1250,6 +1277,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final update = adapter.redoLast(origin: 'local');
     if (update == null || update.isEmpty) return;
     await _publishCrdtUpdate(update);
+    // Redo can re-apply a payload identical to the last one received from
+    // a peer; clear the dedup guard so the next remote update is not
+    // silently dropped.
+    _lastShapePayloadFingerprint.clear();
     _refreshFromCrdtAdapter(emit);
     emit(state.copyWith(activeTray: null));
   }
@@ -1831,20 +1862,48 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       }
     }
     if (existing == null) return;
-    if (existing is! ShapeElement && existing is! StickyNoteElement) return;
+    if (existing is! ShapeElement &&
+        existing is! StickyNoteElement &&
+        existing is! ImageElement) {
+      return;
+    }
 
-    final currentCx = existing is ShapeElement ? existing.center.dx : (existing as StickyNoteElement).center.dx;
-    final currentCy = existing is ShapeElement ? existing.center.dy : (existing as StickyNoteElement).center.dy;
-    final currentSize = existing is ShapeElement ? existing.size : (existing as StickyNoteElement).width;
-    final currentRotation = existing is ShapeElement ? (existing.rotation % (math.pi * 2)) : (existing as StickyNoteElement).rotation;
-    final currentBorderRadius = existing is ShapeElement ? existing.borderRadius : 0.0;
+    final currentCx = existing is ShapeElement
+        ? existing.center.dx
+        : existing is StickyNoteElement
+            ? existing.center.dx
+            : (existing as ImageElement).center.dx;
+    final currentCy = existing is ShapeElement
+        ? existing.center.dy
+        : existing is StickyNoteElement
+            ? existing.center.dy
+            : (existing as ImageElement).center.dy;
+    final currentSize = existing is ShapeElement
+        ? existing.size
+        : existing is StickyNoteElement
+            ? existing.width
+            : (existing as ImageElement).width;
+    final currentRotation = existing is ShapeElement
+        ? (existing.rotation % (math.pi * 2))
+        : existing is StickyNoteElement
+            ? existing.rotation
+            : 0.0;
+    final currentBorderRadius =
+        existing is ShapeElement ? existing.borderRadius : 0.0;
     final currentColor = existing is ShapeElement
         ? existing.color.value
-        : (existing as StickyNoteElement).color.value;
+        : existing is StickyNoteElement
+            ? existing.color.value
+            : 0;
     final currentFilled = existing is ShapeElement ? existing.isFilled : true;
     final nextCx = (data['cx'] as num?)?.toDouble() ?? 0.0;
     final nextCy = (data['cy'] as num?)?.toDouble() ?? 0.0;
-    final nextSize = (data['size'] as num?)?.toDouble() ?? (existing is ShapeElement ? 64.0 : 160.0);
+    final nextSize = (data['size'] as num?)?.toDouble() ??
+        (existing is ShapeElement
+            ? 64.0
+            : existing is StickyNoteElement
+                ? 160.0
+                : (existing as ImageElement).width);
     final nextRotation =
         ((data['rotation'] as num?)?.toDouble() ?? 0.0) % (math.pi * 2);
     final nextBorderRadius = (data['borderRadius'] as num?)?.toDouble() ?? 0.0;
@@ -1864,6 +1923,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (existing is StickyNoteElement) {
       data['width'] ??= nextSize;
       data['height'] ??= nextSize;
+    }
+    if (existing is ImageElement) {
+      data['imageBase64'] ??= existing.imageBase64;
+      data['width'] ??= (data['width'] as num?)?.toDouble() ??
+          (data['size'] as num?)?.toDouble() ??
+          existing.width;
+      data['height'] ??= (data['height'] as num?)?.toDouble() ??
+          (data['size'] as num?)?.toDouble() ??
+          existing.height;
     }
     final fingerprint = _shapeFingerprint(shapeId, data);
     if (_lastShapePayloadFingerprint[shapeId] == fingerprint) return;
@@ -1946,6 +2014,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         data[entry.key] = entry.value;
       }
     }
+    if (shape is ImageElement) {
+      data.remove('imageBase64');
+    }
     await _publishSelectedShapePreview(shape.id, data);
   }
 
@@ -1960,6 +2031,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final data = Map<String, dynamic>.from(shape.toMap())
       ..['cx'] = event.center.dx
       ..['cy'] = event.center.dy;
+    if (shape is ImageElement) {
+      data.remove('imageBase64');
+    }
     await _publishSelectedShapePreview(shape.id, data);
   }
 
@@ -1973,6 +2047,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (!_ensureCanEdit(emit)) return;
     final data = Map<String, dynamic>.from(shape.toMap())
       ..['size'] = event.size.clamp(24.0, 320.0);
+    if (shape is ImageElement) {
+      data.remove('imageBase64');
+      data['width'] = event.size.clamp(80.0, 720.0);
+      data['height'] = event.size.clamp(80.0, 720.0);
+    }
     await _publishSelectedShapePreview(shape.id, data);
   }
 
@@ -2001,6 +2080,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final deletedIds = <String>[];
     final createdStrokes = <CanvasElement>[];
     final nextElements = <CanvasElement>[];
+    // _nextZIndex() scans state.elements, which stays frozen during this
+    // pass; seed a local counter so every fragment gets a distinct,
+    // increasing z instead of all fragments sharing one stale max-z.
+    var zCounter = _nextZIndex();
     for (final element in state.elements) {
       if (element is! StrokeElement) {
         final shouldDeleteWholeElement = eraseEverything &&
@@ -2030,7 +2113,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         if (segment.length < 2) continue;
         final replacement = StrokeElement(
           id: _uuid.v4(),
-          z: _nextZIndex(),
+          z: zCounter++,
           color: element.color,
           strokeWidth: element.strokeWidth,
           opacity: element.opacity,
@@ -2309,7 +2392,19 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasChatMessagesUpdated event,
     Emitter<CanvasState> emit,
   ) {
-    emit(state.copyWith(chatMessages: event.messages));
+    // History can resolve after live messages have already arrived; merge
+    // by id instead of replacing so messages received live are not dropped.
+    final merged = <String, BoardChatMessage>{
+      for (final m in state.chatMessages) m.id: m,
+    };
+    merged.addAll({for (final m in event.messages) m.id: m});
+    final messages = merged.values.toList()
+      ..sort((a, b) {
+        final byTime = a.timestamp.compareTo(b.timestamp);
+        if (byTime != 0) return byTime;
+        return a.id.compareTo(b.id);
+      });
+    emit(state.copyWith(chatMessages: messages));
   }
 
   void _onCanvasChatMessageReceived(

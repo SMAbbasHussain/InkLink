@@ -57,7 +57,8 @@ class FakeAuthService implements AuthService {
   Future<void> sendEmailVerification() async {}
 
   @override
-  Future<bool> reloadAndCheckEmailVerified() async => true;
+  Future<EmailVerificationStatus> reloadAndCheckEmailVerified() async =>
+      EmailVerificationStatus.unverified;
 
   @override
   Future<void> deleteAccount() async {}

@@ -50,6 +50,13 @@ module.exports = async (request) => {
     const firestore = admin.firestore();
     const boardRef = firestore.collection(FirestorePaths.BOARDS).doc(boardId.trim());
 
+    const visibility = normalizeVisibility(request.data?.visibility);
+    const privateJoinPolicy = normalizePrivateJoinPolicy(request.data?.privateJoinPolicy);
+    const whoCanInvite = normalizeWhoCanInvite(request.data?.whoCanInvite);
+    const defaultLinkJoinRole = normalizeDefaultLinkJoinRole(
+      request.data?.defaultLinkJoinRole,
+    );
+
     await firestore.runTransaction(async (transaction) => {
       const boardDoc = await transaction.get(boardRef);
 
@@ -61,13 +68,6 @@ module.exports = async (request) => {
       if (boardData.ownerId !== uid) {
         throw new HttpsError('permission-denied', 'Only the board owner can update board settings.');
       }
-
-      const visibility = normalizeVisibility(request.data?.visibility);
-      const privateJoinPolicy = normalizePrivateJoinPolicy(request.data?.privateJoinPolicy);
-      const whoCanInvite = normalizeWhoCanInvite(request.data?.whoCanInvite);
-      const defaultLinkJoinRole = normalizeDefaultLinkJoinRole(
-        request.data?.defaultLinkJoinRole,
-      );
 
       const joinViaCodeEnabled =
         visibility === VISIBILITY_PUBLIC || privateJoinPolicy === POLICY_LINK_CAN_JOIN;

@@ -30,6 +30,12 @@ abstract class WorkspaceService {
     String? workspaceId,
     List<String>? importedBoardsToKeep,
   });
+  /// Imported boards in [workspaceId] that the current user still has
+  /// access to and could keep when leaving. Used by the leave dialog so
+  /// the advertised "keep imported boards" option is selectable.
+  Future<List<({String boardId, String title})>> getImportedBoardsForLeave(
+    String workspaceId,
+  );
   Future<void> removeMemberFromWorkspace({
     required String workspaceId,
     required String memberUid,
@@ -150,6 +156,11 @@ class WorkspaceServiceImpl implements WorkspaceService {
       'importedBoardsToKeep': importedBoardsToKeep ?? [],
     });
   }
+
+  @override
+  Future<List<({String boardId, String title})>> getImportedBoardsForLeave(
+    String workspaceId,
+  ) => _repository.getImportedBoardsForLeave(workspaceId);
 
   @override
   Future<void> removeMemberFromWorkspace({

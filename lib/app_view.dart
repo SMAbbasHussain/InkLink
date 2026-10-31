@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'ui/theme/ink_theme.dart';
@@ -27,6 +28,7 @@ class AppView extends StatefulWidget {
 
 class _AppViewState extends State<AppView> {
   AuthSessionService? _authSessionService;
+  String? _initializedAuthUid;
 
   @override
   void didChangeDependencies() {
@@ -37,6 +39,11 @@ class _AppViewState extends State<AppView> {
       _authSessionService = service;
       _authSessionService?.registerPreSignOutCallback(_stopBlocsForLogout);
     }
+
+    final authState = context.read<AuthBloc>().state;
+    if (authState is Authenticated) {
+      _initializeAuthenticatedSession(authState.uid);
+    }
   }
 
   @override
@@ -45,7 +52,40 @@ class _AppViewState extends State<AppView> {
     super.dispose();
   }
 
+  void _initializeAuthenticatedSession(String uid) {
+    if (_initializedAuthUid == uid) return;
+    _initializedAuthUid = uid;
+
+    // Phase 4E: Prefetch data on auth
+    context.read<DataPrefetchService>().prefetchInitialData(uid);
+
+    // Start global syncs when authenticated (both on cold start and after login)
+    context.read<DashboardBloc>().add(LoadDashboardRequested());
+    context.read<WorkspaceBloc>().add(LoadWorkspacesRequested());
+    context.read<NotificationsBloc>().add(
+      const NotificationsLoadRequested(),
+    );
+    context.read<BoardInvitationsBloc>().add(
+      const BoardInvitationsLoadRequested(),
+    );
+    context.read<FriendsBloc>().add(LoadFriendsInfo());
+    context.read<ChatService>().login(uid).catchError((e, st) {
+      developer.log('ChatService login notice: $e', error: e, stackTrace: st, name: 'AppView');
+    });
+
+    // Route to pending deep-linked board if user launched with a deep link
+    final pendingBoardId = DeepLinkService.instance.consumePendingBoardId();
+    if (pendingBoardId != null && pendingBoardId.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          DeepLinkService.instance.navigateToBoard(pendingBoardId, context: context);
+        }
+      });
+    }
+  }
+
   Future<void> _stopBlocsForLogout() async {
+    _initializedAuthUid = null;
     if (!mounted) return;
     final friendsBloc = context.read<FriendsBloc>();
     final workspaceBloc = context.read<WorkspaceBloc>();
@@ -85,30 +125,7 @@ class _AppViewState extends State<AppView> {
           Navigator.of(context, rootNavigator: true)
               .popUntil((route) => route.isFirst);
 
-          // Phase 4E: Prefetch data on auth
-          context.read<DataPrefetchService>().prefetchInitialData(state.uid);
-
-          // Restart global syncs when authenticated (crucial after logout/login cycle)
-          context.read<DashboardBloc>().add(LoadDashboardRequested());
-          context.read<WorkspaceBloc>().add(LoadWorkspacesRequested());
-          context.read<NotificationsBloc>().add(
-            const NotificationsLoadRequested(),
-          );
-          context.read<BoardInvitationsBloc>().add(
-            const BoardInvitationsLoadRequested(),
-          );
-          context.read<FriendsBloc>().add(LoadFriendsInfo());
-          context.read<ChatService>().login(state.uid);
-
-          // Route to pending deep-linked board if user launched with a deep link
-          final pendingBoardId = DeepLinkService.instance.consumePendingBoardId();
-          if (pendingBoardId != null && pendingBoardId.isNotEmpty) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                DeepLinkService.instance.navigateToBoard(pendingBoardId, context: context);
-              }
-            });
-          }
+          _initializeAuthenticatedSession(state.uid);
         } else if (state is Unauthenticated) {
           // Extra safety in case logout happened outside standard authSessionService.signOut
           Navigator.of(context, rootNavigator: true)
@@ -159,7 +176,6 @@ class _AppViewState extends State<AppView> {
         }
 
         if (state is Unauthenticated ||
-            state is AuthInitial ||
             state is AuthError ||
             state is AuthLoading ||
             state is PasswordResetSent) {

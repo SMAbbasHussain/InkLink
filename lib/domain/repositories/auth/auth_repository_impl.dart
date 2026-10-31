@@ -115,21 +115,56 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<void> syncFcmToken(String uid, String token) {
-    return upsertUserData(uid, {
-      'fcmToken': token,
-      'fcmTokens': FieldValue.arrayUnion([token]),
-    });
+  Future<void> syncFcmToken(String uid, String token) async {
+    final firestore = _firestoreService.getInstance();
+    final userRef = firestore.collection('users').doc(uid);
+    final batch = firestore.batch();
+
+    // Store push tokens in a protected per-token subcollection instead of the
+    // user document (which every signed-in user can read).
+    final tokenDoc = userRef.collection('fcm_tokens').doc(_fcmTokenDocId(token));
+    batch.set(tokenDoc, <String, dynamic>{
+      'token': token,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    // Migration: strip legacy token fields from the (world-readable) user doc.
+    batch.set(userRef, <String, dynamic>{
+      'fcmToken': FieldValue.delete(),
+      'fcmTokens': FieldValue.delete(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    await batch.commit();
+  }
+
+  static String _fcmTokenDocId(String token) {
+    // Firestore doc ids may not contain '/', '#', '[', ']' or '.' and must not
+    // start with '__'. FCM tokens are URL-safe, but sanitize defensively.
+    var id = token.replaceAll(RegExp(r'[.#$/\[\]]'), '_');
+    if (id.startsWith('__')) id = 'tk_$id';
+    if (id.length > 1400) id = 'tk_${id.hashCode.toUnsigned(31)}';
+    return id;
   }
 
   @override
   Future<void> removeFcmTokenOnSignOut(String uid, {String? token}) {
     final userUpdates = <String, dynamic>{
       'fcmToken': FieldValue.delete(),
+      'updatedAt': FieldValue.serverTimestamp(),
     };
 
     if (token != null && token.isNotEmpty) {
       userUpdates['fcmTokens'] = FieldValue.arrayRemove([token]);
+      return Future.wait<void>([
+        upsertUserData(uid, userUpdates),
+        _firestoreService
+            .collection('users')
+            .doc(uid)
+            .collection('fcm_tokens')
+            .doc(_fcmTokenDocId(token))
+            .delete(),
+      ]).then((_) { });
     }
 
     return upsertUserData(uid, userUpdates);
@@ -215,12 +250,15 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<bool> reloadAndCheckEmailVerified() async {
+  Future<EmailVerificationStatus> reloadAndCheckEmailVerified() async {
     try {
       return await _authService.reloadAndCheckEmailVerified();
     } catch (e) {
+      // The check itself failed (network flake, transient error) — report
+      // `unknown` so callers don't mistake it for "confirmed unverified"
+      // and trap verified users on the verification screen.
       developer.log('Failed to check email verified status: $e', name: 'Auth', error: e);
-      return false;
+      return EmailVerificationStatus.unknown;
     }
   }
 

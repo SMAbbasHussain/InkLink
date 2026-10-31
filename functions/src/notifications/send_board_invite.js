@@ -8,6 +8,8 @@ const logger = require('../utils/logger');
 const ROLE_OWNER = 'owner';
 const ROLE_EDITOR = 'editor';
 const ROLE_VIEWER = 'viewer';
+// Sentinel for "no invite rights": senders with no active member doc.
+const ROLE_NONE = 'none';
 const INVITE_OWNER_ONLY = 'owner_only';
 const INVITE_OWNER_EDITOR = 'owner_editor';
 const INVITE_ALL_MEMBERS = 'all_members';
@@ -89,9 +91,14 @@ module.exports = async (request) => {
       .doc(senderUid);
     const senderMemberDoc = await senderMemberRef.get();
     const senderMemberData = senderMemberDoc.data() || {};
+    // Unknown senders get "no invite rights": a missing/inactive member
+    // doc must not silently resolve to viewer, which would let complete
+    // non-members invite under the all_members policy.
     const senderRole = ownerId === senderUid
       ? ROLE_OWNER
-      : normalizeRole(senderMemberData.role, ROLE_VIEWER);
+      : senderMemberDoc.exists && senderMemberData.status === 'active'
+        ? normalizeRole(senderMemberData.role, ROLE_VIEWER)
+        : ROLE_NONE;
 
     const invitePolicyMap = boardData[FirestorePaths.INVITE_POLICY] || {};
     const whoCanInvite =

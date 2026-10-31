@@ -402,8 +402,10 @@ class ChatBubble extends StatelessWidget {
                       )
                     else if (message.status == ChatMessageStatus.read)
                       const Icon(Icons.done_all_rounded, size: 13, color: Color(0xFF00B0FF))
+                    else if (message.status == ChatMessageStatus.delivered)
+                      Icon(Icons.done_all_rounded, size: 13, color: colors.textSecondary.withOpacity(0.8))
                     else
-                      Icon(Icons.done_all_rounded, size: 13, color: colors.textSecondary.withOpacity(0.8)),
+                      Icon(Icons.done_rounded, size: 13, color: colors.textSecondary.withOpacity(0.8)),
                   ],
                 ],
               ),

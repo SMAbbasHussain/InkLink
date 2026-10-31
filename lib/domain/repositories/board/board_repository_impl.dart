@@ -1297,11 +1297,20 @@ class FirestoreBoardRepository implements BoardRepository {
     required String defaultLinkJoinRole,
     bool? allowMembersToCopy,
   }) async {
+    // Mirror the shape the Board model and cloud functions read/write:
+    // invite roles live in a nested `invitePolicy` map, and
+    // joinViaCodeEnabled is derived the same way update_board_settings.js
+    // derives it. Flat keys here would be silently ignored on sync
+    // (settings reverted on the next snapshot).
     final updateData = <String, dynamic>{
       'visibility': visibility,
       'privateJoinPolicy': privateJoinPolicy,
-      'whoCanInvite': whoCanInvite,
-      'defaultLinkJoinRole': defaultLinkJoinRole,
+      'joinViaCodeEnabled': visibility == Board.visibilityPublic ||
+          privateJoinPolicy == Board.policyLinkCanJoin,
+      'invitePolicy': {
+        'whoCanInvite': whoCanInvite,
+        'defaultLinkJoinRole': defaultLinkJoinRole,
+      },
       'updatedAt': FieldValue.serverTimestamp(),
     };
     if (allowMembersToCopy != null) {

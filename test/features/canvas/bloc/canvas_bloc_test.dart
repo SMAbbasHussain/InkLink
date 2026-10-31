@@ -1,7 +1,11 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/domain/models/board.dart';
+import 'package:inklink/core/database/collections/local_crdt_update.dart';
 import 'package:inklink/domain/services/board/board_service.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
 import 'package:inklink/features/canvas/models/canvas_tool_mode.dart';
@@ -529,6 +533,191 @@ void main() {
       final conn = bloc.state.elements.first as ConnectorElement;
       expect(conn.lineStyle, 'curved');
       expect(conn.hasArrowhead, isTrue);
+      await bloc.close();
+    });
+  });
+
+  group('CanvasBloc — image elements & smooth preview dragging', () {
+    test('CanvasAddImageElement adds an ImageElement to state', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+
+      final imageBytes = Uint8List.fromList([1, 2, 3, 4]);
+      bloc.add(CanvasAddImageElement(
+        imageBytes,
+        const Offset(150, 200),
+        width: 120,
+        height: 100,
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bloc.state.elements, hasLength(1));
+      expect(bloc.state.elements.first, isA<ImageElement>());
+      final img = bloc.state.elements.first as ImageElement;
+      expect(img.center, const Offset(150, 200));
+      expect(img.width, 120);
+      expect(img.height, 100);
+      expect(img.imageBase64, base64Encode(imageBytes));
+      await bloc.close();
+    });
+
+    test(
+      'CanvasApplyRemotePreview updates preview coordinates while retaining imageBase64',
+      () async {
+        final bloc = CanvasBloc();
+        _grantEditor(bloc);
+        await Future<void>.delayed(Duration.zero);
+
+        final imageBytes = Uint8List.fromList([10, 20, 30, 40]);
+        bloc.add(CanvasAddImageElement(
+          imageBytes,
+          const Offset(100, 100),
+          width: 100,
+          height: 100,
+        ));
+        await Future<void>.delayed(Duration.zero);
+
+        final originalImage = bloc.state.elements.first as ImageElement;
+        final elementId = originalImage.id;
+        final expectedBase64 = originalImage.imageBase64;
+        expect(expectedBase64.isNotEmpty, isTrue);
+
+        // Remote preview arrives with ONLY coordinates (imageBase64 omitted)
+        final previewPayload = jsonEncode({
+          'type': 'image',
+          'action': 'upsert',
+          'elementId': elementId,
+          'cx': 250.0,
+          'cy': 350.0,
+          'width': 120.0,
+          'height': 120.0,
+        });
+        final remotePreview = LocalCrdtUpdate()
+          ..updateId = 'preview-1'
+          ..boardId = 'board-1'
+          ..elementId = elementId
+          ..sourceClientId = 'other-client'
+          ..payloadBase64 = base64Encode(utf8.encode(previewPayload))
+          ..appliedAt = DateTime.now()
+          ..isSynced = true;
+
+        bloc.add(CanvasApplyRemotePreview([remotePreview]));
+        await Future<void>.delayed(Duration.zero);
+
+        // The image element should be at the new preview position AND retain its imageBase64
+        final updatedImage =
+            bloc.state.elements.firstWhere((e) => e.id == elementId) as ImageElement;
+        expect(updatedImage.center, const Offset(250, 350));
+        expect(updatedImage.width, 120);
+        expect(updatedImage.height, 120);
+        expect(updatedImage.imageBase64, expectedBase64);
+        await bloc.close();
+      },
+    );
+
+    test('CanvasMoveSelectedShape on ImageElement updates center and preserves imageBase64', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+
+      final imageBytes = Uint8List.fromList([5, 6, 7, 8]);
+      bloc.add(CanvasAddImageElement(
+        imageBytes,
+        const Offset(100, 100),
+        width: 100,
+        height: 100,
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      final image = bloc.state.elements.first as ImageElement;
+      final expectedBase64 = image.imageBase64;
+
+      // Select the image
+      bloc.add(CanvasSelectShape(image.id));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.selectedShapeId, image.id);
+
+      // Move the selected image
+      bloc.add(const CanvasMoveSelectedShape(Offset(300, 400)));
+      await Future<void>.delayed(Duration.zero);
+
+      final movedImage =
+          bloc.state.elements.firstWhere((e) => e.id == image.id) as ImageElement;
+      expect(movedImage.center, const Offset(300, 400));
+      expect(movedImage.imageBase64, expectedBase64);
+      await bloc.close();
+    });
+
+    test('drawing a stroke over an existing image assigns higher z-index and renders above image', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+
+      final imageBytes = Uint8List.fromList([1, 2, 3, 4]);
+      bloc.add(CanvasAddImageElement(
+        imageBytes,
+        const Offset(100, 100),
+        width: 100,
+        height: 100,
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      final image = bloc.state.elements.first as ImageElement;
+
+      // Draw a stroke across the image
+      bloc.add(const CanvasStartStroke(Offset(90, 90)));
+      bloc.add(const CanvasAppendStroke(Offset(110, 110)));
+      bloc.add(const CanvasEndStroke());
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bloc.state.elements, hasLength(2));
+      final stroke = bloc.state.elements.firstWhere((e) => e is StrokeElement) as StrokeElement;
+
+      // Stroke must have higher z than image so it is rendered above the image
+      expect(stroke.z, greaterThan(image.z));
+      expect(bloc.state.elements.indexOf(stroke), greaterThan(bloc.state.elements.indexOf(image)));
+      await bloc.close();
+    });
+
+    test('moving a shape over an existing image promotes its z-index above the image', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+
+      // Add shape first (lower z)
+      bloc.add(const CanvasAddShape(
+        CanvasShapeType.rectangle,
+        Offset(50, 50),
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      // Add image (higher z initially)
+      final imageBytes = Uint8List.fromList([1, 2, 3, 4]);
+      bloc.add(CanvasAddImageElement(
+        imageBytes,
+        const Offset(100, 100),
+        width: 100,
+        height: 100,
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      final initialShape = bloc.state.elements.firstWhere((e) => e is ShapeElement);
+      final image = bloc.state.elements.firstWhere((e) => e is ImageElement);
+      expect(image.z, greaterThan(initialShape.z));
+
+      // Select and move the shape across/over the image
+      bloc.add(CanvasSelectShape(initialShape.id));
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasMoveSelectedShape(Offset(100, 100)));
+      await Future<void>.delayed(Duration.zero);
+
+      final movedShape = bloc.state.elements.firstWhere((e) => e.id == initialShape.id);
+      final currentImage = bloc.state.elements.firstWhere((e) => e.id == image.id);
+
+      // Moved shape now has higher z than image so it is rendered and dragged over the image
+      expect(movedShape.z, greaterThan(currentImage.z));
+      expect(bloc.state.elements.indexOf(movedShape), greaterThan(bloc.state.elements.indexOf(currentImage)));
       await bloc.close();
     });
   });

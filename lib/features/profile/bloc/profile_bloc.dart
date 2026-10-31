@@ -41,6 +41,10 @@ class ProfileLoaded extends ProfileState {
   final int boardCount;
   final bool isOnline;
   final DateTime? lastActive;
+  // Non-fatal errors (e.g. a failed photo upload after name/bio saved) are
+  // surfaced here instead of emitting ProfileError after a successful load,
+  // which would replace the whole profile screen with an error page.
+  final String? errorMessage;
   ProfileLoaded({
     required this.userData,
     required this.isSelf,
@@ -50,6 +54,7 @@ class ProfileLoaded extends ProfileState {
     this.boardCount = 0,
     this.isOnline = false,
     this.lastActive,
+    this.errorMessage,
   });
 }
 
@@ -358,11 +363,8 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             boardCount: currentState.boardCount,
             isOnline: currentState.isOnline,
             lastActive: currentState.lastActive,
-          ),
-        );
-        emit(
-          ProfileError(
-            'Name and bio updated, but failed to upload photo: ${e.toString()}',
+            errorMessage:
+                'Name and bio updated, but failed to upload photo: ${e.toString()}',
           ),
         );
       }

@@ -13,6 +13,10 @@ import '../../repositories/auth/auth_repository.dart';
 import '../../repositories/canvas/canvas_sync_repository.dart';
 import '../presence/presence_service.dart';
 
+// Re-exported so feature blocs can reference the enum without importing
+// core services directly (see tool/architecture_guardrails.dart).
+export '../../../core/services/auth_service.dart' show EmailVerificationStatus;
+
 abstract class AuthSessionService {
   Stream<User?> get user;
   Future<User?> signIn(String email, String password);
@@ -23,7 +27,7 @@ abstract class AuthSessionService {
   User? get currentUser;
   Future<void> sendPasswordResetEmail(String email);
   Future<void> sendEmailVerification();
-  Future<bool> reloadAndCheckEmailVerified();
+  Future<EmailVerificationStatus> reloadAndCheckEmailVerified();
   Future<void> deleteAccount({String? password});
   Future<void> reauthenticate({String? password});
   void registerPreSignOutCallback(Future<void> Function() callback);
@@ -81,7 +85,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
   }
 
   @override
-  Future<bool> reloadAndCheckEmailVerified() {
+  Future<EmailVerificationStatus> reloadAndCheckEmailVerified() {
     return _authRepository.reloadAndCheckEmailVerified();
   }
 
@@ -121,9 +125,9 @@ class AuthSessionServiceImpl implements AuthSessionService {
     // Restore Firestore and RTDB connectivity (was disabled during sign-out).
     await _authRepository.enableNetwork();
     developer.log('enableNetwork done', name: 'AuthSessionService');
-    await _presenceService.setUserOnline();
+    unawaited(_presenceService.setUserOnline());
     developer.log('setUserOnline done', name: 'AuthSessionService');
-    await _syncFcmToken();
+    unawaited(_syncFcmToken());
     developer.log('syncFcmToken done', name: 'AuthSessionService');
   }
 
@@ -301,7 +305,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
       return;
     }
     if (token != null && token.isNotEmpty && _lastSyncedToken != token) {
-      await _authRepository.syncFcmToken(current.uid, token);
+      try { await _authRepository.syncFcmToken(current.uid, token); _lastSyncedToken = token; } catch (e, st) { developer.log('Failed to sync FCM token: $e', name: 'AuthSessionService', error: e, stackTrace: st); }
       _lastSyncedToken = token;
     }
 
@@ -313,7 +317,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
         return;
       }
 
-      await _authRepository.syncFcmToken(user.uid, newToken);
+      try { await _authRepository.syncFcmToken(user.uid, newToken); _lastSyncedToken = newToken; } catch (e, st) { developer.log('Failed to sync refreshed FCM token: $e', name: 'AuthSessionService', error: e, stackTrace: st); }
       _lastSyncedToken = newToken;
     });
   }

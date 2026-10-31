@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:inklink/domain/models/chat/chat_conversation_model.dart';
+import 'package:inklink/domain/services/auth/auth_session_service.dart';
 import 'package:inklink/domain/services/chat/chat_service.dart';
+import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/chat/view/chat_inbox_screen.dart';
 import 'package:inklink/features/chat/bloc/chat_inbox_bloc.dart';
 import 'package:inklink/features/chat/bloc/chat_inbox_event.dart';
@@ -20,6 +23,17 @@ class MockChatService implements ChatService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class FakeAuthSessionService implements AuthSessionService {
+  @override
+  User? get currentUser => null;
+
+  @override
+  Stream<User?> get user => const Stream.empty();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
   testWidgets('ChatInboxScreen empty state renders cleanly with Desk theme', (tester) async {
     final mockService = MockChatService();
@@ -29,11 +43,18 @@ void main() {
         providers: [
           RepositoryProvider<ChatService>.value(value: mockService),
         ],
-        child: BlocProvider(
-          create: (_) => ChatInboxBloc(chatService: mockService)..add(const LoadChatInbox()),
-          child: MaterialApp(
-            theme: InkTheme.light(),
-            home: const ChatInboxScreen(),
+        child: MultiBlocProvider(
+          providers: [
+            BlocProvider<AuthBloc>.value(
+              value: AuthBloc(authService: FakeAuthSessionService()),
+            ),
+          ],
+          child: BlocProvider(
+            create: (_) => ChatInboxBloc(chatService: mockService)..add(const LoadChatInbox()),
+            child: MaterialApp(
+              theme: InkTheme.light(),
+              home: const ChatInboxScreen(),
+            ),
           ),
         ),
       ),
@@ -68,11 +89,18 @@ void main() {
         providers: [
           RepositoryProvider<ChatService>.value(value: mockService),
         ],
-        child: BlocProvider(
-          create: (_) => ChatInboxBloc(chatService: mockService)..add(const LoadChatInbox()),
-          child: MaterialApp(
-            theme: InkTheme.light(),
-            home: const ChatInboxScreen(),
+        child: MultiBlocProvider(
+          providers: [
+            BlocProvider<AuthBloc>.value(
+              value: AuthBloc(authService: FakeAuthSessionService()),
+            ),
+          ],
+          child: BlocProvider(
+            create: (_) => ChatInboxBloc(chatService: mockService)..add(const LoadChatInbox()),
+            child: MaterialApp(
+              theme: InkTheme.light(),
+              home: const ChatInboxScreen(),
+            ),
           ),
         ),
       ),

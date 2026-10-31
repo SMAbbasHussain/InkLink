@@ -86,10 +86,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Offset _gestureStartOffset = Offset.zero;
   Offset _gestureStartFocal = Offset.zero;
   final List<Uint8List> _recentImages = <Uint8List>[];
-  final Map<String, Uint8List> _decodedImageCache = <String, Uint8List>{};
-  final Map<String, String> _decodedImageCacheKey = <String, String>{};
-  final Map<String, _ImageDraftTransform> _imageDrafts =
-      <String, _ImageDraftTransform>{};
+  Map<String, ui.Image> _decodedUiImages = <String, ui.Image>{};
+  final Map<String, String> _decodedUiImageKeys = <String, String>{};
+  final Set<String> _pendingDecodeImageIds = <String>{};
   late final CanvasBloc _canvasBloc;
   Timer? _shapeEditDebounceTimer;
   final Map<String, dynamic> _pendingShapeEdits = <String, dynamic>{};
@@ -533,16 +532,63 @@ class _CanvasScreenState extends State<CanvasScreen> {
     return size;
   }
 
-  void _pruneImageCache(List<CanvasElement> elements) {
-    final activeImageIds = elements
-        .whereType<ImageElement>()
-        .map((element) => element.id)
-        .toSet();
+  void _syncDecodedUiImages(List<CanvasElement> elements) {
+    final activeImages = elements.whereType<ImageElement>().toList();
+    final activeIds = activeImages.map((element) => element.id).toSet();
 
-    _decodedImageCache.removeWhere((key, _) => !activeImageIds.contains(key));
-    _decodedImageCacheKey.removeWhere(
-      (key, _) => !activeImageIds.contains(key),
-    );
+    final removedIds =
+        _decodedUiImages.keys.where((id) => !activeIds.contains(id)).toList();
+    if (removedIds.isNotEmpty) {
+      final nextMap = Map<String, ui.Image>.from(_decodedUiImages);
+      for (final id in removedIds) {
+        nextMap[id]?.dispose();
+        nextMap.remove(id);
+        _decodedUiImageKeys.remove(id);
+        _pendingDecodeImageIds.remove(id);
+      }
+      _decodedUiImages = nextMap;
+    }
+
+    for (final element in activeImages) {
+      final base64Str = element.imageBase64;
+      if (base64Str.isEmpty) continue;
+      final key = '${base64Str.length}:${base64Str.hashCode}';
+      if (_decodedUiImages.containsKey(element.id) &&
+          _decodedUiImageKeys[element.id] == key) {
+        continue;
+      }
+      if (_pendingDecodeImageIds.contains(element.id)) {
+        continue;
+      }
+      _pendingDecodeImageIds.add(element.id);
+      _decodeUiImage(element.id, base64Str, key);
+    }
+  }
+
+  Future<void> _decodeUiImage(String id, String base64Str, String key) async {
+    try {
+      final cleanBase64 = base64Str.trim().replaceAll(RegExp(r'\s+'), '');
+      if (!RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(cleanBase64)) return;
+      final bytes = base64Decode(cleanBase64);
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      codec.dispose();
+      if (!mounted) {
+        frame.image.dispose();
+        return;
+      }
+      final nextMap = Map<String, ui.Image>.from(_decodedUiImages);
+      final oldImage = nextMap[id];
+      nextMap[id] = frame.image;
+      _decodedUiImages = nextMap;
+      _decodedUiImageKeys[id] = key;
+      oldImage?.dispose();
+      setState(() {});
+    } catch (_) {
+      // Decode error fallback handled by canvas placeholder
+    } finally {
+      _pendingDecodeImageIds.remove(id);
+    }
   }
 
   bool _isAtTransform({required double scale, required Offset offset}) {
@@ -1403,7 +1449,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
         },
         child: BlocBuilder<CanvasBloc, CanvasState>(
           builder: (context, state) {
-            _pruneImageCache(state.elements);
+            _syncDecodedUiImages(state.elements);
             final mappedElements = _mapElements(state.elements);
             final title =
                 state.boardTitle ??
@@ -1797,6 +1843,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               child: CustomPaint(
                                 painter: _CanvasPainter(
                                   elements: mappedElements,
+                                  decodedImages: _decodedUiImages,
                                   currentPoints: state.currentStroke,
                                   currentColor: state.selectedColor,
                                   currentStrokeWidth: state.strokeWidth,
@@ -1821,7 +1868,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             ),
                           ),
 
-                          ..._buildImageOverlays(state),
                           ..._buildPinnedCommentPins(state),
 
                           _buildEdgeTriggers(state, isDark),
@@ -1890,6 +1936,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 center: e.center,
                 text: e.text,
                 color: e.color,
+                width: e.width,
+                height: e.height,
               ),
             ImageElement e => _CanvasElement.image(
                 id: e.id,
@@ -2071,15 +2119,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
         if (dist <= 18.0) {
           return element.id;
         }
+      } else if (element.kind == _ElementKind.image ||
+          element.kind == _ElementKind.stickyNote) {
+        final halfW = (element.width > 0 ? element.width : 160.0) / 2 + 8.0;
+        final halfH = (element.height > 0 ? element.height : 160.0) / 2 + 8.0;
+        final dx = (position.dx - element.center.dx).abs();
+        final dy = (position.dy - element.center.dy).abs();
+        if (dx <= halfW && dy <= halfH) {
+          return element.id;
+        }
       } else {
-        // Shapes, images, text, sticky notes
+        // Shapes, text
         final distance = (position - element.center).distance;
         final sizeHit = element.kind == _ElementKind.shape
             ? element.size
-            : (element.kind == _ElementKind.image ||
-                    element.kind == _ElementKind.stickyNote)
-                ? math.max(element.width, element.height)
-                : 100.0;
+            : 100.0;
         if (distance <= (sizeHit / 2) + 14) {
           return element.id;
         }
@@ -2108,6 +2162,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
     }
     if (element.kind == _ElementKind.connector) {
       return _buildConnectorSelectionOverlay(state, element);
+    }
+    if (element.kind == _ElementKind.image) {
+      return _buildShapeTransformOverlay(state, mappedElements);
     }
     if (element.kind == _ElementKind.stickyNote) {
       return Stack(
@@ -2754,7 +2811,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final center = _toScreen(shape.center);
     final double rawW;
     final double rawH;
-    if (shape.kind == _ElementKind.stickyNote ||
+    if (shape.kind == _ElementKind.text) {
+      // Persisted measured text bounds; legacy elements fall back to the
+      // same 180x48 estimate used by the erase hit-test.
+      rawW = shape.width > 0 ? shape.width : 180.0;
+      rawH = shape.height > 0 ? shape.height : 48.0;
+    } else if (shape.kind == _ElementKind.stickyNote ||
         shape.kind == _ElementKind.image) {
       rawW = shape.width > 0
           ? shape.width
@@ -2779,9 +2841,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final halfH = screenH / 2;
     final rotation = (shape.data['rotation'] as num?)?.toDouble() ?? 0.0;
 
+    // Text is painted from its center point as the top-left origin, so anchor
+    // the overlay box at that corner instead of centering it on the point.
+    final isTextElement = shape.kind == _ElementKind.text;
     return Positioned(
-      left: center.dx - halfW - 16,
-      top: center.dy - halfH - 16,
+      left: (isTextElement ? center.dx : center.dx - halfW) - 16,
+      top: (isTextElement ? center.dy : center.dy - halfH) - 16,
       width: screenW + 32,
       height: screenH + 32,
       child: Stack(
@@ -2834,12 +2899,34 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         setState(() {
                           _shapeTransformDraft = draft.copyWith(center: nextCenter);
                         });
-                        _canvasBloc.add(CanvasPreviewMoveSelectedShape(nextCenter));
+                        if (shape.kind == _ElementKind.image) {
+                          _canvasBloc.add(
+                            CanvasPreviewImageElement(
+                              elementId: shape.id,
+                              center: nextCenter,
+                              width: draft.width ?? shape.width,
+                              height: draft.height ?? shape.height,
+                            ),
+                          );
+                        } else {
+                          _canvasBloc.add(CanvasPreviewMoveSelectedShape(nextCenter));
+                        }
                       },
                       onPanEnd: (_) {
                         final draft = _shapeTransformDraft;
                         if (draft != null && draft.shapeId == shape.id) {
-                          _moveSelectedShape(draft.center);
+                          if (shape.kind == _ElementKind.image) {
+                            _canvasBloc.add(
+                              CanvasUpdateImageElement(
+                                elementId: shape.id,
+                                center: draft.center,
+                                width: draft.width ?? shape.width,
+                                height: draft.height ?? shape.height,
+                              ),
+                            );
+                          } else {
+                            _moveSelectedShape(draft.center);
+                          }
                         }
                         _shapeTransformDraft = null;
                         _setShapeEditing(false);
@@ -2849,17 +2936,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           color: Colors.transparent,
                           border: Border.all(color: _tokens.accent, width: 1.5),
                           borderRadius: BorderRadius.circular(
-                            shape.kind == _ElementKind.stickyNote ? 8 : 4,
+                            (shape.kind == _ElementKind.stickyNote ||
+                                    shape.kind == _ElementKind.image)
+                                ? 8
+                                : 4,
                           ),
                         ),
                       ),
                     ),
                   ),
                   // Rotate handle (top center)
-                  Positioned(
-                    top: 2,
-                    left: 16 + (screenW / 2) - 14,
-                    child: GestureDetector(
+                  if (shape.kind != _ElementKind.image)
+                    Positioned(
+                      top: 2,
+                      left: 16 + (screenW / 2) - 14,
+                      child: GestureDetector(
                       onPanStart: (_) {
                         _setShapeEditing(true);
                         _isRotatingShape = true;
@@ -2928,11 +3019,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         final nextSize = (draft.size + delta / _viewportScale * 1.8)
                             .clamp(32.0, 480.0)
                             .toDouble();
+                        final minDim = shape.kind == _ElementKind.image ? 80.0 : 40.0;
+                        final maxDim = shape.kind == _ElementKind.image ? 720.0 : 480.0;
                         final nextW = ((draft.width ?? draft.size) + details.delta.dx / _viewportScale * 1.8)
-                            .clamp(40.0, 480.0)
+                            .clamp(minDim, maxDim)
                             .toDouble();
                         final nextH = ((draft.height ?? draft.size) + details.delta.dy / _viewportScale * 1.8)
-                            .clamp(40.0, 480.0)
+                            .clamp(minDim, maxDim)
                             .toDouble();
                         setState(() {
                           _shapeTransformDraft = draft.copyWith(
@@ -2941,12 +3034,34 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             height: nextH,
                           );
                         });
-                        _canvasBloc.add(CanvasPreviewResizeSelectedShape(nextSize));
+                        if (shape.kind == _ElementKind.image) {
+                          _canvasBloc.add(
+                            CanvasPreviewImageElement(
+                              elementId: shape.id,
+                              center: draft.center,
+                              width: nextW,
+                              height: nextH,
+                            ),
+                          );
+                        } else {
+                          _canvasBloc.add(CanvasPreviewResizeSelectedShape(nextSize));
+                        }
                       },
                       onPanEnd: (_) {
                         final draft = _shapeTransformDraft;
                         if (draft != null && draft.shapeId == shape.id) {
-                          _resizeSelectedShape(draft.size);
+                          if (shape.kind == _ElementKind.image) {
+                            _canvasBloc.add(
+                              CanvasUpdateImageElement(
+                                elementId: shape.id,
+                                center: draft.center,
+                                width: draft.width ?? draft.size,
+                                height: draft.height ?? draft.size,
+                              ),
+                            );
+                          } else {
+                            _resizeSelectedShape(draft.size);
+                          }
                         }
                         _shapeTransformDraft = null;
                         _isResizingShape = false;
@@ -3638,228 +3753,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
   }
 
-  List<Widget> _buildImageOverlays(CanvasState state) {
-    final overlays = <Widget>[];
-    for (final element in state.elements) {
-      if (element is! ImageElement) continue;
-      final imageBase64 = element.imageBase64;
-      if (imageBase64.isEmpty) continue;
-
-      final cacheKey = '${imageBase64.length}:${imageBase64.hashCode}';
-      Uint8List? imageBytes = _decodedImageCache[element.id];
-      final cachedKey = _decodedImageCacheKey[element.id];
-      if (imageBytes == null || cachedKey != cacheKey) {
-        try {
-          imageBytes = base64Decode(imageBase64);
-          _decodedImageCache[element.id] = imageBytes;
-          _decodedImageCacheKey[element.id] = cacheKey;
-        } catch (_) {
-          continue;
-        }
-      }
-
-      if (imageBytes.isEmpty) {
-        continue;
-      }
-
-      final cx = element.center.dx;
-      final cy = element.center.dy;
-      final width = element.width;
-      final height = element.height;
-
-      final draft = _imageDrafts[element.id];
-      final effectiveCx = draft?.cx ?? cx;
-      final effectiveCy = draft?.cy ?? cy;
-      final effectiveWidth = draft?.width ?? width;
-      final effectiveHeight = draft?.height ?? height;
-
-      final screenCenter = _toScreen(Offset(effectiveCx, effectiveCy));
-      final screenWidth = effectiveWidth * _viewportScale;
-      final screenHeight = effectiveHeight * _viewportScale;
-
-      overlays.add(
-        Positioned(
-          left: screenCenter.dx - (screenWidth / 2),
-          top: screenCenter.dy - (screenHeight / 2),
-          child: GestureDetector(
-            onPanStart: (_) {
-              _imageDrafts[element.id] = _ImageDraftTransform(
-                cx: effectiveCx,
-                cy: effectiveCy,
-                width: effectiveWidth,
-                height: effectiveHeight,
-              );
-            },
-            onPanUpdate: (details) {
-              final draftNow =
-                  _imageDrafts[element.id] ??
-                  _ImageDraftTransform(
-                    cx: effectiveCx,
-                    cy: effectiveCy,
-                    width: effectiveWidth,
-                    height: effectiveHeight,
-                  );
-              setState(() {
-                _imageDrafts[element.id] = draftNow.copyWith(
-                  cx: draftNow.cx + (details.delta.dx / _viewportScale),
-                  cy: draftNow.cy + (details.delta.dy / _viewportScale),
-                );
-              });
-              final liveDraft = _imageDrafts[element.id];
-              if (liveDraft != null) {
-                _canvasBloc.add(
-                  CanvasPreviewImageElement(
-                    elementId: element.id,
-                    center: Offset(liveDraft.cx, liveDraft.cy),
-                    width: liveDraft.width,
-                    height: liveDraft.height,
-                  ),
-                );
-              }
-            },
-            onPanEnd: (_) {
-              final finalDraft = _imageDrafts.remove(element.id);
-              if (finalDraft == null) return;
-              _canvasBloc.add(
-                CanvasUpdateImageElement(
-                  elementId: element.id,
-                  center: Offset(finalDraft.cx, finalDraft.cy),
-                  width: finalDraft.width,
-                  height: finalDraft.height,
-                ),
-              );
-            },
-            child: SizedBox(
-              width: screenWidth,
-              height: screenHeight,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.memory(
-                      imageBytes,
-                      width: screenWidth,
-                      height: screenHeight,
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                  if (state.selectedShapeId == element.id)
-                    Positioned(
-                      top: -6,
-                      right: -6,
-                      child: GestureDetector(
-                        onTap: () =>
-                            _canvasBloc.add(CanvasDeleteElement(element.id)),
-                        child: Container(
-                          width: 24,
-                          height: 24,
-                          decoration: BoxDecoration(
-                            color: _tokens.danger,
-                            shape: BoxShape.circle,
-                            border:
-                                Border.all(color: Colors.white, width: 2),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Color(0x22000000),
-                                blurRadius: 4,
-                                offset: Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: const Icon(LucideIcons.trash2,
-                              size: 12, color: Colors.white),
-                        ),
-                      ),
-                    ),
-                  Positioned(
-                    right: -6,
-                    bottom: -6,
-                    child: GestureDetector(
-                      onPanStart: (_) {
-                        _imageDrafts[element.id] = _ImageDraftTransform(
-                          cx: effectiveCx,
-                          cy: effectiveCy,
-                          width: effectiveWidth,
-                          height: effectiveHeight,
-                        );
-                      },
-                      onPanUpdate: (details) {
-                        final draftNow =
-                            _imageDrafts[element.id] ??
-                            _ImageDraftTransform(
-                              cx: effectiveCx,
-                              cy: effectiveCy,
-                              width: effectiveWidth,
-                              height: effectiveHeight,
-                            );
-                        setState(() {
-                          const minDimension = 24.0;
-                          _imageDrafts[element.id] = draftNow.copyWith(
-                            cx:
-                                draftNow.cx +
-                                (details.delta.dx / (_viewportScale * 2)),
-                            cy:
-                                draftNow.cy +
-                                (details.delta.dy / (_viewportScale * 2)),
-                            width: math.max(
-                              minDimension,
-                              draftNow.width +
-                                  (details.delta.dx / _viewportScale),
-                            ),
-                            height: math.max(
-                              minDimension,
-                              draftNow.height +
-                                  (details.delta.dy / _viewportScale),
-                            ),
-                          );
-                        });
-                        final liveDraft = _imageDrafts[element.id];
-                        if (liveDraft != null) {
-                          _canvasBloc.add(
-                            CanvasPreviewImageElement(
-                              elementId: element.id,
-                              center: Offset(liveDraft.cx, liveDraft.cy),
-                              width: liveDraft.width,
-                              height: liveDraft.height,
-                            ),
-                          );
-                        }
-                      },
-                      onPanEnd: (_) {
-                        final finalDraft = _imageDrafts.remove(element.id);
-                        if (finalDraft == null) return;
-                        _canvasBloc.add(
-                          CanvasUpdateImageElement(
-                            elementId: element.id,
-                            center: Offset(finalDraft.cx, finalDraft.cy),
-                            width: finalDraft.width,
-                            height: finalDraft.height,
-                          ),
-                        );
-                      },
-                      child: Container(
-                        width: 18,
-                        height: 18,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(9),
-                          border: Border.all(color: _tokens.accent, width: 1.5),
-                        ),
-                        child: Icon(LucideIcons.maximize2, size: 12, color: _tokens.accent),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-    return overlays;
-  }
-
   void _promptNewCommentDialog(Offset worldPoint) {
     final textController = TextEditingController();
     showDialog(
@@ -4000,37 +3893,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
   @override
   void dispose() {
     _shapeEditDebounceTimer?.cancel();
+    for (final img in _decodedUiImages.values) {
+      img.dispose();
+    }
+    _decodedUiImages.clear();
+    _decodedUiImageKeys.clear();
+    _pendingDecodeImageIds.clear();
     _canvasBloc.close();
     _aiPromptController.dispose();
     super.dispose();
-  }
-}
-
-class _ImageDraftTransform {
-  final double cx;
-  final double cy;
-  final double width;
-  final double height;
-
-  const _ImageDraftTransform({
-    required this.cx,
-    required this.cy,
-    required this.width,
-    required this.height,
-  });
-
-  _ImageDraftTransform copyWith({
-    double? cx,
-    double? cy,
-    double? width,
-    double? height,
-  }) {
-    return _ImageDraftTransform(
-      cx: cx ?? this.cx,
-      cy: cy ?? this.cy,
-      width: width ?? this.width,
-      height: height ?? this.height,
-    );
   }
 }
 

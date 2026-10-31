@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:inklink/features/auth/bloc/auth_bloc.dart';
+import 'package:inklink/features/auth/bloc/auth_state.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../domain/models/board.dart';
@@ -275,6 +277,7 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
   Widget build(BuildContext context) {
     final tokens = context.ink;
     final dashboardState = context.watch<DashboardBloc>().state;
+    final authState = context.watch<AuthBloc>().state;
     List<Board> copyableBoards = [];
     if (dashboardState is DashboardLoaded) {
       copyableBoards = [
@@ -556,8 +559,22 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                             );
                           }
 
-                          if (friendsState is! FriendsLoaded ||
-                              friendsState.friends.isEmpty) {
+                          final myUid = authState is Authenticated ? authState.uid : null;
+                          final myEmail =
+                              (authState is Authenticated ? authState.email : null)
+                                  ?.trim()
+                                  .toLowerCase();
+                          final friends = friendsState is FriendsLoaded
+                              ? friendsState.friends.where((friend) {
+                                  final uid = (friend['uid'] ?? '').toString().trim();
+                                  final email = (friend['email'] ?? '').toString().trim().toLowerCase();
+                                  if (myUid != null && uid.isNotEmpty && uid == myUid.trim()) return false;
+                                  if (myEmail != null && email.isNotEmpty && email == myEmail) return false;
+                                  return true;
+                                }).toList()
+                              : const <Map<String, dynamic>>[];
+
+                          if (friends.isEmpty) {
                             return Align(
                               alignment: Alignment.centerLeft,
                               child: Text(
@@ -571,7 +588,7 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                             child: Wrap(
                               spacing: 8,
                               runSpacing: 8,
-                              children: friendsState.friends.map((friend) {
+                              children: friends.map((friend) {
                                 final uid = friend['uid']?.toString() ?? '';
                                 if (uid.isEmpty) return const SizedBox.shrink();
                                 final name =

@@ -5,10 +5,53 @@ const Redis = require('ioredis');
 const admin = require('firebase-admin');
 const cors = require('cors');
 const Y = require('yjs');
+const crypto = require('crypto');
+// Official Agora token generator for Node. NOTE: the npm package is
+// "agora-token" (verified against registry.npmjs.org in Oct 2026 —
+// "agora-token-builder" does not exist on npm; only the Dart/Flutter and
+// Python Agora token packages use that name).
+const { RtcTokenBuilder, RtcRole, ChatTokenBuilder } = require('agora-token');
 require('dotenv').config();
 
+// ============================================================
+// CORS & ORIGIN VALIDATION (Comments 2 & 3)
+// ============================================================
+const defaultAllowedOrigins = [
+  'http://localhost:3000',
+  'https://inklink.web.app',
+  'https://inklink.app',
+];
+
+// Comment 2: Do NOT treat '*' as allowed when credentials are enabled; require explicit origins.
+const configuredOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0 && s !== '*')
+  : defaultAllowedOrigins;
+
+const allowedOrigins = configuredOrigins.length > 0 ? configuredOrigins : defaultAllowedOrigins;
+
+function isOriginAllowed(origin) {
+  // Allow requests with no Origin header (such as native mobile apps or curl)
+  if (!origin) return true;
+  return allowedOrigins.includes(origin);
+}
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (isOriginAllowed(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+};
+
 const app = express();
-app.use(cors());
+app.use(cors(corsOptions));
+// Parse JSON bodies for the Agora token routes below (Socket.IO is attached
+// directly to the http server and is unaffected by this middleware).
+app.use(express.json());
 
 app.get('/health', (req, res) => {
   console.log("Ping Test");
@@ -18,9 +61,136 @@ app.get('/health', (req, res) => {
   });
 });
 
+// ============================================================
+// AGORA TOKEN HTTP ROUTES — per-user chat token + voice RTC token
+// ============================================================
+// Both routes verify a Firebase Auth ID token (same identity check as the
+// Socket.IO handshake) and never log issued tokens. Socket.IO still carries
+// live board traffic; these endpoints exist so the client can mint/renew
+// tokens for the Agora-Chat SDK and for RTC voice joins.
+
+app.post('/api/agora/chat/token', async (req, res) => {
+  try {
+    const decoded = await authenticateFirebaseRequest(req);
+    if (!decoded) {
+      console.warn('[agora-chat] /api/agora/chat/token → 401 (missing/invalid Firebase ID token)');
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
+    if (!isAgoraChatConfigured()) {
+      const cfg = getAgoraChatConfig();
+      const missing = [
+        ['AGORA_CHAT_ORG_NAME', cfg.orgName],
+        ['AGORA_CHAT_APP_NAME', cfg.appName],
+        ['AGORA_CHAT_REST_CLIENT_ID', cfg.clientId],
+        ['AGORA_CHAT_REST_CLIENT_SECRET', cfg.clientSecret],
+      ].filter(([, v]) => !v).map(([k]) => k);
+      console.warn(`[agora-chat] /api/agora/chat/token → 503 (not configured; missing env: ${missing.join(', ')})`);
+      // Client falls back to local-first chat mode when chat REST is not configured.
+      return res.status(503).json({ error: 'agora chat not configured' });
+    }
+
+    // Must mirror the client's _sanitizeAgoraUid exactly so both sides
+    // agree on the Agora Chat username.
+    const agoraUsername = sanitizeAgoraUid(decoded.uid);
+    const cacheKey = `agora_chat:token:${agoraUsername}`;
+
+    // Redis-first: serve the cached token while it is still fresh (5 min headroom).
+    if (redisAvailable) {
+      const cachedRaw = await redis.get(cacheKey).catch(() => null);
+      if (cachedRaw) {
+        try {
+          const cached = JSON.parse(cachedRaw);
+          if (cached && cached.token && cached.expiresAt > Date.now() + 600000) {
+            return res.status(200).json(cached);
+          }
+        } catch (_) { }
+      }
+    }
+
+    const config = getAgoraChatConfig();
+    const expirySeconds = config.tokenExpiryHours * 3600;
+
+    const appToken = await getAgoraChatAppToken();
+    await ensureAgoraChatUser(agoraUsername, appToken);
+    const minted = await createAgoraChatUserToken(agoraUsername, expirySeconds);
+    console.log(`[agora-chat] minted Chat user token for ${agoraUsername} (valid ${config.tokenExpiryHours}h, cache miss)`);
+
+    const payload = {
+      agoraUsername,
+      appKey: `${config.orgName}#${config.appName}`,
+      appId: process.env.AGORA_APP_ID || null,
+      token: minted.token,
+      expiresAt: minted.expiresAt,
+    };
+
+    // Cache TTL = token lifetime - 600s so the entry always outlives the token.
+    if (redisAvailable) {
+      const cacheTtl = Math.max(60, Math.floor((payload.expiresAt - Date.now()) / 1000) - 600);
+      redis.set(cacheKey, JSON.stringify(payload), 'EX', cacheTtl).catch(() => { });
+    }
+
+    return res.status(200).json(payload);
+  } catch (err) {
+    console.error('[agora/chat/token] Error:', err);
+    return res.status(502).json({ error: 'agora chat token request failed' });
+  }
+});
+
+app.post('/api/agora/rtc/token', async (req, res) => {
+  try {
+    const decoded = await authenticateFirebaseRequest(req);
+    if (!decoded) {
+      console.warn('[agora-rtc] /api/agora/rtc/token → 401 (missing/invalid Firebase ID token)');
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
+    const boardId = req.body?.boardId;
+    if (!isValidBoardId(boardId)) {
+      console.warn(`[agora-rtc] /api/agora/rtc/token → 400 (invalid board id "${boardId}")`);
+      return res.status(400).json({ error: 'invalid_board_id' });
+    }
+
+    const hasAccess = await canUserAccessBoard(boardId, decoded.uid, false);
+    if (!hasAccess) {
+      console.warn(`[agora-rtc] /api/agora/rtc/token → 403 (uid ${decoded.uid} lacks access to board ${boardId})`);
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const appId = process.env.AGORA_APP_ID;
+    const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+    if (!appId || !appCertificate) {
+      const missing = [
+        !appId ? 'AGORA_APP_ID' : null,
+        !appCertificate ? 'AGORA_APP_CERTIFICATE' : null,
+      ].filter(Boolean).join(', ');
+      console.warn(`[agora-rtc] /api/agora/rtc/token → 503 (${missing} not configured)`);
+      return res.status(503).json({ error: 'agora certificate not configured' });
+    }
+
+    const channelName = `board_${boardId}`;
+    const { token, privilegeExpiredTs } = buildAgoraRtcToken(appId, appCertificate, channelName);
+    console.log(`[agora-rtc] minted RTC token for ${decoded.uid} channel ${channelName} (valid 1h)`);
+    return res.status(200).json({ appId, token, channelName, privilegeExpiredTs });
+  } catch (err) {
+    console.error('[agora/rtc/token] Error:', err);
+    return res.status(500).json({ error: 'agora rtc token request failed' });
+  }
+});
+
 const server = http.createServer(app);
+
+// Comment 3: Explicit origin check for Socket.IO WebSocket handshakes via Engine.IO allowRequest
 const io = new Server(server, {
-  cors: { origin: process.env.CORS_ORIGIN || '*' },
+  cors: corsOptions,
+  allowRequest: (req, callback) => {
+    const origin = req.headers.origin;
+    if (isOriginAllowed(origin)) {
+      return callback(null, true);
+    }
+    console.warn(`[Socket.IO handshake] Rejected unlisted origin: ${origin}`);
+    return callback('Origin not allowed by CORS policy', false);
+  },
 });
 
 function loadFirebaseServiceAccount() {
@@ -160,6 +330,11 @@ redisSub.on('message', async (channel, message) => {
     try {
       const data = JSON.parse(message);
       if (data.type === 'member_removed' && data.boardId && data.uid) {
+        // Prune the server-side membership cache immediately so a removed
+        // user can't keep socket-level access until the cache TTL expires.
+        if (redisAvailable) {
+          redis.srem(`board_members:${data.boardId}`, data.uid).catch(() => { });
+        }
         const sockets = await io.in(`board_room:${data.boardId}`).fetchSockets();
         for (const s of sockets) {
           if (s.data.uid === data.uid) {
@@ -169,6 +344,9 @@ redisSub.on('message', async (channel, message) => {
           }
         }
       } else if (data.type === 'board_deleted' && data.boardId) {
+        if (redisAvailable) {
+          redis.del(`board_members:${data.boardId}`).catch(() => { });
+        }
         io.to(`board_room:${data.boardId}`).emit('board_access_revoked', { boardId: data.boardId, reason: 'deleted' });
         io.socketsLeave(`board_room:${data.boardId}`);
         console.log(`[board_events] Evicted all users from deleted board_room:${data.boardId}`);
@@ -202,7 +380,7 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
         if (redisAvailable) {
           const p = redis.pipeline();
           p.sadd(`board_members:${boardId}`, uid);
-          p.expire(`board_members:${boardId}`, 604800);
+          p.expire(`board_members:${boardId}`, 86400);
           await p.exec().catch(() => { });
         }
         return true;
@@ -225,7 +403,7 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
       if (redisAvailable) {
         const p = redis.pipeline();
         p.sadd(`board_members:${boardId}`, uid);
-        p.expire(`board_members:${boardId}`, 604800);
+        p.expire(`board_members:${boardId}`, 86400);
         await p.exec().catch(() => { });
       }
       return true;
@@ -255,6 +433,274 @@ async function getConnectedSocketsInRoom(roomName) {
 }
 
 // ============================================================
+// AGORA HELPERS — Chat REST + RTC token builder
+// ============================================================
+// Agora Chat REST credentials come from the Agora Console (Project → Chat →
+// Overview: Client ID / Client Secret). The REST base URL is host-dependent —
+// legacy apps use https://a1.easemob.com, newer apps are hosted at
+// https://a???.chat.agora.io (read the exact URL from the console and set
+// AGORA_CHAT_REST_BASE accordingly). Endpoint shapes verified against the
+// official Agora Chat REST docs (Oct 2026):
+//   App token:  POST {base}/{org}/{app}/token   {grant_type:'client_credentials', client_id, client_secret}
+//                                              → 200 {access_token, expires_in(seconds), application}
+//   Register:   POST {base}/{org}/{app}/users   body is an ARRAY [{username, password}]
+//                                              duplicate user → HTTP 400 "duplicate_unique_property_exists"
+//   User token: POST {base}/{org}/{app}/token   {grant_type:'inherit', username, autoCreateUser:true, ttl}
+//                                              → 200 {access_token, expires_in, user}
+//               (replaces the legacy form POST /{org}/{app}/users/{username}/token with {expiry})
+//   Docs: https://docs.agora.io/en/chat/restful-api/user-account (resolved via doc.easemob.com)
+// TODO: if a specific Easemob deployment (e.g. legacy/VIP5 cluster) still only
+// serves the legacy /users/{username}/token form, switch the user-token call below.
+
+// Voice-call RTC tokens live 1 hour (kept in lockstep with join_voice_call).
+const AGORA_RTC_TOKEN_TTL_SECONDS = 3600;
+// Refresh app tokens 5 minutes before their documented expiry.
+const AGORA_CHAT_APP_TOKEN_HEADROOM_MS = 300000;
+
+function getAgoraChatConfig() {
+  return {
+    restBase: (process.env.AGORA_CHAT_REST_BASE && process.env.AGORA_CHAT_REST_BASE !== 'https://a1.easemob.com') ? process.env.AGORA_CHAT_REST_BASE : (((process.env.AGORA_CHAT_APP_NAME || '').startsWith('61') || (process.env.AGORA_CHAT_ORG_NAME || '').startsWith('61')) ? 'https://a61.chat.agora.io' : (process.env.AGORA_CHAT_REST_BASE || 'https://a1.easemob.com')),
+    orgName: (process.env.AGORA_CHAT_APP_NAME || '').includes('#') ? process.env.AGORA_CHAT_APP_NAME.split('#')[0] : (process.env.AGORA_CHAT_ORG_NAME || ''),
+    appName: (process.env.AGORA_CHAT_APP_NAME || '').includes('#') ? process.env.AGORA_CHAT_APP_NAME.split('#')[1] : (process.env.AGORA_CHAT_APP_NAME || ''),
+    clientId: process.env.AGORA_CHAT_REST_CLIENT_ID || '',
+    clientSecret: process.env.AGORA_CHAT_REST_CLIENT_SECRET || '',
+    // Per-user chat token lifetime (env is hours; default 24h).
+    tokenExpiryHours: Math.max(1, parseInt(process.env.AGORA_CHAT_TOKEN_EXPIRY_HOURS, 10) || 24),
+  };
+}
+
+function isAgoraChatConfigured() {
+  const config = getAgoraChatConfig();
+  return Boolean(config.orgName && config.appName && config.clientId && config.clientSecret);
+}
+
+// expires_in is documented in seconds; legacy (VIP5) Easemob clusters report
+// milliseconds — treat implausibly large values as ms and normalize to seconds.
+function normalizeAgoraExpirySeconds(expiresIn) {
+  const value = Number(expiresIn);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return Math.floor(value > 31536000 ? value / 1000 : value);
+}
+
+let agoraChatAppTokenCache = null; // { token, expiresAt }
+
+async function getAgoraChatAppToken() {
+  if (!isAgoraChatConfigured()) {
+    throw new Error('agora chat not configured');
+  }
+  const config = getAgoraChatConfig();
+  const now = Date.now();
+
+  if (agoraChatAppTokenCache && agoraChatAppTokenCache.token
+    && agoraChatAppTokenCache.expiresAt > now + AGORA_CHAT_APP_TOKEN_HEADROOM_MS) {
+    return agoraChatAppTokenCache.token;
+  }
+
+  if (redisAvailable) {
+    const cachedRaw = await redis.get('agora_chat:app_token').catch(() => null);
+    if (cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw);
+        if (cached && cached.token && cached.expiresAt > now + AGORA_CHAT_APP_TOKEN_HEADROOM_MS) {
+          agoraChatAppTokenCache = cached;
+          return cached.token;
+        }
+      } catch (_) { }
+    }
+  }
+
+  // Prefer local Agora AppToken generation via ChatTokenBuilder when AGORA_APP_ID & AGORA_APP_CERTIFICATE are set.
+  if (process.env.AGORA_APP_ID && process.env.AGORA_APP_CERTIFICATE) {
+    const ttlSeconds = 86400;
+    const token = ChatTokenBuilder.buildAppToken(process.env.AGORA_APP_ID, process.env.AGORA_APP_CERTIFICATE, ttlSeconds);
+    agoraChatAppTokenCache = { token, expiresAt: now + ttlSeconds * 1000 };
+    if (redisAvailable) {
+      await redis.set('agora_chat:app_token', JSON.stringify(agoraChatAppTokenCache), 'EX', ttlSeconds - 300).catch(() => { });
+    }
+    return token;
+  }
+  // Never log client secrets or token strings — only status + truncated error body.
+  const response = await fetch(
+    `${config.restBase}/${encodeURIComponent(config.orgName)}/${encodeURIComponent(config.appName)}/token`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'client_credentials',
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const detail = (await response.text().catch(() => '')).slice(0, 300);
+    console.warn(`[agora-chat] App token request failed: HTTP ${response.status} ${detail}`);
+    throw new Error(`agora chat app token request failed (${response.status})`);
+  }
+
+  const data = await response.json();
+  const expiresIn = normalizeAgoraExpirySeconds(data.expires_in);
+  if (!data.access_token || !expiresIn) {
+    throw new Error('agora chat app token response missing access_token/expires_in');
+  }
+
+  agoraChatAppTokenCache = { token: data.access_token, expiresAt: now + expiresIn * 1000 };
+
+  // Cross-process cache: TTL = expires_in - 300s so it is refreshed before expiry.
+  if (redisAvailable) {
+    await redis.set('agora_chat:app_token', JSON.stringify(agoraChatAppTokenCache),
+      'EX', Math.max(300, expiresIn - 300)).catch(() => { });
+  }
+
+  return agoraChatAppTokenCache.token;
+}
+
+async function ensureAgoraChatUser(username, appToken) {
+  if (!isAgoraChatConfigured()) {
+    throw new Error('agora chat not configured');
+  }
+  const config = getAgoraChatConfig();
+
+  // Users log in with tokens only, so the password is a throwaway secret the
+  // server never stores (Easemob requires one for registration; ≤64 chars).
+  const password = crypto.randomBytes(24).toString('hex');
+
+  const response = await fetch(
+    `${config.restBase}/${encodeURIComponent(config.orgName)}/${encodeURIComponent(config.appName)}/users`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${appToken}`,
+      },
+      // Easemob's documented registration body is an array of users.
+      body: JSON.stringify([{ username, password }]),
+    },
+  );
+
+  if (response.ok) return true;
+
+  const detail = (await response.text().catch(() => '')).slice(0, 300);
+  let body = null;
+  try { body = JSON.parse(detail); } catch (_) { }
+  const duplicate = body?.error === 'duplicate_unique_property_exists'
+    || (typeof detail === 'string' && detail.includes('requires that property named username be unique'));
+  if (response.status === 400 && duplicate) {
+    // "User already exists" — idempotent success.
+    console.log(`[agora-chat] Chat user ${username} already registered`);
+    return true;
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    // Auth failures are NOT swallowed — the app token itself is bad/expired.
+    console.warn(`[agora-chat] User registration rejected: HTTP ${response.status} ${detail}`);
+    throw new Error(`agora chat user registration rejected (${response.status})`);
+  }
+
+  // Pessimistic-but-idempotent: other failures (transient 5xx etc.) are
+  // swallowed with a log — token minting below surfaces real problems anyway.
+  console.warn(`[agora-chat] User registration failed (HTTP ${response.status}): ${detail}`);
+  return false;
+}
+
+async function createAgoraChatUserToken(username, expirySeconds) {
+  if (!isAgoraChatConfigured()) {
+    throw new Error('agora chat not configured');
+  }
+  const config = getAgoraChatConfig();
+  const appToken = await getAgoraChatAppToken();
+
+  const response = await fetch(
+    `${config.restBase}/${encodeURIComponent(config.orgName)}/${encodeURIComponent(config.appName)}/token`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${appToken}`,
+      },
+      body: JSON.stringify({
+        grant_type: 'inherit',
+        username,
+        autoCreateUser: true,
+        ttl: expirySeconds,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const detail = (await response.text().catch(() => '')).slice(0, 300);
+    console.warn(`[agora-chat] User token request failed for ${username}: HTTP ${response.status} ${detail}`);
+    throw new Error(`agora chat user token request failed (${response.status})`);
+  }
+
+  const data = await response.json();
+  if (!data.access_token) {
+    throw new Error('agora chat user token response missing access_token');
+  }
+  // expires_in is documented in seconds (ms on legacy VIP5 clusters).
+  const expiresIn = normalizeAgoraExpirySeconds(data.expires_in) || expirySeconds;
+  return { token: data.access_token, expiresAt: Date.now() + expiresIn * 1000 };
+}
+
+// MUST mirror the client's _sanitizeAgoraUid
+// (lib/domain/services/chat/agora_chat_service.dart): replace every char
+// outside [a-zA-Z0-9_-] with '_' (the '-' sits last in the class so it stays
+// literal), then lowercase.
+function sanitizeAgoraUid(uid) {
+  return String(uid).replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+}
+
+// Server-side Firebase Auth check for the HTTP token routes — mirrors the
+// transient-error fallback behavior of the Socket.IO handshake middleware.
+async function authenticateFirebaseRequest(req) {
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Bearer ')) return null;
+  if (!db || !admin.apps || !admin.apps.length) return null;
+
+  const idToken = header.slice('Bearer '.length).trim();
+  try {
+    return await admin.auth().verifyIdToken(idToken, true);
+  } catch (error) {
+    // Same transient fallback as the socket middleware: only when the
+    // verification backend itself is unavailable, verify without the
+    // revocation check — genuine invalid/revoked tokens still fail closed.
+    const transient = error && (
+      error.code === 'auth/internal-error' ||
+      error.code === 'auth/network-error' ||
+      error.code === 'auth/network-timeout' ||
+      (typeof error.message === 'string' && error.message.includes('ETIMEDOUT'))
+    );
+    if (!transient) return null;
+    console.warn('[agora] Revocation check unavailable, verifying without it:', error.message);
+    try {
+      return await admin.auth().verifyIdToken(idToken);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+// Real RTC token for voice (replaces the old dummy token). uid 0 = wildcard:
+// the token is valid for ANY client uid in `channelName`, since clients pick
+// their own numeric uid. NOTE: agora-token@2.x (AccessToken2) interprets
+// tokenExpire/privilegeExpire as RELATIVE seconds from now — pre-2.x builders
+// took an absolute epoch there, which is why this is NOT
+// `Math.floor(Date.now()/1000) + 3600` for the builder itself.
+function buildAgoraRtcToken(appId, appCertificate, channelName) {
+  const tokenExpire = AGORA_RTC_TOKEN_TTL_SECONDS;
+  const token = RtcTokenBuilder.buildTokenWithUid(
+    appId, appCertificate, channelName, 0, RtcRole.PUBLISHER, tokenExpire, tokenExpire,
+  );
+  // Absolute epoch (seconds) at which the token/privileges lapse — returned to
+  // clients so they can renew via POST /api/agora/rtc/token.
+  const privilegeExpiredTs = Math.floor(Date.now() / 1000) + tokenExpire;
+  return { token, privilegeExpiredTs };
+}
+
+// ============================================================
 // REDIS LUA SCRIPT — atomic append to board op log
 // KEYS[1] = board:{boardId}:version       (INCR counter)
 // KEYS[2] = board_updates:{boardId}       (STREAM)
@@ -275,6 +721,9 @@ if seen == 0 then
 end
 redis.call('EXPIRE', KEYS[3], 3600)
 local version = redis.call('INCR', KEYS[1])
+-- Refresh the version key TTL on every append so it can never expire while
+-- the board is active (a version reset would rewind the snapshot cursor).
+redis.call('EXPIRE', KEYS[1], 604800)
 redis.call('XADD', KEYS[2], 'MAXLEN', '~', ARGV[1], '*',
   'version', version,
   'updateId', ARGV[2],
@@ -402,7 +851,9 @@ async function triggerSnapshot(boardId) {
     }
   }
   for (const entry of entries) {
-    if (!entry.payloadBase64 || entry._singleUser === true) continue;
+    // Single-user updates are persisted to the stream too — they must be
+    // included in the snapshot or solo-board content would be lost.
+    if (!entry.payloadBase64) continue;
     try {
       const buffer = Buffer.from(entry.payloadBase64, 'base64');
       Y.applyUpdate(doc, buffer);
@@ -459,6 +910,12 @@ setInterval(async () => {
   const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
   const stream = redis.scanStream({ match: 'board:lastActivity:*', count: 100 });
 
+  stream.on('error', (err) => {
+    // Without an error listener, an unhandled 'error' event on the stream
+    // throws and kills the process.
+    console.warn(`[cleanup] Scan stream error: ${err.message}`);
+  });
+
   stream.on('data', async (keys) => {
     if (!keys || keys.length === 0) return;
     try {
@@ -477,20 +934,80 @@ setInterval(async () => {
   });
 }, 60 * 60 * 1000);
 
+// Snapshot worker loop — persists pending stream updates to Firestore every
+// 5 minutes. Without this, snapshots only happen on `% 100 === 0` appends or
+// after 3 days of inactivity, so a crash could lose up to ~100 acknowledged
+// updates for later joiners.
+setInterval(async () => {
+  if (!redisAvailable) return;
+  const stream = redis.scanStream({ match: 'board:lastActivity:*', count: 100 });
+
+  stream.on('error', (err) => {
+    console.warn(`[snapshot-loop] Scan stream error: ${err.message}`);
+  });
+
+  stream.on('data', async (keys) => {
+    if (!keys || keys.length === 0) return;
+    for (const key of keys) {
+      const boardId = key.replace('board:lastActivity:', '');
+      try {
+        const [verStr, snapVerStr] = await redis.mget(
+          `board:${boardId}:version`,
+          `board:lastSnapshotVersion:${boardId}`,
+        );
+        const version = parseInt(verStr || '0', 10) || 0;
+        const snapshotVersion = parseInt(snapVerStr || '0', 10) || 0;
+        if (version > snapshotVersion) {
+          await triggerSnapshot(boardId);
+        }
+      } catch (e) {
+        console.warn(`[snapshot-loop] Failed for board ${boardId}: ${e.message}`);
+      }
+    }
+  });
+}, 5 * 60 * 1000);
+
 // ============================================================
 // SOCKET.IO AUTH MIDDLEWARE
 // ============================================================
 io.use(async (socket, next) => {
   try {
+    // Comment 3: Validate origin during Socket.IO connection initialization
+    const origin = socket.handshake.headers.origin;
+    if (origin && !isOriginAllowed(origin)) {
+      console.warn(`[Socket.IO auth] Rejected unlisted origin: ${origin}`);
+      return next(new Error('CORS error: Origin not allowed'));
+    }
+
     const { token } = socket.handshake.auth;
     if (!token) return next(new Error('Authentication error: Token missing'));
 
-    if (db) {
-      const decodedToken = await admin.auth().verifyIdToken(token);
-      socket.data.uid = decodedToken.uid;
-    } else {
-      socket.data.uid = socket.handshake.auth.uid || "test-user";
+    if (!db || !admin.apps || !admin.apps.length) {
+      if (process.env.NODE_ENV === 'development' && process.env.ALLOW_DEV_AUTH === 'true') {
+        socket.data.uid = socket.handshake.auth.uid || "test-user";
+        return next();
+      }
+      return next(new Error('Authentication service unavailable'));
     }
+
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(token, true);
+    } catch (error) {
+      // Fall back to a non-revocation check only when the verification
+      // backend itself is unavailable (transient errors) — genuine
+      // invalid/revoked tokens must still be rejected.
+      const transient = error && (
+        error.code === 'auth/internal-error' ||
+        error.code === 'auth/network-error' ||
+        error.code === 'auth/network-timeout' ||
+        (typeof error.message === 'string' && error.message.includes('ETIMEDOUT'))
+      );
+      if (!transient) throw error;
+      console.warn('[Socket.IO auth] Revocation check unavailable, verifying without it:', error.message);
+      decodedToken = await admin.auth().verifyIdToken(token);
+    }
+    socket.data.uid = decodedToken.uid;
     next();
   } catch (error) {
     next(new Error('Authentication error: Invalid Token'));
@@ -579,11 +1096,14 @@ io.on('connection', (socket) => {
     try {
       // -------------------------------------------------------
       // PHASE 1: Atomic append to Redis STREAM via Lua script
+      // Single-user boards are persisted the same way (skip only the
+      // broadcast below) so the snapshot worker durably stores them —
+      // acking "success" without persisting would lose all solo work.
       // -------------------------------------------------------
       let version = null;
       let isDuplicate = false;
 
-      if (redisAvailable && !isSingleUser) {
+      if (redisAvailable) {
         // Seed Redis version from Firestore if missing (handles Redis loss recovery)
         await seedRedisFromFirestore(boardId);
 
@@ -636,14 +1156,6 @@ io.on('connection', (socket) => {
         }
       }
 
-      if (isSingleUser) {
-        console.log(`[crdt_update] Single-user board — saved directly, no broadcast/queue`);
-        if (typeof ack === 'function') {
-          ack({ status: 'success', updateId: update.updateId, boardId, version: version || 0 });
-        }
-        return;
-      }
-
       if (isDuplicate) {
         // Duplicate: ack success but no broadcast (already broadcast the first time)
         if (typeof ack === 'function') {
@@ -653,7 +1165,7 @@ io.on('connection', (socket) => {
       }
 
       // If persistence failed (Redis unavailable or Lua error), reject so client retries
-      if (version === null && !isSingleUser) {
+      if (version === null) {
         if (typeof ack === 'function') {
           ack({ status: 'error', message: 'persistence_unavailable' });
         }
@@ -661,11 +1173,15 @@ io.on('connection', (socket) => {
       }
 
       // -------------------------------------------------------
-      // Broadcast to room (with version for client cursor tracking)
+      // Broadcast to room (with version for client cursor tracking).
+      // Single-user boards skip the broadcast — no peers to relay to —
+      // but the update is already durably appended to the stream above.
       // -------------------------------------------------------
-      const broadcastPayload = { boardId, update: { ...update, version } };
-      socket.to(`board_room:${boardId}`).emit('crdt_update', broadcastPayload);
-      console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId} version=${version}`);
+      if (!isSingleUser) {
+        const broadcastPayload = { boardId, update: { ...update, version } };
+        socket.to(`board_room:${boardId}`).emit('crdt_update', broadcastPayload);
+        console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId} version=${version}`);
+      }
 
       // -------------------------------------------------------
       // Trigger snapshot every 100 updates (fire-and-forget)
@@ -702,6 +1218,15 @@ io.on('connection', (socket) => {
     if (!isValidBoardId(boardId) || !isValidPreview(preview)) {
       console.warn(`[crdt_preview] Invalid payload from ${uid}`);
       if (typeof ack === 'function') ack({ status: 'error', message: 'invalid_payload' });
+      return;
+    }
+
+    // Access check — previews are relayed into the board room; without this,
+    // any connected socket could spam/deface previews on any board.
+    const hasAccess = await canUserAccessBoard(boardId, uid, false);
+    if (!hasAccess) {
+      console.warn(`[crdt_preview] Forbidden: User ${uid} cannot access board ${boardId}`);
+      if (typeof ack === 'function') ack({ status: 'error', message: 'forbidden' });
       return;
     }
 
@@ -959,7 +1484,7 @@ io.on('connection', (socket) => {
   });
 
   // ============================================================
-  // board_chat_message — IN-BOARD LIVE CHAT + REDIS TTL + FIRESTORE 30-BATCH
+  // board_chat_message — IN-BOARD LIVE CHAT + REDIS HISTORY (Agora-only)
   // ============================================================
   socket.on('board_chat_message', async (data, ack) => {
     try {
@@ -980,7 +1505,9 @@ io.on('connection', (socket) => {
       }
 
       const chatMessage = {
-        id: messageObj.id || data?.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        // Doc/storage id is ALWAYS generated server-side — client-supplied ids
+        // are never trusted (they could overwrite another user's message).
+        id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
         boardId,
         senderUid: uid,
         senderName: messageObj.senderName || data?.senderName || 'Anonymous',
@@ -989,23 +1516,20 @@ io.on('connection', (socket) => {
         timestamp: messageObj.timestamp || data?.timestamp || Date.now(),
       };
 
-      // 1. Broadcast immediately to all active board viewers in real-time
+      // 1. Broadcast to all active board viewers in real-time.
+      //    NOTE: board chat no longer persists to Firestore (Agora Chat
+      //    migration) — accepted messages are broadcast live and stored in
+      //    Redis history only. Redis persistence (AOF) must be enabled for
+      //    history to survive restarts.
       io.to(`board_room:${boardId}`).emit('board_chat_message', chatMessage);
 
-      // 2. Cache in Redis with TTL (7 days: 604800s) for low-latency retrieval
+      // 2. Cache in Redis with TTL (BOARD_CHAT_HISTORY_TTL_DAYS, default 90 days)
       if (redisAvailable) {
         const historyKey = `board_chat:${boardId}:history`;
+        const historyTtlDays = Math.max(1, parseInt(process.env.BOARD_CHAT_HISTORY_TTL_DAYS, 10) || 90);
         const payloadStr = JSON.stringify(chatMessage);
         await redis.rpush(historyKey, payloadStr);
-        await redis.expire(historyKey, 604800); // 7 days TTL
-      }
-
-      // 3. Persist to Firestore so messages are never lost after Redis TTL expiry
-      if (db) {
-        await db.collection('boards').doc(boardId).collection('chat_messages').doc(chatMessage.id).set({
-          ...chatMessage,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+        await redis.expire(historyKey, historyTtlDays * 86400);
       }
 
       if (typeof ack === 'function') ack({ status: 'success', message: chatMessage });
@@ -1027,22 +1551,16 @@ io.on('connection', (socket) => {
         return;
       }
 
+      // Clamp to a sane range — unsanitized values (negative/NaN/huge) would
+      // be passed straight into Redis queries.
+      const historyLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+
+      // Redis-only: board chat no longer has a Firestore fallback (Agora
+      // Chat migration). An empty/missing history list means no messages yet.
       if (redisAvailable) {
         const historyKey = `board_chat:${boardId}:history`;
-        const raw = await redis.lrange(historyKey, -limit, -1);
-        if (raw && raw.length > 0) {
-          const messages = raw.map(r => JSON.parse(r));
-          if (typeof callback === 'function') callback({ status: 'success', messages });
-          return;
-        }
-      }
-
-      if (db) {
-        const snap = await db.collection('boards').doc(boardId).collection('chat_messages')
-          .orderBy('timestamp', 'asc')
-          .limit(limit)
-          .get();
-        const messages = snap.docs.map(doc => doc.data());
+        const raw = await redis.lrange(historyKey, -historyLimit, -1);
+        const messages = (raw || []).map(r => JSON.parse(r));
         if (typeof callback === 'function') callback({ status: 'success', messages });
         return;
       }
@@ -1061,11 +1579,13 @@ io.on('connection', (socket) => {
     try {
       const { boardId, displayName, photoUrl } = data || {};
       if (!isValidBoardId(boardId)) {
+        console.warn(`[voice] join_voice_call rejected: invalid board id`);
         if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
         return;
       }
       const hasAccess = await canUserAccessBoard(boardId, uid, false);
       if (!hasAccess) {
+        console.warn(`[voice] join_voice_call rejected: uid ${uid} lacks access to board ${boardId}`);
         if (typeof callback === 'function') callback({ status: 'error', message: 'forbidden' });
         return;
       }
@@ -1088,11 +1608,21 @@ io.on('connection', (socket) => {
       socket.join(`board_voice:${boardId}`);
       socket.data.currentVoiceBoardId = boardId;
 
-      io.to(`board_room:${boardId}`).emit('voice_participant_joined', participant);
+      // Voice events target the voice room — voice sockets only ever join
+      // `board_voice:` (they never call watch_board), so emitting to
+      // `board_room:` would leave participants blind to each other.
+      io.to(`board_voice:${boardId}`).emit('voice_participant_joined', participant);
 
       const channelName = `board_${boardId}`;
-      const appId = process.env.AGORA_APP_ID || 'dummy_agora_app_id_inklink_2026';
-      const token = `dummy_agora_token_${channelName}_${uid}`;
+      const appId = process.env.AGORA_APP_ID;
+      const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+      if (!appId || !appCertificate) {
+        console.warn(`[voice] Agora RTC not configured (AGORA_APP_ID/AGORA_APP_CERTIFICATE); rejecting join from ${uid}`);
+        if (typeof callback === 'function') callback({ status: 'error', message: 'agora certificate not configured' });
+        return;
+      }
+
+      const { token } = buildAgoraRtcToken(appId, appCertificate, channelName);
 
       console.log(`[voice] User ${uid} joined voice channel ${channelName}`);
       if (typeof callback === 'function') {
@@ -1120,7 +1650,7 @@ io.on('connection', (socket) => {
         }
         socket.leave(`board_voice:${boardId}`);
         socket.data.currentVoiceBoardId = null;
-        io.to(`board_room:${boardId}`).emit('voice_participant_left', { uid, boardId });
+        io.to(`board_voice:${boardId}`).emit('voice_participant_left', { uid, boardId });
         console.log(`[voice] User ${uid} left voice channel board_${boardId}`);
       }
       if (typeof callback === 'function') callback({ status: 'success' });
@@ -1133,6 +1663,10 @@ io.on('connection', (socket) => {
   socket.on('voice_speaking_state', async ({ boardId, isSpeaking, isMuted }) => {
     try {
       if (!isValidBoardId(boardId)) return;
+      // Access check — without it any connected socket could spam fake
+      // speaking-state updates into any board's voice room.
+      const hasAccess = await canUserAccessBoard(boardId, uid, false);
+      if (!hasAccess) return;
       if (redisAvailable) {
         const voiceKey = `voice:board:${boardId}:participants`;
         const raw = await redis.hget(voiceKey, uid);
@@ -1143,7 +1677,7 @@ io.on('connection', (socket) => {
           await redis.hset(voiceKey, uid, JSON.stringify(p));
         }
       }
-      io.to(`board_room:${boardId}`).emit('voice_speaking_changed', {
+      io.to(`board_voice:${boardId}`).emit('voice_speaking_changed', {
         uid,
         isSpeaking: !!isSpeaking,
         isMuted: !!isMuted,
@@ -1187,7 +1721,7 @@ io.on('connection', (socket) => {
         if (redisAvailable) {
           await redis.hdel(`voice:board:${voiceBoardId}:participants`, uid);
         }
-        io.to(`board_room:${voiceBoardId}`).emit('voice_participant_left', { uid, boardId: voiceBoardId });
+        io.to(`board_voice:${voiceBoardId}`).emit('voice_participant_left', { uid, boardId: voiceBoardId });
       } catch (_) { }
     }
   });
@@ -1229,11 +1763,54 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`WebSocket server listening on port ${PORT}`);
+
+  // One-time Agora config audit so a later 503/'not configured' response is
+  // diagnosable from these logs alone. Secrets are never printed — only
+  // presence booleans (org/app names and the REST base are identifiers).
+  const rtcReady = Boolean(process.env.AGORA_APP_ID && process.env.AGORA_APP_CERTIFICATE);
+  const chatCfg = getAgoraChatConfig();
+  console.log('[agora] config audit:');
+  console.log(`  AGORA_APP_ID: ${process.env.AGORA_APP_ID ? 'set' : 'MISSING'}`);
+  console.log(`  AGORA_APP_CERTIFICATE: ${process.env.AGORA_APP_CERTIFICATE ? 'set' : 'MISSING'}`);
+  console.log(`  → RTC voice tokens: ${rtcReady ? 'ready' : 'disabled (voice joins will fail)'}`);
+  if (chatCfg.orgName || chatCfg.appName || chatCfg.clientId || chatCfg.clientSecret) {
+    console.log(`  AGORA_CHAT_REST_BASE: ${chatCfg.restBase}`);
+    console.log(`  AGORA_CHAT_ORG_NAME: ${chatCfg.orgName || 'MISSING'}`);
+    console.log(`  AGORA_CHAT_APP_NAME: ${chatCfg.appName || 'MISSING'}`);
+    console.log(`  AGORA_CHAT_REST_CLIENT_ID: ${chatCfg.clientId ? 'set' : 'MISSING'}`);
+    console.log(`  AGORA_CHAT_REST_CLIENT_SECRET: ${chatCfg.clientSecret ? 'set' : 'MISSING'}`);
+  } else {
+    console.log('  AGORA_CHAT_* (org/app/client id/secret): all absent');
+  }
+  console.log(`  → Agora Chat tokens: ${isAgoraChatConfigured()
+    ? `ready (appKey ${chatCfg.orgName}#${chatCfg.appName}, base ${chatCfg.restBase})`
+    : 'disabled (clients will run chat in local-first mode)'}`);
 });
 
 // Graceful shutdown
-function gracefulShutdown(signal) {
+async function gracefulShutdown(signal) {
   console.log(`\nReceived ${signal}, shutting down gracefully...`);
+
+  // Snapshot boards that still have unsnapshotted updates so acknowledged
+  // CRDT ops aren't lost between the last %100 snapshot and shutdown.
+  try {
+    if (redisAvailable) {
+      const sockets = await io.fetchSockets();
+      const boardIds = new Set(
+        sockets.map(s => s.data?.currentBoardId).filter(Boolean),
+      );
+      for (const boardId of boardIds) {
+        try {
+          await triggerSnapshot(boardId);
+        } catch (e) {
+          console.warn(`[shutdown] Snapshot failed for board ${boardId}: ${e.message}`);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`[shutdown] Pre-shutdown snapshot pass failed: ${e.message}`);
+  }
+
   server.close(() => {
     console.log('HTTP server closed');
     if (redisAvailable) {

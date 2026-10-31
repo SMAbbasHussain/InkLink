@@ -63,6 +63,11 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
       (b) => b.state is Authenticated ? (b.state as Authenticated).uid : '',
     );
     final conv = widget.conversation;
+    final isPartnerOnline = context.select<ChatThreadBloc, bool>(
+      (b) => b.state is ChatThreadLoaded
+          ? ((b.state as ChatThreadLoaded).isOnline ?? conv.isOnline)
+          : conv.isOnline,
+    );
 
     return Scaffold(
       backgroundColor: colors.background,
@@ -114,7 +119,7 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
                           width: 10,
                           height: 10,
                           decoration: BoxDecoration(
-                            color: conv.isOnline ? colors.statusOnline : colors.statusOffline,
+                            color: isPartnerOnline ? colors.statusOnline : colors.statusOffline,
                             shape: BoxShape.circle,
                             border: Border.all(color: colors.surface, width: 2),
                           ),
@@ -140,7 +145,7 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
                       Text(
                         conv.isGroup
                             ? '${conv.memberIds.length} members'
-                            : (conv.isOnline ? 'Active now' : 'Offline'),
+                            : (isPartnerOnline ? 'Active now' : 'Offline'),
                         style: TextStyle(
                           color: colors.textSecondary,
                           fontSize: 11,
@@ -242,11 +247,13 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
                     itemCount: messages.length,
                     itemBuilder: (context, index) {
                       final message = messages[index];
-                      final isMe = message.senderId == currentUid;
+                      final isMe = currentUid.isNotEmpty &&
+                          message.senderId.toLowerCase() == currentUid.toLowerCase();
 
                       // Message grouping logic
                       final bool isFirstInGroup = index == 0 ||
-                          messages[index - 1].senderId != message.senderId ||
+                          messages[index - 1].senderId.toLowerCase() !=
+                              message.senderId.toLowerCase() ||
                           message.timestamp.difference(messages[index - 1].timestamp).inMinutes > 5;
 
                       return ChatBubble(

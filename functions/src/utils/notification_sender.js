@@ -11,6 +11,15 @@ function _toStringData(payload = {}) {
   return data;
 }
 
+function fcmTokenDocId(token) {
+  // Mirrors the client's sanitization: Firestore doc ids may not contain
+  // '/', '#', '[', ']' or '.' and must not start with '__'.
+  let id = String(token).replace(/[.#$/[\]]/g, '_');
+  if (id.startsWith('__')) id = `tk_${id}`;
+  if (id.length > 1400) id = `tk_${Math.abs(id.length * 31 + id.charCodeAt(0))}`;
+  return id;
+}
+
 async function sendUserNotification({
   recipientUid,
   title,
@@ -23,6 +32,7 @@ async function sendUserNotification({
   senderPhotoUrl,
   groupingKey,
   extraData = {},
+  isPushOnly = false,
 }) {
   const actionStatus =
     type === 'friend_request' ||
@@ -51,6 +61,21 @@ async function sendUserNotification({
 
   if (Array.isArray(userData[FirestorePaths.FCM_TOKENS])) {
     tokenCandidates.push(...userData[FirestorePaths.FCM_TOKENS]);
+  }
+
+  // Preferred source: protected per-token subcollection (tokens are no longer
+  // stored on the user document). Legacy doc fields still honored for users
+  // who have not synced since the migration.
+  try {
+    const tokenDocs = await userRef.collection(FirestorePaths.FCM_TOKENS_SUBCOLLECTION).get();
+    for (const doc of tokenDocs.docs) {
+      const t = doc.data()?.token;
+      if (typeof t === 'string' && t) {
+        tokenCandidates.push(t);
+      }
+    }
+  } catch (e) {
+    logger.warn('Failed to read FCM token subcollection', { recipientUid, errorMessage: e.message });
   }
 
   const tokens = [...new Set(tokenCandidates.filter((token) => !!token))];
@@ -82,12 +107,12 @@ async function sendUserNotification({
   const notificationPrefs = userData.notificationPreferences || {};
   if (notificationPrefs.pushNotificationsEnabled === false) {
     logger.info('Push notifications disabled by recipient preference', { recipientUid });
-    return { notificationId: notificationRef.id, deliveredToTokens: 0 };
+    return { notificationId, deliveredToTokens: 0 };
   }
 
   if (type === 'board_invite' && notificationPrefs.inviteAlertsEnabled === false) {
     logger.info('Invite alerts disabled by recipient preference', { recipientUid });
-    return { notificationId: notificationRef.id, deliveredToTokens: 0 };
+    return { notificationId, deliveredToTokens: 0 };
   }
 
   if (
@@ -97,12 +122,12 @@ async function sendUserNotification({
     notificationPrefs.friendAlertsEnabled === false
   ) {
     logger.info('Friend alerts disabled by recipient preference', { recipientUid });
-    return { notificationId: notificationRef.id, deliveredToTokens: 0 };
+    return { notificationId, deliveredToTokens: 0 };
   }
 
   if (tokens.length === 0) {
     logger.warn('No FCM tokens found for recipient', { recipientUid });
-    return { notificationId: notificationRef.id, deliveredToTokens: 0 };
+    return { notificationId, deliveredToTokens: 0 };
   }
 
   const data = _toStringData({
@@ -113,7 +138,7 @@ async function sendUserNotification({
     senderUid,
     senderName,
     senderPhotoUrl,
-    notificationId: notificationRef.id,
+    notificationId: notificationId,
     groupingKey,
     ...extraData,
   });
@@ -147,6 +172,12 @@ async function sendUserNotification({
         await userRef.update({
           [FirestorePaths.FCM_TOKENS]: admin.firestore.FieldValue.arrayRemove(staleToken),
         });
+        // Also remove the protected per-token subcollection copy
+        await userRef
+          .collection(FirestorePaths.FCM_TOKENS_SUBCOLLECTION)
+          .doc(fcmTokenDocId(staleToken))
+          .delete()
+          .catch(() => { });
       }
       logger.info('Cleaned up stale FCM tokens', {
         recipientUid,
@@ -160,12 +191,12 @@ async function sendUserNotification({
     deliveredCount: response.successCount,
     failedCount: response.failureCount,
     attemptedCount: tokens.length,
-    notificationId: notificationRef.id,
+    notificationId,
     type,
   });
 
   return {
-    notificationId: notificationRef.id,
+    notificationId,
     deliveredToTokens: response.successCount,
   };
 }

@@ -65,6 +65,7 @@ class StickyNote extends StatelessWidget {
             top: -8,
             left: 0,
             right: 0,
+            height: 16,
             child: Center(
               child: Transform.rotate(
                 angle: inkDeterministicTilt('${tiltId ?? 'sticky'}-tape', maxDegrees: 4),
