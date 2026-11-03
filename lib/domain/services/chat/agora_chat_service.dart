@@ -2319,7 +2319,7 @@ class AgoraChatServiceImpl implements ChatService {
   }) async {
     try {
       final list = await _sdk.getMessageReactionList(msg);
-      return _reactionsFromChatReactionList(list, currentUid: currentUid);
+      return await _reactionsFromChatReactionList(list, currentUid: currentUid);
     } catch (_) {
       return {};
     }
