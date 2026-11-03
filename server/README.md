@@ -94,9 +94,10 @@ Clients connect using `auth: { token: "<firebase_id_token>" }`. Connection origi
 Configure the following variables in `server/.env`:
 
 ```env
-# Server Port & CORS
+# Server Port & CORS (setting CORS_ORIGIN replaces the default origin allowlist;
+# include every deployed web client origin so HTTP and Socket.IO checks pass)
 PORT=3000
-CORS_ORIGIN=http://localhost:3000,https://inklink.web.app
+CORS_ORIGIN=http://localhost:3000,https://inklink.web.app,https://inklink.app
 
 # Redis Connection (Required for offline queue & board chat)
 REDIS_URL=redis://127.0.0.1:6379

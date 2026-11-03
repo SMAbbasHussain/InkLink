@@ -8,5 +8,6 @@ abstract class BoardChatService {
     required String text,
   });
   Future<void> connect(String boardId);
+  Future<void> disconnect();
   Future<void> dispose();
 }

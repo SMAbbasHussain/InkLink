@@ -1,4 +1,3 @@
-import '../../../../core/database/collections/local_profile.dart';
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 
 abstract class GroupSettingsState {
@@ -17,7 +16,7 @@ class GroupSettingsLoaded extends GroupSettingsState {
   final ChatConversationModel group;
   final bool isOwner;
   final bool isAdmin;
-  final Map<String, LocalProfile> memberProfiles;
+  final Map<String, ChatMemberProfile> memberProfiles;
 
   const GroupSettingsLoaded({
     required this.group,
@@ -30,7 +29,7 @@ class GroupSettingsLoaded extends GroupSettingsState {
     ChatConversationModel? group,
     bool? isOwner,
     bool? isAdmin,
-    Map<String, LocalProfile>? memberProfiles,
+    Map<String, ChatMemberProfile>? memberProfiles,
   }) {
     return GroupSettingsLoaded(
       group: group ?? this.group,

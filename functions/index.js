@@ -27,7 +27,7 @@ const mySecrets = [
 const apiFiles = glob.sync(`src/**/*.js`, {
     cwd: __dirname,
     // Ignore utility files
-    ignore: ['src/utils/**/*.js']
+    ignore: ['src/utils/**/*.js', 'src/**/*_utils.js']
 });
 
 apiFiles.forEach(filePath => {

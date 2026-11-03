@@ -17,6 +17,10 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   static const int _maxPayloadBase64Length = 900000;
   // Socket.IO client (optional). When present and connected, we'll prefer websocket transport.
   io.Socket? _socket;
+  String? _connectedUserId;
+  String? _connectingUserId;
+  Future<bool>? _connectingFuture;
+  int _connectGeneration = 0;
   bool _isSingleUserBoard = false;
   StreamController<List<LocalCrdtUpdate>>? _socketUpdatesController;
   StreamController<List<LocalCrdtUpdate>>? _socketPreviewController;
@@ -57,27 +61,91 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     });
   }
 
+  void _teardownSocket([io.Socket? specificSocket]) {
+    final stale = specificSocket ?? _socket;
+    if (specificSocket == null || identical(_socket, specificSocket)) {
+      _socket = null;
+      _connectedUserId = null;
+    }
+    if (stale == null) return;
+    try {
+      stale.dispose();
+    } catch (_) {
+      try {
+        stale.disconnect();
+      } catch (_) {}
+    }
+  }
+
   Future<bool> _ensureSocketConnected() async {
-    if (_socket != null && _socket!.connected) {
+    final currentUid = _authService.getCurrentUserId();
+    if (currentUid == null || currentUid.isEmpty) {
+      _connectGeneration++;
+      _connectingFuture = null;
+      _connectingUserId = null;
+      _teardownSocket();
+      return false;
+    }
+
+    if (_socket != null &&
+        _socket!.connected &&
+        _connectedUserId == currentUid) {
       return true;
     }
 
+    if (_connectingFuture != null && _connectingUserId == currentUid) {
+      final ok = await _connectingFuture!;
+      return ok &&
+          _socket != null &&
+          _socket!.connected &&
+          _connectedUserId == currentUid &&
+          _authService.getCurrentUserId() == currentUid;
+    }
+
+    final gen = ++_connectGeneration;
+    _connectingUserId = currentUid;
+    final future = _performSocketConnect(currentUid, gen);
+    _connectingFuture = future;
+    try {
+      final ok = await future;
+      return ok &&
+          _socket != null &&
+          _socket!.connected &&
+          _connectedUserId == currentUid &&
+          _authService.getCurrentUserId() == currentUid;
+    } finally {
+      if (identical(_connectingFuture, future)) {
+        _connectingFuture = null;
+        _connectingUserId = null;
+      }
+    }
+  }
+
+  Future<bool> _performSocketConnect(String targetUid, int gen) async {
+    _teardownSocket();
+
     final token = await _authService.getIdToken();
-    if (token == null) return false;
+    if (gen != _connectGeneration ||
+        token == null ||
+        token.isEmpty ||
+        _authService.getCurrentUserId() != targetUid) {
+      return false;
+    }
 
     final serverUrl = resolveWebSocketUrl();
-    _socket = io.io(
+    final socket = io.io(
       serverUrl,
       io.OptionBuilder()
           .setTransports(['websocket'])
           .setAuth({'token': token})
           .disableAutoConnect()
+          .disableReconnection()
           .build(),
     );
-    _socket!.connect();
+    socket.connect();
 
     final connectCompleter = Completer<void>();
-    _socket!.onConnect((_) {
+    socket.onConnect((_) {
       if (!connectCompleter.isCompleted) connectCompleter.complete();
     });
 
@@ -86,7 +154,20 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       Future.delayed(const Duration(seconds: 2)),
     ]);
 
-    return _socket != null && _socket!.connected;
+    if (gen != _connectGeneration ||
+        _authService.getCurrentUserId() != targetUid) {
+      _teardownSocket(socket);
+      return false;
+    }
+
+    if (socket.connected) {
+      _socket = socket;
+      _connectedUserId = targetUid;
+      return true;
+    }
+
+    _teardownSocket(socket);
+    return false;
   }
 
   void _bindBoardSocketStream({
@@ -879,12 +960,14 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   /// Disconnect WebSocket locally.
   @override
   Future<void> disconnectSocket() async {
-    if (_socket != null && _socket!.connected) {
-      _socket!.disconnect();
-      _socket = null;
-      _socketUpdatesController?.close();
-      _socketUpdatesController = null;
-    }
+    _connectGeneration++;
+    _connectingFuture = null;
+    _connectingUserId = null;
+    _teardownSocket();
+    await _socketUpdatesController?.close();
+    _socketUpdatesController = null;
+    await _socketPreviewController?.close();
+    _socketPreviewController = null;
   }
 
   void _logWs(

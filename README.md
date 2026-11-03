@@ -62,7 +62,7 @@ InkLink is a real-time collaborative canvas and digital whiteboard application b
 
 | Directory | Purpose | Primary Technologies |
 | :--- | :--- | :--- |
-| **`lib/`** | Multiplatform Flutter application client | Flutter 3.x, Dart 3.9+, BLoC, Isar, Agora Chat/RTC SDKs |
+| **`lib/`** | Multiplatform Flutter application client | Flutter 3.35+, Dart 3.9.2+, BLoC, Isar, Agora Chat/RTC SDKs |
 | **`server/`** | Real-time WebSocket relay & Agora token minter | Node.js, Express, Socket.IO, Redis (ioredis), Firebase Admin, Agora Token SDK |
 | **`functions/`** | Serverless backend callable cloud functions | Node.js 22, Firebase Functions v2, Cloud Firestore, Cloudflare R2 |
 | **`tool/`** | Developer tooling and architecture validation scripts | Dart CLI |
@@ -87,7 +87,7 @@ Enforced locally and in CI via `tool/architecture_guardrails.dart`:
 ## Local Development & Setup
 
 ### Prerequisites
-- **Flutter SDK:** Stable channel (3.24+ / Dart 3.5+)
+- **Flutter SDK:** Stable channel (3.35+ / Dart 3.9.2+, matching `sdk: ^3.9.2` in `pubspec.yaml`)
 - **Node.js:** v20+ or v22 LTS
 - **Redis Server:** Running locally (`redis://127.0.0.1:6379`) or a provisioned cloud instance
 - **Firebase CLI:** Installed and authenticated (`firebase login`)

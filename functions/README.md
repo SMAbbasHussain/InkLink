@@ -48,6 +48,7 @@ functions/
     │   ├── block_user.js
     │   ├── cancel_friend_request.js
     │   ├── decline_friend_request.js
+    │   ├── relationship_utils.js
     │   ├── report_user.js
     │   ├── send_friend_request.js
     │   ├── unblock_user.js
@@ -55,10 +56,10 @@ functions/
     │
     ├── invitations/             # Board invitations
     │   ├── accept_board_invite.js
-    │   ├── decline_board_invite.js
-    │   └── send_board_invite.js
+    │   └── decline_board_invite.js
     │
     ├── notifications/           # Push notification triggers & mentions
+    │   ├── send_board_invite.js
     │   └── send_comment_mention.js
     │
     ├── profile/                 # Profile management & media uploads
@@ -82,8 +83,8 @@ functions/
     └── utils/                   # Shared validation, constants, and logging
         ├── firestore_paths.js   # Centralized Firestore collection paths
         ├── logger.js            # Structured JSON logger
-        ├── notification_helpers.js
-        ├── r2-client.js         # Cloudflare R2 S3-compatible client
+        ├── notification_sender.js
+        ├── redis.js             # Upstash / ioredis cache sync helpers
         └── validation.js        # Input sanitization & boundary validation
 ```
 
@@ -141,6 +142,9 @@ Set secrets via Firebase CLI:
 ```bash
 firebase functions:secrets:set CLOUDFLARE_R2_ACCESS_KEY
 firebase functions:secrets:set CLOUDFLARE_R2_SECRET_KEY
+firebase functions:secrets:set CLOUDFLARE_ACCOUNT_ID
+firebase functions:secrets:set CLOUDFLARE_R2_BUCKET
+firebase functions:secrets:set CLOUDFLARE_R2_PUBLIC_URL
 ```
 
 ---

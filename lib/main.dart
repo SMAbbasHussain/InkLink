@@ -50,6 +50,8 @@ import 'package:inklink/domain/services/theme/theme_service.dart';
 import 'package:inklink/domain/services/workspace/workspace_service.dart';
 import 'package:inklink/domain/repositories/canvas/board_comments_repository.dart';
 import 'package:inklink/domain/repositories/canvas/board_comments_repository_impl.dart';
+import 'package:inklink/domain/repositories/chat/chat_repository.dart';
+import 'package:inklink/domain/repositories/chat/chat_repository_impl.dart';
 import 'package:inklink/domain/services/canvas/board_comments_service.dart';
 import 'package:inklink/domain/services/canvas/board_comments_service_impl.dart';
 import 'package:inklink/domain/services/canvas/board_chat_service.dart';
@@ -210,6 +212,11 @@ Future<void> _startApp() async {
           ),
         ),
         // 2. Domain services (depend on repositories)
+        RepositoryProvider<ChatRepository>(
+          create: (context) => ChatRepositoryImpl(
+            localDatabaseService: context.read<LocalDatabaseService>(),
+          ),
+        ),
         RepositoryProvider<PresenceService>(
           create: (context) => PresenceServiceImpl(
             presenceRepository: context.read<PresenceRepository>(),
@@ -285,7 +292,7 @@ Future<void> _startApp() async {
         ),
         RepositoryProvider<ChatService>(
           create: (context) => AgoraChatServiceImpl(
-            localDbService: context.read<LocalDatabaseService>(),
+            chatRepository: context.read<ChatRepository>(),
             authService: context.read<AuthService>(),
             presenceService: context.read<PresenceService>(),
             pushTokenProvider: messagingService.getToken,
