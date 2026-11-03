@@ -201,7 +201,7 @@ LocalChatConversation _localChatConversationDeserialize(
   object.name = reader.readString(offsets[9]);
   object.ownerId = reader.readStringOrNull(offsets[10]);
   object.unreadCount = reader.readLong(offsets[11]);
-  object.updatedAt = reader.readDateTime(offsets[12]);
+  object.updatedAt = reader.readDateTimeOrNull(offsets[12]);
   return object;
 }
 
@@ -237,7 +237,7 @@ P _localChatConversationDeserializeProp<P>(
     case 11:
       return (reader.readLong(offset)) as P;
     case 12:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
   }
@@ -2539,7 +2539,33 @@ extension LocalChatConversationQueryFilter
     LocalChatConversation,
     QAfterFilterCondition
   >
-  updatedAtEqualTo(DateTime value) {
+  updatedAtIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'updatedAt'),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalChatConversation,
+    LocalChatConversation,
+    QAfterFilterCondition
+  >
+  updatedAtIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'updatedAt'),
+      );
+    });
+  }
+
+  QueryBuilder<
+    LocalChatConversation,
+    LocalChatConversation,
+    QAfterFilterCondition
+  >
+  updatedAtEqualTo(DateTime? value) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(
         FilterCondition.equalTo(property: r'updatedAt', value: value),
@@ -2552,7 +2578,7 @@ extension LocalChatConversationQueryFilter
     LocalChatConversation,
     QAfterFilterCondition
   >
-  updatedAtGreaterThan(DateTime value, {bool include = false}) {
+  updatedAtGreaterThan(DateTime? value, {bool include = false}) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(
         FilterCondition.greaterThan(
@@ -2569,7 +2595,7 @@ extension LocalChatConversationQueryFilter
     LocalChatConversation,
     QAfterFilterCondition
   >
-  updatedAtLessThan(DateTime value, {bool include = false}) {
+  updatedAtLessThan(DateTime? value, {bool include = false}) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(
         FilterCondition.lessThan(
@@ -2587,8 +2613,8 @@ extension LocalChatConversationQueryFilter
     QAfterFilterCondition
   >
   updatedAtBetween(
-    DateTime lower,
-    DateTime upper, {
+    DateTime? lower,
+    DateTime? upper, {
     bool includeLower = true,
     bool includeUpper = true,
   }) {
@@ -3143,7 +3169,7 @@ extension LocalChatConversationQueryProperty
     });
   }
 
-  QueryBuilder<LocalChatConversation, DateTime, QQueryOperations>
+  QueryBuilder<LocalChatConversation, DateTime?, QQueryOperations>
   updatedAtProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'updatedAt');

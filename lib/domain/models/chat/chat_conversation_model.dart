@@ -116,3 +116,17 @@ class ChatConversationModel {
 
   String toJsonString() => jsonEncode(toMap());
 }
+
+class ChatMemberProfile {
+  final String uid;
+  final String displayName;
+  final String? photoURL;
+  final String? email;
+
+  const ChatMemberProfile({
+    required this.uid,
+    required this.displayName,
+    this.photoURL,
+    this.email,
+  });
+}

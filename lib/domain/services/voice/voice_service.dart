@@ -14,5 +14,6 @@ abstract class VoiceService {
   Future<void> leaveCall(String boardId);
   Future<void> toggleMute(String boardId);
   Future<void> setSpeaking({required String boardId, required bool isSpeaking});
+  Future<void> disconnect();
   Future<void> dispose();
 }

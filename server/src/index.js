@@ -93,7 +93,7 @@ app.post('/api/agora/chat/token', async (req, res) => {
     // Must mirror the client's _sanitizeAgoraUid exactly so both sides
     // agree on the Agora Chat username.
     const agoraUsername = sanitizeAgoraUid(decoded.uid);
-    const cacheKey = `agora_chat:token:${agoraUsername}`;
+    const cacheKey = `agora_chat:token:${decoded.uid}`;
 
     // Redis-first: serve the cached token while it is still fresh (5 min headroom).
     if (redisAvailable) {

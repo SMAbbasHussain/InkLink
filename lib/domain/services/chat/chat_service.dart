@@ -158,5 +158,7 @@ abstract class ChatService {
   Future<void> leaveGroup(String groupId);
   Future<void> destroyGroup(String groupId);
 
+  Future<Map<String, ChatMemberProfile>> getMemberProfiles(List<String> uids);
+
   Future<void> dispose();
 }
