@@ -168,8 +168,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: InkSpacing.s24),
                             SocialAuthButton(
                               text: "Continue with Google",
-                              iconUrl:
-                                  "https://img.icons8.com/color/48/000000/google-logo.png",
+                              assetPath: "images/google-logo.png",
                               onTap: () => context.read<AuthBloc>().add(
                                 GoogleSignInRequested(),
                               ),

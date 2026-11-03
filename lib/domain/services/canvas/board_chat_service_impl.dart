@@ -17,6 +17,8 @@ class BoardChatServiceImpl implements BoardChatService {
 
   /// Board whose room should be re-subscribed after a reconnect.
   String? _watchedBoardId;
+  String? _connectedUserId;
+  Future<bool>? _connectingFuture;
   int _reconnectAttempts = 0;
   bool _reconnectScheduled = false;
   bool _disposed = false;
@@ -104,10 +106,31 @@ class BoardChatServiceImpl implements BoardChatService {
   }
 
   Future<bool> _ensureConnected() async {
-    if (_socket != null && _socket!.connected) return true;
+    final currentUid = _authService.getCurrentUserId();
+    if (_socket != null &&
+        _socket!.connected &&
+        _connectedUserId == currentUid) {
+      return true;
+    }
 
+    if (_connectingFuture != null) {
+      return _connectingFuture!;
+    }
+
+    final future = _performConnect(currentUid);
+    _connectingFuture = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_connectingFuture, future)) {
+        _connectingFuture = null;
+      }
+    }
+  }
+
+  Future<bool> _performConnect(String? currentUid) async {
     // Tear down any stale socket — its auth token is frozen at creation, so
-    // reconnecting it would fail forever after the token expires.
+    // reconnecting it would fail forever after the token expires or on user switch.
     _teardownSocket();
 
     final token = await _authService.getIdToken();
@@ -115,6 +138,7 @@ class BoardChatServiceImpl implements BoardChatService {
 
     final socket = _buildSocket(token);
     _socket = socket;
+    _connectedUserId = currentUid;
     socket.connect();
 
     final completer = Completer<void>();

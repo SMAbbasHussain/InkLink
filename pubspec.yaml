@@ -102,6 +102,7 @@ flutter:
   assets:
     - .env
     - images/app_icon.png
+    - images/google-logo.png
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 
