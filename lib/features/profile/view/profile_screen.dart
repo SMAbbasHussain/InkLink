@@ -5,6 +5,8 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:inklink/features/profile/bloc/profile_bloc.dart';
 import 'package:inklink/features/profile/view/widgets/edit_profile_sheet.dart';
 
+import '../../../core/utils/app_error_formatter.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
@@ -19,6 +21,7 @@ import '../../friends/bloc/friends_bloc.dart';
 import '../../friends/view/blocked_users_screen.dart';
 import '../../friends/view/friend_requests_screen.dart';
 import 'widgets/friends_collapsible_card.dart';
+import 'widgets/profile_skeleton.dart';
 import '../../../domain/models/chat/chat_conversation_model.dart';
 import '../../chat/view/chat_thread_route.dart';
 
@@ -128,9 +131,7 @@ class ProfileScreen extends StatelessWidget {
           BlocListener<FriendsBloc, FriendsState>(
             listener: (context, friendsState) {
               if (friendsState is FriendsError) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text(friendsState.message)));
+                AppSnackBar.showError(context, friendsState.message);
               }
             },
           ),
@@ -142,9 +143,7 @@ class ProfileScreen extends StatelessWidget {
                   ? profileState.errorMessage
                   : null;
               if (message != null) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text(message)));
+                AppSnackBar.showError(context, message);
               }
             },
           ),
@@ -152,7 +151,7 @@ class ProfileScreen extends StatelessWidget {
         child: BlocBuilder<ProfileBloc, ProfileState>(
           builder: (context, state) {
             if (state is ProfileLoading) {
-              return Center(child: CircularProgressIndicator(color: tokens.accent));
+              return const ProfileSkeleton();
             }
 
             if (state is ProfileError) {
@@ -578,6 +577,13 @@ class ProfileScreen extends StatelessWidget {
                                 userId,
                               ),
                             );
+                            final friendName =
+                                state.userData['displayName']?.toString() ??
+                                    'User';
+                            AppSnackBar.showSuccess(
+                              context,
+                              'Friend request from $friendName accepted!',
+                            );
                           },
                   ),
                 ),
@@ -597,6 +603,10 @@ class ProfileScreen extends StatelessWidget {
                         : () {
                             context.read<FriendsBloc>().add(
                               DeclineFriendRequestRequested(incomingRequestId),
+                            );
+                            AppSnackBar.showMessage(
+                              context,
+                              'Friend request declined.',
                             );
                           },
                   ),
@@ -660,18 +670,9 @@ class ProfileScreen extends StatelessWidget {
               );
 
               final recipientName = state.userData['displayName']?.toString() ?? 'collaborator';
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Row(
-                    children: [
-                      const Icon(LucideIcons.checkCircle2, color: Colors.white, size: 18),
-                      const SizedBox(width: 8),
-                      Text('Friend request sent to $recipientName!'),
-                    ],
-                  ),
-                  backgroundColor: const Color(0xFF16A34A),
-                  behavior: SnackBarBehavior.floating,
-                ),
+              AppSnackBar.showSuccess(
+                context,
+                'Friend request sent to $recipientName!',
               );
             },
           );
@@ -683,7 +684,6 @@ class ProfileScreen extends StatelessWidget {
   Future<void> _confirmBlockUser(BuildContext context) async {
     final friendsBloc = context.read<FriendsBloc>();
     final profileBloc = context.read<ProfileBloc>();
-    final messenger = ScaffoldMessenger.maybeOf(context);
 
     final shouldBlock = await showInkConfirmDialog(
       context,
@@ -697,16 +697,23 @@ class ProfileScreen extends StatelessWidget {
     try {
       await friendsBloc.blockUser(userId);
       profileBloc.add(LoadProfile(userId));
-      messenger?.showSnackBar(const SnackBar(content: Text('User blocked')));
+      if (!context.mounted) return;
+      AppSnackBar.showSuccess(context, 'User blocked');
     } catch (e) {
-      messenger?.showSnackBar(SnackBar(content: Text(e.toString())));
+      if (context.mounted) {
+        final details = AppErrorFormatter.format(e);
+        showInkErrorDialog(
+          context,
+          title: details.title,
+          message: details.message,
+        );
+      }
     }
   }
 
   Future<void> _confirmUnfriendUser(BuildContext context) async {
     final friendsBloc = context.read<FriendsBloc>();
     final profileBloc = context.read<ProfileBloc>();
-    final messenger = ScaffoldMessenger.maybeOf(context);
 
     final shouldUnfriend = await showInkConfirmDialog(
       context,
@@ -720,16 +727,23 @@ class ProfileScreen extends StatelessWidget {
     try {
       await friendsBloc.unfriendUser(userId);
       profileBloc.add(LoadProfile(userId));
-      messenger?.showSnackBar(const SnackBar(content: Text('Friend removed')));
+      if (!context.mounted) return;
+      AppSnackBar.showSuccess(context, 'Friend removed');
     } catch (e) {
-      messenger?.showSnackBar(SnackBar(content: Text(e.toString())));
+      if (context.mounted) {
+        final details = AppErrorFormatter.format(e);
+        showInkErrorDialog(
+          context,
+          title: details.title,
+          message: details.message,
+        );
+      }
     }
   }
 
   Future<void> _confirmUnblockUser(BuildContext context) async {
     final friendsBloc = context.read<FriendsBloc>();
     final profileBloc = context.read<ProfileBloc>();
-    final messenger = ScaffoldMessenger.maybeOf(context);
 
     final shouldUnblock = await showInkConfirmDialog(
       context,
@@ -744,15 +758,22 @@ class ProfileScreen extends StatelessWidget {
     try {
       await friendsBloc.unblockUser(userId);
       profileBloc.add(LoadProfile(userId));
-      messenger?.showSnackBar(const SnackBar(content: Text('User unblocked')));
+      if (!context.mounted) return;
+      AppSnackBar.showSuccess(context, 'User unblocked');
     } catch (e) {
-      messenger?.showSnackBar(SnackBar(content: Text(e.toString())));
+      if (context.mounted) {
+        final details = AppErrorFormatter.format(e);
+        showInkErrorDialog(
+          context,
+          title: details.title,
+          message: details.message,
+        );
+      }
     }
   }
 
   Future<void> _reportUser(BuildContext context) async {
     final friendsBloc = context.read<FriendsBloc>();
-    final messenger = ScaffoldMessenger.maybeOf(context);
 
     final reasonController = TextEditingController();
     final reason = await showDialog<String?>(
@@ -787,11 +808,17 @@ class ProfileScreen extends StatelessWidget {
 
     try {
       await friendsBloc.reportUser(userId, reason: reason);
-      messenger?.showSnackBar(
-        const SnackBar(content: Text('Report submitted')),
-      );
+      if (!context.mounted) return;
+      AppSnackBar.showSuccess(context, 'Report submitted');
     } catch (e) {
-      messenger?.showSnackBar(SnackBar(content: Text(e.toString())));
+      if (context.mounted) {
+        final details = AppErrorFormatter.format(e);
+        showInkErrorDialog(
+          context,
+          title: details.title,
+          message: details.message,
+        );
+      }
     }
   }
 }
