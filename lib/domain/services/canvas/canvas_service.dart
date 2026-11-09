@@ -254,7 +254,6 @@ class CanvasServiceImpl implements CanvasService {
             }
             // Persist cursor so the next open resumes from the latest update.
             await _syncRepository.persistCursorForBoard(boardId);
-            await _syncPendingLocalUpdates(boardId, userId);
           },
           onError: (error, stackTrace) {
             developer.log(

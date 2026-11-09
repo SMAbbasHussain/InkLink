@@ -22,6 +22,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   Future<bool>? _connectingFuture;
   int _connectGeneration = 0;
   bool _isSingleUserBoard = false;
+  final Map<String, int> _watchedBoardRefCounts = <String, int>{};
   StreamController<List<LocalCrdtUpdate>>? _socketUpdatesController;
   StreamController<List<LocalCrdtUpdate>>? _socketPreviewController;
 
@@ -139,7 +140,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           .setTransports(['websocket'])
           .setAuth({'token': token})
           .disableAutoConnect()
-          .disableReconnection()
+          .enableReconnection()
+          .setReconnectionDelay(500)
+          .setReconnectionDelayMax(3000)
           .build(),
     );
     socket.connect();
@@ -147,6 +150,12 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     final connectCompleter = Completer<void>();
     socket.onConnect((_) {
       if (!connectCompleter.isCompleted) connectCompleter.complete();
+      // Re-subscribe to any actively watched boards upon reconnect
+      for (final boardId in _watchedBoardRefCounts.keys) {
+        if ((_watchedBoardRefCounts[boardId] ?? 0) > 0) {
+          socket.emit('watch_board', boardId);
+        }
+      }
     });
 
     await Future.any([
@@ -177,14 +186,26 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     required String subscribeLabel,
     required void Function(dynamic data) handleEvent,
   }) {
-    _socket!.emit('watch_board', boardId);
+    final socket = _socket;
+    if (socket == null) return;
+    final prevCount = _watchedBoardRefCounts[boardId] ?? 0;
+    _watchedBoardRefCounts[boardId] = prevCount + 1;
+    if (prevCount == 0) {
+      socket.emit('watch_board', boardId);
+    }
     _logWs('SUBSCRIBE SENT', boardId, subscribeLabel);
-    _socket!.on(eventName, handleEvent);
+    socket.on(eventName, handleEvent);
 
     controller.onCancel = () {
       try {
-        _socket!.emit('leave_board', boardId);
-        _socket!.off(eventName, handleEvent);
+        final remaining = (_watchedBoardRefCounts[boardId] ?? 1) - 1;
+        if (remaining <= 0) {
+          _watchedBoardRefCounts.remove(boardId);
+          socket.emit('leave_board', boardId);
+        } else {
+          _watchedBoardRefCounts[boardId] = remaining;
+        }
+        socket.off(eventName, handleEvent);
       } catch (error, stackTrace) {
         _logError(
           'Failed while unsubscribing from board socket stream',
@@ -349,24 +370,19 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     }
 
     try {
-      if (_socket != null && _socket!.connected) {
-        _logWs(
-          'PREVIEW SENT',
-          boardId,
-          'crdt_preview',
-          updateId: previewId,
-          elementId: elementId,
-        );
-        await _emitWithAck('crdt_preview', {
-          'boardId': boardId,
-          'preview': {
-            'previewId': previewId,
-            'elementId': elementId,
-            'payloadBase64': payloadBase64,
-            'sourceClientId': sourceClientId,
-          },
-        });
+      if (_socket == null || !_socket!.connected) {
+        unawaited(_ensureSocketConnected());
+        return;
       }
+      _socket!.emit('crdt_preview', {
+        'boardId': boardId,
+        'preview': {
+          'previewId': previewId,
+          'elementId': elementId,
+          'payloadBase64': payloadBase64,
+          'sourceClientId': sourceClientId,
+        },
+      });
     } catch (error, stackTrace) {
       _logError(
         'Socket preview publish failed',
@@ -394,29 +410,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   }) async {
     if (preferSocket) {
       try {
-        if (_socket == null || !_socket!.connected) {
-          final token = await _authService.getIdToken();
-          if (token != null) {
-            final serverUrl = resolveWebSocketUrl();
-            _socket = io.io(
-              serverUrl,
-              io.OptionBuilder()
-                  .setTransports(['websocket'])
-                  .setAuth({'token': token})
-                  .disableAutoConnect()
-                  .build(),
-            );
-            _socket!.connect();
-            final connectCompleter = Completer<void>();
-            _socket!.onConnect((_) {
-              if (!connectCompleter.isCompleted) connectCompleter.complete();
-            });
-            await Future.any([
-              connectCompleter.future,
-              Future.delayed(const Duration(seconds: 2)),
-            ]);
-          }
-        }
+        await _ensureSocketConnected();
 
         if (_socket != null && _socket!.connected) {
           // Load stored cursor from local sync state if not provided
@@ -765,8 +759,13 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
   @override
   Future<bool> batchSyncPendingUpdates(String boardId, String userId) async {
-    final pending = await getLocalCrdtUpdates(boardId);
-    final toSync = pending.where((u) => !u.isSynced).toList();
+    final isar = await _localDatabaseService.database;
+    final toSync = await isar.localCrdtUpdates
+        .filter()
+        .boardIdEqualTo(boardId)
+        .isSyncedEqualTo(false)
+        .sortByAppliedAt()
+        .findAll();
     if (toSync.isEmpty) return true;
     // Push each pending update to server via socket
     try {

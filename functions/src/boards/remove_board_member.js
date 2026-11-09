@@ -30,11 +30,13 @@ module.exports = async (request) => {
       }
 
       const boardData = boardDoc.data() || {};
-      if (boardData.ownerId !== uid) {
-        throw new HttpsError('permission-denied', 'Only the board owner can remove members.');
+      const isOwner = boardData.ownerId === uid;
+      const isSelfRemoval = targetUid.trim() === uid;
+      if (!isOwner && !isSelfRemoval) {
+        throw new HttpsError('permission-denied', 'Only the board owner or the member themselves can remove membership.');
       }
 
-      if (boardData.ownerId === targetUid) {
+      if (boardData.ownerId === targetUid.trim()) {
         throw new HttpsError('invalid-argument', 'Cannot remove the board owner.');
       }
 
