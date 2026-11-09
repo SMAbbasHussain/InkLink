@@ -14,10 +14,14 @@ import '../../../ui/widgets/ink_initials.dart';
 import '../../../ui/widgets/ink_segmented.dart';
 import '../../../ui/widgets/ink_text_field.dart';
 import '../../../ui/widgets/paper_card.dart';
+import '../../../core/utils/app_snackbar.dart';
+import '../../../core/utils/app_error_formatter.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
+import '../../notifications/bloc/notifications_bloc.dart';
 import '../bloc/board_settings_bloc.dart';
 import '../bloc/dashboard_bloc.dart';
+import 'board_edit_requests_screen.dart';
 
 class BoardSettingsScreen extends StatelessWidget {
   final Board board;
@@ -118,8 +122,9 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
         allowMembersToCopy: _allowMembersToCopy,
       ),
     );
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Settings saved successfully.')),
+    AppSnackBar.showSuccess(
+      context,
+      'Settings saved successfully.',
     );
   }
 
@@ -135,6 +140,21 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
     final dashboardBloc = context.read<DashboardBloc>();
     Navigator.of(context).popUntil((route) => route.isFirst);
     dashboardBloc.add(DashboardDeleteBoardRequested(boardId));
+  }
+
+  Future<void> _confirmLeave(BuildContext context, Board board) async {
+    final confirmed = await showInkConfirmDialog(
+      context,
+      title: 'Leave Board',
+      message:
+          'Are you sure you want to leave "${board.title}"? You will need to be re-invited or join again to access it.',
+      confirmLabel: 'Leave',
+      destructive: true,
+    );
+    if (!confirmed || !context.mounted) return;
+    final dashboardBloc = context.read<DashboardBloc>();
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    dashboardBloc.add(DashboardLeaveBoardRequested(board.id));
   }
 
   void _updateNameDialog(BuildContext context, Board board) {
@@ -273,8 +293,9 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
     context.read<DashboardBloc>().add(
       DashboardDuplicateBoardRequested(boardId),
     );
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Board duplicate created!')),
+    AppSnackBar.showMessage(
+      context,
+      'Board duplicate created!',
     );
     Navigator.pop(context);
   }
@@ -294,16 +315,18 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
       context.read<DashboardBloc>().add(
         DashboardArchiveBoardRequested(board.id),
       );
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Board archived.')),
+      AppSnackBar.showSuccess(
+        context,
+        'Board archived.',
       );
       Navigator.pop(context);
     } else {
       context.read<DashboardBloc>().add(
         DashboardUnarchiveBoardRequested(board.id),
       );
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Board unarchived.')),
+      AppSnackBar.showSuccess(
+        context,
+        'Board unarchived.',
       );
     }
   }
@@ -321,13 +344,66 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
       appBar: AppBar(
         backgroundColor: tokens.paper,
         title: Text('Board Settings', style: InkType.title(tokens.ink)),
+        actions: [
+          BlocBuilder<BoardSettingsBloc, BoardSettingsState>(
+            builder: (context, state) {
+              final board = state.board;
+              if (board == null || board.ownerId != currentUserId) {
+                return const SizedBox.shrink();
+              }
+              final notifState = context.watch<NotificationsBloc>().state;
+              final pendingRequestsCount = (notifState is NotificationsLoaded)
+                  ? notifState.notifications.where((n) {
+                      final type = n['type']?.toString();
+                      final status = n['status']?.toString();
+                      final extraData = n['extraData'] is Map
+                          ? (n['extraData'] as Map).cast<String, dynamic>()
+                          : <String, dynamic>{};
+                      final bId = extraData['boardId']?.toString() ??
+                          n['targetId']?.toString();
+                      final reqType = extraData['requestType']?.toString() ??
+                          (type == 'board_edit_request' ? 'edit' : 'join');
+                      return (type == 'board_edit_request' ||
+                              (type == 'board_access_request' &&
+                                  reqType == 'edit')) &&
+                          status == 'pending' &&
+                          bId == board.id;
+                    }).length
+                  : 0;
+
+              return IconButton(
+                tooltip: 'Edit Requests',
+                icon: pendingRequestsCount > 0
+                    ? Badge(
+                        label: Text('$pendingRequestsCount'),
+                        backgroundColor: tokens.accent,
+                        textColor: Colors.white,
+                        child: Icon(LucideIcons.userCheck, color: tokens.ink),
+                      )
+                    : Icon(LucideIcons.userCheck, color: tokens.ink),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => BoardEditRequestsScreen(
+                        boardId: board.id,
+                        boardTitle: board.title,
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ],
       ),
       body: BlocConsumer<BoardSettingsBloc, BoardSettingsState>(
         listener: (context, state) {
           if (state.errorMessage != null && !state.isOperationLoading) {
-            ScaffoldMessenger.of(
+            AppSnackBar.showError(
               context,
-            ).showSnackBar(SnackBar(content: Text(state.errorMessage!)));
+              AppErrorFormatter.cleanMessage(state.errorMessage!),
+            );
           }
         },
         builder: (context, state) {
@@ -355,6 +431,28 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
               invalidInviteEntries.isEmpty &&
               !state.isOperationLoading;
           _initFormFields(board);
+
+          final notifState = context.watch<NotificationsBloc>().state;
+          final int pendingRequestsCount;
+          if (isOwner && notifState is NotificationsLoaded) {
+            pendingRequestsCount = notifState.notifications.where((n) {
+              final type = n['type']?.toString();
+              final status = n['status']?.toString();
+              final extraData = n['extraData'] is Map
+                  ? (n['extraData'] as Map).cast<String, dynamic>()
+                  : <String, dynamic>{};
+              final bId =
+                  extraData['boardId']?.toString() ?? n['targetId']?.toString();
+              final reqType = extraData['requestType']?.toString() ??
+                  (type == 'board_edit_request' ? 'edit' : 'join');
+              return (type == 'board_edit_request' ||
+                      (type == 'board_access_request' && reqType == 'edit')) &&
+                  status == 'pending' &&
+                  bId == board.id;
+            }).length;
+          } else {
+            pendingRequestsCount = 0;
+          }
 
           return ListView(
             padding: const EdgeInsets.all(InkSpacing.s16),
@@ -390,8 +488,9 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                         icon: Icon(LucideIcons.copy, color: tokens.inkMuted),
                         onPressed: () {
                           Clipboard.setData(ClipboardData(text: board.id));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Join code copied!')),
+                          AppSnackBar.showSuccess(
+                            context,
+                            'Join code copied!',
                           );
                         },
                       ),
@@ -433,7 +532,83 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                 ),
               ),
               const SizedBox(height: InkSpacing.s20),
-              if (isOwner) ...[
+               if (isOwner) ...[
+                const SizedBox(height: InkSpacing.s20),
+                _sectionLabel(tokens, 'Access & Requests'),
+                const SizedBox(height: InkSpacing.s8),
+                PaperCard(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: InkSpacing.s16,
+                    vertical: InkSpacing.s8,
+                  ),
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: tokens.accent.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        LucideIcons.userCheck,
+                        color: tokens.accent,
+                        size: 20,
+                      ),
+                    ),
+                    title: Text(
+                      'Edit Requests',
+                      style: InkType.bodyStrong(tokens.ink),
+                    ),
+                    subtitle: Text(
+                      pendingRequestsCount > 0
+                          ? '$pendingRequestsCount pending edit request${pendingRequestsCount == 1 ? '' : 's'}'
+                          : 'Review and manage edit requests for this board',
+                      style: InkType.caption(tokens.inkSecondary),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (pendingRequestsCount > 0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: tokens.accent,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '$pendingRequestsCount',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        const SizedBox(width: 6),
+                        Icon(
+                          LucideIcons.chevronRight,
+                          color: tokens.inkMuted,
+                          size: 18,
+                        ),
+                      ],
+                    ),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => BoardEditRequestsScreen(
+                            boardId: board.id,
+                            boardTitle: board.title,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: InkSpacing.s20),
                 _sectionLabel(tokens, 'Permissions & Visibility'),
                 const SizedBox(height: InkSpacing.s8),
                 PaperCard(
@@ -750,7 +925,7 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                   ),
                 ),
               ],
-              if (isOwner) ...[
+              ...[
                 const SizedBox(height: InkSpacing.s24),
                 _sectionLabel(tokens, 'Danger Zone', color: tokens.danger),
                 const SizedBox(height: InkSpacing.s8),
@@ -762,10 +937,15 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                     border: Border.all(color: tokens.danger.withValues(alpha: 0.3)),
                     boxShadow: tokens.paperShadow,
                   ),
-                  child: InkButton.danger(
-                    label: 'Delete Board',
-                    onPressed: () => _confirmDelete(context, board.id),
-                  ),
+                  child: isOwner
+                      ? InkButton.danger(
+                          label: 'Delete Board',
+                          onPressed: () => _confirmDelete(context, board.id),
+                        )
+                      : InkButton.danger(
+                          label: 'Leave Board',
+                          onPressed: () => _confirmLeave(context, board),
+                        ),
                 ),
               ],
               const SizedBox(height: InkSpacing.s32),

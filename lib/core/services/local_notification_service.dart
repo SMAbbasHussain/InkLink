@@ -10,6 +10,7 @@ import '../../domain/models/chat/chat_conversation_model.dart';
 import '../../features/friends/view/friend_requests_screen.dart';
 import '../../features/board_invitations/bloc/board_invitations_bloc.dart';
 import '../../features/board_invitations/view/board_invites_screen.dart';
+import '../../features/dashboard/view/board_edit_requests_screen.dart';
 import '../../features/workspaces/view/workspace_invites_screen.dart';
 import '../../features/chat/view/chat_thread_route.dart';
 
@@ -97,6 +98,26 @@ class LocalNotificationService {
         MaterialPageRoute(builder: (_) => const WorkspaceInvitesScreen()),
       );
       return;
+    }
+
+    if (type == 'board_edit_request' ||
+        (type == 'board_access_request' &&
+            receivedAction.payload?['requestType'] == 'edit')) {
+      final boardId = receivedAction.payload?['boardId'] ??
+          receivedAction.payload?['targetId'] ??
+          '';
+      final boardTitle = receivedAction.payload?['boardTitle'] ?? 'Board';
+      if (boardId.isNotEmpty) {
+        navigator.push(
+          MaterialPageRoute(
+            builder: (_) => BoardEditRequestsScreen(
+              boardId: boardId,
+              boardTitle: boardTitle,
+            ),
+          ),
+        );
+        return;
+      }
     }
 
     if (type == 'chat_message') {

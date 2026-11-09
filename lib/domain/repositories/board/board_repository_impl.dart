@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/painting.dart';
 import 'package:isar_community/isar.dart' hide Query;
 import 'package:path_provider/path_provider.dart';
 
@@ -43,6 +44,20 @@ class FirestoreBoardRepository implements BoardRepository {
       <String, Map<String, dynamic>>{};
 
   late final FirestoreBatchFetcher _batchFetcher;
+  String? _previewsDirectoryPath;
+
+  Future<String> _getPreviewsDirectoryPath() async {
+    if (_previewsDirectoryPath != null) return _previewsDirectoryPath!;
+    final directory = await getApplicationDocumentsDirectory();
+    final previewsDir = Directory(
+      '${directory.path}${Platform.pathSeparator}inklink${Platform.pathSeparator}board_previews',
+    );
+    if (!await previewsDir.exists()) {
+      await previewsDir.create(recursive: true);
+    }
+    _previewsDirectoryPath = previewsDir.path;
+    return previewsDir.path;
+  }
 
   FirestoreBoardRepository({
     required FirestoreService firestoreService,
@@ -52,6 +67,7 @@ class FirestoreBoardRepository implements BoardRepository {
        _authService = authService,
        _localDatabaseService = localDatabaseService {
     _batchFetcher = FirestoreBatchFetcher(firestoreService: firestoreService);
+    unawaited(_getPreviewsDirectoryPath());
   }
 
   @override
@@ -565,6 +581,18 @@ class FirestoreBoardRepository implements BoardRepository {
       final existingBoard = await isar.localBoards.getByBoardId(boardId);
       final localBoard = existingBoard ?? LocalBoard();
 
+      var resolvedPreview = existingBoard?.previewPath;
+      if (resolvedPreview == null ||
+          resolvedPreview.isEmpty ||
+          !File(resolvedPreview).existsSync()) {
+        final previewsDir = await _getPreviewsDirectoryPath();
+        final canonicalFile =
+            File('$previewsDir${Platform.pathSeparator}$boardId.png');
+        if (await canonicalFile.exists()) {
+          resolvedPreview = canonicalFile.path;
+        }
+      }
+
       localBoard
         ..boardId = boardId
         ..title = data['title'] ?? data['name'] ?? 'Untitled Board'
@@ -592,7 +620,7 @@ class FirestoreBoardRepository implements BoardRepository {
           ownerId: (data['ownerId'] as String?) ?? '',
           uid: uid,
         )
-        ..previewPath = existingBoard?.previewPath
+        ..previewPath = resolvedPreview
         ..createdAt =
             (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()
         ..updatedAt =
@@ -742,12 +770,24 @@ class FirestoreBoardRepository implements BoardRepository {
     final docData = _ownedBoardDocs[lb.boardId] ?? _joinedBoardDocs[lb.boardId];
     final isArchived = (docData?['isArchived'] as bool?) ?? false;
     final allowMembersToCopy = (docData?['allowMembersToCopy'] as bool?) ?? false;
+
+    var previewPath = lb.previewPath;
+    if (previewPath == null || previewPath.isEmpty || !File(previewPath).existsSync()) {
+      if (_previewsDirectoryPath != null) {
+        final canonical =
+            '$_previewsDirectoryPath${Platform.pathSeparator}${lb.boardId}.png';
+        if (File(canonical).existsSync()) {
+          previewPath = canonical;
+        }
+      }
+    }
+
     return Board(
       id: lb.boardId,
       title: lb.title,
       ownerId: lb.ownerId,
       members: lb.members,
-      previewPath: lb.previewPath,
+      previewPath: previewPath,
       visibility: lb.visibility,
       privateJoinPolicy: lb.privateJoinPolicy,
       tags: lb.tags,
@@ -967,6 +1007,18 @@ class FirestoreBoardRepository implements BoardRepository {
     final members = List<String>.from(boardData['members'] ?? const <String>[]);
     final localBoard = existingBoard ?? LocalBoard();
 
+    var resolvedPreview = existingBoard?.previewPath;
+    if (resolvedPreview == null ||
+        resolvedPreview.isEmpty ||
+        !File(resolvedPreview).existsSync()) {
+      final previewsDir = await _getPreviewsDirectoryPath();
+      final canonicalFile =
+          File('$previewsDir${Platform.pathSeparator}$boardId.png');
+      if (await canonicalFile.exists()) {
+        resolvedPreview = canonicalFile.path;
+      }
+    }
+
     localBoard
       ..boardId = boardId
       ..title = boardData['title'] ?? boardData['name'] ?? 'Untitled Board'
@@ -994,7 +1046,7 @@ class FirestoreBoardRepository implements BoardRepository {
         ownerId: (boardData['ownerId'] as String?) ?? '',
         uid: uid,
       )
-      ..previewPath = existingBoard?.previewPath
+      ..previewPath = resolvedPreview
       ..createdAt =
           (boardData['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()
       ..updatedAt =
@@ -1390,49 +1442,55 @@ class FirestoreBoardRepository implements BoardRepository {
       return;
     }
 
-    final directory = await getApplicationDocumentsDirectory();
-    final previewsDir = Directory(
-      '${directory.path}${Platform.pathSeparator}inklink${Platform.pathSeparator}board_previews',
-    );
-    if (!await previewsDir.exists()) {
-      await previewsDir.create(recursive: true);
-    }
-
+    final previewsDirPath = await _getPreviewsDirectoryPath();
     final previewFile = File(
-      '${previewsDir.path}${Platform.pathSeparator}$boardId.png',
+      '$previewsDirPath${Platform.pathSeparator}$boardId.png',
     );
     await previewFile.writeAsBytes(pngBytes, flush: true);
 
+    try {
+      PaintingBinding.instance.imageCache.evict(FileImage(previewFile));
+    } catch (_) {}
+
     final isar = await _localDatabaseService.database;
-    final localBoard = await isar.localBoards.getByBoardId(boardId);
-    if (localBoard == null) return;
-    // Updating top-level board metadata is owner-scoped in security rules.
-    // Do not attempt this write for non-owners when closing/saving preview.
-    final canUpdateBoardMetadata =
-        localBoard.currentUserRole == Board.roleOwner ||
-        localBoard.ownerId == currentUserId;
+    var localBoard = await isar.localBoards.getByBoardId(boardId);
+    if (localBoard == null) {
+      await ensureBoardCached(boardId);
+      localBoard = await isar.localBoards.getByBoardId(boardId);
+    }
+    if (localBoard == null) {
+      final now = DateTime.now();
+      localBoard = LocalBoard()
+        ..boardId = boardId
+        ..title = 'Board'
+        ..ownerId = currentUserId ?? ''
+        ..members = [currentUserId ?? '']
+        ..engine = crdtEngine
+        ..createdAt = now
+        ..updatedAt = now
+        ..isSynced = false;
+    }
 
     localBoard.previewPath = previewFile.path;
     localBoard.updatedAt = DateTime.now();
 
-    if (canUpdateBoardMetadata) {
-      try {
-        await _firestoreService.collection('boards').doc(boardId).update({
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      } on FirebaseException catch (e) {
-        // permission-denied: the caller lost edit rights. not-found: the board
-        // was deleted while this preview was being saved. Neither should fail
-        // the local preview update.
-        if (e.code != 'permission-denied' && e.code != 'not-found') {
-          rethrow;
-        }
-      }
-    }
-
     await isar.writeTxn(() async {
-      await isar.localBoards.putByBoardId(localBoard);
+      await isar.localBoards.putByBoardId(localBoard!);
     });
+
+    final canUpdateBoardMetadata =
+        localBoard.currentUserRole == Board.roleOwner ||
+        localBoard.ownerId == currentUserId;
+
+    if (canUpdateBoardMetadata) {
+      unawaited(
+        _firestoreService
+            .collection('boards')
+            .doc(boardId)
+            .update({'updatedAt': FieldValue.serverTimestamp()})
+            .catchError((_) {}),
+      );
+    }
   }
 
   @override

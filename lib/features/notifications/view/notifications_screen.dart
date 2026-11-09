@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../core/utils/app_snackbar.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
@@ -15,6 +16,7 @@ import '../../friends/view/friend_requests_screen.dart';
 import '../../profile/view/profile_route.dart';
 import '../../board_invitations/bloc/board_invitations_bloc.dart';
 import '../../board_invitations/view/board_invites_screen.dart';
+import '../../dashboard/view/board_edit_requests_screen.dart';
 import '../../workspaces/bloc/workspace_bloc.dart';
 import '../../workspaces/view/workspace_detail_route.dart';
 import '../../workspaces/view/workspaces_screen.dart';
@@ -29,21 +31,11 @@ class NotificationsScreen extends StatelessWidget {
       listener: (context, state) {
         if (state is! BoardInvitationsLoaded) return;
         if (state.message != null) {
-          final tokens = context.ink;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: state.isError
-                  ? Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(LucideIcons.ban, size: 16, color: tokens.danger),
-                        const SizedBox(width: InkSpacing.s8),
-                        Flexible(child: Text(state.message!)),
-                      ],
-                    )
-                  : Text(state.message!),
-            ),
-          );
+          if (state.isError) {
+            AppSnackBar.showError(context, state.message!);
+          } else {
+            AppSnackBar.showSuccess(context, state.message!);
+          }
         }
 
         if (state.openedBoardId != null && !state.isError) {
@@ -169,8 +161,32 @@ class NotificationsScreen extends StatelessWidget {
                                 .markNotificationRead(notificationId);
                           }
 
+                          if (type == 'board_edit_request' ||
+                              (type == 'board_access_request' &&
+                                  item['extraData']?['requestType'] ==
+                                      'edit')) {
+                            final boardId =
+                                item['extraData']?['boardId']?.toString() ??
+                                item['targetId']?.toString() ??
+                                '';
+                            final boardTitle =
+                                item['extraData']?['boardTitle']?.toString() ??
+                                'Board';
+                            if (boardId.isNotEmpty) {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => BoardEditRequestsScreen(
+                                    boardId: boardId,
+                                    boardTitle: boardTitle,
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                          }
+
                           if (type == 'board_access_request' ||
-                              type == 'board_edit_request' ||
                               type == 'board_access_accepted' ||
                               type == 'board_edit_accepted') {
                             final boardId =
@@ -472,6 +488,10 @@ class NotificationsScreen extends StatelessWidget {
                                                   senderUid,
                                                 ),
                                               );
+                                              AppSnackBar.showSuccess(
+                                                context,
+                                                'Friend request accepted!',
+                                              );
                                             },
                                           ),
                                           const SizedBox(width: InkSpacing.s8),
@@ -498,6 +518,10 @@ class NotificationsScreen extends StatelessWidget {
                                                 DeclineFriendRequestRequested(
                                                   requestId,
                                                 ),
+                                              );
+                                              AppSnackBar.showMessage(
+                                                context,
+                                                'Friend request declined.',
                                               );
                                             },
                                           ),
