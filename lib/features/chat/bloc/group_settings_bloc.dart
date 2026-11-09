@@ -1,6 +1,4 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../../core/database/collections/local_profile.dart';
-import '../../../../core/database/local_database_service.dart';
 import '../../../../domain/services/chat/chat_service.dart';
 import 'group_settings_event.dart';
 import 'group_settings_state.dart';
@@ -8,15 +6,12 @@ import 'group_settings_state.dart';
 class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
   final ChatService _chatService;
   final String _currentUid;
-  final LocalDatabaseService? _localDbService;
 
   GroupSettingsBloc({
     required ChatService chatService,
     required String currentUid,
-    LocalDatabaseService? localDbService,
   })  : _chatService = chatService,
         _currentUid = currentUid,
-        _localDbService = localDbService,
         super(const GroupSettingsInitial()) {
     on<LoadGroupSettings>(_onLoadGroupSettings);
     on<UpdateGroupDetailsRequested>(_onUpdateGroupDetails);
@@ -43,19 +38,8 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
 
       final isOwner = group.isUserOwner(_currentUid);
       final isAdmin = group.isUserAdmin(_currentUid);
-
-      final Map<String, LocalProfile> memberProfiles = {};
-      if (_localDbService != null) {
-        try {
-          final isar = await _localDbService.database;
-          final profiles = await isar.localProfiles.getAllByUid(group.memberIds);
-          for (final p in profiles) {
-            if (p != null) {
-              memberProfiles[p.uid] = p;
-            }
-          }
-        } catch (_) {}
-      }
+      final memberProfiles =
+          await _chatService.getMemberProfiles(group.memberIds);
 
       emit(GroupSettingsLoaded(
         group: group,
@@ -166,7 +150,7 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
   ) async {
     try {
       await _chatService.leaveGroup(event.groupId);
-      emit(const GroupSettingsOperationSuccess('Left group successfully', shouldExit: true));
+      emit(const GroupSettingsOperationSuccess('Left group chat', shouldExit: true));
     } catch (e) {
       emit(GroupSettingsError(e.toString()));
     }
@@ -178,7 +162,7 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
   ) async {
     try {
       await _chatService.destroyGroup(event.groupId);
-      emit(const GroupSettingsOperationSuccess('Group destroyed successfully', shouldExit: true));
+      emit(const GroupSettingsOperationSuccess('Group deleted permanently', shouldExit: true));
     } catch (e) {
       emit(GroupSettingsError(e.toString()));
     }

@@ -248,12 +248,11 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
                     itemBuilder: (context, index) {
                       final message = messages[index];
                       final isMe = currentUid.isNotEmpty &&
-                          message.senderId.toLowerCase() == currentUid.toLowerCase();
+                          message.senderId == currentUid;
 
                       // Message grouping logic
                       final bool isFirstInGroup = index == 0 ||
-                          messages[index - 1].senderId.toLowerCase() !=
-                              message.senderId.toLowerCase() ||
+                          messages[index - 1].senderId != message.senderId ||
                           message.timestamp.difference(messages[index - 1].timestamp).inMinutes > 5;
 
                       return ChatBubble(

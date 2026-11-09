@@ -175,6 +175,24 @@ class CanvasUpdateConnector extends CanvasEvent {
   });
 }
 
+/// Reattach one end of a connector to another element, or detach it to a free
+/// point in world space.
+class CanvasRewireConnector extends CanvasEvent {
+  final String connectorId;
+  final bool isStart;
+  final String? targetElementId;
+  final String anchor;
+  final Offset point;
+
+  const CanvasRewireConnector({
+    required this.connectorId,
+    required this.isStart,
+    this.targetElementId,
+    this.anchor = 'auto',
+    required this.point,
+  });
+}
+
 /// Update existing image transform
 class CanvasUpdateImageElement extends CanvasEvent {
   final String elementId;
@@ -480,10 +498,14 @@ class CanvasUpdateBoardMemberRole extends CanvasEvent {
 class CanvasExportBoardRequested extends CanvasEvent {
   final BoardExportFormat format;
   final bool shareAfterExport;
+  /// Global rect of the tap target, used to anchor the native share popover on
+  /// iPad/Mac. Null is tolerated on phones but fails to present on tablets.
+  final Rect? sharePositionOrigin;
 
   const CanvasExportBoardRequested({
     required this.format,
     this.shareAfterExport = false,
+    this.sharePositionOrigin,
   });
 }
 

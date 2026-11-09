@@ -27,6 +27,10 @@ class VoiceServiceImpl implements VoiceService {
   bool _isInCall = false;
   bool _isMuted = false;
   String? _activeBoardId;
+  String? _connectedUserId;
+  String? _connectingUserId;
+  Future<bool>? _connectingFuture;
+  int _connectGeneration = 0;
   int _reconnectAttempts = 0;
   bool _reconnectScheduled = false;
   bool _disposed = false;
@@ -166,9 +170,12 @@ class VoiceServiceImpl implements VoiceService {
     });
   }
 
-  void _teardownSocket() {
-    final stale = _socket;
-    _socket = null;
+  void _teardownSocket([io.Socket? specificSocket]) {
+    final stale = specificSocket ?? _socket;
+    if (specificSocket == null || identical(_socket, specificSocket)) {
+      _socket = null;
+      _connectedUserId = null;
+    }
     if (stale == null) return;
     try {
       stale.dispose();
@@ -180,18 +187,69 @@ class VoiceServiceImpl implements VoiceService {
     }
   }
 
-  Future<bool> _ensureConnected() async {
-    if (_socket != null && _socket!.connected) return true;
+  Future<bool> _ensureConnected({String? expectedUid}) async {
+    if (_disposed) return false;
+    final currentUid = expectedUid ?? _authService.getCurrentUserId();
+    if (currentUid == null || currentUid.isEmpty) {
+      _connectGeneration++;
+      _connectingFuture = null;
+      _connectingUserId = null;
+      _teardownSocket();
+      return false;
+    }
+    if (_authService.getCurrentUserId() != currentUid) {
+      return false;
+    }
+    if (_socket != null &&
+        _socket!.connected &&
+        _connectedUserId == currentUid) {
+      return true;
+    }
+    if (_connectingFuture != null && _connectingUserId == currentUid) {
+      final ok = await _connectingFuture!;
+      return ok &&
+          !_disposed &&
+          _socket != null &&
+          _socket!.connected &&
+          _connectedUserId == currentUid &&
+          _authService.getCurrentUserId() == currentUid;
+    }
 
+    final gen = ++_connectGeneration;
+    _connectingUserId = currentUid;
+    final future = _performConnect(currentUid, gen);
+    _connectingFuture = future;
+    try {
+      final ok = await future;
+      return ok &&
+          !_disposed &&
+          _socket != null &&
+          _socket!.connected &&
+          _connectedUserId == currentUid &&
+          _authService.getCurrentUserId() == currentUid;
+    } finally {
+      if (identical(_connectingFuture, future)) {
+        _connectingFuture = null;
+        _connectingUserId = null;
+      }
+    }
+  }
+
+  Future<bool> _performConnect(String targetUid, int gen) async {
     // Tear down any stale socket — its auth token is frozen at creation, so
-    // reconnecting it would fail forever after the token expires.
+    // reconnecting it would fail forever after the token expires or on user switch.
     _teardownSocket();
 
     final token = await _authService.getIdToken();
-    if (token == null) return false;
+    if (_disposed ||
+        gen != _connectGeneration ||
+        token == null ||
+        token.isEmpty ||
+        _authService.getCurrentUserId() != targetUid) {
+      return false;
+    }
 
     final socket = _buildSocket(token);
-    _socket = socket;
     socket.connect();
 
     final completer = Completer<void>();
@@ -204,7 +262,16 @@ class VoiceServiceImpl implements VoiceService {
       Future.delayed(const Duration(seconds: 5)),
     ]);
 
+    if (_disposed ||
+        gen != _connectGeneration ||
+        _authService.getCurrentUserId() != targetUid) {
+      _teardownSocket(socket);
+      return false;
+    }
+
     if (socket.connected) {
+      _socket = socket;
+      _connectedUserId = targetUid;
       _reconnectAttempts = 0;
       // If a call was active while the socket dropped, re-register with the
       // signaling room so participant/speaking events resume.
@@ -219,6 +286,7 @@ class VoiceServiceImpl implements VoiceService {
       return true;
     }
 
+    _teardownSocket(socket);
     _scheduleReconnect();
     return false;
   }
@@ -400,6 +468,32 @@ class VoiceServiceImpl implements VoiceService {
       'isSpeaking': isSpeaking,
       'isMuted': _isMuted,
     });
+  }
+
+  @override
+  Future<void> disconnect() async {
+    _connectGeneration++;
+    if (_isInCall && _activeBoardId != null) {
+      try {
+        await leaveCall(_activeBoardId!);
+      } catch (_) {}
+    }
+    _activeBoardId = null;
+    _isInCall = false;
+    _isMuted = false;
+    _participants.clear();
+    if (!_participantsController.isClosed) {
+      _participantsController.add(const []);
+    }
+    if (!_isInCallController.isClosed) {
+      _isInCallController.add(false);
+    }
+    if (!_isMutedController.isClosed) {
+      _isMutedController.add(false);
+    }
+    _connectingFuture = null;
+    _connectingUserId = null;
+    _teardownSocket();
   }
 
   @override

@@ -17,6 +17,8 @@ import 'package:flutter/material.dart'
         TextPainter,
         TextSpan,
         TextStyle;
+import 'package:flutter/services.dart'
+    show MissingPluginException, PlatformException;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -27,6 +29,11 @@ import '../../models/canvas/canvas_shape_type.dart';
 
 enum BoardExportFormat { png, pdf, svg }
 
+/// What happened when the exported file was handed to the platform share
+/// sheet. "unavailable" means the sheet could not be opened at all, so callers
+/// must not claim that it was.
+enum BoardShareOutcome { shared, dismissed, unavailable }
+
 abstract class BoardExportService {
   Future<File> exportBoard({
     required String boardTitle,
@@ -34,9 +41,10 @@ abstract class BoardExportService {
     required BoardExportFormat format,
   });
 
-  Future<void> shareBoardFile({
+  Future<BoardShareOutcome> shareBoardFile({
     required File file,
     required String boardTitle,
+    Rect? sharePositionOrigin,
   });
 }
 
@@ -158,16 +166,48 @@ class BoardExportServiceImpl implements BoardExportService {
   }
 
   @override
-  Future<void> shareBoardFile({
+  Future<BoardShareOutcome> shareBoardFile({
     required File file,
     required String boardTitle,
+    Rect? sharePositionOrigin,
   }) async {
-    final xFile = XFile(file.path);
-    await Share.shareXFiles(
-      [xFile],
-      text: 'Exported board "$boardTitle" from InkLink',
-      subject: boardTitle,
-    );
+    if (!await file.exists()) {
+      throw Exception('Exported file not found: ${file.path}');
+    }
+    final ShareResult result;
+    try {
+      result = await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path, mimeType: _mimeTypeForFile(file))],
+          text: 'Exported board "$boardTitle" from InkLink',
+          subject: boardTitle,
+          title: boardTitle,
+          // Required to anchor the popover on iPad/Mac; without it the native
+          // share sheet silently fails to present.
+          sharePositionOrigin: sharePositionOrigin,
+        ),
+      );
+    } on UnimplementedError {
+      // Platform has no file sharing at all (e.g. older Windows builds).
+      return BoardShareOutcome.unavailable;
+    } on MissingPluginException {
+      return BoardShareOutcome.unavailable;
+    } on PlatformException {
+      return BoardShareOutcome.unavailable;
+    }
+    return switch (result.status) {
+      ShareResultStatus.success => BoardShareOutcome.shared,
+      ShareResultStatus.dismissed => BoardShareOutcome.dismissed,
+      ShareResultStatus.unavailable => BoardShareOutcome.unavailable,
+    };
+  }
+
+  String _mimeTypeForFile(File file) {
+    final path = file.path.toLowerCase();
+    if (path.endsWith('.pdf')) return 'application/pdf';
+    if (path.endsWith('.svg')) return 'image/svg+xml';
+    if (path.endsWith('.png')) return 'image/png';
+    return 'application/octet-stream';
   }
 
   String _sanitizeFileName(String title) {

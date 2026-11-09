@@ -93,7 +93,7 @@ app.post('/api/agora/chat/token', async (req, res) => {
     // Must mirror the client's _sanitizeAgoraUid exactly so both sides
     // agree on the Agora Chat username.
     const agoraUsername = sanitizeAgoraUid(decoded.uid);
-    const cacheKey = `agora_chat:token:${agoraUsername}`;
+    const cacheKey = `agora_chat:token:${decoded.uid}`;
 
     // Redis-first: serve the cached token while it is still fresh (5 min headroom).
     if (redisAvailable) {
@@ -377,6 +377,17 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
       const data = boardDoc.data() || {};
 
       if (data.ownerId === uid) {
+        if (redisAvailable) {
+          const p = redis.pipeline();
+          p.sadd(`board_members:${boardId}`, uid);
+          p.expire(`board_members:${boardId}`, 86400);
+          await p.exec().catch(() => { });
+        }
+        return true;
+      }
+
+      // Allow read-only access for public boards
+      if (data.visibility === 'public' && !requireEdit) {
         if (redisAvailable) {
           const p = redis.pipeline();
           p.sadd(`board_members:${boardId}`, uid);

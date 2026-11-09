@@ -50,8 +50,17 @@ void _checkServiceDataAccessBoundaries(
   final forbiddenImportPatterns = <RegExp>[
     RegExp(r"import\s+'package:cloud_firestore/cloud_firestore\.dart'"),
     RegExp(r"import\s+'package:firebase_database/firebase_database\.dart'"),
+    RegExp(r"import\s+'package:isar_community/"),
     RegExp(r"import\s+'package:inklink/core/services/firestore_service\.dart'"),
     RegExp(r"import\s+'\.\./\.\./\.\./core/services/firestore_service\.dart'"),
+    if (path != 'lib/domain/services/auth/auth_session_service.dart') ...[
+      RegExp(
+        r"import\s+'package:inklink/core/database/local_database_service\.dart'",
+      ),
+      RegExp(
+        r"import\s+'(?:\.\./)+core/database/local_database_service\.dart'",
+      ),
+    ],
   ];
 
   for (final importPattern in forbiddenImportPatterns) {
@@ -90,12 +99,19 @@ void _checkBlocLayerBoundaries(
 
   final forbiddenImportPatterns = <RegExp>[
     RegExp(r"import\s+'package:inklink/domain/repositories/"),
-    RegExp(r"import\s+'\.\./\.\./\.\./domain/repositories/"),
+    RegExp(r"import\s+'(?:\.\./)+domain/repositories/"),
+    RegExp(r"import\s+'package:isar_community/"),
+    RegExp(
+      r"import\s+'package:inklink/core/database/local_database_service\.dart'",
+    ),
+    RegExp(
+      r"import\s+'(?:\.\./)+core/database/local_database_service\.dart'",
+    ),
     RegExp(
       r"import\s+'package:inklink/core/services/(?!cloud_functions_service\.dart)",
     ),
     RegExp(
-      r"import\s+'\.\./\.\./\.\./core/services/(?!cloud_functions_service\.dart)",
+      r"import\s+'(?:\.\./)+core/services/(?!cloud_functions_service\.dart)",
     ),
   ];
 

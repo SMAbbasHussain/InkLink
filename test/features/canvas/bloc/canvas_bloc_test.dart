@@ -535,6 +535,90 @@ void main() {
       expect(conn.hasArrowhead, isTrue);
       await bloc.close();
     });
+
+    test('CanvasRewireConnector links a free end to an element', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddConnector(
+        startPoint: Offset(10, 10),
+        endPoint: Offset(100, 100),
+      ));
+      await Future<void>.delayed(Duration.zero);
+      final connectorId = bloc.state.elements.first.id;
+
+      bloc.add(CanvasRewireConnector(
+        connectorId: connectorId,
+        isStart: false,
+        targetElementId: 'shape-1',
+        anchor: 'auto',
+        point: const Offset(120, 120),
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      final conn = bloc.state.elements.first as ConnectorElement;
+      expect(conn.endElementId, 'shape-1');
+      expect(conn.endAnchor, 'auto');
+      expect(conn.endPoint, const Offset(120, 120));
+      expect(conn.startElementId, isNull);
+      expect(conn.startPoint, const Offset(10, 10));
+      await bloc.close();
+    });
+
+    test('CanvasRewireConnector detaches an end to a free point', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddConnector(
+        startPoint: Offset(10, 10),
+        endPoint: Offset(100, 100),
+        endElementId: 'shape-1',
+        endAnchor: 'auto',
+      ));
+      await Future<void>.delayed(Duration.zero);
+      final connectorId = bloc.state.elements.first.id;
+
+      bloc.add(CanvasRewireConnector(
+        connectorId: connectorId,
+        isStart: false,
+        point: const Offset(45, 65),
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      final conn = bloc.state.elements.first as ConnectorElement;
+      expect(conn.endElementId, isNull);
+      expect(conn.endAnchor, 'center');
+      expect(conn.endPoint, const Offset(45, 65));
+      await bloc.close();
+    });
+
+    test("CanvasMoveSelectedShape only translates a connector's free ends",
+        () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddConnector(
+        startPoint: Offset(0, 0),
+        endPoint: Offset(100, 0),
+      ));
+      await Future<void>.delayed(Duration.zero);
+      final connectorId = bloc.state.elements.first.id;
+      bloc.add(CanvasRewireConnector(
+        connectorId: connectorId,
+        isStart: true,
+        targetElementId: 'shape-1',
+        point: const Offset(0, 0),
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      bloc.add(const CanvasMoveSelectedShape(Offset(60, 40)));
+      await Future<void>.delayed(Duration.zero);
+
+      final conn = bloc.state.elements.first as ConnectorElement;
+      expect(conn.startPoint, const Offset(0, 0));
+      expect(conn.endPoint, const Offset(110, 40));
+      await bloc.close();
+    });
   });
 
   group('CanvasBloc — image elements & smooth preview dragging', () {

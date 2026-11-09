@@ -26,5 +26,5 @@ class LocalChatConversation {
   String? ownerId;
   String? description;
 
-  DateTime updatedAt = DateTime.now();
+  DateTime? updatedAt;
 }

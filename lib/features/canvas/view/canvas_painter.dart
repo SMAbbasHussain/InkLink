@@ -289,6 +289,123 @@ class _CanvasElement {
   }
 }
 
+/// Resolves one end of a connector against the element it is attached to.
+///
+/// The painter, the connector hit test and the selection handles all resolve
+/// through this helper so the drawn line, the tappable line and the grabbable
+/// handles agree with each other.
+Offset _resolveConnectorEnd(
+  List<_CanvasElement> elements, {
+  required String? elementId,
+  required String anchor,
+  required Offset fallback,
+  Offset? towards,
+}) {
+  if (elementId == null) return fallback;
+  final target = elements.where((e) => e.id == elementId).firstOrNull;
+  if (target == null) return fallback;
+
+  Rect targetBounds;
+  if (target.kind == _ElementKind.shape) {
+    final w = target.shapeType == CanvasShapeType.rectangle
+        ? target.size * 1.35
+        : target.size * 1.1;
+    final h = target.shapeType == CanvasShapeType.rectangle
+        ? target.size * 0.8
+        : target.size * 1.1;
+    targetBounds = Rect.fromCenter(center: target.center, width: w, height: h);
+  } else if (target.kind == _ElementKind.stickyNote ||
+      target.kind == _ElementKind.image) {
+    targetBounds = Rect.fromCenter(
+      center: target.center,
+      width: target.width > 0 ? target.width : target.size,
+      height: target.height > 0 ? target.height : target.size,
+    );
+  } else if (target.bounds != null) {
+    targetBounds = target.bounds!;
+  } else {
+    return target.center;
+  }
+
+  var effectiveAnchor = anchor;
+  if (effectiveAnchor == 'auto' && towards != null) {
+    final dx = towards.dx - targetBounds.center.dx;
+    final dy = towards.dy - targetBounds.center.dy;
+    if (dx.abs() > dy.abs()) {
+      effectiveAnchor = dx > 0 ? 'right' : 'left';
+    } else {
+      effectiveAnchor = dy > 0 ? 'bottom' : 'top';
+    }
+  }
+
+  switch (effectiveAnchor) {
+    case 'top':
+      return Offset(targetBounds.center.dx, targetBounds.top);
+    case 'bottom':
+      return Offset(targetBounds.center.dx, targetBounds.bottom);
+    case 'left':
+      return Offset(targetBounds.left, targetBounds.center.dy);
+    case 'right':
+      return Offset(targetBounds.right, targetBounds.center.dy);
+    case 'center':
+    default:
+      return targetBounds.center;
+  }
+}
+
+class _ConnectorPreviewPainter extends CustomPainter {
+  final Offset start;
+  final Offset end;
+  final Color color;
+  final double strokeWidth;
+  final Rect? highlight;
+
+  const _ConnectorPreviewPainter({
+    required this.start,
+    required this.end,
+    required this.color,
+    required this.strokeWidth,
+    this.highlight,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final halo = highlight;
+    if (halo != null) {
+      final rrect = RRect.fromRectAndRadius(halo, const Radius.circular(10));
+      canvas.drawRRect(
+        rrect,
+        Paint()..color = color.withValues(alpha: 0.12),
+      );
+      canvas.drawRRect(
+        rrect,
+        Paint()
+          ..color = color
+          ..strokeWidth = 2
+          ..style = PaintingStyle.stroke,
+      );
+    }
+
+    canvas.drawLine(
+      start,
+      end,
+      Paint()
+        ..color = color
+        ..strokeWidth = strokeWidth
+        ..strokeCap = StrokeCap.round
+        ..style = PaintingStyle.stroke,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_ConnectorPreviewPainter oldDelegate) =>
+      oldDelegate.start != start ||
+      oldDelegate.end != end ||
+      oldDelegate.color != color ||
+      oldDelegate.strokeWidth != strokeWidth ||
+      oldDelegate.highlight != highlight;
+}
+
 class _CanvasPainter extends CustomPainter {
   final List<_CanvasElement> elements;
   final Map<String, ui.Image> decodedImages;
@@ -306,6 +423,7 @@ class _CanvasPainter extends CustomPainter {
   final CanvasShapeType? pendingShapeType;
   final Color accentColor;
   final String? arrowConnectStartElementId;
+  final List<RemoteEraserCursor> remoteEraserCursors;
 
   const _CanvasPainter({
     required this.elements,
@@ -324,10 +442,12 @@ class _CanvasPainter extends CustomPainter {
     this.pendingShapeType,
     required this.accentColor,
     this.arrowConnectStartElementId,
+    this.remoteEraserCursors = const [],
   });
 
   @override
   void paint(Canvas canvas, Size size) {
+
     canvas.save();
     canvas.translate(viewportOffset.dx, viewportOffset.dy);
     canvas.scale(viewportScale);
@@ -389,16 +509,23 @@ class _CanvasPainter extends CustomPainter {
       }
     }
 
-    if (currentPoints.length > 1) {
+    // Collaborators' erasers are shown as ghost rings, never as ink.
+    for (final cursor in remoteEraserCursors) {
+      _paintRemoteEraserCursor(canvas, cursor.position, cursor.radius);
+    }
+
+    if (currentPoints.isNotEmpty) {
       if (currentBrushType != 'eraser') {
-        _paintStroke(
-          canvas,
-          currentPoints,
-          currentColor,
-          currentStrokeWidth,
-          opacity: 1,
-          brushType: currentBrushType,
-        );
+        if (currentPoints.length > 1) {
+          _paintStroke(
+            canvas,
+            currentPoints,
+            currentColor,
+            currentStrokeWidth,
+            opacity: 1,
+            brushType: currentBrushType,
+          );
+        }
       } else if (showEraserPreview) {
         // Eraser convention: state.strokeWidth is the eraser *diameter*;
         // the erase hit-test uses radius = strokeWidth / 2. The preview
@@ -654,6 +781,18 @@ class _CanvasPainter extends CustomPainter {
     canvas.drawCircle(position, radius, previewPaint);
   }
 
+  void _paintRemoteEraserCursor(Canvas canvas, Offset position, double radius) {
+    final fillPaint = Paint()
+      ..color = Colors.white.withOpacity(0.22)
+      ..style = PaintingStyle.fill;
+    final ringPaint = Paint()
+      ..color = accentColor.withValues(alpha: 0.55)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawCircle(position, radius, fillPaint);
+    canvas.drawCircle(position, radius, ringPaint);
+  }
+
   void _paintShapeDrawPreview(Canvas canvas, Offset start, Offset current) {
     if (pendingShapeType == CanvasShapeType.arrow) {
       final linePaint = Paint()
@@ -798,60 +937,13 @@ class _CanvasPainter extends CustomPainter {
     Offset fallback, {
     Offset? towards,
   }) {
-    if (elementId == null) return fallback;
-    final target = elements.where((e) => e.id == elementId).firstOrNull;
-    if (target == null) return fallback;
-
-    Rect targetBounds;
-    if (target.kind == _ElementKind.shape) {
-      final w = target.shapeType == CanvasShapeType.rectangle
-          ? target.size * 1.35
-          : target.size * 1.1;
-      final h = target.shapeType == CanvasShapeType.rectangle
-          ? target.size * 0.8
-          : target.size * 1.1;
-      targetBounds = Rect.fromCenter(
-        center: target.center,
-        width: w,
-        height: h,
-      );
-    } else if (target.kind == _ElementKind.stickyNote ||
-        target.kind == _ElementKind.image) {
-      targetBounds = Rect.fromCenter(
-        center: target.center,
-        width: target.width > 0 ? target.width : target.size,
-        height: target.height > 0 ? target.height : target.size,
-      );
-    } else if (target.bounds != null) {
-      targetBounds = target.bounds!;
-    } else {
-      return target.center;
-    }
-
-    String effectiveAnchor = anchor;
-    if (effectiveAnchor == 'auto' && towards != null) {
-      final dx = towards.dx - targetBounds.center.dx;
-      final dy = towards.dy - targetBounds.center.dy;
-      if (dx.abs() > dy.abs()) {
-        effectiveAnchor = dx > 0 ? 'right' : 'left';
-      } else {
-        effectiveAnchor = dy > 0 ? 'bottom' : 'top';
-      }
-    }
-
-    switch (effectiveAnchor) {
-      case 'top':
-        return Offset(targetBounds.center.dx, targetBounds.top);
-      case 'bottom':
-        return Offset(targetBounds.center.dx, targetBounds.bottom);
-      case 'left':
-        return Offset(targetBounds.left, targetBounds.center.dy);
-      case 'right':
-        return Offset(targetBounds.right, targetBounds.center.dy);
-      case 'center':
-      default:
-        return targetBounds.center;
-    }
+    return _resolveConnectorEnd(
+      elements,
+      elementId: elementId,
+      anchor: anchor,
+      fallback: fallback,
+      towards: towards,
+    );
   }
 
   void _paintStickyNote(Canvas canvas, _CanvasElement element) {
@@ -1048,6 +1140,17 @@ class _CanvasPainter extends CustomPainter {
     }
   }
 
+  static bool _erasureCursorsEqual(
+    List<RemoteEraserCursor> a,
+    List<RemoteEraserCursor> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   @override
   bool shouldRepaint(covariant _CanvasPainter oldDelegate) {
     return oldDelegate.elements != elements ||
@@ -1063,6 +1166,10 @@ class _CanvasPainter extends CustomPainter {
         oldDelegate.shapeDrawStart != shapeDrawStart ||
         oldDelegate.shapeDrawCurrent != shapeDrawCurrent ||
         oldDelegate.arrowConnectStartElementId != arrowConnectStartElementId ||
+        !_erasureCursorsEqual(
+          oldDelegate.remoteEraserCursors,
+          remoteEraserCursors,
+        ) ||
         oldDelegate.accentColor != accentColor;
   }
 }

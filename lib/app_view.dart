@@ -18,6 +18,8 @@ import 'core/services/data_prefetch_service.dart';
 import 'core/services/deep_link_service.dart';
 import 'domain/services/auth/auth_session_service.dart';
 import 'domain/services/chat/chat_service.dart';
+import 'domain/services/canvas/board_chat_service.dart';
+import 'domain/services/voice/voice_service.dart';
 
 class AppView extends StatefulWidget {
   const AppView({super.key});
@@ -93,6 +95,8 @@ class _AppViewState extends State<AppView> {
     final notificationsBloc = context.read<NotificationsBloc>();
     final boardInvitationsBloc = context.read<BoardInvitationsBloc>();
     final chatService = context.read<ChatService>();
+    final boardChatService = context.read<BoardChatService>();
+    final voiceService = context.read<VoiceService>();
 
     await Future.wait([
       friendsBloc.stopForLogout(),
@@ -101,6 +105,8 @@ class _AppViewState extends State<AppView> {
       notificationsBloc.stopForLogout(),
       boardInvitationsBloc.stopForLogout(),
       chatService.logout(),
+      boardChatService.disconnect(),
+      voiceService.disconnect(),
     ]);
   }
 

@@ -27,6 +27,9 @@ class FirestoreBoardCommentsRepository implements BoardCommentsRepository {
       return snapshot.docs
           .map((doc) => CanvasComment.fromMap(doc.id, doc.data()))
           .toList();
+    }).handleError((error) {
+      // Gracefully handle permission-denied or closed listeners (e.g. board deleted)
+      return <CanvasComment>[];
     });
   }
 
