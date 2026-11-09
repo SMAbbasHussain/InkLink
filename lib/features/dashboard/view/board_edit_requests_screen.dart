@@ -1,16 +1,12 @@
 import 'dart:async';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../../../core/utils/app_error_formatter.dart';
 import '../../../core/utils/app_snackbar.dart';
 import '../../../domain/models/board_edit_request.dart';
-import '../../../domain/services/board/board_service.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
@@ -47,79 +43,15 @@ class _BoardEditRequestsScreenState extends State<BoardEditRequestsScreen> {
   int _selectedTabIndex = 0; // 0: Pending, 1: History
   final Set<String> _processingIds = {};
 
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _firestoreSub;
-  List<BoardEditRequest> _directFirestoreRequests = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _listenToDirectFirestoreRequests();
-  }
-
   @override
   void dispose() {
-    _firestoreSub?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
-  void _listenToDirectFirestoreRequests() {
-    try {
-      final uid = FirebaseAuth.instance.currentUser?.uid;
-      if (uid == null) return;
-
-      _firestoreSub = FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('notifications')
-          .where('targetId', isEqualTo: widget.boardId)
-          .snapshots()
-          .listen(
-        (snapshot) {
-          final requests = snapshot.docs
-              .map((doc) => {'id': doc.id, ...doc.data()})
-              .where((data) {
-                final type = data['type']?.toString();
-                final extraData = data['extraData'] is Map
-                    ? (data['extraData'] as Map).cast<String, dynamic>()
-                    : <String, dynamic>{};
-                final reqType = extraData['requestType']?.toString() ??
-                    (type == 'board_edit_request' ? 'edit' : 'join');
-                return type == 'board_edit_request' ||
-                    (type == 'board_access_request' && reqType == 'edit');
-              })
-              .map(
-                (m) => BoardEditRequest.fromNotificationMap(
-                  m,
-                  fallbackBoardId: widget.boardId,
-                ),
-              )
-              .toList();
-
-          if (mounted) {
-            setState(() {
-              _directFirestoreRequests = requests;
-            });
-          }
-        },
-        onError: (_) {
-          // Gracefully fallback to NotificationsBloc state
-        },
-      );
-    } catch (_) {}
-  }
-
-  List<BoardEditRequest> _getCombinedRequests(NotificationsState notifState) {
+  List<BoardEditRequest> _getRequests(NotificationsState notifState) {
     final Map<String, BoardEditRequest> requestMap = {};
 
-    // 1. Add direct firestore requests
-    for (final req in _directFirestoreRequests) {
-      if (req.id.isNotEmpty) {
-        requestMap[req.id] = req;
-      }
-    }
-
-    // 2. Add from NotificationsBloc
     if (notifState is NotificationsLoaded) {
       for (final raw in notifState.notifications) {
         final type = raw['type']?.toString();
@@ -174,19 +106,10 @@ class _BoardEditRequestsScreenState extends State<BoardEditRequestsScreen> {
     });
 
     try {
-      final boardService = context.read<BoardService>();
-      await boardService.respondToBoardAccessRequest(
-        boardId: widget.boardId,
-        requesterUid: request.requesterUid,
-        notificationId: notificationId,
-        action: action,
-        requestType: 'edit',
-      );
-
-      if (!mounted) return;
-
       if (notificationId.isNotEmpty) {
-        context.read<NotificationsBloc>().markNotificationRead(notificationId);
+        context.read<NotificationsBloc>().add(
+              NotificationMarkReadRequested(notificationId),
+            );
         context.read<NotificationsBloc>().add(
               NotificationRespondToAccessRequest(
                 notificationId: notificationId,
@@ -209,11 +132,7 @@ class _BoardEditRequestsScreenState extends State<BoardEditRequestsScreen> {
           'Edit request from $requesterName declined.',
         );
       }
-    } catch (e) {
-      if (mounted) {
-        final details = AppErrorFormatter.format(e);
-        AppSnackBar.showError(context, details.message);
-      }
+    } catch (_) {
     } finally {
       if (mounted) {
         setState(() {
@@ -258,7 +177,7 @@ class _BoardEditRequestsScreenState extends State<BoardEditRequestsScreen> {
       ),
       body: BlocBuilder<NotificationsBloc, NotificationsState>(
         builder: (context, notifState) {
-          final allRequests = _getCombinedRequests(notifState);
+          final allRequests = _getRequests(notifState);
           final pendingRequests =
               allRequests.where((r) => r.isPending).toList();
           final historyRequests =

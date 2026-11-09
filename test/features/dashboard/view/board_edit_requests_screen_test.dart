@@ -12,8 +12,14 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 class MockNotificationsBloc
     extends Bloc<NotificationsEvent, NotificationsState>
     implements NotificationsBloc {
+  NotificationRespondToAccessRequest? lastRespondEvent;
+
   MockNotificationsBloc(super.initialState) {
-    on<NotificationsEvent>((event, emit) {});
+    on<NotificationsEvent>((event, emit) {
+      if (event is NotificationRespondToAccessRequest) {
+        lastRespondEvent = event;
+      }
+    });
   }
 
   @override
@@ -183,9 +189,9 @@ void main() {
       await tester.tap(find.text('Grant Edit Access'));
       await tester.pumpAndSettle();
 
-      expect(fakeBoardService.lastBoardId, equals('board_1'));
-      expect(fakeBoardService.lastRequesterUid, equals('u_sam'));
-      expect(fakeBoardService.lastAction, equals('accept'));
+      expect(mockNotifBloc.lastRespondEvent?.boardId, equals('board_1'));
+      expect(mockNotifBloc.lastRespondEvent?.requesterUid, equals('u_sam'));
+      expect(mockNotifBloc.lastRespondEvent?.action, equals('accept'));
     });
   });
 

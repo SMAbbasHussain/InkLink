@@ -16,7 +16,6 @@ import 'package:share_plus/share_plus.dart';
 import '../../../core/utils/app_snackbar.dart';
 
 import '../../../domain/models/board.dart';
-import '../../../domain/services/canvas/canvas_service.dart';
 import '../../../core/utils/app_error_formatter.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
 import '../../../ui/theme/ink_theme.dart';
@@ -1206,8 +1205,7 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
 
       if (bytes != null && bytes.isNotEmpty) {
         if (mounted) {
-          final canvasService = context.read<CanvasService>();
-          await canvasService.saveBoardPreview(widget.boardId, bytes);
+          _canvasBloc.add(CanvasSaveBoardPreviewRequested(bytes));
         }
       }
     } catch (e) {

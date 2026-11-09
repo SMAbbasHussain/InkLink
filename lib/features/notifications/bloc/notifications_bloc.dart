@@ -37,6 +37,12 @@ class NotificationRespondToAccessRequest extends NotificationsEvent {
   });
 }
 
+class NotificationMarkReadRequested extends NotificationsEvent {
+  final String notificationId;
+
+  const NotificationMarkReadRequested(this.notificationId);
+}
+
 class _NotificationsUpdated extends NotificationsEvent {
   final List<Map<String, dynamic>> notifications;
 
@@ -94,6 +100,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     on<_NotificationsErrorOccurred>(_onErrorOccurred);
     on<NotificationsDeleteRequested>(_onDeleteRequested);
     on<NotificationRespondToAccessRequest>(_onRespondToAccessRequest);
+    on<NotificationMarkReadRequested>(_onMarkReadRequested);
   }
 
   Future<void> _onLoadRequested(
@@ -128,6 +135,13 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     Emitter<NotificationsState> emit,
   ) {
     emit(NotificationsError(event.error));
+  }
+
+  Future<void> _onMarkReadRequested(
+    NotificationMarkReadRequested event,
+    Emitter<NotificationsState> emit,
+  ) async {
+    await markNotificationRead(event.notificationId);
   }
 
   Future<void> markNotificationRead(String notificationId) async {
