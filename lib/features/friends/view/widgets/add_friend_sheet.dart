@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 import '../../../../domain/services/friends/friends_service.dart';
+import '../../../../core/utils/app_snackbar.dart';
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_tokens.dart';
 import '../../../../ui/theme/ink_type.dart';
@@ -295,18 +296,9 @@ class _AddFriendSheetState extends State<AddFriendSheet> {
                                             context.read<FriendsBloc>().add(
                                                   SendFriendRequestRequested(uid),
                                                 );
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              SnackBar(
-                                                content: Row(
-                                                  children: [
-                                                    const Icon(LucideIcons.checkCircle2, color: Colors.white, size: 18),
-                                                    const SizedBox(width: 8),
-                                                    Text('Friend request sent to $name!'),
-                                                  ],
-                                                ),
-                                                backgroundColor: const Color(0xFF16A34A),
-                                                behavior: SnackBarBehavior.floating,
-                                              ),
+                                            AppSnackBar.showSuccess(
+                                              context,
+                                              'Friend request sent to $name!',
                                             );
                                           },
                                   ),

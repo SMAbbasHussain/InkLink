@@ -15,6 +15,8 @@ import '../../../ui/widgets/ink_dialog.dart';
 import '../../../ui/widgets/ink_initials.dart';
 import '../../../ui/widgets/ink_text_field.dart';
 import '../../../ui/widgets/paper_card.dart';
+import '../../../core/utils/app_error_formatter.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../bloc/settings_bloc.dart';
 import '../../theme/bloc/theme_bloc.dart';
 
@@ -52,7 +54,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             final message = state.message;
             if (message == null) return;
 
-            ScaffoldMessenger.of(context).showSnackBar(
+            AppSnackBar.show(
+              context,
               SnackBar(
                 content: state.isError
                     ? Row(
@@ -72,15 +75,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         BlocListener<AuthBloc, AuthState>(
           listener: (context, state) {
             if (state is AuthDeletingAccount) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Deleting account...')),
-              );
+              AppSnackBar.showMessage(context, 'Deleting account...');
             } else if (state is AuthError) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(state.message),
-                  backgroundColor: tokens.danger,
-                ),
+              final formatted = AppErrorFormatter.format(state.message);
+              showInkErrorDialog(
+                context,
+                title: formatted.title,
+                message: formatted.message,
               );
             }
           },

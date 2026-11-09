@@ -134,6 +134,12 @@ class DashboardDeleteBoardRequested extends DashboardEvent {
   DashboardDeleteBoardRequested(this.boardId);
 }
 
+class DashboardLeaveBoardRequested extends DashboardEvent {
+  final String boardId;
+
+  DashboardLeaveBoardRequested(this.boardId);
+}
+
 class DashboardArchiveBoardRequested extends DashboardEvent {
   final String boardId;
   DashboardArchiveBoardRequested(this.boardId);
@@ -191,6 +197,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     on<DashboardJoinBoardRequested>(_onDashboardJoinBoardRequested);
     on<DashboardRenameBoardRequested>(_onDashboardRenameBoardRequested);
     on<DashboardDeleteBoardRequested>(_onDashboardDeleteBoardRequested);
+    on<DashboardLeaveBoardRequested>(_onDashboardLeaveBoardRequested);
     on<DashboardUpdateBoardSettingsRequested>(
       _onDashboardUpdateBoardSettingsRequested,
     );
@@ -428,6 +435,31 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       final current = state;
       if (current is DashboardLoaded) {
         emit(current.copyWith(actionError: null));
+      }
+    } catch (e) {
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(current.copyWith(actionError: _humanizeError(e)));
+      }
+    }
+  }
+
+  Future<void> _onDashboardLeaveBoardRequested(
+    DashboardLeaveBoardRequested event,
+    Emitter<DashboardState> emit,
+  ) async {
+    try {
+      await boardService.leaveBoard(event.boardId);
+      final current = state;
+      if (current is DashboardLoaded) {
+        final updatedJoined = current.joinedBoards
+            .where((b) => b.id != event.boardId)
+            .toList();
+        emit(current.copyWith(
+          joinedBoards: updatedJoined,
+          actionInfo: 'You left the board.',
+          actionError: null,
+        ));
       }
     } catch (e) {
       final current = state;

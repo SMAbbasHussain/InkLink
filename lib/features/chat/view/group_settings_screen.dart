@@ -9,6 +9,7 @@ import '../bloc/group_settings_bloc.dart';
 import '../bloc/group_settings_event.dart';
 import '../bloc/group_settings_state.dart';
 import '../theme/chat_theme.dart';
+import '../../../../core/utils/app_snackbar.dart';
 
 class GroupSettingsScreen extends StatelessWidget {
   final String groupId;
@@ -36,16 +37,19 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
     return BlocConsumer<GroupSettingsBloc, GroupSettingsState>(
       listener: (context, state) {
         if (state is GroupSettingsOperationSuccess) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(state.message)),
+          AppSnackBar.showMessage(
+            context,
+            state.message,
           );
           if (state.shouldExit) {
             Navigator.of(context).popUntil((route) => route.isFirst);
           }
         }
         if (state is GroupSettingsError) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(state.message), backgroundColor: Colors.red),
+          AppSnackBar.showMessage(
+            context,
+            state.message,
+            backgroundColor: Colors.red,
           );
         }
       },

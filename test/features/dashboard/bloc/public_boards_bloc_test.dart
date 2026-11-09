@@ -76,6 +76,8 @@ class FakeBoardService implements BoardService {
   @override
   Future<void> removeBoardMember(String boardId, String targetUid) async {}
   @override
+  Future<void> leaveBoard(String boardId) async {}
+  @override
   Future<void> renameBoard(String boardId, String newName) async {}
   @override
   Future<SendBoardInviteResult> sendBoardInvite({

@@ -1,4 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/utils/app_error_formatter.dart';
 import '../../../../domain/services/chat/chat_service.dart';
 import 'group_settings_event.dart';
 import 'group_settings_state.dart';
@@ -48,7 +49,7 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
         memberProfiles: memberProfiles,
       ));
     } catch (e) {
-      emit(GroupSettingsError(e.toString()));
+      emit(GroupSettingsError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 
@@ -65,7 +66,7 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
       );
       add(LoadGroupSettings(event.groupId));
     } catch (e) {
-      emit(GroupSettingsError(e.toString()));
+      emit(GroupSettingsError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 
@@ -80,7 +81,7 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
       );
       add(LoadGroupSettings(event.groupId));
     } catch (e) {
-      emit(GroupSettingsError(e.toString()));
+      emit(GroupSettingsError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 
@@ -95,7 +96,7 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
       );
       add(LoadGroupSettings(event.groupId));
     } catch (e) {
-      emit(GroupSettingsError(e.toString()));
+      emit(GroupSettingsError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 
@@ -110,7 +111,7 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
       );
       add(LoadGroupSettings(event.groupId));
     } catch (e) {
-      emit(GroupSettingsError(e.toString()));
+      emit(GroupSettingsError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 
@@ -125,7 +126,7 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
       );
       add(LoadGroupSettings(event.groupId));
     } catch (e) {
-      emit(GroupSettingsError(e.toString()));
+      emit(GroupSettingsError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 
@@ -140,7 +141,7 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
       );
       add(LoadGroupSettings(event.groupId));
     } catch (e) {
-      emit(GroupSettingsError(e.toString()));
+      emit(GroupSettingsError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 
@@ -152,7 +153,7 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
       await _chatService.leaveGroup(event.groupId);
       emit(const GroupSettingsOperationSuccess('Left group chat', shouldExit: true));
     } catch (e) {
-      emit(GroupSettingsError(e.toString()));
+      emit(GroupSettingsError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 
@@ -164,7 +165,7 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
       await _chatService.destroyGroup(event.groupId);
       emit(const GroupSettingsOperationSuccess('Group deleted permanently', shouldExit: true));
     } catch (e) {
-      emit(GroupSettingsError(e.toString()));
+      emit(GroupSettingsError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 }

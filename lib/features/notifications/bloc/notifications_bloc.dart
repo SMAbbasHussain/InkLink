@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/utils/notification_preferences.dart';
 import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/notification/notification_service.dart';
+import '../../../core/utils/app_error_formatter.dart';
 
 abstract class NotificationsEvent {
   const NotificationsEvent();
@@ -108,7 +109,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
       _rawNotifications = items;
       final normalized = _normalizeNotifications(items);
       add(_NotificationsUpdated(normalized));
-    }, onError: (error) => add(_NotificationsErrorOccurred(error.toString())));
+    }, onError: (error) => add(_NotificationsErrorOccurred(AppErrorFormatter.cleanMessage(error))));
   }
 
   void _onNotificationsUpdated(
@@ -197,7 +198,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     } catch (e) {
       emit(
         NotificationsError(
-          'Failed to process request: ${e.toString().replaceAll('Exception: ', '')}',
+          'Failed to process request: ${AppErrorFormatter.cleanMessage(e)}',
         ),
       );
     }

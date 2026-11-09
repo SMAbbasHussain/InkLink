@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/utils/app_error_formatter.dart';
 import '../../../../domain/models/board.dart';
 import '../../../../domain/services/board/board_service.dart';
 import '../../../../domain/services/profile/profile_service.dart';
@@ -118,7 +119,7 @@ class PublicBoardsBloc extends Bloc<PublicBoardsEvent, PublicBoardsState> {
     } catch (e) {
       emit(state.copyWith(
         status: PublicBoardsStatus.failure,
-        errorMessage: e.toString(),
+        errorMessage: AppErrorFormatter.cleanMessage(e),
       ));
     }
   }
@@ -177,7 +178,7 @@ class PublicBoardsBloc extends Bloc<PublicBoardsEvent, PublicBoardsState> {
     } catch (e) {
       emit(state.copyWith(
         status: PublicBoardsStatus.failure,
-        errorMessage: e.toString(),
+        errorMessage: AppErrorFormatter.cleanMessage(e),
       ));
     }
   }
@@ -211,7 +212,7 @@ class PublicBoardsBloc extends Bloc<PublicBoardsEvent, PublicBoardsState> {
     } catch (e) {
       emit(state.copyWith(
         status: PublicBoardsStatus.failure,
-        errorMessage: e.toString(),
+        errorMessage: AppErrorFormatter.cleanMessage(e),
       ));
     }
   }
@@ -270,13 +271,51 @@ class PublicBoardsBloc extends Bloc<PublicBoardsEvent, PublicBoardsState> {
     try {
       await _boardService.joinBoard(event.boardId);
       final title = event.boardTitle != null ? ' "${event.boardTitle}"' : '';
+
+      final currentUid = _profileService.getCurrentUserId();
+      final updatedBoards = state.boards.map((b) {
+        if (b.id == event.boardId) {
+          final members = List<String>.from(b.members);
+          if (currentUid != null && !members.contains(currentUid)) {
+            members.add(currentUid);
+          }
+          final newCount = (b.membersCount < members.length)
+              ? members.length
+              : b.membersCount + 1;
+          return b.copyWith(
+            members: members,
+            membersCount: newCount,
+          );
+        }
+        return b;
+      }).toList();
+
+      final updatedRecommended = state.recommendedBoards.map((b) {
+        if (b.id == event.boardId) {
+          final members = List<String>.from(b.members);
+          if (currentUid != null && !members.contains(currentUid)) {
+            members.add(currentUid);
+          }
+          final newCount = (b.membersCount < members.length)
+              ? members.length
+              : b.membersCount + 1;
+          return b.copyWith(
+            members: members,
+            membersCount: newCount,
+          );
+        }
+        return b;
+      }).toList();
+
       emit(state.copyWith(
+        boards: updatedBoards,
+        recommendedBoards: updatedRecommended,
         actionSuccessMessage: 'Joined board$title! Added to your dashboard.',
         clearError: true,
       ));
     } catch (e) {
       emit(state.copyWith(
-        errorMessage: e.toString().replaceAll('Exception: ', ''),
+        errorMessage: AppErrorFormatter.cleanMessage(e),
       ));
     }
   }
@@ -297,7 +336,7 @@ class PublicBoardsBloc extends Bloc<PublicBoardsEvent, PublicBoardsState> {
       ));
     } catch (e) {
       emit(state.copyWith(
-        errorMessage: e.toString().replaceAll('Exception: ', ''),
+        errorMessage: AppErrorFormatter.cleanMessage(e),
       ));
     }
   }
@@ -318,7 +357,7 @@ class PublicBoardsBloc extends Bloc<PublicBoardsEvent, PublicBoardsState> {
       ));
     } catch (e) {
       emit(state.copyWith(
-        errorMessage: e.toString().replaceAll('Exception: ', ''),
+        errorMessage: AppErrorFormatter.cleanMessage(e),
       ));
     }
   }

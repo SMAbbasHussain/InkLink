@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../core/utils/app_error_formatter.dart';
 import '../../../domain/services/friends/friends_service.dart';
 import 'friends_event.dart';
 import 'friends_state.dart';
@@ -257,7 +258,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
         if (currentState is FriendsLoaded) {
           emit(currentState.copyWith(isOffline: _isOffline));
         }
-        emit(FriendsError("Failed to accept: ${e.toString()}"));
+        emit(FriendsError(AppErrorFormatter.cleanMessage(e)));
       } finally {
         _acceptingRequestIds = Set<String>.from(_acceptingRequestIds)
           ..remove(event.requestId);
@@ -386,7 +387,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
         if (_looksOffline(e)) {
           add(FriendsConnectivityUpdated(true));
         }
-        emit(FriendsError(e.toString()));
+        emit(FriendsError(AppErrorFormatter.cleanMessage(e)));
       } finally {
         _sendingRequestTargetUids = Set<String>.from(_sendingRequestTargetUids)
           ..remove(event.targetUid);

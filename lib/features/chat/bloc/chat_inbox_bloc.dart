@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/utils/app_error_formatter.dart';
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 import '../../../../domain/services/chat/chat_service.dart';
 import 'chat_inbox_event.dart';
@@ -84,7 +85,7 @@ class ChatInboxBloc extends Bloc<ChatInboxEvent, ChatInboxState> {
     try {
       await _chatService.deleteConversation(event.conversationId);
     } catch (e) {
-      emit(ChatInboxError(e.toString()));
+      emit(ChatInboxError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 
@@ -95,7 +96,7 @@ class ChatInboxBloc extends Bloc<ChatInboxEvent, ChatInboxState> {
     try {
       await _chatService.toggleMuteConversation(event.conversationId);
     } catch (e) {
-      emit(ChatInboxError(e.toString()));
+      emit(ChatInboxError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 

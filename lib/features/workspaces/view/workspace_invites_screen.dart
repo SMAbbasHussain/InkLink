@@ -11,6 +11,7 @@ import '../../../ui/widgets/ink_avatar.dart';
 import '../../../ui/widgets/ink_button.dart';
 import '../../../ui/widgets/ink_initials.dart';
 import '../../../ui/widgets/paper_card.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../bloc/workspace_bloc.dart';
 
 class WorkspaceInvitesScreen extends StatefulWidget {
@@ -47,15 +48,17 @@ class _WorkspaceInvitesScreenState extends State<WorkspaceInvitesScreen> {
                 'WorkspaceInvitesScreen actionError: ${state.actionError}',
                 name: 'WorkspaceInvitesScreen',
               );
-              ScaffoldMessenger.of(
+              AppSnackBar.showError(
                 context,
-              ).showSnackBar(SnackBar(content: Text(state.actionError!)));
+                state.actionError!,
+              );
             }
 
             if (state.actionInfo != null && state.actionInfo!.isNotEmpty) {
-              ScaffoldMessenger.of(
+              AppSnackBar.showSuccess(
                 context,
-              ).showSnackBar(SnackBar(content: Text(state.actionInfo!)));
+                state.actionInfo!,
+              );
             }
           },
           builder: (context, state) {

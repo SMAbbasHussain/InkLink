@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/utils/app_error_formatter.dart';
 import '../../../../domain/models/chat/chat_message_model.dart';
 import '../../../../domain/services/chat/chat_service.dart';
 import '../../../../domain/services/presence/presence_service.dart';
@@ -113,7 +114,7 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
       }
     } catch (e) {
       if (state is! ChatThreadLoaded) {
-        emit(ChatThreadError(e.toString()));
+        emit(ChatThreadError(AppErrorFormatter.cleanMessage(e)));
       }
     }
   }
@@ -144,7 +145,7 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
       }
     } catch (e) {
       if (state is! ChatThreadLoaded) {
-        emit(ChatThreadError(e.toString()));
+        emit(ChatThreadError(AppErrorFormatter.cleanMessage(e)));
       }
     }
   }
@@ -167,7 +168,7 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
       );
     } catch (e) {
       if (state is! ChatThreadLoaded) {
-        emit(ChatThreadError(e.toString()));
+        emit(ChatThreadError(AppErrorFormatter.cleanMessage(e)));
       }
     }
   }
@@ -192,7 +193,7 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
       );
     } catch (e) {
       if (state is! ChatThreadLoaded) {
-        emit(ChatThreadError(e.toString()));
+        emit(ChatThreadError(AppErrorFormatter.cleanMessage(e)));
       }
     }
   }
@@ -215,7 +216,7 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
       );
     } catch (e) {
       if (state is! ChatThreadLoaded) {
-        emit(ChatThreadError(e.toString()));
+        emit(ChatThreadError(AppErrorFormatter.cleanMessage(e)));
       }
     }
   }
@@ -248,7 +249,7 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
         }
       }
     } catch (e) {
-      emit(ChatThreadError(e.toString()));
+      emit(ChatThreadError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 
@@ -264,7 +265,7 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
         newContent: event.newContent,
       );
     } catch (e) {
-      emit(ChatThreadError(e.toString()));
+      emit(ChatThreadError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 
@@ -279,7 +280,7 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
         messageId: event.messageId,
       );
     } catch (e) {
-      emit(ChatThreadError(e.toString()));
+      emit(ChatThreadError(AppErrorFormatter.cleanMessage(e)));
     }
   }
 

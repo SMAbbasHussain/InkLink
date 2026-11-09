@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/utils/app_error_formatter.dart';
 import '../../../domain/services/invitation/invitation_service.dart';
 
 abstract class BoardInvitationsEvent {
@@ -170,13 +171,13 @@ class BoardInvitationsBloc
       if (current is BoardInvitationsLoaded) {
         emit(
           current.copyWith(
-            message: e.toString(),
+            message: AppErrorFormatter.cleanMessage(e),
             isError: true,
             isOffline: _isOffline,
           ),
         );
       } else {
-        emit(BoardInvitationsError(e.toString()));
+        emit(BoardInvitationsError(AppErrorFormatter.cleanMessage(e)));
       }
     }
   }
@@ -199,13 +200,13 @@ class BoardInvitationsBloc
       if (current is BoardInvitationsLoaded) {
         emit(
           current.copyWith(
-            message: e.toString(),
+            message: AppErrorFormatter.cleanMessage(e),
             isError: true,
             isOffline: _isOffline,
           ),
         );
       } else {
-        emit(BoardInvitationsError(e.toString()));
+        emit(BoardInvitationsError(AppErrorFormatter.cleanMessage(e)));
       }
     }
   }
