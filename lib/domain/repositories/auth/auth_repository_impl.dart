@@ -92,7 +92,7 @@ class FirebaseAuthRepository implements AuthRepository {
         name: 'Auth',
         error: e,
       );
-      throw 'Google sign-in failed (${e.code}). Check OAuth client configuration.';
+      throw 'Google sign-in could not be completed. Please try again.';
     } on FirebaseAuthException catch (e) {
       developer.log('Google sign-in failed: ${e.code}', name: 'Auth', error: e);
       throw _mapFirebaseAuthError(e);
@@ -102,7 +102,7 @@ class FirebaseAuthRepository implements AuthRepository {
         name: 'Auth',
         error: e,
       );
-      throw 'Google sign-in failed (${e.code}). Check SHA-1 / OAuth client configuration.';
+      throw 'Google sign-in could not be completed. Please verify your connection or try signing in with email.';
     }
   }
 
@@ -214,10 +214,17 @@ class FirebaseAuthRepository implements AuthRepository {
   @override
   Future<User?> signIn(String email, String password) async {
     final normalizedEmail = email.trim().toLowerCase();
-    return (await _authService.getInstance().signInWithEmailAndPassword(
-      email: normalizedEmail,
-      password: password,
-    )).user;
+    try {
+      return (await _authService.getInstance().signInWithEmailAndPassword(
+        email: normalizedEmail,
+        password: password,
+      )).user;
+    } on FirebaseAuthException catch (e) {
+      throw _mapFirebaseAuthError(e);
+    } catch (e) {
+      if (e is String) rethrow;
+      throw 'An unexpected error occurred during sign in. Please try again.';
+    }
   }
 
   @override
@@ -548,29 +555,30 @@ class FirebaseAuthRepository implements AuthRepository {
   String _mapFirebaseAuthError(FirebaseAuthException e) {
     switch (e.code) {
       case 'account-exists-with-different-credential':
-        return 'Account exists with different credentials.';
+        return 'An account already exists with this email using a different sign-in method.';
       case 'invalid-credential':
-        return 'Invalid credential. Check Google sign-in configuration.';
-      case 'operation-not-allowed':
-        return 'Operation is disabled for this project.';
-      case 'user-disabled':
-        return "This account has been disabled.";
-      case 'user-not-found':
-        return "No account found with this email.";
       case 'wrong-password':
-        return "Incorrect password.";
+        return 'Invalid email or password. Please verify your credentials and try again.';
+      case 'operation-not-allowed':
+        return 'Sign-in with this method is currently disabled. Please contact support.';
+      case 'user-disabled':
+        return 'This account has been disabled. Please contact support for assistance.';
+      case 'user-not-found':
+        return 'No account was found with this email. Please check your email or register a new account.';
       case 'invalid-email':
-        return "Please enter a valid email address.";
+        return 'Please enter a valid email address.';
       case 'email-already-in-use':
-        return "An account already exists with this email address.";
+        return 'An account already exists with this email address. Please sign in instead.';
       case 'weak-password':
-        return "The password provided is too weak.";
+        return 'The password provided is too weak. Please choose a password with at least 6 characters.';
       case 'too-many-requests':
-        return "Too many attempts. Please wait a moment and try again.";
+        return 'Too many failed sign-in attempts. Please wait a moment and try again, or reset your password.';
       case 'network-request-failed':
-        return "Check your internet connection.";
+        return 'Network connection issue. Please check your internet connection and try again.';
+      case 'requires-recent-login':
+        return 'This sensitive operation requires recent sign-in. Please log out, sign in again, and retry.';
       default:
-        return "Authentication failed (${e.code}). Please try again.";
+        return 'Authentication failed. Please verify your details and try again.';
     }
   }
 }

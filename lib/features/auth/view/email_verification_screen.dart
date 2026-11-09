@@ -4,12 +4,15 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../core/utils/app_error_formatter.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
 import '../../../ui/widgets/desk_background.dart';
 import '../../../ui/widgets/glass_panel.dart';
 import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_dialog.dart';
 import '../../../ui/widgets/paper_card.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
@@ -78,21 +81,16 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
       body: BlocListener<AuthBloc, AuthState>(
         listener: (context, state) {
           if (state is AuthError) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(LucideIcons.ban, size: 16, color: tokens.danger),
-                    const SizedBox(width: InkSpacing.s8),
-                    Flexible(child: Text(state.message)),
-                  ],
-                ),
-              ),
+            final details = AppErrorFormatter.format(state.message);
+            showInkErrorDialog(
+              context,
+              title: details.title,
+              message: details.message,
             );
           } else if (state is AuthEmailUnverified && state.message != null) {
             final isWarning = state.message!.contains('not verified');
-            ScaffoldMessenger.of(context).showSnackBar(
+            AppSnackBar.show(
+              context,
               SnackBar(
                 content: Row(
                   mainAxisSize: MainAxisSize.min,

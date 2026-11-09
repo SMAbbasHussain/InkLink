@@ -10,6 +10,8 @@ import '../../../workspaces/view/workspace_detail_screen.dart';
 import '../../../workspaces/bloc/workspace_bloc.dart';
 import '../../../../domain/models/chat/chat_share_payload.dart';
 import '../../../../domain/services/workspace/workspace_service.dart';
+import '../../../../core/utils/app_error_formatter.dart';
+import '../../../../core/utils/app_snackbar.dart';
 import '../../theme/chat_theme.dart';
 import 'message_reactions_sheet.dart';
 
@@ -661,11 +663,9 @@ class ChatBubble extends StatelessWidget {
               onTap: () {
                 HapticFeedback.selectionClick();
                 Clipboard.setData(ClipboardData(text: payload.joinCode));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Board join code ${payload.joinCode} copied!'),
-                    duration: const Duration(seconds: 2),
-                  ),
+                AppSnackBar.showMessage(
+                  context,
+                  'Board join code ${payload.joinCode} copied!',
                 );
               },
               child: Container(
@@ -870,8 +870,9 @@ class ChatBubble extends StatelessWidget {
                       HapticFeedback.selectionClick();
                       Clipboard.setData(ClipboardData(text: message.content));
                       Navigator.pop(bottomContext);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Message copied to clipboard')),
+                      AppSnackBar.showMessage(
+                        context,
+                        'Message copied to clipboard',
                       );
                     },
                   ),
@@ -1044,9 +1045,12 @@ class _WorkspaceShareCardState extends State<_WorkspaceShareCard> {
       _openWorkspace(context);
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppSnackBar.show(
+        context,
         SnackBar(
-          content: Text('Failed to join workspace: $e'),
+          content: Text(
+            'Failed to join workspace: ${AppErrorFormatter.cleanMessage(e, fallback: 'Please check your code or connection.')}',
+          ),
           backgroundColor: Colors.redAccent,
         ),
       );
@@ -1106,11 +1110,9 @@ class _WorkspaceShareCardState extends State<_WorkspaceShareCard> {
               onTap: () {
                 HapticFeedback.selectionClick();
                 Clipboard.setData(ClipboardData(text: payload.joinCode));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Workspace join code ${payload.joinCode} copied!'),
-                    duration: const Duration(seconds: 2),
-                  ),
+                AppSnackBar.showMessage(
+                  context,
+                  'Workspace join code ${payload.joinCode} copied!',
                 );
               },
               child: Container(

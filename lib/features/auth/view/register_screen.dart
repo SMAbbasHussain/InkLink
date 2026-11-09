@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../core/utils/app_error_formatter.dart';
 import '../../../core/utils/helpers.dart'; // FIX: Import validation helpers
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
@@ -10,6 +11,7 @@ import '../../../ui/widgets/auth_hero.dart';
 import '../../../ui/widgets/desk_background.dart';
 import '../../../ui/widgets/glass_panel.dart';
 import '../../../ui/widgets/ink_button.dart';
+import '../../../ui/widgets/ink_dialog.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
@@ -56,17 +58,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
               Navigator.of(context).pop();
             }
           } else if (state is AuthError) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(LucideIcons.ban, size: 16, color: tokens.danger),
-                    const SizedBox(width: InkSpacing.s8),
-                    Flexible(child: Text(state.message)),
-                  ],
-                ),
-              ),
+            final details = AppErrorFormatter.format(state.message);
+            showInkErrorDialog(
+              context,
+              title: details.title,
+              message: details.message,
             );
           }
         },
@@ -209,45 +205,48 @@ class _RegisterScreenState extends State<RegisterScreen> {
         email.isEmpty ||
         password.isEmpty ||
         confirmPassword.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Please fill in all fields")),
+      showInkErrorDialog(
+        context,
+        title: 'Missing Information',
+        message: 'Please fill in all required fields to create your account.',
       );
       return;
     }
 
-    // 2. Validate name length
     if (name.length < 2) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Name must be at least 2 characters")),
+      showInkErrorDialog(
+        context,
+        title: 'Name Too Short',
+        message: 'Your display name must be at least 2 characters long.',
       );
       return;
     }
 
-    // 3. Validate email format
     if (!isValidEmail(email)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please enter a valid email address")),
+      showInkErrorDialog(
+        context,
+        title: 'Invalid Email Address',
+        message: 'Please enter a valid email address (e.g. name@example.com).',
       );
       return;
     }
 
-    // 4. Validate password strength (FR01-04)
     final passwordError = getPasswordStrengthError(password);
     if (passwordError != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(passwordError),
-          backgroundColor: context.ink.danger,
-        ),
+      showInkErrorDialog(
+        context,
+        title: 'Password Weak',
+        message: passwordError,
       );
       return;
     }
 
-    // 5. Validate password confirmation
     if (password != confirmPassword) {
-      ScaffoldMessenger.of(
+      showInkErrorDialog(
         context,
-      ).showSnackBar(const SnackBar(content: Text("Passwords do not match")));
+        title: 'Passwords Do Not Match',
+        message: 'The confirmation password does not match. Please re-enter both passwords.',
+      );
       return;
     }
 

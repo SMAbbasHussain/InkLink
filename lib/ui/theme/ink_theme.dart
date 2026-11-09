@@ -165,6 +165,7 @@ class InkTheme {
         backgroundColor: tokens.ink,
         contentTextStyle: InkType.body(tokens.isDark ? InkColors.inkLight : InkColors.inkDark),
         behavior: SnackBarBehavior.floating,
+        dismissDirection: DismissDirection.down,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
         ),
