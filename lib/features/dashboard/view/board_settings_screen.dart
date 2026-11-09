@@ -132,8 +132,9 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
       confirmLabel: 'Delete',
     );
     if (!confirmed || !context.mounted) return;
-    context.read<DashboardBloc>().add(DashboardDeleteBoardRequested(boardId));
+    final dashboardBloc = context.read<DashboardBloc>();
     Navigator.of(context).popUntil((route) => route.isFirst);
+    dashboardBloc.add(DashboardDeleteBoardRequested(boardId));
   }
 
   void _updateNameDialog(BuildContext context, Board board) {

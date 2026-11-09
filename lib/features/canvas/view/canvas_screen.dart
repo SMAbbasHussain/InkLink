@@ -71,6 +71,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
   bool _smoothDoodlesEnabled = false;
   bool _isRotatingShape = false;
   bool _isResizingShape = false;
+  String? _rewiringConnectorId;
+  bool? _rewireIsStart;
+  Offset? _rewireScreenPoint;
+  String? _rewireTargetId;
+  Offset? _connectorDragDelta;
   bool _showEraserPreview = false;
   bool _isTransformingCanvas = false;
   bool _didAutoFrameContent = false;
@@ -1246,9 +1251,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     onPressed: () {
                       Navigator.pop(sheetContext);
                       _canvasBloc.add(
-                        const CanvasExportBoardRequested(
+                        CanvasExportBoardRequested(
                           format: BoardExportFormat.png,
                           shareAfterExport: true,
+                          sharePositionOrigin: _shareAnchorRect(),
                         ),
                       );
                     },
@@ -1280,8 +1286,20 @@ class _CanvasScreenState extends State<CanvasScreen> {
       ),
     );
     _canvasBloc.add(
-      CanvasExportBoardRequested(format: format, shareAfterExport: share),
+      CanvasExportBoardRequested(
+        format: format,
+        shareAfterExport: share,
+        sharePositionOrigin: share ? _shareAnchorRect() : null,
+      ),
     );
+  }
+
+  /// Global rect used to anchor the native share popover. iPad/Mac require it;
+  /// without one the share sheet refuses to present.
+  Rect? _shareAnchorRect() {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
   }
 
   Widget _buildExportTile(
@@ -1376,6 +1394,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                             CanvasExportBoardRequested(
                               format: format,
                               shareAfterExport: true,
+                              sharePositionOrigin: _shareAnchorRect(),
                             ),
                           );
                         },
@@ -1429,11 +1448,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   ? SnackBarAction(
                       label: 'Request Edit',
                       textColor: _tokens.accent,
-                      onPressed: () {
-                        context
-                            .read<CanvasBloc>()
-                            .add(const CanvasRequestEditAccess());
-                      },
+                      onPressed: () => _showRequestEditDialog(context),
                     )
                   : null,
               duration: isViewerWarning
@@ -1526,6 +1541,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 details.localFocalPoint,
                               );
 
+                              // The eraser always erases: it must not be
+                              // diverted into connecting, drawing a shape, or
+                              // dragging a selected element.
+                              if (state.brushType == 'eraser') {
+                                _isDraggingShape = false;
+                                _isDraggingStroke = false;
+                                _showEraserPreview = true;
+                                _startStroke(worldPoint);
+                                return;
+                              }
+
                               // In arrow mode, touching an existing element should connect, not draw a freehand shape
                               if (_isArrowMode(state)) {
                                 final hitShapeId = _hitTestShape(
@@ -1571,6 +1597,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 _shapeDragStartWorldPoint = worldPoint;
                                 _shapeDragStartRotation =
                                     state.selectedShapeRotation;
+                                _connectorDragDelta =
+                                    hit.kind == _ElementKind.connector
+                                    ? Offset.zero
+                                    : null;
                                 return;
                               }
 
@@ -1616,6 +1646,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               final worldPoint = _toWorld(
                                 details.localFocalPoint,
                               );
+                              if (state.brushType == 'eraser') {
+                                // Erase even while an element is selected.
+                                _showEraserPreview = true;
+                                _appendStroke(worldPoint);
+                                return;
+                              }
                               if (_isDraggingStroke) {
                                 final delta =
                                     worldPoint - _strokeDragStartWorldPoint;
@@ -1646,6 +1682,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                     _shapeDragStartCenter + dragDelta;
                                 setState(() {
                                   _shapeDragPreviewCenter = nextCenter;
+                                  _connectorDragDelta = dragDelta;
                                 });
                                 _canvasBloc.add(
                                   CanvasPreviewMoveSelectedShape(nextCenter),
@@ -1657,8 +1694,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 // is selected. Deselect first.
                                 return;
                               }
-                              final isEraser = state.brushType == 'eraser';
-                              _showEraserPreview = isEraser;
+                              _showEraserPreview = false;
                               _appendStroke(worldPoint);
                             },
                             onScaleEnd: (_) {
@@ -1697,6 +1733,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   );
                                 }
                                 _shapeDragPreviewCenter = null;
+                                _connectorDragDelta = null;
                                 _shapeDragStartCenter = Offset.zero;
                                 _shapeDragStartWorldPoint = Offset.zero;
                                 _shapeDragStartRotation = 0.0;
@@ -1859,6 +1896,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   shapeDrawCurrent: state.shapeDrawCurrent,
                                   pendingShapeType: state.pendingShapeType,
                                   accentColor: _tokens.accent,
+                                  remoteEraserCursors:
+                                      _canvasBloc.remoteEraserCursors,
                                   arrowConnectStartElementId:
                                       _isArrowMode(state)
                                           ? _arrowConnectStartElementId
@@ -1871,6 +1910,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           ..._buildPinnedCommentPins(state),
 
                           _buildEdgeTriggers(state, isDark),
+                          if (state.selectedShapeId != null)
+                            _buildSelectionOutline(state, mappedElements),
                           _buildAllTrays(state),
                           const BoardChatDrawer(),
                           const CommentsTray(),
@@ -2087,16 +2128,34 @@ class _CanvasScreenState extends State<CanvasScreen> {
           }
         }
       } else if (element.kind == _ElementKind.connector) {
-        Offset start = element.startPoint;
-        Offset end = element.endPoint;
-        if (element.startElementId != null) {
-          final sElem = elements.where((e) => e.id == element.startElementId).firstOrNull;
-          if (sElem != null) start = sElem.center;
-        }
-        if (element.endElementId != null) {
-          final eElem = elements.where((e) => e.id == element.endElementId).firstOrNull;
-          if (eElem != null) end = eElem.center;
-        }
+        // Resolve exactly like the painter so the tappable line matches the
+        // drawn line, including its anchor on each attached element.
+        final startRaw = _resolveConnectorEnd(
+          elements,
+          elementId: element.startElementId,
+          anchor: 'center',
+          fallback: element.startPoint,
+        );
+        final endRaw = _resolveConnectorEnd(
+          elements,
+          elementId: element.endElementId,
+          anchor: 'center',
+          fallback: element.endPoint,
+        );
+        final start = _resolveConnectorEnd(
+          elements,
+          elementId: element.startElementId,
+          anchor: element.startAnchor,
+          fallback: element.startPoint,
+          towards: endRaw,
+        );
+        final end = _resolveConnectorEnd(
+          elements,
+          elementId: element.endElementId,
+          anchor: element.endAnchor,
+          fallback: element.endPoint,
+          towards: startRaw,
+        );
         final dist = _pointToSegmentDistance(position, start, end);
         if (dist <= element.strokeWidth / 2 + 14.0) {
           return element.id;
@@ -2149,22 +2208,21 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final selected = mappedElements.where((e) => e.id == state.selectedShapeId);
     if (selected.isEmpty) return const SizedBox.shrink();
     final element = selected.first;
+    if (element.kind == _ElementKind.connector) {
+      return const SizedBox.shrink();
+    }
+    if (element.kind == _ElementKind.image) {
+      return const SizedBox.shrink();
+    }
     if (element.kind == _ElementKind.stroke) {
       return Stack(
         children: [
-          _buildStrokeSelectionOverlay(state, element),
           if (!_isEditingShape && _isStrokeEditExpanded)
             _buildSelectedStrokePanel(state, element),
           if (!_isEditingShape && !_isStrokeEditExpanded)
             _buildStrokeEditBanner(),
         ],
       );
-    }
-    if (element.kind == _ElementKind.connector) {
-      return _buildConnectorSelectionOverlay(state, element);
-    }
-    if (element.kind == _ElementKind.image) {
-      return _buildShapeTransformOverlay(state, mappedElements);
     }
     if (element.kind == _ElementKind.stickyNote) {
       return Stack(
@@ -2174,7 +2232,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
               Theme.of(context).brightness == Brightness.dark,
               element,
             ),
-          _buildShapeTransformOverlay(state, mappedElements),
         ],
       );
     }
@@ -2186,9 +2243,27 @@ class _CanvasScreenState extends State<CanvasScreen> {
           _buildShapeEditBanner(
             Theme.of(context).brightness == Brightness.dark,
           ),
-        _buildShapeTransformOverlay(state, mappedElements),
       ],
     );
+  }
+
+  /// Outline and transform handles of the selected element. Kept below the
+  /// trays so an open tray always covers the selection rather than the
+  /// selection drawing over the tray.
+  Widget _buildSelectionOutline(
+    CanvasState state,
+    List<_CanvasElement> mappedElements,
+  ) {
+    final selected = mappedElements.where((e) => e.id == state.selectedShapeId);
+    if (selected.isEmpty) return const SizedBox.shrink();
+    final element = selected.first;
+    if (element.kind == _ElementKind.stroke) {
+      return _buildStrokeSelectionOverlay(state, element);
+    }
+    if (element.kind == _ElementKind.connector) {
+      return _buildConnectorSelectionOverlay(element, mappedElements);
+    }
+    return _buildShapeTransformOverlay(state, mappedElements);
   }
 
   Widget _buildStickyNoteEditBanner(bool isDark, _CanvasElement element) {
@@ -2223,74 +2298,142 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   Widget _buildConnectorSelectionOverlay(
-    CanvasState state,
     _CanvasElement element,
+    List<_CanvasElement> mappedElements,
   ) {
-    Offset start = element.startPoint;
-    Offset end = element.endPoint;
-    if (element.startElementId != null) {
-      final s = state.elements
-          .where((e) => e.id == element.startElementId)
-          .firstOrNull;
-      if (s != null) start = _getElementWorldCenter(s);
-    }
-    if (element.endElementId != null) {
-      final e = state.elements
-          .where((e) => e.id == element.endElementId)
-          .firstOrNull;
-      if (e != null) end = _getElementWorldCenter(e);
+    final startRaw = _resolveConnectorEnd(
+      mappedElements,
+      elementId: element.startElementId,
+      anchor: 'center',
+      fallback: element.startPoint,
+    );
+    final endRaw = _resolveConnectorEnd(
+      mappedElements,
+      elementId: element.endElementId,
+      anchor: 'center',
+      fallback: element.endPoint,
+    );
+    var start = _resolveConnectorEnd(
+      mappedElements,
+      elementId: element.startElementId,
+      anchor: element.startAnchor,
+      fallback: element.startPoint,
+      towards: endRaw,
+    );
+    var end = _resolveConnectorEnd(
+      mappedElements,
+      elementId: element.endElementId,
+      anchor: element.endAnchor,
+      fallback: element.endPoint,
+      towards: startRaw,
+    );
+
+    final isRewiring = _rewiringConnectorId == element.id;
+    final dragDelta = _connectorDragDelta;
+    if (!isRewiring && dragDelta != null) {
+      // Only the detached ends follow the drag; attached ends stay pinned.
+      if (element.startElementId == null) start += dragDelta;
+      if (element.endElementId == null) end += dragDelta;
     }
 
     final screenStart = _toScreen(start);
     final screenEnd = _toScreen(end);
+    var previewStart = screenStart;
+    var previewEnd = screenEnd;
+    final rewirePoint = _rewireScreenPoint;
+    if (isRewiring && rewirePoint != null) {
+      if (_rewireIsStart ?? false) {
+        previewStart = rewirePoint;
+      } else {
+        previewEnd = rewirePoint;
+      }
+    }
+
+    Rect? highlight;
+    final targetId = _rewireTargetId;
+    if (isRewiring && targetId != null) {
+      final target = _canvasBloc.state.elements
+          .where((e) => e.id == targetId)
+          .firstOrNull;
+      if (target != null) {
+        final worldRect = _elementLinkBounds(target);
+        final topLeft = _toScreen(worldRect.topLeft);
+        final bottomRight = _toScreen(worldRect.bottomRight);
+        highlight = Rect.fromLTRB(
+          topLeft.dx - 4,
+          topLeft.dy - 4,
+          bottomRight.dx + 4,
+          bottomRight.dy + 4,
+        );
+      }
+    }
+
     final screenMid = Offset(
       (screenStart.dx + screenEnd.dx) / 2,
       (screenStart.dy + screenEnd.dy) / 2,
     );
 
+    Widget handle(Offset point, bool isStart) {
+      final active = isRewiring && (_rewireIsStart ?? false) == isStart;
+      return Positioned(
+        left: point.dx - 22,
+        top: point.dy - 22,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (_) => _beginConnectorRewire(element.id, isStart, point),
+          onPanUpdate: (details) => _updateConnectorRewire(
+            (_rewireScreenPoint ?? point) + details.delta,
+          ),
+          onPanCancel: _cancelConnectorRewire,
+          onPanEnd: (_) => _finishConnectorRewire(element.id),
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Center(
+              child: Container(
+                width: active ? 26 : 20,
+                height: active ? 26 : 20,
+                decoration: BoxDecoration(
+                  color: active ? _tokens.accent : Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: active ? Colors.white : _tokens.accent,
+                    width: 2,
+                  ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x33000000),
+                      blurRadius: 4,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        Positioned(
-          left: screenStart.dx - 10,
-          top: screenStart.dy - 10,
-          child: Container(
-            width: 20,
-            height: 20,
-            decoration: BoxDecoration(
-              color: _tokens.accent,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x33000000),
-                  blurRadius: 4,
-                  offset: Offset(0, 2),
+        if (isRewiring || dragDelta != null)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(
+                painter: _ConnectorPreviewPainter(
+                  start: previewStart,
+                  end: previewEnd,
+                  color: _tokens.accent,
+                  strokeWidth: math.max(element.strokeWidth, 2),
+                  highlight: highlight,
                 ),
-              ],
+              ),
             ),
           ),
-        ),
-        Positioned(
-          left: screenEnd.dx - 10,
-          top: screenEnd.dy - 10,
-          child: Container(
-            width: 20,
-            height: 20,
-            decoration: BoxDecoration(
-              color: _tokens.accent,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x33000000),
-                  blurRadius: 4,
-                  offset: Offset(0, 2),
-                ),
-              ],
-            ),
-          ),
-        ),
+        handle(screenStart, true),
+        handle(screenEnd, false),
         Positioned(
           left: screenMid.dx - 14,
           top: screenMid.dy - 36,
@@ -2317,6 +2460,129 @@ class _CanvasScreenState extends State<CanvasScreen> {
         ),
       ],
     );
+  }
+
+  void _beginConnectorRewire(
+    String connectorId,
+    bool isStart,
+    Offset screenPoint,
+  ) {
+    setState(() {
+      _rewiringConnectorId = connectorId;
+      _rewireIsStart = isStart;
+      _rewireScreenPoint = screenPoint;
+      _rewireTargetId = null;
+    });
+  }
+
+  void _updateConnectorRewire(Offset screenPoint) {
+    final connectorId = _rewiringConnectorId;
+    if (connectorId == null) return;
+    final target = _hitTestConnectorTarget(
+      _toWorld(screenPoint),
+      connectorId,
+      isStart: _rewireIsStart ?? true,
+    );
+    setState(() {
+      _rewireScreenPoint = screenPoint;
+      _rewireTargetId = target?.id;
+    });
+  }
+
+  void _finishConnectorRewire(String connectorId) {
+    final screenPoint = _rewireScreenPoint;
+    final isStart = _rewireIsStart ?? true;
+    if (screenPoint == null) {
+      _cancelConnectorRewire();
+      return;
+    }
+    final world = _toWorld(screenPoint);
+    final target = _hitTestConnectorTarget(world, connectorId, isStart: isStart);
+    _canvasBloc.add(
+      CanvasRewireConnector(
+        connectorId: connectorId,
+        isStart: isStart,
+        targetElementId: target?.id,
+        anchor: target == null ? 'center' : 'auto',
+        point: target == null ? world : _getElementWorldCenter(target),
+      ),
+    );
+    _cancelConnectorRewire();
+  }
+
+  void _cancelConnectorRewire() {
+    if (!mounted) return;
+    setState(() {
+      _rewiringConnectorId = null;
+      _rewireIsStart = null;
+      _rewireScreenPoint = null;
+      _rewireTargetId = null;
+    });
+  }
+
+  /// Element a connector end can snap to, ignoring the connector itself, its
+  /// other end and everything that cannot own an anchor (doodles, connectors).
+  CanvasElement? _hitTestConnectorTarget(
+    Offset worldPoint,
+    String connectorId, {
+    required bool isStart,
+  }) {
+    final elements = _canvasBloc.state.elements;
+    String? otherEndId;
+    for (final element in elements) {
+      if (element.id == connectorId && element is ConnectorElement) {
+        otherEndId = isStart ? element.endElementId : element.startElementId;
+        break;
+      }
+    }
+    for (var i = elements.length - 1; i >= 0; i--) {
+      final element = elements[i];
+      if (element.id == connectorId ||
+          element.id == otherEndId ||
+          element is ConnectorElement ||
+          element is StrokeElement) {
+        continue;
+      }
+      if (_elementLinkBounds(element).inflate(18).contains(worldPoint)) {
+        return element;
+      }
+    }
+    return null;
+  }
+
+  /// World-space box a connector end snaps to, matching the bounds the painter
+  /// uses to resolve anchors.
+  Rect _elementLinkBounds(CanvasElement element) {
+    return switch (element) {
+      ShapeElement e => Rect.fromCenter(
+        center: e.center,
+        width: e.size *
+            (e.shapeType == CanvasShapeType.rectangle ? 1.35 : 1.1),
+        height: e.size *
+            (e.shapeType == CanvasShapeType.rectangle ? 0.8 : 1.1),
+      ),
+      StickyNoteElement e => Rect.fromCenter(
+        center: e.center,
+        width: e.width > 0 ? e.width : 160,
+        height: e.height > 0 ? e.height : 160,
+      ),
+      ImageElement e => Rect.fromCenter(
+        center: e.center,
+        width: e.width,
+        height: e.height,
+      ),
+      TextElement e => Rect.fromCenter(
+        center: e.center,
+        width: e.width > 0 ? e.width : 180,
+        height: e.height > 0 ? e.height : 48,
+      ),
+      StrokeElement e => Rect.fromCenter(
+        center: _strokeCenter(e.points),
+        width: 1,
+        height: 1,
+      ),
+      ConnectorElement e => Rect.fromPoints(e.startPoint, e.endPoint),
+    };
   }
 
   Widget _buildStrokeSelectionOverlay(
@@ -3252,66 +3518,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onTap: () => _openSettings(state.boardTitle ?? 'Board'),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Flexible(
-                              child: Text(
-                                title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
-                                style: InkType.title(tokens.ink),
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Icon(
-                              LucideIcons.chevronDown,
-                              size: 16,
-                              color: tokens.inkMuted,
-                            ),
-                          ],
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          softWrap: false,
+                          style: InkType.title(tokens.ink),
                         ),
                       ),
                     ),
-                    if (state.currentUserRole == Board.roleViewer) ...[
-                      const SizedBox(width: 4),
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => _showRequestEditDialog(context),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: tokens.pending.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: tokens.pending.withValues(alpha: 0.45),
-                              width: 0.8,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                LucideIcons.pencilLine,
-                                size: 11,
-                                color: tokens.pending,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                'Request Edit',
-                                style: InkType.caption(tokens.pending)
-                                    .copyWith(fontWeight: FontWeight.w700),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                    ],
+                    const SizedBox(width: 8),
                   ],
                 ),
               ),
@@ -3345,12 +3561,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                       ),
-                    )
-                  else
-                    IconButton(
-                      tooltip: 'Export & Share Board',
-                      icon: Icon(LucideIcons.download, color: tokens.ink, size: 18),
-                      onPressed: () => _showExportOptionsSheet(context),
                     ),
                   PopupMenuButton<String>(
                     icon: Icon(LucideIcons.ellipsis, color: tokens.ink, size: 18),
@@ -3363,9 +3573,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         _showExportOptionsSheet(context);
                       } else if (value == 'share') {
                         _canvasBloc.add(
-                          const CanvasExportBoardRequested(
+                          CanvasExportBoardRequested(
                             format: BoardExportFormat.png,
                             shareAfterExport: true,
+                            sharePositionOrigin: _shareAnchorRect(),
                           ),
                         );
                       } else if (value == 'copy') {
@@ -3533,25 +3744,72 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   Widget _buildMemberAvatarStack(List<BoardMember> members) {
-    final shown = members.take(3).toList();
-    return SizedBox(
-      width: 24 + (shown.length - 1) * 16,
-      height: 32,
-      child: Stack(
-        children: [
-          for (var i = 0; i < shown.length; i++)
-            Positioned(
-              left: i * 16,
-              child: InkAvatar(
-                imageUrl: shown[i].photoUrl,
-                initials: shown[i].label.isNotEmpty
-                    ? shown[i].label.substring(0, 1).toUpperCase()
-                    : '?',
-                id: shown[i].uid,
-                size: 28,
-              ),
-            ),
-        ],
+    const maxVisible = 4;
+    final bool hasOverflow = members.length > maxVisible;
+    final shownCount = hasOverflow ? maxVisible - 1 : members.length;
+    final shown = members.take(shownCount).toList();
+    final overflowCount = members.length - shownCount;
+    final totalBadges = shown.length + (hasOverflow ? 1 : 0);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _toggleTray('members'),
+      child: Tooltip(
+        message: 'Board members (${members.length})',
+        child: SizedBox(
+          width: totalBadges == 0 ? 0 : 28.0 + (totalBadges - 1) * 18.0,
+          height: 32,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              for (var i = 0; i < shown.length; i++)
+                Positioned(
+                  left: i * 18.0,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: _tokens.glassStroke,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: InkAvatar(
+                      imageUrl: shown[i].photoUrl,
+                      initials: shown[i].label.isNotEmpty
+                          ? shown[i].label.substring(0, 1).toUpperCase()
+                          : '?',
+                      id: shown[i].uid,
+                      size: 26,
+                    ),
+                  ),
+                ),
+              if (hasOverflow)
+                Positioned(
+                  left: shownCount * 18.0,
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: _tokens.glass,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: _tokens.glassStroke,
+                        width: 1.5,
+                      ),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      '+$overflowCount',
+                      style: InkType.caption(_tokens.ink).copyWith(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -383,7 +383,23 @@ class FirestoreBoardRepository implements BoardRepository {
   }
 
   @override
-  Stream<List<BoardMember>> getBoardMembers(String boardId) {
+  Stream<List<BoardMember>> getBoardMembers(String boardId) async* {
+    try {
+      yield* _watchBoardMembers(boardId);
+    } on FirebaseException catch (e) {
+      // The board document is gone (or no longer readable) — e.g. it was just
+      // deleted while a settings sheet or members tray was open. Rules resolve
+      // canReadBoard() through the board document, so the listener fails with
+      // permission-denied instead of simply ending. Treat that as "no members"
+      // rather than surfacing a Firestore error to the UI.
+      if (e.code != 'permission-denied' && e.code != 'not-found') {
+        rethrow;
+      }
+      yield const <BoardMember>[];
+    }
+  }
+
+  Stream<List<BoardMember>> _watchBoardMembers(String boardId) {
     return _firestoreService
         .collection('boards')
         .doc(boardId)
@@ -926,10 +942,21 @@ class FirestoreBoardRepository implements BoardRepository {
       return;
     }
 
-    final boardSnapshot = await _firestoreService
-        .collection('boards')
-        .doc(boardId)
-        .get();
+    final DocumentSnapshot<Map<String, dynamic>> boardSnapshot;
+    try {
+      boardSnapshot = await _firestoreService
+          .collection('boards')
+          .doc(boardId)
+          .get();
+    } on FirebaseException catch (e) {
+      // Reading a board that no longer exists is denied by the rules (they
+      // dereference resource.data), so a stale deep link or deleted board
+      // surfaces as permission-denied rather than exists == false.
+      if (e.code == 'permission-denied' || e.code == 'not-found') {
+        return;
+      }
+      rethrow;
+    }
     if (!boardSnapshot.exists) {
       return;
     }
@@ -1022,6 +1049,9 @@ class FirestoreBoardRepository implements BoardRepository {
       await isar.localBoards.deleteByBoardId(boardId);
       await isar.localCrdtUpdates.filter().boardIdEqualTo(boardId).deleteAll();
     });
+    // Drop the cached metadata stream so a board that is later re-joined does
+    // not reuse a stream bound to the deleted document.
+    StreamRegistry.instance.remove('board_doc:$boardId');
   }
 
   @override
@@ -1143,15 +1173,29 @@ class FirestoreBoardRepository implements BoardRepository {
     newBoardData['title'] = duplicateTitle;
     newBoardData['name'] = duplicateTitle;
     newBoardData['ownerId'] = uid;
+    newBoardData['engine'] = crdtEngine;
     newBoardData['members'] = [uid];
+    // Both counters are read (Board.fromMap prefers membersCount), so leaving
+    // the source values would show the copy as having the source's members.
     newBoardData['memberCount'] = 1;
+    newBoardData['membersCount'] = 1;
     newBoardData['joinCode'] = newDocRef.id;
     newBoardData['isArchived'] = false;
     newBoardData['allowMembersToCopy'] = false;
+    newBoardData['invitePolicy'] = {
+      'whoCanInvite': Board.inviteOwnerOnly,
+      'defaultLinkJoinRole': Board.roleViewer,
+    };
     newBoardData['createdAt'] = FieldValue.serverTimestamp();
     newBoardData['updatedAt'] = FieldValue.serverTimestamp();
     newBoardData['lastEditedBy'] = uid;
     newBoardData.remove('previewPath');
+    // A copy is a standalone board: never inherit the source's workspace
+    // membership or invite bookkeeping.
+    newBoardData.remove('workspaceId');
+    newBoardData.remove('workspaceIds');
+    newBoardData.remove('pendingInvites');
+    newBoardData.remove('invitedUserIds');
 
     // Check if source board has a CRDT snapshot
     DocumentSnapshot<Map<String, dynamic>>? snapshotDoc;
@@ -1179,13 +1223,31 @@ class FirestoreBoardRepository implements BoardRepository {
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      if (snapshotDoc != null && snapshotDoc.exists && snapshotDoc.data() != null) {
-        final snapData = Map<String, dynamic>.from(snapshotDoc.data()!);
-        snapData['boardId'] = newDocRef.id;
-        snapData['updatedAt'] = FieldValue.serverTimestamp();
-        transaction.set(newDocRef.collection('snapshot').doc('latest'), snapData);
-      }
     });
+
+    // The CRDT snapshot has to be written *after* the copy exists: its Firestore
+    // rule checks canEditBoard(newBoardId), which resolves the board document
+    // with get() and therefore cannot see a document created in the same
+    // transaction. Writing it inside the transaction rejected the whole
+    // duplicate (boards with drawings always have a snapshot), which is why
+    // copying a board failed.
+    if (snapshotDoc != null && snapshotDoc.exists && snapshotDoc.data() != null) {
+      final snapData = Map<String, dynamic>.from(snapshotDoc.data()!);
+      snapData['boardId'] = newDocRef.id;
+      snapData['updatedAt'] = FieldValue.serverTimestamp();
+      try {
+        await newDocRef.collection('snapshot').doc('latest').set(snapData);
+      } catch (error, stackTrace) {
+        // The copy still works from the local CRDT rows below; only its
+        // other-device availability is delayed until the client republishes.
+        developer.log(
+          'Failed to copy CRDT snapshot for duplicated board ${newDocRef.id}',
+          name: 'FirestoreBoardRepository',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    }
 
     final isar = await _localDatabaseService.database;
 
@@ -1359,7 +1421,10 @@ class FirestoreBoardRepository implements BoardRepository {
           'updatedAt': FieldValue.serverTimestamp(),
         });
       } on FirebaseException catch (e) {
-        if (e.code != 'permission-denied') {
+        // permission-denied: the caller lost edit rights. not-found: the board
+        // was deleted while this preview was being saved. Neither should fail
+        // the local preview update.
+        if (e.code != 'permission-denied' && e.code != 'not-found') {
           rethrow;
         }
       }

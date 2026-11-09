@@ -78,6 +78,31 @@ module.exports = async (request) => {
     const senderName = senderData.displayName || 'An InkLink user';
     const senderPhotoUrl = senderData.photoURL || null;
 
+    const groupingKey = `board_${normalizedType}_request:${cleanBoardId}:${uid}`;
+
+    // Guardrail: check for existing pending request so requests are idempotent (max 1 per board per user)
+    const existingNotifications = await firestore
+      .collection(FirestorePaths.USERS)
+      .doc(ownerId)
+      .collection(FirestorePaths.NOTIFICATIONS_SUBCOLLECTION)
+      .where(FirestorePaths.GROUPING_KEY, '==', groupingKey)
+      .get();
+
+    const hasPending = existingNotifications.docs.some(
+      (doc) => (doc.data() || {}).status === 'pending',
+    );
+
+    if (hasPending) {
+      return {
+        success: true,
+        alreadyRequested: true,
+        message:
+          normalizedType === 'edit'
+            ? 'An edit access request has already been sent to the board owner and is pending review.'
+            : 'A join request has already been sent to the board owner and is pending review.',
+      };
+    }
+
     const notifTitle =
       normalizedType === 'edit' ? 'Edit Access Request' : 'Board Join Request';
     const notifBody =
@@ -98,7 +123,7 @@ module.exports = async (request) => {
       senderUid: uid,
       senderName,
       senderPhotoUrl,
-      groupingKey: `board_${normalizedType}_request:${cleanBoardId}:${uid}`,
+      groupingKey,
       extraData: {
         boardId: cleanBoardId,
         boardTitle,

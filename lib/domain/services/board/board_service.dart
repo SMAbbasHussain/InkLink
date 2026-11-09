@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/services/cloud_functions_service.dart';
 import '../../models/board.dart';
 import '../../repositories/board/board_repository.dart';
@@ -247,18 +248,27 @@ class BoardServiceImpl implements BoardService {
   }
 
   @override
-  Future<void> deleteBoard(String boardId) {
+  Future<void> deleteBoard(String boardId) async {
     final resolvedBoardId = boardId.trim();
-    return _boardRepository
-        .removeBoardSync(resolvedBoardId)
-        .then(
-          (_) => _cloudFunctionsService.httpsCallable('deleteBoard').call({
-            'boardId': resolvedBoardId,
-          }),
-        )
-        .then((_) {
-          return _boardRepository.deleteBoard(resolvedBoardId);
-        });
+    if (resolvedBoardId.isEmpty) {
+      return;
+    }
+
+    await _boardRepository.removeBoardSync(resolvedBoardId);
+
+    try {
+      await _cloudFunctionsService.httpsCallable('deleteBoard').call({
+        'boardId': resolvedBoardId,
+      });
+    } on FirebaseFunctionsException catch (e) {
+      // Already deleted (retry, another device, or a previous call that only
+      // failed while purging subcollections): the local copy still has to go.
+      if (e.code != 'not-found') {
+        rethrow;
+      }
+    } finally {
+      await _boardRepository.deleteBoard(resolvedBoardId);
+    }
   }
 
   @override
@@ -366,19 +376,53 @@ class BoardServiceImpl implements BoardService {
     );
   }
 
+  static final Map<String, DateTime> _accessRequestCache = <String, DateTime>{};
+
   @override
   Future<void> requestBoardAccess({
     required String boardId,
     required String requestType,
     String? message,
   }) async {
+    final cleanBoardId = boardId.trim();
+    final cleanType = requestType.trim().toLowerCase();
+    final cacheKey = 'access_req_${cleanBoardId}_$cleanType';
+    final now = DateTime.now();
+
+    // Check in-memory 5-minute cache
+    final inMemoryLast = _accessRequestCache[cacheKey];
+    if (inMemoryLast != null &&
+        now.difference(inMemoryLast) < const Duration(minutes: 5)) {
+      return;
+    }
+
+    // Check persistent 5-minute cache
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastTimestamp = prefs.getInt(cacheKey);
+      if (lastTimestamp != null) {
+        final lastSent = DateTime.fromMillisecondsSinceEpoch(lastTimestamp);
+        if (now.difference(lastSent) < const Duration(minutes: 5)) {
+          _accessRequestCache[cacheKey] = lastSent;
+          return;
+        }
+      }
+    } catch (_) {}
+
     try {
       await _cloudFunctionsService.httpsCallable('requestBoardAccess').call({
-        'boardId': boardId.trim(),
-        'requestType': requestType.trim(),
+        'boardId': cleanBoardId,
+        'requestType': cleanType,
         if (message != null && message.trim().isNotEmpty)
           'message': message.trim(),
       });
+
+      // Update 5-minute cache on success
+      _accessRequestCache[cacheKey] = now;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt(cacheKey, now.millisecondsSinceEpoch);
+      } catch (_) {}
     } on FirebaseFunctionsException catch (e) {
       throw Exception(e.message ?? 'Failed to send access request.');
     } catch (e) {

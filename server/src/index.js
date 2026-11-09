@@ -386,6 +386,17 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
         return true;
       }
 
+      // Allow read-only access for public boards
+      if (data.visibility === 'public' && !requireEdit) {
+        if (redisAvailable) {
+          const p = redis.pipeline();
+          p.sadd(`board_members:${boardId}`, uid);
+          p.expire(`board_members:${boardId}`, 86400);
+          await p.exec().catch(() => { });
+        }
+        return true;
+      }
+
       const members = Array.isArray(data.members) ? data.members : [];
       if (!members.includes(uid)) {
         return false;

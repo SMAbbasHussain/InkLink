@@ -95,11 +95,14 @@ module.exports = async (request) => {
         type: 'board_deleted',
         boardId: boardId.trim(),
       });
+      // The board document is already gone at this point (the transaction
+      // committed). Purging subcollections is cleanup: a failure here must not
+      // turn a successful delete into an error for the caller, otherwise the
+      // client reports a huge failure and skips its own local cleanup.
       try {
         await firestore.recursiveDelete(boardRef);
       } catch (e) {
         logger.error('Recursive delete of board subcollections failed', e);
-        throw e;
       }
     }
 

@@ -67,6 +67,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final Map<String, _QueuedPreviewPublish> _pendingPreviewPublishes =
       <String, _QueuedPreviewPublish>{};
   String? _activeStrokeId;
+  _EraserSession? _eraserSession;
+  final Map<String, RemoteEraserCursor> _remoteEraserCursors =
+      <String, RemoteEraserCursor>{};
   bool _hasSeenBoardMetadata = false;
   String _boardId;
   String _currentUserRole = Board.roleViewer;
@@ -109,6 +112,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasUpdateStickyNote>(_onUpdateStickyNote);
     on<CanvasAddConnector>(_onAddConnector);
     on<CanvasUpdateConnector>(_onUpdateConnector);
+    on<CanvasRewireConnector>(_onRewireConnector);
     on<CanvasUndo>(_onUndo);
     on<CanvasRedo>(_onRedo);
     on<CanvasClearAll>(_onClearAll);
@@ -179,6 +183,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
   String? get _currentClientId => _canvasService?.currentClientId;
 
+  /// Live eraser positions of collaborators, for the ghost eraser rings.
+  List<RemoteEraserCursor> get remoteEraserCursors =>
+      List<RemoteEraserCursor>.unmodifiable(_remoteEraserCursors.values);
+
   // ──────────────────────────────────────────────
   // Board & rename
   // ──────────────────────────────────────────────
@@ -230,15 +238,21 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _boardUnavailableTimer = null;
     emit(state.copyWith(isLoading: true, error: null));
     try {
+      if (isClosed) return;
       _startBoardMetadataListener();
       await _ensureCrdtReady();
+      if (isClosed) return;
       _startCrdtUpdatesListener();
       _startPreviewUpdatesListener();
       _startCommunicationListeners(event.boardId);
       _refreshFromCrdtAdapter(emit);
-      emit(state.copyWith(isLoading: false, error: null));
+      if (!isClosed) {
+        emit(state.copyWith(isLoading: false, error: null));
+      }
     } catch (e) {
-      emit(state.copyWith(isLoading: false, error: e.toString()));
+      if (!isClosed) {
+        emit(state.copyWith(isLoading: false, error: e.toString()));
+      }
     }
   }
 
@@ -281,55 +295,68 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   // ──────────────────────────────────────────────
 
   void _startCrdtUpdatesListener() {
-    if (_crdtUpdatesSub != null || !_canSync) return;
+    if (isClosed || _crdtUpdatesSub != null || !_canSync) return;
     final canvasService = _canvasService;
     if (canvasService == null) return;
-    _crdtUpdatesSub =
-        canvasService.listenToCrdtUpdates(_boardId).listen((updates) {
-      if (!isClosed) {
-        add(CanvasApplyRemoteUpdate(updates));
-      }
-    });
+    _crdtUpdatesSub = canvasService
+        .listenToCrdtUpdates(_boardId)
+        .listen(
+          (updates) {
+            if (!isClosed) {
+              add(CanvasApplyRemoteUpdate(updates));
+            }
+          },
+          onError: (_) {},
+        );
   }
 
   void _startPreviewUpdatesListener() {
-    if (_previewUpdatesSub != null || !_canSync) return;
+    if (isClosed || _previewUpdatesSub != null || !_canSync) return;
     final canvasService = _canvasService;
     if (canvasService == null) return;
-    _previewUpdatesSub =
-        canvasService.listenToCanvasPreviews(_boardId).listen((previews) {
-      if (!isClosed) {
-        add(CanvasApplyRemotePreview(previews));
-      }
-    });
+    _previewUpdatesSub = canvasService
+        .listenToCanvasPreviews(_boardId)
+        .listen(
+          (previews) {
+            if (!isClosed) {
+              add(CanvasApplyRemotePreview(previews));
+            }
+          },
+          onError: (_) {},
+        );
   }
 
   void _startBoardMetadataListener() {
+    if (isClosed) return;
     final canvasService = _canvasService;
     if (canvasService == null || _boardId.isEmpty) return;
     _boardMetaSub?.cancel();
-    _boardMetaSub = canvasService.watchBoardById(_boardId).listen((board) {
-      if (isClosed) return;
-      if (board == null) {
-        if (!_hasSeenBoardMetadata) return;
-        _scheduleBoardUnavailableCheck();
-        return;
-      }
-      _boardUnavailableTimer?.cancel();
-      _boardUnavailableTimer = null;
-      _hasSeenBoardMetadata = true;
-      _canvasService?.setBoardSingleUserStatus(board.members.length <= 1);
-      if (!isClosed) {
-        add(CanvasBoardTitleUpdated(
-          board.title,
-          currentUserRole: board.currentUserRole,
-        ));
-      }
-    });
+    _boardMetaSub = canvasService.watchBoardById(_boardId).listen(
+      (board) {
+        if (isClosed) return;
+        if (board == null) {
+          if (!_hasSeenBoardMetadata) return;
+          _scheduleBoardUnavailableCheck();
+          return;
+        }
+        _boardUnavailableTimer?.cancel();
+        _boardUnavailableTimer = null;
+        _hasSeenBoardMetadata = true;
+        _canvasService?.setBoardSingleUserStatus(board.members.length <= 1);
+        if (!isClosed) {
+          add(CanvasBoardTitleUpdated(
+            board.title,
+            currentUserRole: board.currentUserRole,
+          ));
+        }
+      },
+      onError: (_) {},
+    );
     _startBoardMembersListener();
   }
 
   void _startBoardMembersListener() {
+    if (isClosed) return;
     final boardService = _boardService;
     if (boardService == null || _boardId.isEmpty) return;
     _membersSub?.cancel();
@@ -438,6 +465,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasApplyRemotePreview event,
     Emitter<CanvasState> emit,
   ) async {
+    _pruneRemoteEraserCursors();
     final currentClientId = _currentClientId;
     for (final preview in event.previews) {
       if (preview.elementId == null || preview.payloadBase64.isEmpty) continue;
@@ -460,6 +488,26 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           continue;
         }
         _remotePreviewClearsBoard = false;
+        // Eraser gestures are never ink. Older clients published them as
+        // strokes with the eraser brush, which used to leave a permanent
+        // coloured stroke on everyone else's board.
+        if (type == 'eraser' || decoded['brushType'] == 'eraser') {
+          if (action == 'delete') {
+            _remoteEraserCursors.remove(elementId);
+          } else {
+            final x = _toDoubleValue(decoded['x']);
+            final y = _toDoubleValue(decoded['y']);
+            final radius = _toDoubleValue(decoded['radius']);
+            if (x != null && y != null) {
+              _remoteEraserCursors[elementId] = RemoteEraserCursor(
+                position: Offset(x, y),
+                radius: (radius ?? 24).clamp(1.0, 400.0),
+                updatedAt: DateTime.now(),
+              );
+            }
+          }
+          continue;
+        }
         if (action == 'delete') {
           _remotePreviewDeletedIds.add(elementId);
           _remotePreviewElements.remove(elementId);
@@ -581,7 +629,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final rebuilt = adapter != null
         ? _rebuildElementsFromCrdtState(adapter.materializeElements())
         : state.elements;
-    emit(state.copyWith(elements: _composeElementsWithPreviews(rebuilt)));
+    // A collaborator update can rebuild the board in the middle of an erase
+    // gesture; re-apply the live erase so already-erased ink does not pop back.
+    final withErase = _applyActiveEraserOverlay(rebuilt);
+    emit(state.copyWith(elements: _composeElementsWithPreviews(withErase)));
   }
 
   List<CanvasElement> _composeElementsWithPreviews(
@@ -848,6 +899,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
   void _onStartStroke(CanvasStartStroke event, Emitter<CanvasState> emit) {
     if (!_ensureCanEditWithOptions(emit, clearStroke: true)) return;
+    if (state.brushType == 'eraser') {
+      _beginEraserStroke(event.point);
+      emit(state.copyWith(currentStroke: [event.point]));
+      return;
+    }
     _activeStrokeId = _uuid.v4();
     emit(state.copyWith(currentStroke: [event.point]));
   }
@@ -859,6 +915,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (!_ensureCanEditWithOptions(emit, clearStroke: true)) return;
     final updated = List<Offset>.from(state.currentStroke)..add(event.point);
     emit(state.copyWith(currentStroke: updated));
+    if (state.brushType == 'eraser') {
+      await _extendEraserStroke(updated, emit);
+      return;
+    }
     final canvasService = _canvasService;
     final strokeId = _activeStrokeId;
     if (canvasService == null || strokeId == null || _boardId.isEmpty) return;
@@ -881,39 +941,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     if (!_ensureCanEditWithOptions(emit, clearStroke: true)) return;
+    if (state.brushType == 'eraser' || _eraserSession != null) {
+      await _finishEraserStroke(emit, event.smoothedPoints);
+      return;
+    }
     final usePoints = event.smoothedPoints ?? state.currentStroke;
     if (usePoints.length < 2) {
       emit(state.copyWith(currentStroke: const []));
-      return;
-    }
-    if (state.brushType == 'eraser') {
-      final eraserResult = _applyEraserStroke(
-        erasePath: usePoints,
-        eraserRadius: state.strokeWidth / 2,
-        eraseEverything: state.eraserEraseEverything,
-      );
-      emit(state.copyWith(
-        elements: eraserResult.nextElements,
-        currentStroke: const [],
-      ));
-      for (final elementId in eraserResult.deletedElementIds) {
-        await _saveCrdtOperation(
-          action: 'delete',
-          type: 'element',
-          objectId: elementId,
-          data: const {},
-          emit: emit,
-        );
-      }
-      for (final createdStroke in eraserResult.createdStrokes) {
-        await _saveCrdtOperation(
-          action: 'create',
-          type: 'stroke',
-          objectId: createdStroke.id,
-          data: createdStroke.toMap(),
-          emit: emit,
-        );
-      }
       return;
     }
     final strokeId = _activeStrokeId ?? _uuid.v4();
@@ -1251,6 +1285,62 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
   }
 
+  Future<void> _onRewireConnector(
+    CanvasRewireConnector event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    ConnectorElement? connector;
+    for (final element in state.elements) {
+      if (element.id == event.connectorId && element is ConnectorElement) {
+        connector = element;
+        break;
+      }
+    }
+    if (connector == null) return;
+
+    // Linking both ends to the same element collapses the connector into a
+    // zero-length line, so ignore that drop.
+    final otherEndId =
+        event.isStart ? connector.endElementId : connector.startElementId;
+    if (event.targetElementId != null && event.targetElementId == otherEndId) {
+      return;
+    }
+
+    // A detached end has nothing to anchor to, so it falls back to 'center'.
+    final anchor = event.targetElementId == null ? 'center' : event.anchor;
+    final updated = ConnectorElement(
+      id: connector.id,
+      z: connector.z,
+      startElementId:
+          event.isStart ? event.targetElementId : connector.startElementId,
+      startPoint: event.isStart ? event.point : connector.startPoint,
+      startAnchor: event.isStart ? anchor : connector.startAnchor,
+      endElementId:
+          event.isStart ? connector.endElementId : event.targetElementId,
+      endPoint: event.isStart ? connector.endPoint : event.point,
+      endAnchor: event.isStart ? connector.endAnchor : anchor,
+      lineStyle: connector.lineStyle,
+      color: connector.color,
+      strokeWidth: connector.strokeWidth,
+      hasArrowhead: connector.hasArrowhead,
+    );
+    final nextElements =
+        state.elements.map((e) => e.id == updated.id ? updated : e).toList();
+    nextElements.sort((a, b) {
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
+    emit(state.copyWith(elements: nextElements));
+    await _saveCrdtOperation(
+      action: 'update',
+      type: _elementType(updated),
+      objectId: updated.id,
+      data: updated.toMap(),
+      emit: emit,
+    );
+  }
+
   // ──────────────────────────────────────────────
   // Undo / Redo / Clear / Delete
   // ──────────────────────────────────────────────
@@ -1574,6 +1664,49 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final shape = _selectedShape();
     if (shape == null || !_ensureCanEdit(emit)) return;
     final nextZ = _nextZIndex();
+    if (shape is ConnectorElement) {
+      // A connector has no geometry of its own: translate only the ends that
+      // are not pinned to an element so attached ends stay attached.
+      final currentCenter = Offset(
+        (shape.startPoint.dx + shape.endPoint.dx) / 2,
+        (shape.startPoint.dy + shape.endPoint.dy) / 2,
+      );
+      final delta = event.center - currentCenter;
+      if (delta == Offset.zero) return;
+      final updated = ConnectorElement(
+        id: shape.id,
+        z: nextZ,
+        startElementId: shape.startElementId,
+        startPoint: shape.startElementId == null
+            ? shape.startPoint + delta
+            : shape.startPoint,
+        startAnchor: shape.startAnchor,
+        endElementId: shape.endElementId,
+        endPoint: shape.endElementId == null
+            ? shape.endPoint + delta
+            : shape.endPoint,
+        endAnchor: shape.endAnchor,
+        lineStyle: shape.lineStyle,
+        color: shape.color,
+        strokeWidth: shape.strokeWidth,
+        hasArrowhead: shape.hasArrowhead,
+      );
+      final next =
+          state.elements.map((e) => e.id == updated.id ? updated : e).toList();
+      next.sort((a, b) {
+        if (a.z != b.z) return a.z.compareTo(b.z);
+        return a.id.compareTo(b.id);
+      });
+      emit(state.copyWith(elements: next));
+      await _saveCrdtOperation(
+        action: 'update',
+        type: _elementType(updated),
+        objectId: updated.id,
+        data: updated.toMap(),
+        emit: emit,
+      );
+      return;
+    }
     final data = Map<String, dynamic>.from(shape.toMap())
       ..['cx'] = event.center.dx
       ..['cy'] = event.center.dy
@@ -2027,6 +2160,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final shape = _selectedShape();
     final canvasService = _canvasService;
     if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    // Connectors carry endpoints, not a centre; moving one is committed on
+    // drag end, so there is no cx/cy preview to publish here.
+    if (shape is ConnectorElement) return;
     if (!_ensureCanEdit(emit)) return;
     final data = Map<String, dynamic>.from(shape.toMap())
       ..['cx'] = event.center.dx
@@ -2072,7 +2208,193 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   // Eraser
   // ──────────────────────────────────────────────
 
+  void _beginEraserStroke(Offset point) {
+    _activeStrokeId = null;
+    _eraserSession = _EraserSession(
+      previewId: _uuid.v4(),
+      radius: state.strokeWidth / 2,
+      baseElementIds: {for (final element in state.elements) element.id},
+    )..path.add(point);
+  }
+
+  /// Applies the erase on every pointer sample so ink disappears under the
+  /// eraser as the user drags, instead of only on release.
+  Future<void> _extendEraserStroke(
+    List<Offset> path,
+    Emitter<CanvasState> emit,
+  ) async {
+    final session = _eraserSession ??= _EraserSession(
+      previewId: _uuid.v4(),
+      radius: state.strokeWidth / 2,
+      baseElementIds: {for (final element in state.elements) element.id},
+    );
+    session.path
+      ..clear()
+      ..addAll(path);
+    final result = _applyEraserStroke(
+      elements: state.elements,
+      erasePath: session.path,
+      eraserRadius: session.radius,
+      eraseEverything: state.eraserEraseEverything,
+    );
+    session.absorb(result);
+    final selectedId = state.selectedShapeId;
+    emit(state.copyWith(
+      elements: result.nextElements,
+      selectedShapeId:
+          selectedId != null && result.deletedElementIds.contains(selectedId)
+              ? null
+              : selectedId,
+    ));
+    await _publishEraserCursor(session, path.last);
+  }
+
+  Future<void> _publishEraserCursor(
+    _EraserSession session,
+    Offset position,
+  ) {
+    return _publishSelectedShapePreview(session.previewId, {
+      'type': 'eraser',
+      'radius': session.radius,
+      'x': position.dx,
+      'y': position.dy,
+    });
+  }
+
+  void _cancelPendingPreview(String elementId) {
+    _pendingPreviewPublishes.remove(elementId)?.timer?.cancel();
+  }
+
+  Future<void> _finishEraserStroke(
+    Emitter<CanvasState> emit,
+    List<Offset>? smoothedPoints,
+  ) async {
+    final session = _eraserSession;
+    _eraserSession = null;
+    _activeStrokeId = null;
+    final path = (session != null && session.path.isNotEmpty)
+        ? List<Offset>.from(session.path)
+        : List<Offset>.from(smoothedPoints ?? state.currentStroke);
+    if (path.isEmpty) {
+      emit(state.copyWith(currentStroke: const []));
+      return;
+    }
+    final baseIds =
+        session?.baseElementIds ??
+        {for (final element in state.elements) element.id};
+    final createdIds = session?.createdIds ?? <String>{};
+    final erasedIds = session?.erasedIds ?? <String>{};
+    final result = _applyEraserStroke(
+      elements: state.elements,
+      erasePath: path,
+      eraserRadius: session?.radius ?? (state.strokeWidth / 2),
+      eraseEverything: state.eraserEraseEverything,
+    );
+    // Fragments first produced by this final pass (e.g. a tap erase with no
+    // drag samples) still have to be persisted.
+    session?.absorb(result);
+    final nextElements = result.nextElements;
+    final survivingIds = {for (final element in nextElements) element.id};
+    final deletedIds = <String>{
+      ...erasedIds,
+      ...result.deletedElementIds,
+      ...baseIds.difference(survivingIds),
+    }..removeAll(survivingIds);
+    final created = <CanvasElement>[
+      for (final element in nextElements)
+        if (createdIds.contains(element.id)) element,
+    ];
+    final selectedId = state.selectedShapeId;
+    emit(state.copyWith(
+      elements: nextElements,
+      currentStroke: const [],
+      selectedShapeId: selectedId != null && deletedIds.contains(selectedId)
+          ? null
+          : selectedId,
+    ));
+    final previewId = session?.previewId;
+    if (previewId != null) {
+      // Stop the throttled cursor preview so no stray ring is left behind.
+      _cancelPendingPreview(previewId);
+    }
+    await _commitEraser(
+      deletedElementIds: deletedIds,
+      createdStrokes: created,
+      emit: emit,
+    );
+    if (previewId != null) {
+      await _publishOperationPreview(
+        action: 'delete',
+        type: 'eraser',
+        objectId: previewId,
+        data: const {},
+      );
+    }
+  }
+
+  /// Persists a finished erase as a single CRDT update: one round trip and one
+  /// state rebuild, so the result never flickers through half-applied states
+  /// and collaborators never see a partially erased board.
+  Future<void> _commitEraser({
+    required Set<String> deletedElementIds,
+    required List<CanvasElement> createdStrokes,
+    required Emitter<CanvasState> emit,
+  }) async {
+    if (!_canSync) return;
+    await _ensureCrdtReady();
+    final adapter = _crdtAdapter;
+    if (adapter == null) return;
+    if (deletedElementIds.isEmpty && createdStrokes.isEmpty) return;
+    for (final id in deletedElementIds) {
+      // Elements that exist locally only as collaborator previews have no CRDT
+      // entry to tombstone, so hide their preview too instead of letting the
+      // erased ink reappear on the next rebuild.
+      if (_remotePreviewElements.remove(id) != null) {
+        _remotePreviewDeletedIds.add(id);
+      }
+    }
+    final beforeVector = adapter.encodeStateVector();
+    for (final id in deletedElementIds) {
+      adapter.deleteElement(id, origin: 'local');
+    }
+    for (final stroke in createdStrokes) {
+      adapter.upsertElement(
+        stroke.id,
+        <String, dynamic>{'type': 'stroke', ...stroke.toMap()},
+        origin: 'local',
+      );
+    }
+    final update = adapter.encodeStateUpdate(vector: beforeVector);
+    if (update.isNotEmpty) {
+      await _publishCrdtUpdate(update);
+    }
+    _refreshFromCrdtAdapter(emit);
+  }
+
+  /// Re-applies an in-flight erase over freshly rebuilt elements.
+  List<CanvasElement> _applyActiveEraserOverlay(List<CanvasElement> elements) {
+    final session = _eraserSession;
+    if (session == null || session.path.isEmpty) return elements;
+    final result = _applyEraserStroke(
+      elements: elements,
+      erasePath: session.path,
+      eraserRadius: session.radius,
+      eraseEverything: state.eraserEraseEverything,
+    );
+    session.absorb(result);
+    return result.nextElements;
+  }
+
+  void _pruneRemoteEraserCursors() {
+    if (_remoteEraserCursors.isEmpty) return;
+    final cutoff = DateTime.now().subtract(const Duration(seconds: 5));
+    _remoteEraserCursors.removeWhere(
+      (_, cursor) => cursor.updatedAt.isBefore(cutoff),
+    );
+  }
+
   _EraserResult _applyEraserStroke({
+    required List<CanvasElement> elements,
     required List<Offset> erasePath,
     required double eraserRadius,
     required bool eraseEverything,
@@ -2080,11 +2402,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final deletedIds = <String>[];
     final createdStrokes = <CanvasElement>[];
     final nextElements = <CanvasElement>[];
-    // _nextZIndex() scans state.elements, which stays frozen during this
-    // pass; seed a local counter so every fragment gets a distinct,
-    // increasing z instead of all fragments sharing one stale max-z.
-    var zCounter = _nextZIndex();
-    for (final element in state.elements) {
+    final eraseBounds = _erasePathBounds(erasePath, eraserRadius);
+    if (eraseBounds == null) {
+      return _EraserResult(
+        nextElements: List<CanvasElement>.from(elements),
+        deletedElementIds: deletedIds,
+        createdStrokes: createdStrokes,
+      );
+    }
+    for (final element in elements) {
       if (element is! StrokeElement) {
         final shouldDeleteWholeElement = eraseEverything &&
             _elementTouchesErasePath(element, erasePath, eraserRadius);
@@ -2095,25 +2421,40 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         }
         continue;
       }
-      final touched =
-          _elementTouchesErasePath(element, erasePath, eraserRadius);
-      if (!touched) {
+      final strokePoints = element.points;
+      if (strokePoints.isEmpty) {
         nextElements.add(element);
         continue;
       }
-      final strokePoints = element.points;
-      final strokeWidth = element.strokeWidth;
-      final keepSegments = _splitStrokeByErasePath(
+      // Cheap reject: only strokes near the eraser swath are re-split.
+      if (!_strokeBounds(strokePoints, element.strokeWidth / 2)
+          .overlaps(eraseBounds)) {
+        nextElements.add(element);
+        continue;
+      }
+      final keepSegments = splitStrokeByEraserPath(
         strokePoints: strokePoints,
         erasePath: erasePath,
-        eraseRadius: eraserRadius + (strokeWidth / 2),
+        eraseRadius: eraserRadius + (element.strokeWidth / 2),
       );
+      if (keepSegments.length == 1 &&
+          (identical(keepSegments.first, strokePoints) ||
+              _samePointList(keepSegments.first, strokePoints))) {
+        nextElements.add(element);
+        continue;
+      }
       deletedIds.add(element.id);
-      for (final segment in keepSegments) {
+      for (var index = 0; index < keepSegments.length; index++) {
+        final segment = keepSegments[index];
         if (segment.length < 2) continue;
         final replacement = StrokeElement(
-          id: _uuid.v4(),
-          z: zCounter++,
+          // Deterministic ids keep the live erase idempotent: re-splitting the
+          // same stroke while dragging reuses the same fragments instead of
+          // spawning (and duplicating) new ones on every sample.
+          id: '${element.id}~e$index',
+          // Fragments inherit the source stroke's z, so erasing never lifts a
+          // stroke above shapes it was drawn behind.
+          z: element.z,
           color: element.color,
           strokeWidth: element.strokeWidth,
           opacity: element.opacity,
@@ -2224,18 +2565,28 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         format: event.format,
       );
 
+      var shareOutcome = BoardShareOutcome.dismissed;
       if (event.shareAfterExport) {
-        await _boardExportService.shareBoardFile(
+        shareOutcome = await _boardExportService.shareBoardFile(
           file: file,
           boardTitle: boardTitle,
+          sharePositionOrigin: event.sharePositionOrigin,
         );
       }
 
       final ext = event.format.name.toUpperCase();
       final destination = file.path.contains('Download') ? 'Downloads' : 'device storage';
-      final successMsg = event.shareAfterExport
-          ? 'Board exported as $ext and opened in Share Sheet!'
-          : 'Board saved locally to $destination as $ext!\n${file.path}';
+      final String successMsg;
+      if (!event.shareAfterExport) {
+        successMsg = 'Board saved locally to $destination as $ext!\n${file.path}';
+      } else if (shareOutcome == BoardShareOutcome.shared) {
+        successMsg = 'Board exported as $ext and opened in Share Sheet!';
+      } else if (shareOutcome == BoardShareOutcome.unavailable) {
+        successMsg =
+            'Board saved as $ext, but sharing is not available on this device.\n${file.path}';
+      } else {
+        successMsg = 'Board exported as $ext.\n${file.path}';
+      }
       _activeExportCount = math.max(0, _activeExportCount - 1);
       emit(
         state.copyWith(
@@ -2331,6 +2682,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   // ──────────────────────────────────────────────
 
   void _startCommunicationListeners(String boardId) {
+    if (isClosed) return;
     _commentsSub?.cancel();
     _chatSub?.cancel();
     _voiceParticipantsSub?.cancel();
@@ -2341,9 +2693,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (commentsService != null) {
       _commentsSub = commentsService
           .watchComments(boardId)
-          .listen((comments) {
-        if (!isClosed) add(CanvasCommentsUpdated(comments));
-      });
+          .listen(
+            (comments) {
+              if (!isClosed) add(CanvasCommentsUpdated(comments));
+            },
+            onError: (_) {},
+          );
     }
 
     final chatService = _boardChatService;
@@ -2351,33 +2706,45 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       chatService.connect(boardId);
       _chatSub = chatService
           .watchChatMessages(boardId)
-          .listen((msg) {
-        if (!isClosed) add(CanvasChatMessageReceived(msg));
-      });
+          .listen(
+            (msg) {
+              if (!isClosed) add(CanvasChatMessageReceived(msg));
+            },
+            onError: (_) {},
+          );
       chatService.getChatHistory(boardId).then((history) {
         if (!isClosed && history.isNotEmpty) {
           add(CanvasChatMessagesUpdated(history));
         }
-      });
+      }).catchError((_) {});
     }
 
     final voiceService = _voiceService;
     if (voiceService != null) {
       _voiceParticipantsSub = voiceService
           .watchParticipants(boardId)
-          .listen((participants) {
-        if (!isClosed) add(CanvasVoiceParticipantsUpdated(participants));
-      });
+          .listen(
+            (participants) {
+              if (!isClosed) add(CanvasVoiceParticipantsUpdated(participants));
+            },
+            onError: (_) {},
+          );
       _voiceCallStatusSub = voiceService
           .watchIsInCall()
-          .listen((isInCall) {
-        if (!isClosed) add(CanvasVoiceCallStatusChanged(isInCall));
-      });
+          .listen(
+            (isInCall) {
+              if (!isClosed) add(CanvasVoiceCallStatusChanged(isInCall));
+            },
+            onError: (_) {},
+          );
       _voiceMuteStatusSub = voiceService
           .watchIsMuted()
-          .listen((isMuted) {
-        if (!isClosed) add(CanvasVoiceMuteStatusChanged(isMuted));
-      });
+          .listen(
+            (isMuted) {
+              if (!isClosed) add(CanvasVoiceMuteStatusChanged(isMuted));
+            },
+            onError: (_) {},
+          );
     }
   }
 
@@ -2612,17 +2979,26 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     _pendingPreviewPublishes.clear();
     await _commentsSub?.cancel();
+    _commentsSub = null;
     await _chatSub?.cancel();
+    _chatSub = null;
     await _voiceParticipantsSub?.cancel();
+    _voiceParticipantsSub = null;
     await _voiceCallStatusSub?.cancel();
+    _voiceCallStatusSub = null;
     await _voiceMuteStatusSub?.cancel();
+    _voiceMuteStatusSub = null;
     if (_boardId.isNotEmpty && state.isVoiceCallActive) {
       _voiceService?.leaveCall(_boardId);
     }
     await _boardMetaSub?.cancel();
+    _boardMetaSub = null;
     await _membersSub?.cancel();
+    _membersSub = null;
     await _crdtUpdatesSub?.cancel();
+    _crdtUpdatesSub = null;
     await _previewUpdatesSub?.cancel();
+    _previewUpdatesSub = null;
     await _canvasService?.stopCrdtRemoteSync(_boardId);
     return super.close();
   }
