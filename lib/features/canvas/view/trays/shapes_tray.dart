@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -92,11 +94,17 @@ class ShapesTray extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    item.icon,
-                    size: 22,
-                    color: selected ? tokens.accent : tokens.ink,
-                  ),
+                  if (item.type == CanvasShapeType.semicircle)
+                    SemicircleIcon(
+                      size: 22,
+                      color: selected ? tokens.accent : tokens.ink,
+                    )
+                  else
+                    Icon(
+                      item.icon,
+                      size: 22,
+                      color: selected ? tokens.accent : tokens.ink,
+                    ),
                   const SizedBox(height: 4),
                   Text(
                     item.label,
@@ -111,4 +119,63 @@ class ShapesTray extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A crisp vector icon depicting an upper semicircle with a flat base,
+/// matching Lucide icon geometry and stroke styling.
+class SemicircleIcon extends StatelessWidget {
+  final double size;
+  final Color color;
+
+  const SemicircleIcon({
+    super.key,
+    this.size = 22,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Center(
+        child: CustomPaint(
+          size: Size(size * 0.88, size * 0.48),
+          painter: _SemicircleIconPainter(color: color),
+        ),
+      ),
+    );
+  }
+}
+
+class _SemicircleIconPainter extends CustomPainter {
+  final Color color;
+
+  const _SemicircleIconPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    final w = size.width;
+    final h = size.height;
+    final rect = Rect.fromCenter(
+      center: Offset(w / 2, h),
+      width: w,
+      height: h * 2,
+    );
+    final path = Path()
+      ..arcTo(rect, math.pi, math.pi, false)
+      ..close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _SemicircleIconPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
