@@ -21,6 +21,12 @@ void _grantEditor(CanvasBloc bloc) {
   );
 }
 
+void _grantOwner(CanvasBloc bloc) {
+  bloc.add(
+    const CanvasBoardTitleUpdated(null, currentUserRole: Board.roleOwner),
+  );
+}
+
 void main() {
   group('CanvasBloc — brush / tool settings', () {
     blocTest<CanvasBloc, CanvasState>(
@@ -337,9 +343,9 @@ void main() {
       },
     );
 
-    test('CanvasClearAll empties the elements list', () async {
+    test('CanvasClearAll empties the elements list for owner', () async {
       final bloc = CanvasBloc();
-      _grantEditor(bloc);
+      _grantOwner(bloc);
       await Future<void>.delayed(Duration.zero);
       bloc.add(const CanvasAddShape(CanvasShapeType.circle, Offset(0, 0)));
       await Future<void>.delayed(Duration.zero);
@@ -352,16 +358,42 @@ void main() {
       await bloc.close();
     });
 
+    test('CanvasClearAll rejects editors and preserves elements', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddShape(CanvasShapeType.circle, Offset(0, 0)));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.elements, hasLength(1));
+      bloc.add(const CanvasClearAll());
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.elements, hasLength(1));
+      expect(bloc.state.error, contains('owner'));
+      await bloc.close();
+    });
+
     blocTest<CanvasBloc, CanvasState>(
-      'CanvasClearAll on an empty canvas is a no-op (no error)',
+      'CanvasClearAll rejects viewers and preserves elements',
       build: CanvasBloc.new,
       act: (b) {
-        _grantEditor(b);
+        b.add(const CanvasClearAll());
+      },
+      verify: (b) {
+        expect(b.state.elements, isEmpty);
+        expect(b.state.error, contains('viewer'));
+      },
+    );
+
+    blocTest<CanvasBloc, CanvasState>(
+      'CanvasClearAll on an empty canvas is a no-op for owner',
+      build: CanvasBloc.new,
+      act: (b) {
+        _grantOwner(b);
         b.add(const CanvasClearAll());
       },
       // Only the role-grant emits. The clear itself is a no-op.
       expect: () => [predicate<CanvasState>(
-        (s) => s.currentUserRole == Board.roleEditor,
+        (s) => s.currentUserRole == Board.roleOwner,
       )],
     );
   });
@@ -476,6 +508,59 @@ void main() {
         expect(b.state.isDrawingShape, isFalse);
       },
     );
+
+    blocTest<CanvasBloc, CanvasState>(
+      'CanvasUpdateShapeDraw updates shapeDrawCurrent during active shape drawing',
+      build: CanvasBloc.new,
+      act: (b) {
+        _grantEditor(b);
+        b.add(const CanvasSetToolMode(
+          CanvasToolMode.shape,
+          shapeType: CanvasShapeType.circle,
+        ));
+        b.add(const CanvasStartShapeDraw(Offset(20, 20)));
+        b.add(const CanvasUpdateShapeDraw(Offset(80, 80)));
+      },
+      verify: (b) {
+        expect(b.state.isDrawingShape, isTrue);
+        expect(b.state.shapeDrawStart, const Offset(20, 20));
+        expect(b.state.shapeDrawCurrent, const Offset(80, 80));
+      },
+    );
+
+    test('ShapeGeometry computes correct center, size, and rotation with fixed start anchor', () {
+      final squareGeom = ShapeGeometry.compute(
+        shapeType: CanvasShapeType.square,
+        start: const Offset(10, 10),
+        current: const Offset(70, 90),
+      );
+      expect(squareGeom.center, const Offset(50, 50));
+      expect(squareGeom.size, 80.0);
+      expect(squareGeom.rotation, 0.0);
+      // Start anchor is strictly fixed at (10, 10)
+      expect(squareGeom.center.dx - squareGeom.size / 2, 10.0);
+      expect(squareGeom.center.dy - squareGeom.size / 2, 10.0);
+
+      final reverseSquare = ShapeGeometry.compute(
+        shapeType: CanvasShapeType.square,
+        start: const Offset(100, 100),
+        current: const Offset(20, 40),
+      );
+      expect(reverseSquare.center, const Offset(60, 60));
+      expect(reverseSquare.size, 80.0);
+      // Reverse drag anchor is strictly fixed at (100, 100)
+      expect(reverseSquare.center.dx + reverseSquare.size / 2, 100.0);
+      expect(reverseSquare.center.dy + reverseSquare.size / 2, 100.0);
+
+      final arrowGeom = ShapeGeometry.compute(
+        shapeType: CanvasShapeType.arrow,
+        start: const Offset(0, 0),
+        current: const Offset(100, 0),
+      );
+      expect(arrowGeom.center, const Offset(50, 0));
+      expect(arrowGeom.rotation, 0.0);
+      expect(arrowGeom.size, closeTo(100 / 1.3, 0.01));
+    });
 
     blocTest<CanvasBloc, CanvasState>(
       'promoting a viewer to editor re-enables edits',

@@ -10,7 +10,7 @@ class ToolsTray extends StatelessWidget {
   final bool isOpen;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
-  final VoidCallback onClearAll;
+  final VoidCallback? onClearAll;
   final VoidCallback? onAddStickyNote;
   final VoidCallback? onAddConnector;
   final VoidCallback? onExport;
@@ -21,7 +21,7 @@ class ToolsTray extends StatelessWidget {
     required this.isOpen,
     required this.onUndo,
     required this.onRedo,
-    required this.onClearAll,
+    this.onClearAll,
     this.onAddStickyNote,
     this.onAddConnector,
     this.onExport,
@@ -35,7 +35,7 @@ class ToolsTray extends StatelessWidget {
       isOpen: isOpen,
       direction: TrayDirection.left,
       title: 'Editing Tools',
-      height: 440,
+      height: onClearAll != null ? 440 : 380,
       width: 230,
       bottomOffset: 60,
       onClose: onClose,
@@ -74,13 +74,15 @@ class ToolsTray extends StatelessWidget {
               color: tokens.ink,
               onTap: onRedo,
             ),
-            const SizedBox(height: 10),
-            _ToolButton(
-              icon: LucideIcons.trash2,
-              label: 'Clear All',
-              color: tokens.danger,
-              onTap: onClearAll,
-            ),
+            if (onClearAll != null) ...[
+              const SizedBox(height: 10),
+              _ToolButton(
+                icon: LucideIcons.trash2,
+                label: 'Clear All',
+                color: tokens.danger,
+                onTap: onClearAll!,
+              ),
+            ],
             if (onExport != null) ...[
               const SizedBox(height: 10),
               _ToolButton(

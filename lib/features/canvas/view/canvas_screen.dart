@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -9,8 +11,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:share_plus/share_plus.dart';
+
+import '../../../core/utils/app_snackbar.dart';
 
 import '../../../domain/models/board.dart';
+import '../../../domain/services/canvas/canvas_service.dart';
+import '../../../core/utils/app_error_formatter.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
@@ -22,6 +29,8 @@ import '../../../ui/widgets/ink_dialog.dart';
 import '../../../ui/widgets/ink_text_field.dart';
 import '../../dashboard/bloc/dashboard_bloc.dart';
 import '../../dashboard/view/board_settings_route.dart';
+import '../../dashboard/view/board_edit_requests_screen.dart';
+import '../../notifications/bloc/notifications_bloc.dart';
 import '../bloc/canvas_bloc.dart';
 import '../models/canvas_tool_mode.dart';
 import 'media_editor_screen.dart';
@@ -56,12 +65,13 @@ class CanvasScreen extends StatefulWidget {
   State<CanvasScreen> createState() => _CanvasScreenState();
 }
 
-class _CanvasScreenState extends State<CanvasScreen> {
+class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver {
   final TextEditingController _aiPromptController = TextEditingController();
   final GlobalKey _canvasPreviewKey = GlobalKey();
   bool _savingPreview = false;
   bool _isDraggingShape = false;
   bool _isDraggingStroke = false;
+  bool _isDrawingShape = false;
   List<Offset>? _strokeDragOriginalPoints;
   Offset? _strokeDragDelta;
   Offset _strokeDragStartWorldPoint = Offset.zero;
@@ -70,7 +80,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
   bool _isStrokeEditExpanded = false;
   bool _smoothDoodlesEnabled = false;
   bool _isRotatingShape = false;
+  double _rotationPrevTouchAngle = 0.0;
+  double _rotationCurrentAngle = 0.0;
   bool _isResizingShape = false;
+  Offset _overlayDragStartGlobalPos = Offset.zero;
+  Offset _overlayDragStartCenter = Offset.zero;
+  Offset _resizeStartGlobalPos = Offset.zero;
+  double _resizeStartSize = 64.0;
+  double _resizeStartWidth = 64.0;
+  double _resizeStartHeight = 64.0;
+  double _resizeStartRotation = 0.0;
   String? _rewiringConnectorId;
   bool? _rewireIsStart;
   Offset? _rewireScreenPoint;
@@ -83,7 +102,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Offset _shapeDragStartCenter = Offset.zero;
   Offset _shapeDragStartWorldPoint = Offset.zero;
   Offset? _shapeDragPreviewCenter;
-  double _shapeDragStartRotation = 0.0;
   _ShapeTransformDraft? _shapeTransformDraft;
   double _viewportScale = 1.0;
   Offset _viewportOffset = Offset.zero;
@@ -111,8 +129,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _canvasBloc = context.read<CanvasBloc>();
     _maybeShowTrayTipsOverlay();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycleState) {
+    if (lifecycleState == AppLifecycleState.paused ||
+        lifecycleState == AppLifecycleState.inactive) {
+      _savePreview();
+    }
   }
 
   Future<void> _maybeShowTrayTipsOverlay() async {
@@ -248,7 +275,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   void _deferredResizeSelectedShape(double size) {
-    _pendingShapeEdits['size'] = size;
+    setState(() {
+      _pendingShapeEdits['size'] = size;
+    });
     _canvasBloc.add(
       CanvasPreviewPendingShapeEdits(
         shapeId: _canvasBloc.state.selectedShapeId ?? '',
@@ -259,7 +288,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   void _deferredSetSelectedShapeFill(bool isFilled) {
-    _pendingShapeEdits['isFilled'] = isFilled;
+    setState(() {
+      _pendingShapeEdits['isFilled'] = isFilled;
+    });
     _canvasBloc.add(
       CanvasPreviewPendingShapeEdits(
         shapeId: _canvasBloc.state.selectedShapeId ?? '',
@@ -278,7 +309,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   void _deferredRotateSelectedShape(double rotation) {
-    _pendingShapeEdits['rotation'] = rotation;
+    setState(() {
+      _pendingShapeEdits['rotation'] = rotation;
+    });
     _canvasBloc.add(
       CanvasPreviewPendingShapeEdits(
         shapeId: _canvasBloc.state.selectedShapeId ?? '',
@@ -356,8 +389,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   void _onGenerateImagePlaceholder() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('AI image generation is coming soon.')),
+    AppSnackBar.showMessage(
+      context,
+      'AI image generation is coming soon.',
     );
   }
 
@@ -465,22 +499,26 @@ class _CanvasScreenState extends State<CanvasScreen> {
               ? 'Camera permission was denied.'
               : 'Failed to access camera: ${e.message ?? e.code}';
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          action: isNoCamera
-              ? SnackBarAction(
-                  label: 'Choose Gallery',
-                  onPressed: () => _uploadImageToCanvas(ImageSource.gallery),
-                )
-              : null,
-        ),
+      AppSnackBar.showError(
+        context,
+        message,
+        action: isNoCamera
+            ? SnackBarAction(
+                label: 'Choose Gallery',
+                textColor: Colors.white,
+                onPressed: () => _uploadImageToCanvas(ImageSource.gallery),
+              )
+            : null,
       );
       return;
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to pick image: $e')),
+      AppSnackBar.showError(
+        context,
+        AppErrorFormatter.cleanMessage(
+          e,
+          fallback: 'Failed to pick image. Please try again.',
+        ),
       );
       return;
     }
@@ -649,8 +687,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
       _lastCanvasSize,
     );
     if (fitted == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No canvas content to fit yet.')),
+      AppSnackBar.showMessage(
+        context,
+        'No canvas content to fit yet.',
       );
       return;
     }
@@ -788,8 +827,19 @@ class _CanvasScreenState extends State<CanvasScreen> {
     _canvasBloc.add(const CanvasRedo());
   }
 
-  void _clearAll() {
+  Future<void> _clearAll() async {
+    if (_canvasBloc.state.currentUserRole != Board.roleOwner) return;
+    final confirmed = await showInkConfirmDialog(
+      context,
+      title: 'Clear entire canvas?',
+      message:
+          'This will permanently delete all strokes, shapes, and notes on this board for everyone.',
+      confirmLabel: 'Clear All',
+      destructive: true,
+    );
+    if (!mounted || !confirmed) return;
     _canvasBloc.add(const CanvasClearAll());
+    AppSnackBar.showSuccess(context, 'Canvas cleared.');
   }
 
   Future<void> _addStickyNoteDialog() async {
@@ -1101,36 +1151,67 @@ class _CanvasScreenState extends State<CanvasScreen> {
     _savingPreview = true;
 
     try {
+      Uint8List? bytes;
+
       final boundary =
           _canvasPreviewKey.currentContext?.findRenderObject()
               as RenderRepaintBoundary?;
-      if (boundary == null) return;
 
-      double pixelRatio;
-      switch (widget.boardPreviewQuality) {
-        case 'low':
-          pixelRatio = 0.2;
-          break;
-        case 'high':
-          pixelRatio = 0.5;
-          break;
-        case 'medium':
-        default:
-          pixelRatio = 0.35;
-          break;
+      if (boundary != null) {
+        if (boundary.debugNeedsPaint) {
+          await WidgetsBinding.instance.endOfFrame;
+        }
+
+        double pixelRatio;
+        switch (widget.boardPreviewQuality) {
+          case 'low':
+            pixelRatio = 0.2;
+            break;
+          case 'high':
+            pixelRatio = 0.5;
+            break;
+          case 'medium':
+          default:
+            pixelRatio = 0.35;
+            break;
+        }
+
+        if (!widget.boardPreviewCompressionEnabled) {
+          pixelRatio = (pixelRatio + 0.2).clamp(0.2, 0.8);
+        }
+
+        try {
+          final ui.Image image = await boundary.toImage(pixelRatio: pixelRatio);
+          final byteData =
+              await image.toByteData(format: ui.ImageByteFormat.png);
+          bytes = byteData?.buffer.asUint8List();
+        } catch (e) {
+          developer.log('boundary.toImage error: $e', name: 'CanvasScreen');
+        }
       }
 
-      if (!widget.boardPreviewCompressionEnabled) {
-        pixelRatio = (pixelRatio + 0.2).clamp(0.2, 0.8);
+      // Robust fallback: if boundary capture failed or produced empty bytes,
+      // and canvas elements exist, render offscreen using BoardExportServiceImpl.
+      if ((bytes == null || bytes.isEmpty) &&
+          _canvasBloc.state.elements.isNotEmpty) {
+        try {
+          bytes = await const BoardExportServiceImpl().renderToPng(
+            _canvasBloc.state.elements,
+            scale: 0.5,
+          );
+        } catch (e) {
+          developer.log('Fallback renderToPng error: $e', name: 'CanvasScreen');
+        }
       }
 
-      final ui.Image image = await boundary.toImage(pixelRatio: pixelRatio);
-      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      final bytes = byteData?.buffer.asUint8List();
-      if (bytes == null || bytes.isEmpty) return;
-      _canvasBloc.add(CanvasSaveBoardPreviewRequested(bytes));
-    } catch (_) {
-      // Ignore preview errors and allow navigation to continue.
+      if (bytes != null && bytes.isNotEmpty) {
+        if (mounted) {
+          final canvasService = context.read<CanvasService>();
+          await canvasService.saveBoardPreview(widget.boardId, bytes);
+        }
+      }
+    } catch (e) {
+      developer.log('Failed to save board preview: $e', name: 'CanvasScreen');
     } finally {
       _savingPreview = false;
     }
@@ -1375,87 +1456,83 @@ class _CanvasScreenState extends State<CanvasScreen> {
           if (state.exportSuccessMessage != null) {
             final msg = state.exportSuccessMessage!;
             final path = state.lastExportedFilePath;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(msg),
-                backgroundColor: context.ink.success,
-                duration: const Duration(seconds: 4),
-                action: path != null
-                    ? SnackBarAction(
-                        label: 'Share',
-                        textColor: Colors.white,
-                        onPressed: () {
-                          final format = path.endsWith('.pdf')
-                              ? BoardExportFormat.pdf
-                              : path.endsWith('.svg')
-                                  ? BoardExportFormat.svg
-                                  : BoardExportFormat.png;
-                          context.read<CanvasBloc>().add(
-                            CanvasExportBoardRequested(
-                              format: format,
-                              shareAfterExport: true,
-                              sharePositionOrigin: _shareAnchorRect(),
-                            ),
-                          );
-                        },
-                      )
-                    : null,
-              ),
+            final boardTitle = state.boardTitle ?? 'InkLink Board';
+            AppSnackBar.showSuccess(
+              context,
+              msg,
+              action: path != null
+                  ? SnackBarAction(
+                      label: 'Share',
+                      textColor: Colors.white,
+                      onPressed: () async {
+                        try {
+                          final file = File(path);
+                          if (await file.exists()) {
+                            final mimeType = path.endsWith('.pdf')
+                                ? 'application/pdf'
+                                : path.endsWith('.svg')
+                                    ? 'image/svg+xml'
+                                    : 'image/png';
+                            await SharePlus.instance.share(
+                              ShareParams(
+                                files: [XFile(file.path, mimeType: mimeType)],
+                                subject: boardTitle,
+                                title: boardTitle,
+                              ),
+                            );
+                          }
+                        } catch (e) {
+                          developer.log('Failed to share exported file: $e', name: 'CanvasScreen');
+                        }
+                      },
+                    )
+                  : null,
             );
             context.read<CanvasBloc>().add(const CanvasConsumeExportMessage());
           }
 
           if (state.infoMessage != null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(LucideIcons.checkCircle2, size: 16, color: _tokens.success),
-                    const SizedBox(width: InkSpacing.s8),
-                    Flexible(child: Text(state.infoMessage!)),
-                  ],
-                ),
-                backgroundColor: _tokens.paper,
-                duration: const Duration(seconds: 3),
-              ),
-            );
+            AppSnackBar.showSuccess(context, state.infoMessage!);
             context.read<CanvasBloc>().add(const CanvasConsumeInfoMessage());
           }
 
-          final message = state.error;
-          if (message == null || message.isEmpty) return;
+          final rawError = state.error;
+          if (rawError == null || rawError.isEmpty) return;
+          final message = AppErrorFormatter.cleanMessage(rawError);
 
           final isViewerWarning = message.toLowerCase().contains(
             'you are a viewer',
           );
 
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    isViewerWarning ? LucideIcons.triangleAlert : LucideIcons.ban,
-                    size: 16,
-                    color: isViewerWarning ? _tokens.pending : _tokens.danger,
-                  ),
-                  const SizedBox(width: InkSpacing.s8),
-                  Flexible(child: Text(message)),
-                ],
+          if (isViewerWarning) {
+            AppSnackBar.show(
+              context,
+              SnackBar(
+                content: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      LucideIcons.triangleAlert,
+                      size: 16,
+                      color: _tokens.pending,
+                    ),
+                    const SizedBox(width: InkSpacing.s8),
+                    Flexible(child: Text(message)),
+                  ],
+                ),
+                backgroundColor: _tokens.paper,
+                action: SnackBarAction(
+                  label: 'Request Edit',
+                  textColor: _tokens.accent,
+                  onPressed: () => _showRequestEditDialog(context),
+                ),
+                duration: AppSnackBar.defaultDuration,
               ),
-              action: isViewerWarning
-                  ? SnackBarAction(
-                      label: 'Request Edit',
-                      textColor: _tokens.accent,
-                      onPressed: () => _showRequestEditDialog(context),
-                    )
-                  : null,
-              duration: isViewerWarning
-                  ? const Duration(seconds: 3)
-                  : const Duration(seconds: 4),
-            ),
-          );
+              duration: AppSnackBar.defaultDuration,
+            );
+          } else {
+            AppSnackBar.showError(context, message);
+          }
 
           if (message.contains('no longer available') ||
               message.contains('access lost')) {
@@ -1562,6 +1639,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   return;
                                 }
                                 // Empty canvas drag in arrow mode: start drawing an arrow shape
+                                _isDrawingShape = true;
                                 _canvasBloc.add(CanvasStartShapeDraw(worldPoint));
                                 return;
                               }
@@ -1569,6 +1647,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               // Handle shape drawing mode
                               if (state.currentToolMode == CanvasToolMode.shape &&
                                   state.pendingShapeType != null) {
+                                _isDrawingShape = true;
                                 _canvasBloc.add(CanvasStartShapeDraw(worldPoint));
                                 return;
                               }
@@ -1595,8 +1674,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 _setShapeEditing(true);
                                 _shapeDragStartCenter = hit.center;
                                 _shapeDragStartWorldPoint = worldPoint;
-                                _shapeDragStartRotation =
-                                    state.selectedShapeRotation;
                                 _connectorDragDelta =
                                     hit.kind == _ElementKind.connector
                                     ? Offset.zero
@@ -1635,7 +1712,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               }
 
                               // Handle shape drawing update
-                              if (state.isDrawingShape) {
+                              if (_isDrawingShape || state.isDrawingShape) {
                                 final worldPoint = _toWorld(
                                   details.localFocalPoint,
                                 );
@@ -1662,22 +1739,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               }
 
                               if (_isDraggingShape) {
-                                var dragDelta =
+                                final dragDelta =
                                     worldPoint - _shapeDragStartWorldPoint;
-                                // Unrotate dragDelta to convert from shape's rotated frame
-                                // back to screen frame
-                                if (_shapeDragStartRotation != 0.0) {
-                                  final cos = math.cos(
-                                    -_shapeDragStartRotation,
-                                  );
-                                  final sin = math.sin(
-                                    -_shapeDragStartRotation,
-                                  );
-                                  dragDelta = Offset(
-                                    dragDelta.dx * cos - dragDelta.dy * sin,
-                                    dragDelta.dx * sin + dragDelta.dy * cos,
-                                  );
-                                }
                                 final nextCenter =
                                     _shapeDragStartCenter + dragDelta;
                                 setState(() {
@@ -1704,7 +1767,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               }
 
                               // End shape drawing
-                              if (state.isDrawingShape) {
+                              if (_isDrawingShape || state.isDrawingShape) {
+                                _isDrawingShape = false;
                                 _canvasBloc.add(const CanvasEndShapeDraw());
                                 return;
                               }
@@ -1736,12 +1800,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                 _connectorDragDelta = null;
                                 _shapeDragStartCenter = Offset.zero;
                                 _shapeDragStartWorldPoint = Offset.zero;
-                                _shapeDragStartRotation = 0.0;
                                 _setShapeEditing(false);
                                 return;
                               }
                               if (_isRotatingShape || _isResizingShape) {
                                 _isRotatingShape = false;
+                                _rotationPrevTouchAngle = 0.0;
+                                _rotationCurrentAngle = 0.0;
                                 _isResizingShape = false;
                                 _setShapeEditing(false);
                                 return;
@@ -1987,7 +2052,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 width: e.width,
                 height: e.height,
                 imageBase64: e.imageBase64,
-                data: e.toMap(),
+                data: const {},
               ),
             StickyNoteElement e => _CanvasElement.stickyNote(
                 id: e.id,
@@ -1998,7 +2063,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 text: e.text,
                 color: e.color,
                 rotation: e.rotation,
-                data: e.toMap(),
+                data: {'rotation': e.rotation},
               ),
             ConnectorElement e => _CanvasElement.connector(
                 id: e.id,
@@ -2013,7 +2078,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 color: e.color,
                 strokeWidth: e.strokeWidth,
                 hasArrowhead: e.hasArrowhead,
-                data: e.toMap(),
+                data: const {},
               ),
           };
         })
@@ -2940,7 +3005,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     activeColor: _tokens.accent,
                     dense: true,
                     contentPadding: EdgeInsets.zero,
-                    value: state.selectedShapeIsFilled,
+                    value: (_pendingShapeEdits['isFilled'] as bool?) ??
+                        state.selectedShapeIsFilled,
                     title: const Text('Filled', style: TextStyle(fontSize: 13)),
                     onChanged: (v) {
                       HapticFeedback.lightImpact();
@@ -2959,15 +3025,31 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     onChanged: _deferredResizeSelectedShape,
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    'Rotation ${(state.selectedShapeRotation * 180 / math.pi).toStringAsFixed(0)}°',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  Slider(
-                    value: state.selectedShapeRotation,
-                    min: 0,
-                    max: math.pi * 2,
-                    onChanged: _deferredRotateSelectedShape,
+                  Builder(
+                    builder: (context) {
+                      final rawRotation =
+                          (_pendingShapeEdits['rotation'] as num?)
+                              ?.toDouble() ??
+                          state.selectedShapeRotation;
+                      final effectiveRotation =
+                          (rawRotation % (math.pi * 2) + (math.pi * 2)) %
+                          (math.pi * 2);
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Rotation ${(effectiveRotation * 180 / math.pi).toStringAsFixed(0)}°',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          Slider(
+                            value: effectiveRotation.clamp(0.0, math.pi * 2),
+                            min: 0,
+                            max: math.pi * 2,
+                            onChanged: _deferredRotateSelectedShape,
+                          ),
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -3041,6 +3123,20 @@ class _CanvasScreenState extends State<CanvasScreen> {
         ),
       ),
     );
+  }
+
+  Offset _getShapeCenterGlobal(_CanvasElement shape) {
+    final centerLocal = _toScreen(shape.center);
+    final canvasBox =
+        _canvasPreviewKey.currentContext?.findRenderObject() as RenderBox?;
+    if (canvasBox != null && canvasBox.hasSize) {
+      return canvasBox.localToGlobal(centerLocal);
+    }
+    final rootBox = context.findRenderObject() as RenderBox?;
+    if (rootBox != null && rootBox.hasSize) {
+      return rootBox.localToGlobal(centerLocal);
+    }
+    return centerLocal;
   }
 
   Widget _buildShapeTransformOverlay(
@@ -3132,8 +3228,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     height: screenH,
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onPanStart: (_) {
+                      onPanStart: (details) {
                         _setShapeEditing(true);
+                        _overlayDragStartGlobalPos = details.globalPosition;
+                        _overlayDragStartCenter = shape.center;
                         _shapeTransformDraft ??= _ShapeTransformDraft(
                           shapeId: shape.id,
                           center: shape.center,
@@ -3158,9 +3256,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
                                   (shape.data['rotation'] as num?)?.toDouble() ??
                                   state.selectedShapeRotation,
                             );
+                        final globalDelta =
+                            details.globalPosition - _overlayDragStartGlobalPos;
                         final nextCenter = Offset(
-                          draft.center.dx + (details.delta.dx / _viewportScale),
-                          draft.center.dy + (details.delta.dy / _viewportScale),
+                          _overlayDragStartCenter.dx +
+                              (globalDelta.dx / _viewportScale),
+                          _overlayDragStartCenter.dy +
+                              (globalDelta.dy / _viewportScale),
                         );
                         setState(() {
                           _shapeTransformDraft = draft.copyWith(center: nextCenter);
@@ -3195,6 +3297,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           }
                         }
                         _shapeTransformDraft = null;
+                        _overlayDragStartGlobalPos = Offset.zero;
+                        _overlayDragStartCenter = Offset.zero;
+                        _setShapeEditing(false);
+                      },
+                      onPanCancel: () {
+                        _shapeTransformDraft = null;
+                        _overlayDragStartGlobalPos = Offset.zero;
+                        _overlayDragStartCenter = Offset.zero;
                         _setShapeEditing(false);
                       },
                       child: Container(
@@ -3217,12 +3327,102 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       top: 2,
                       left: 16 + (screenW / 2) - 14,
                       child: GestureDetector(
-                      onPanStart: (_) {
+                        onPanStart: (details) {
+                          _setShapeEditing(true);
+                          _isRotatingShape = true;
+                          final baseRotation =
+                              (shape.data['rotation'] as num?)?.toDouble() ??
+                              state.selectedShapeRotation;
+                          _shapeTransformDraft = _ShapeTransformDraft(
+                            shapeId: shape.id,
+                            center: shape.center,
+                            size: shape.size,
+                            width: rawW,
+                            height: rawH,
+                            rotation: baseRotation,
+                          );
+                          final centerGlobal = _getShapeCenterGlobal(shape);
+                          final touchVector =
+                              details.globalPosition - centerGlobal;
+                          if (touchVector.distanceSquared > 1e-4) {
+                            _rotationPrevTouchAngle = math.atan2(
+                              touchVector.dy,
+                              touchVector.dx,
+                            );
+                          } else {
+                            _rotationPrevTouchAngle = 0.0;
+                          }
+                          _rotationCurrentAngle = baseRotation;
+                        },
+                        onPanUpdate: (details) {
+                          final draft = _shapeTransformDraft;
+                          if (draft == null || draft.shapeId != shape.id) return;
+                          final centerGlobal = _getShapeCenterGlobal(shape);
+                          final touchVector =
+                              details.globalPosition - centerGlobal;
+                          if (touchVector.distanceSquared < 1e-4) return;
+                          final currentTouchAngle = math.atan2(
+                            touchVector.dy,
+                            touchVector.dx,
+                          );
+                          var angleDiff =
+                              currentTouchAngle - _rotationPrevTouchAngle;
+                          while (angleDiff > math.pi) {
+                            angleDiff -= 2 * math.pi;
+                          }
+                          while (angleDiff < -math.pi) {
+                            angleDiff += 2 * math.pi;
+                          }
+                          _rotationPrevTouchAngle = currentTouchAngle;
+                          _rotationCurrentAngle += angleDiff;
+                          setState(() {
+                            _shapeTransformDraft = draft.copyWith(
+                              rotation: _rotationCurrentAngle,
+                            );
+                          });
+                          _canvasBloc.add(
+                            CanvasPreviewRotateSelectedShape(
+                              _rotationCurrentAngle,
+                            ),
+                          );
+                        },
+                        onPanEnd: (_) {
+                          final draft = _shapeTransformDraft;
+                          if (draft != null && draft.shapeId == shape.id) {
+                            _rotateSelectedShape(draft.rotation);
+                          }
+                          _shapeTransformDraft = null;
+                          _isRotatingShape = false;
+                          _rotationPrevTouchAngle = 0.0;
+                          _rotationCurrentAngle = 0.0;
+                          _setShapeEditing(false);
+                        },
+                        onPanCancel: () {
+                          _shapeTransformDraft = null;
+                          _isRotatingShape = false;
+                          _rotationPrevTouchAngle = 0.0;
+                          _rotationCurrentAngle = 0.0;
+                          _setShapeEditing(false);
+                        },
+                        child: _buildHandle(LucideIcons.rotateCw),
+                      ),
+                    ),
+                  // Resize handle (bottom right)
+                  Positioned(
+                    bottom: 2,
+                    right: 2,
+                    child: GestureDetector(
+                      onPanStart: (details) {
                         _setShapeEditing(true);
-                        _isRotatingShape = true;
+                        _isResizingShape = true;
                         final baseRotation =
                             (shape.data['rotation'] as num?)?.toDouble() ??
                             state.selectedShapeRotation;
+                        _resizeStartGlobalPos = details.globalPosition;
+                        _resizeStartSize = shape.size;
+                        _resizeStartWidth = rawW;
+                        _resizeStartHeight = rawH;
+                        _resizeStartRotation = baseRotation;
                         _shapeTransformDraft = _ShapeTransformDraft(
                           shapeId: shape.id,
                           center: shape.center,
@@ -3235,62 +3435,25 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       onPanUpdate: (details) {
                         final draft = _shapeTransformDraft;
                         if (draft == null || draft.shapeId != shape.id) return;
-                        final delta = details.delta.dx + details.delta.dy;
-                        setState(() {
-                          _shapeTransformDraft = draft.copyWith(
-                            rotation: draft.rotation + (delta / 140),
-                          );
-                        });
-                        _canvasBloc.add(
-                          CanvasPreviewRotateSelectedShape(
-                            draft.rotation + (delta / 140),
-                          ),
-                        );
-                      },
-                      onPanEnd: (_) {
-                        final draft = _shapeTransformDraft;
-                        if (draft != null && draft.shapeId == shape.id) {
-                          _rotateSelectedShape(draft.rotation);
-                        }
-                        _shapeTransformDraft = null;
-                        _isRotatingShape = false;
-                        _setShapeEditing(false);
-                      },
-                      child: _buildHandle(LucideIcons.rotateCw),
-                    ),
-                  ),
-                  // Resize handle (bottom right)
-                  Positioned(
-                    bottom: 2,
-                    right: 2,
-                    child: GestureDetector(
-                      onPanStart: (_) {
-                        _setShapeEditing(true);
-                        _isResizingShape = true;
-                        _shapeTransformDraft = _ShapeTransformDraft(
-                          shapeId: shape.id,
-                          center: shape.center,
-                          size: shape.size,
-                          width: rawW,
-                          height: rawH,
-                          rotation:
-                              (shape.data['rotation'] as num?)?.toDouble() ??
-                              state.selectedShapeRotation,
-                        );
-                      },
-                      onPanUpdate: (details) {
-                        final draft = _shapeTransformDraft;
-                        if (draft == null || draft.shapeId != shape.id) return;
-                        final delta = details.delta.dx + details.delta.dy;
-                        final nextSize = (draft.size + delta / _viewportScale * 1.8)
-                            .clamp(32.0, 480.0)
+                        final worldDelta =
+                            (details.globalPosition - _resizeStartGlobalPos) /
+                            _viewportScale;
+                        final cosA = math.cos(-_resizeStartRotation);
+                        final sinA = math.sin(-_resizeStartRotation);
+                        final localDx =
+                            worldDelta.dx * cosA - worldDelta.dy * sinA;
+                        final localDy =
+                            worldDelta.dx * sinA + worldDelta.dy * cosA;
+                        final sizeDelta = (localDx + localDy) * 1.2;
+                        final nextSize = (_resizeStartSize + sizeDelta)
+                            .clamp(24.0, 320.0)
                             .toDouble();
                         final minDim = shape.kind == _ElementKind.image ? 80.0 : 40.0;
                         final maxDim = shape.kind == _ElementKind.image ? 720.0 : 480.0;
-                        final nextW = ((draft.width ?? draft.size) + details.delta.dx / _viewportScale * 1.8)
+                        final nextW = (_resizeStartWidth + localDx * 1.8)
                             .clamp(minDim, maxDim)
                             .toDouble();
-                        final nextH = ((draft.height ?? draft.size) + details.delta.dy / _viewportScale * 1.8)
+                        final nextH = (_resizeStartHeight + localDy * 1.8)
                             .clamp(minDim, maxDim)
                             .toDouble();
                         setState(() {
@@ -3331,6 +3494,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         }
                         _shapeTransformDraft = null;
                         _isResizingShape = false;
+                        _resizeStartGlobalPos = Offset.zero;
+                        _setShapeEditing(false);
+                      },
+                      onPanCancel: () {
+                        _shapeTransformDraft = null;
+                        _isResizingShape = false;
+                        _resizeStartGlobalPos = Offset.zero;
                         _setShapeEditing(false);
                       },
                       child: _buildHandle(LucideIcons.maximize2),
@@ -3446,7 +3616,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
           isOpen: state.activeTray == 'tools',
           onUndo: _undo,
           onRedo: _redo,
-          onClearAll: _clearAll,
+          onClearAll:
+              state.currentUserRole == Board.roleOwner ? _clearAll : null,
           onAddStickyNote: _addStickyNoteDialog,
           onAddConnector: _addConnectorDialog,
           onExport: () => _showExportOptionsSheet(context),
@@ -3494,6 +3665,28 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Widget _buildTopPills(CanvasState state, String title) {
     final tokens = _tokens;
     final topInset = MediaQuery.of(context).padding.top + 8;
+    final notifState = context.watch<NotificationsBloc>().state;
+    final int pendingRequestsCount;
+    if (state.currentUserRole == Board.roleOwner &&
+        notifState is NotificationsLoaded) {
+      pendingRequestsCount = notifState.notifications.where((n) {
+        final type = n['type']?.toString();
+        final status = n['status']?.toString();
+        final extraData = n['extraData'] is Map
+            ? (n['extraData'] as Map).cast<String, dynamic>()
+            : <String, dynamic>{};
+        final bId =
+            extraData['boardId']?.toString() ?? n['targetId']?.toString();
+        final reqType = extraData['requestType']?.toString() ??
+            (type == 'board_edit_request' ? 'edit' : 'join');
+        return (type == 'board_edit_request' ||
+                (type == 'board_access_request' && reqType == 'edit')) &&
+            status == 'pending' &&
+            bId == widget.boardId;
+      }).length;
+    } else {
+      pendingRequestsCount = 0;
+    }
 
     return Positioned(
       top: topInset,
@@ -3518,12 +3711,30 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onTap: () => _openSettings(state.boardTitle ?? 'Board'),
-                        child: Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          softWrap: false,
-                          style: InkType.title(tokens.ink),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                                style: InkType.title(tokens.ink),
+                              ),
+                            ),
+                            if (pendingRequestsCount > 0) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: tokens.accent,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                     ),
@@ -3563,9 +3774,35 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       ),
                     ),
                   PopupMenuButton<String>(
-                    icon: Icon(LucideIcons.ellipsis, color: tokens.ink, size: 18),
-                    onSelected: (value) {
-                      if (value == 'settings') {
+                    tooltip: 'More options',
+                    icon: pendingRequestsCount > 0
+                        ? Badge(
+                            label: Text('$pendingRequestsCount'),
+                            backgroundColor: tokens.accent,
+                            textColor: Colors.white,
+                            child: Icon(
+                              LucideIcons.ellipsis,
+                              color: tokens.ink,
+                              size: 18,
+                            ),
+                          )
+                        : Icon(
+                            LucideIcons.ellipsis,
+                            color: tokens.ink,
+                            size: 18,
+                          ),
+                    onSelected: (value) async {
+                      if (value == 'requests') {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => BoardEditRequestsScreen(
+                              boardId: widget.boardId,
+                              boardTitle: state.boardTitle ?? 'Board',
+                            ),
+                          ),
+                        );
+                      } else if (value == 'settings') {
                         _openSettings(state.boardTitle ?? 'Board');
                       } else if (value == 'request_edit') {
                         _showRequestEditDialog(context);
@@ -3583,35 +3820,49 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         Clipboard.setData(
                           ClipboardData(text: widget.boardId),
                         );
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Join Code copied to clipboard!'),
-                          ),
+                        AppSnackBar.showSuccess(
+                          context,
+                          'Join Code copied to clipboard!',
                         );
                       } else if (value == 'toggle_gesture_lock') {
                         setState(() {
                           _preventGestureBack = !_preventGestureBack;
                         });
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(_preventGestureBack
-                                ? 'Gesture back locked (exit via back button).'
-                                : 'Gesture back unlocked.'),
-                            duration: const Duration(seconds: 2),
-                          ),
+                        AppSnackBar.showMessage(
+                          context,
+                          _preventGestureBack
+                              ? 'Gesture back locked (exit via back button).'
+                              : 'Gesture back unlocked.',
                         );
                       } else if (value == 'toggle_edge_buttons') {
                         setState(() {
                           _showEdgeTrayButtons = !_showEdgeTrayButtons;
                         });
                       } else if (value == 'exit') {
-                        _exitCanvas();
+                        await _exitCanvas();
                       }
                     },
                     itemBuilder: (context) => [
+                      if (state.currentUserRole == Board.roleOwner &&
+                          pendingRequestsCount > 0)
+                        PopupMenuItem(
+                          value: 'requests',
+                          child: _menuRow(
+                            LucideIcons.userCheck,
+                            'Edit Requests ($pendingRequestsCount)',
+                            tokens.accent,
+                          ),
+                        ),
                       PopupMenuItem(
                         value: 'settings',
-                        child: _menuRow(LucideIcons.slidersHorizontal, 'Board Settings', tokens.ink),
+                        child: _menuRow(
+                          LucideIcons.slidersHorizontal,
+                          (state.currentUserRole == Board.roleOwner &&
+                                  pendingRequestsCount > 0)
+                              ? 'Board Settings ($pendingRequestsCount)'
+                              : 'Board Settings',
+                          tokens.ink,
+                        ),
                       ),
                       if (state.currentUserRole == Board.roleViewer)
                         PopupMenuItem(
@@ -4150,6 +4401,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _shapeEditDebounceTimer?.cancel();
     for (final img in _decodedUiImages.values) {
       img.dispose();

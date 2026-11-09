@@ -794,55 +794,34 @@ class _CanvasPainter extends CustomPainter {
   }
 
   void _paintShapeDrawPreview(Canvas canvas, Offset start, Offset current) {
-    if (pendingShapeType == CanvasShapeType.arrow) {
-      final linePaint = Paint()
-        ..color = accentColor
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.5
-        ..strokeCap = StrokeCap.round;
-      canvas.drawLine(start, current, linePaint);
-      final angle = math.atan2(current.dy - start.dy, current.dx - start.dx);
-      const headLen = 16.0;
-      final arrowPath = Path()
-        ..moveTo(current.dx, current.dy)
-        ..lineTo(
-          current.dx - headLen * math.cos(angle - 0.45),
-          current.dy - headLen * math.sin(angle - 0.45),
-        )
-        ..lineTo(
-          current.dx - headLen * math.cos(angle + 0.45),
-          current.dy - headLen * math.sin(angle + 0.45),
-        )
-        ..close();
-      final fillPaint = Paint()
-        ..color = accentColor
-        ..style = PaintingStyle.fill;
-      canvas.drawPath(arrowPath, fillPaint);
-      return;
-    }
+    final shapeType = pendingShapeType;
+    if (shapeType == null) return;
 
-    final rect = Rect.fromPoints(start, current);
-    final dashPaint = Paint()
-      ..color = accentColor.withValues(alpha: 0.6)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawRect(rect, dashPaint);
+    final dx = (current.dx - start.dx).abs();
+    final dy = (current.dy - start.dy).abs();
+    if (dx < 2 && dy < 2) return;
 
-    // Draw size label near the center
-    final size = math.max((current.dx - start.dx).abs(), (current.dy - start.dy).abs());
-    final sizeText = TextSpan(
-      text: size.toStringAsFixed(0),
-      style: TextStyle(
-        color: accentColor,
-        fontSize: 11,
-        fontWeight: FontWeight.w500,
-      ),
+    final geom = ShapeGeometry.compute(
+      shapeType: shapeType,
+      start: start,
+      current: current,
     );
-    final tp = TextPainter(
-      text: sizeText,
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, Offset(rect.center.dx - tp.width / 2, rect.bottom + 4));
+
+    // Live shape preview with chosen color and stroke width
+    final previewElement = _CanvasElement.shape(
+      id: '__preview_shape__',
+      shapeType: shapeType,
+      center: geom.center,
+      size: geom.size,
+      color: currentColor,
+      strokeWidth: currentStrokeWidth > 0 ? currentStrokeWidth : 3.0,
+      isFilled: false,
+      data: {
+        'rotation': geom.rotation,
+        'borderRadius': 0.0,
+      },
+    );
+    _paintShape(canvas, previewElement);
   }
 
   void _paintText(Canvas canvas, _CanvasElement element) {
@@ -1165,6 +1144,7 @@ class _CanvasPainter extends CustomPainter {
         oldDelegate.isDrawingShape != isDrawingShape ||
         oldDelegate.shapeDrawStart != shapeDrawStart ||
         oldDelegate.shapeDrawCurrent != shapeDrawCurrent ||
+        oldDelegate.pendingShapeType != pendingShapeType ||
         oldDelegate.arrowConnectStartElementId != arrowConnectStartElementId ||
         !_erasureCursorsEqual(
           oldDelegate.remoteEraserCursors,
