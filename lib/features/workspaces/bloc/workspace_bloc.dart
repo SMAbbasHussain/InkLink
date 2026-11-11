@@ -7,6 +7,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../domain/models/board.dart';
 import '../../../domain/models/workspace.dart';
 import '../../../domain/services/workspace/workspace_service.dart';
+import '../../../core/utils/app_error_formatter.dart';
 
 abstract class WorkspaceEvent {}
 
@@ -358,7 +359,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       emit(_emptyLoaded());
     } catch (e) {
       emit(
-        _emptyLoaded().copyWith(actionError: 'Failed to load workspaces: $e'),
+        _emptyLoaded().copyWith(actionError: 'Failed to load workspaces: ${AppErrorFormatter.cleanMessage(e)}'),
       );
     }
   }
@@ -513,7 +514,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to create workspace: $e'));
+        emit(current.copyWith(actionError: 'Failed to create workspace: ${AppErrorFormatter.cleanMessage(e)}'));
       }
     }
   }
@@ -540,7 +541,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to update workspace: $e'));
+        emit(current.copyWith(actionError: 'Failed to update workspace: ${AppErrorFormatter.cleanMessage(e)}'));
       }
     }
   }
@@ -584,7 +585,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to delete workspace: $e'));
+        emit(current.copyWith(actionError: 'Failed to delete workspace: ${AppErrorFormatter.cleanMessage(e)}'));
       }
     }
   }
@@ -635,7 +636,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
         emit(
           updated.copyWith(
             invitingUserIds: nextInviting,
-            actionError: 'Failed to send invitations: $e',
+            actionError: 'Failed to send invitations: ${AppErrorFormatter.cleanMessage(e)}',
           ),
         );
       }
@@ -669,7 +670,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to leave workspace: $e'));
+        emit(current.copyWith(actionError: 'Failed to leave workspace: ${AppErrorFormatter.cleanMessage(e)}'));
       }
     }
   }
@@ -695,7 +696,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to remove member: $e'));
+        emit(current.copyWith(actionError: 'Failed to remove member: ${AppErrorFormatter.cleanMessage(e)}'));
       }
     }
   }
@@ -737,7 +738,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       if (current is WorkspaceLoaded) {
         emit(
           current.copyWith(
-            actionError: 'Failed to join workspace: $e',
+            actionError: 'Failed to join workspace: ${AppErrorFormatter.cleanMessage(e)}',
           ),
         );
       }
@@ -896,7 +897,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to add board: $e'));
+        emit(current.copyWith(actionError: 'Failed to add board: ${AppErrorFormatter.cleanMessage(e)}'));
       }
     }
   }
@@ -927,7 +928,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to create board: $e'));
+        emit(current.copyWith(actionError: 'Failed to create board: ${AppErrorFormatter.cleanMessage(e)}'));
       }
     }
   }
@@ -956,7 +957,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to remove board: $e'));
+        emit(current.copyWith(actionError: 'Failed to remove board: ${AppErrorFormatter.cleanMessage(e)}'));
       }
     }
   }
@@ -986,7 +987,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to move board: $e'));
+        emit(current.copyWith(actionError: 'Failed to move board: ${AppErrorFormatter.cleanMessage(e)}'));
       }
     }
   }
@@ -1059,10 +1060,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     required String action,
     required Object error,
   }) {
-    if (error is FirebaseFunctionsException) {
-      return 'Failed to $action invite (${error.code}): ${error.message ?? 'Unknown Cloud Function error'}';
-    }
-    return 'Failed to $action invite: $error';
+    return 'Failed to $action invite: ${AppErrorFormatter.cleanMessage(error)}';
   }
 
   void _logWorkspaceInviteError({

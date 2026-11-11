@@ -3,6 +3,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_bloc.dart';
 import 'package:inklink/features/auth/bloc/auth_state.dart';
 import '../../../../domain/services/chat/chat_service.dart';
+import '../../../../core/utils/app_error_formatter.dart';
+import '../../../../core/utils/app_snackbar.dart';
 import '../../../friends/bloc/friends_bloc.dart';
 import '../../theme/chat_theme.dart';
 
@@ -29,8 +31,9 @@ class _CreateGroupSheetState extends State<CreateGroupSheet> {
   Future<void> _handleCreateGroup() async {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a group name')),
+      AppSnackBar.showMessage(
+        context,
+        'Please enter a group name',
       );
       return;
     }
@@ -49,8 +52,9 @@ class _CreateGroupSheetState extends State<CreateGroupSheet> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to create group: $e')),
+        AppSnackBar.showMessage(
+          context,
+          'Failed to create group: ${AppErrorFormatter.cleanMessage(e, fallback: 'Please check your connection.')}',
         );
       }
     } finally {

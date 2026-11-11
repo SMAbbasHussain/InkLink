@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
+const { publishBoardEvent } = require('../utils/redis');
 
 const ROLE_EDITOR = 'editor';
 const ROLE_VIEWER = 'viewer';
@@ -34,7 +35,7 @@ module.exports = async (request) => {
     const firestore = admin.firestore();
     const boardRef = firestore.collection(FirestorePaths.BOARDS).doc(boardId.trim());
 
-    return await firestore.runTransaction(async (transaction) => {
+    const result = await firestore.runTransaction(async (transaction) => {
       const boardDoc = await transaction.get(boardRef);
       if (!boardDoc.exists) {
         throw new HttpsError('not-found', 'Board not found.');
@@ -78,6 +79,17 @@ module.exports = async (request) => {
         role: newRole,
       };
     });
+
+    if (result.success) {
+      publishBoardEvent({
+        type: 'role_updated',
+        boardId: result.boardId,
+        uid: result.targetUid,
+        role: result.role,
+      }).catch(() => {});
+    }
+
+    return result;
   } catch (error) {
     if (error instanceof HttpsError) throw error;
     logger.error('updateBoardMemberRole failed', error);

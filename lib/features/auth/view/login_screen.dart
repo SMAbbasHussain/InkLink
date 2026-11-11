@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../core/utils/app_error_formatter.dart';
 import '../../../core/utils/helpers.dart'; // FIX: Import validation helpers
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
@@ -50,17 +51,11 @@ class _LoginScreenState extends State<LoginScreen> {
         listener: (context, state) {
           // AppView handles the authenticated → MainWrapper transition declaratively
           if (state is AuthError) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(LucideIcons.ban, size: 16, color: tokens.danger),
-                    const SizedBox(width: InkSpacing.s8),
-                    Flexible(child: Text(state.message)),
-                  ],
-                ),
-              ),
+            final details = AppErrorFormatter.format(state.message);
+            showInkErrorDialog(
+              context,
+              title: details.title,
+              message: details.message,
             );
           } else if (state is PasswordResetSent) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -212,17 +207,20 @@ class _LoginScreenState extends State<LoginScreen> {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
-    // FIX: Added comprehensive validation with helpful error messages
     if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Please enter email and password")),
+      showInkErrorDialog(
+        context,
+        title: 'Missing Credentials',
+        message: 'Please enter both your email address and password to log in.',
       );
       return;
     }
 
     if (!isValidEmail(email)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please enter a valid email address")),
+      showInkErrorDialog(
+        context,
+        title: 'Invalid Email Address',
+        message: 'Please enter a valid email address (e.g., name@example.com).',
       );
       return;
     }
@@ -325,11 +323,11 @@ class _LoginScreenState extends State<LoginScreen> {
               onPressed: () {
                 final email = resetEmailController.text.trim();
                 if (email.isEmpty || !isValidEmail(email)) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text("Please enter a valid email address"),
-                      backgroundColor: context.ink.danger,
-                    ),
+                  showInkErrorDialog(
+                    dialogContext,
+                    title: 'Invalid Email Address',
+                    message:
+                        'Please enter a valid email address to receive password reset instructions.',
                   );
                   return;
                 }

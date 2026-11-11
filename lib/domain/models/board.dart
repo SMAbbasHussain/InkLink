@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 DateTime _parseDate(dynamic value) {
   if (value == null) return DateTime.now();
   if (value is DateTime) return value;
@@ -68,9 +70,10 @@ class Board {
     final invitePolicy = map['invitePolicy'] as Map<String, dynamic>?;
     final membersList = List<String>.from(map['members'] ?? []);
     final rawCount = map['membersCount'] ?? map['memberCount'];
-    final membersCount = rawCount is int
+    final parsedCount = rawCount is int
         ? rawCount
-        : (rawCount is num ? rawCount.toInt() : membersList.length);
+        : (rawCount is num ? rawCount.toInt() : 0);
+    final membersCount = math.max(parsedCount, membersList.length);
 
     return Board(
       id: id,

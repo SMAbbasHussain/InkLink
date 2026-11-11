@@ -10,6 +10,7 @@ import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
 import '../../../ui/widgets/glass_panel.dart';
 import '../../../ui/widgets/ink_button.dart';
+import '../../../core/utils/app_snackbar.dart';
 
 class MediaEditorScreen extends StatefulWidget {
   final Uint8List imageBytes;
@@ -39,9 +40,10 @@ class _MediaEditorScreenState extends State<MediaEditorScreen> {
     final decoded = img.decodeImage(_workingImageBytes);
     if (decoded == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
+      AppSnackBar.showMessage(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Could not decode image.')));
+        'Could not decode image.',
+      );
       return;
     }
 
@@ -79,8 +81,9 @@ class _MediaEditorScreenState extends State<MediaEditorScreen> {
       final decoded = img.decodeImage(_workingImageBytes);
       if (decoded == null) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not decode image.')),
+        AppSnackBar.showMessage(
+          context,
+          'Could not decode image.',
         );
         return;
       }
@@ -111,8 +114,9 @@ class _MediaEditorScreenState extends State<MediaEditorScreen> {
         _workingImageBytes = bytes;
         _backgroundWasRemoved = true;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Background removal applied.')),
+      AppSnackBar.showMessage(
+        context,
+        'Background removal applied.',
       );
     } finally {
       if (mounted) {

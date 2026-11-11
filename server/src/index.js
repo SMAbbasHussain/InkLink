@@ -230,19 +230,23 @@ let redisAvailable = false;
 // RATE LIMITING
 // ============================================================
 const RATE_LIMIT_WINDOW_MS = 1000;
-const RATE_LIMIT_MAX_EVENTS = 30;
+const RATE_LIMIT_MAX_EVENTS = 120;
+const RATE_LIMIT_MAX_PREVIEWS = 120;
 const socketEventCounts = new Map();
+const socketPreviewCounts = new Map();
 
-function isRateLimited(socketId) {
+function isRateLimited(socketId, isPreview = false) {
   const now = Date.now();
-  const entry = socketEventCounts.get(socketId) || { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+  const map = isPreview ? socketPreviewCounts : socketEventCounts;
+  const maxEvents = isPreview ? RATE_LIMIT_MAX_PREVIEWS : RATE_LIMIT_MAX_EVENTS;
+  const entry = map.get(socketId) || { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
   if (now > entry.resetAt) {
     entry.count = 0;
     entry.resetAt = now + RATE_LIMIT_WINDOW_MS;
   }
   entry.count++;
-  socketEventCounts.set(socketId, entry);
-  return entry.count > RATE_LIMIT_MAX_EVENTS;
+  map.set(socketId, entry);
+  return entry.count > maxEvents;
 }
 
 setInterval(() => {
@@ -250,6 +254,11 @@ setInterval(() => {
   for (const [sid, entry] of socketEventCounts.entries()) {
     if (now > entry.resetAt + RATE_LIMIT_WINDOW_MS) {
       socketEventCounts.delete(sid);
+    }
+  }
+  for (const [sid, entry] of socketPreviewCounts.entries()) {
+    if (now > entry.resetAt + RATE_LIMIT_WINDOW_MS) {
+      socketPreviewCounts.delete(sid);
     }
   }
 }, 30000);
@@ -325,15 +334,58 @@ redisSub.on('error', (error) => {
   console.warn('⚠ Redis subscriber error:', error.message);
 });
 
+// ============================================================
+// IN-MEMORY ACCESS & SEED CACHES (Hot-Path Optimization)
+// ============================================================
+// 10 minutes cache TTL: Invalidation is handled in real-time via Redis Pub/Sub
+// (`board_events` channel), so longer TTL is completely safe and avoids hitting
+// Redis or Firestore when users pause or resume edits.
+const ACCESS_CACHE_TTL_MS = 10 * 60 * 1000;
+const EDITORS_REDIS_TTL_SEC = 600; // 10 minutes for Redis board_editors set
+const boardAccessCache = new Map(); // key: `${boardId}:${uid}` -> { canView, canEdit, expiresAt }
+const seededBoards = new Set();
+
+function setCachedBoardAccess(boardId, uid, canView, canEdit) {
+  boardAccessCache.set(`${boardId}:${uid}`, {
+    canView: Boolean(canView),
+    canEdit: Boolean(canEdit),
+    expiresAt: Date.now() + ACCESS_CACHE_TTL_MS,
+  });
+}
+
+function invalidateCachedBoardAccess(boardId, uid = null) {
+  if (uid) {
+    boardAccessCache.delete(`${boardId}:${uid}`);
+    return;
+  }
+  const prefix = `${boardId}:`;
+  for (const key of boardAccessCache.keys()) {
+    if (key.startsWith(prefix)) {
+      boardAccessCache.delete(key);
+    }
+  }
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of boardAccessCache.entries()) {
+    if (now > entry.expiresAt) {
+      boardAccessCache.delete(key);
+    }
+  }
+}, 30000);
+
 redisSub.on('message', async (channel, message) => {
   if (channel === 'board_events') {
     try {
       const data = JSON.parse(message);
       if (data.type === 'member_removed' && data.boardId && data.uid) {
+        invalidateCachedBoardAccess(data.boardId, data.uid);
         // Prune the server-side membership cache immediately so a removed
         // user can't keep socket-level access until the cache TTL expires.
         if (redisAvailable) {
           redis.srem(`board_members:${data.boardId}`, data.uid).catch(() => { });
+          redis.srem(`board_editors:${data.boardId}`, data.uid).catch(() => { });
         }
         const sockets = await io.in(`board_room:${data.boardId}`).fetchSockets();
         for (const s of sockets) {
@@ -343,9 +395,21 @@ redisSub.on('message', async (channel, message) => {
             console.log(`[board_events] Evicted user ${data.uid} from board_room:${data.boardId}`);
           }
         }
-      } else if (data.type === 'board_deleted' && data.boardId) {
+      } else if (data.type === 'role_updated' && data.boardId && data.uid) {
+        invalidateCachedBoardAccess(data.boardId, data.uid);
         if (redisAvailable) {
-          redis.del(`board_members:${data.boardId}`).catch(() => { });
+          if (data.role === 'editor' || data.role === 'owner') {
+            redis.sadd(`board_editors:${data.boardId}`, data.uid).catch(() => { });
+            redis.sadd(`board_members:${data.boardId}`, data.uid).catch(() => { });
+          } else {
+            redis.srem(`board_editors:${data.boardId}`, data.uid).catch(() => { });
+          }
+        }
+      } else if (data.type === 'board_deleted' && data.boardId) {
+        invalidateCachedBoardAccess(data.boardId);
+        seededBoards.delete(data.boardId);
+        if (redisAvailable) {
+          redis.del(`board_members:${data.boardId}`, `board_editors:${data.boardId}`).catch(() => { });
         }
         io.to(`board_room:${data.boardId}`).emit('board_access_revoked', { boardId: data.boardId, reason: 'deleted' });
         io.socketsLeave(`board_room:${data.boardId}`);
@@ -363,11 +427,35 @@ redisSub.on('message', async (channel, message) => {
 async function canUserAccessBoard(boardId, uid, requireEdit = false) {
   if (!uid || !boardId) return false;
 
+  const cacheKey = `${boardId}:${uid}`;
+  const cached = boardAccessCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    if (requireEdit && cached.canEdit !== undefined) {
+      return cached.canEdit;
+    }
+    if (!requireEdit && cached.canView) {
+      return true;
+    }
+  }
+
   try {
     if (redisAvailable) {
-      const isMember = await redis.sismember(`board_members:${boardId}`, uid);
-      if (isMember && !requireEdit) {
-        return true;
+      if (requireEdit) {
+        const isEditor = await redis.sismember(`board_editors:${boardId}`, uid);
+        if (isEditor) {
+          setCachedBoardAccess(boardId, uid, true, true);
+          return true;
+        }
+      } else {
+        const isMember = await redis.sismember(`board_members:${boardId}`, uid);
+        if (isMember) {
+          boardAccessCache.set(cacheKey, {
+            canView: true,
+            canEdit: cached?.canEdit,
+            expiresAt: Date.now() + ACCESS_CACHE_TTL_MS,
+          });
+          return true;
+        }
       }
     }
 
@@ -377,28 +465,37 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
       const data = boardDoc.data() || {};
 
       if (data.ownerId === uid) {
+        setCachedBoardAccess(boardId, uid, true, true);
         if (redisAvailable) {
           const p = redis.pipeline();
           p.sadd(`board_members:${boardId}`, uid);
           p.expire(`board_members:${boardId}`, 86400);
-          await p.exec().catch(() => { });
+          p.sadd(`board_editors:${boardId}`, uid);
+          p.expire(`board_editors:${boardId}`, EDITORS_REDIS_TTL_SEC);
+          p.exec().catch(() => { });
         }
         return true;
       }
 
       // Allow read-only access for public boards
       if (data.visibility === 'public' && !requireEdit) {
+        boardAccessCache.set(cacheKey, {
+          canView: true,
+          canEdit: cached?.canEdit,
+          expiresAt: Date.now() + ACCESS_CACHE_TTL_MS,
+        });
         if (redisAvailable) {
           const p = redis.pipeline();
           p.sadd(`board_members:${boardId}`, uid);
           p.expire(`board_members:${boardId}`, 86400);
-          await p.exec().catch(() => { });
+          p.exec().catch(() => { });
         }
         return true;
       }
 
       const members = Array.isArray(data.members) ? data.members : [];
       if (!members.includes(uid)) {
+        setCachedBoardAccess(boardId, uid, false, false);
         return false;
       }
 
@@ -407,15 +504,33 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
           .collection('members').doc(uid).get();
         if (memberDoc.exists) {
           const role = memberDoc.data()?.role;
-          if (role === 'viewer') return false;
+          if (role === 'viewer') {
+            setCachedBoardAccess(boardId, uid, true, false);
+            return false;
+          }
         }
+        setCachedBoardAccess(boardId, uid, true, true);
+        if (redisAvailable) {
+          const p = redis.pipeline();
+          p.sadd(`board_members:${boardId}`, uid);
+          p.expire(`board_members:${boardId}`, 86400);
+          p.sadd(`board_editors:${boardId}`, uid);
+          p.expire(`board_editors:${boardId}`, EDITORS_REDIS_TTL_SEC);
+          p.exec().catch(() => { });
+        }
+        return true;
       }
 
+      boardAccessCache.set(cacheKey, {
+        canView: true,
+        canEdit: cached?.canEdit,
+        expiresAt: Date.now() + ACCESS_CACHE_TTL_MS,
+      });
       if (redisAvailable) {
         const p = redis.pipeline();
         p.sadd(`board_members:${boardId}`, uid);
         p.expire(`board_members:${boardId}`, 86400);
-        await p.exec().catch(() => { });
+        p.exec().catch(() => { });
       }
       return true;
     }
@@ -777,9 +892,13 @@ function parseStreamEntry(fields) {
 // ============================================================
 async function seedRedisFromFirestore(boardId) {
   if (!redisAvailable || !db) return;
+  if (seededBoards.has(boardId)) return;
   const versionKey = `board:${boardId}:version`;
   const exists = await redis.exists(versionKey);
-  if (exists) return;
+  if (exists) {
+    seededBoards.add(boardId);
+    return;
+  }
 
   try {
     const snap = await db.collection('boards').doc(boardId)
@@ -799,6 +918,7 @@ async function seedRedisFromFirestore(boardId) {
     } else {
       await redis.set(versionKey, '0', 'EX', 604800);
     }
+    seededBoards.add(boardId);
   } catch (e) {
     console.warn(`[seed] Failed to seed board ${boardId}: ${e.message}`);
   }
@@ -1051,6 +1171,9 @@ io.on('connection', (socket) => {
 
     socket.join(`board_room:${boardId}`);
     socket.data.currentBoardId = boardId;
+    // Warm up seed status and edit permission cache asynchronously on join
+    seedRedisFromFirestore(boardId).catch(() => { });
+    canUserAccessBoard(boardId, uid, true).catch(() => { });
     console.log(`[watch_board] User ${uid} joined board ${boardId} (socket: ${socket.id})`);
     if (typeof callback === 'function') callback({ status: 'success', boardId });
   });
@@ -1220,7 +1343,7 @@ io.on('connection', (socket) => {
   // crdt_preview — EPHEMERAL RELAY (unchanged)
   // ----------------------------------------------------------
   socket.on('crdt_preview', async ({ boardId, preview }, ack) => {
-    if (isRateLimited(socket.id)) {
+    if (isRateLimited(socket.id, true)) {
       console.warn(`[crdt_preview] Rate limited ${uid} (socket: ${socket.id})`);
       if (typeof ack === 'function') ack({ status: 'error', message: 'rate_limited' });
       return;
@@ -1232,23 +1355,26 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Access check — previews are relayed into the board room; without this,
-    // any connected socket could spam/deface previews on any board.
-    const hasAccess = await canUserAccessBoard(boardId, uid, false);
+    // Fast path: if socket already joined this board room and hasn't been evicted,
+    // or check cached access without blocking on Redis/Firestore round-trips.
+    const inRoom = socket.rooms.has(`board_room:${boardId}`);
+    const hasAccess = inRoom || await canUserAccessBoard(boardId, uid, false);
     if (!hasAccess) {
       console.warn(`[crdt_preview] Forbidden: User ${uid} cannot access board ${boardId}`);
       if (typeof ack === 'function') ack({ status: 'error', message: 'forbidden' });
       return;
     }
 
-    logWsEvent('PREVIEW RECEIVED', [
-      `[event] crdt_preview`,
-      `[direction] client -> server`,
-      `[user] ${uid}`,
-      `[board] ${boardId}`,
-      `[previewId] ${preview?.previewId ?? 'n/a'}`,
-      `[elementId] ${preview?.elementId ?? 'n/a'}`,
-    ]);
+    if (process.env.VERBOSE_WS_LOGS === 'true') {
+      logWsEvent('PREVIEW RECEIVED', [
+        `[event] crdt_preview`,
+        `[direction] client -> server`,
+        `[user] ${uid}`,
+        `[board] ${boardId}`,
+        `[previewId] ${preview?.previewId ?? 'n/a'}`,
+        `[elementId] ${preview?.elementId ?? 'n/a'}`,
+      ]);
+    }
 
     socket.to(`board_room:${boardId}`).emit('crdt_preview', { boardId, preview });
 
@@ -1726,6 +1852,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', async () => {
     console.log(`[WS DISCONNECT] user=${uid} socket=${socket.id}`);
     socketEventCounts.delete(socket.id);
+    socketPreviewCounts.delete(socket.id);
     const voiceBoardId = socket.data.currentVoiceBoardId;
     if (voiceBoardId) {
       try {

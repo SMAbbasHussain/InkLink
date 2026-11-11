@@ -6,6 +6,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:inklink/features/friends/view/widgets/friend_request_banner.dart';
 import 'package:inklink/features/friends/view/widgets/friend_presence_avatar.dart';
 import 'package:inklink/features/friends/view/widgets/add_friend_sheet.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
@@ -48,18 +49,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
     return BlocListener<FriendsBloc, FriendsState>(
       listener: (context, state) {
         if (state is FriendsError) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(LucideIcons.ban, size: 16, color: tokens.danger),
-                  const SizedBox(width: InkSpacing.s8),
-                  Flexible(child: Text(state.message)),
-                ],
-              ),
-            ),
-          );
+          AppSnackBar.showError(context, state.message);
         }
       },
       child: Scaffold(

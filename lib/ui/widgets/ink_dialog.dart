@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../theme/ink_theme.dart';
 import '../theme/ink_tokens.dart';
@@ -108,4 +109,34 @@ Future<bool> showInkConfirmDialog(
     ),
   );
   return result ?? false;
+}
+
+/// Shows a glass error dialog with an alert icon, user-friendly title, and
+/// clear actionable message.
+Future<void> showInkErrorDialog(
+  BuildContext context, {
+  required String title,
+  required String message,
+  String buttonLabel = 'Okay',
+}) async {
+  final tokens = context.ink;
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => InkDialog(
+      title: title,
+      icon: LucideIcons.circleAlert,
+      content: Text(
+        message,
+        style: InkType.body(tokens.inkSecondary),
+      ),
+      actions: [
+        InkButton.primary(
+          label: buttonLabel,
+          expand: false,
+          compact: true,
+          onPressed: () => Navigator.pop(ctx),
+        ),
+      ],
+    ),
+  );
 }

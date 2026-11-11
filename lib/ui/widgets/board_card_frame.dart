@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../theme/ink_theme.dart';
 import '../theme/ink_tokens.dart';
@@ -17,6 +18,8 @@ class BoardCardFrame extends StatelessWidget {
   final String caption;
   final VoidCallback onTap;
   final Widget? menuButton;
+  final int pendingRequestsCount;
+  final VoidCallback? onPendingRequestsTap;
 
   const BoardCardFrame({
     super.key,
@@ -25,6 +28,8 @@ class BoardCardFrame extends StatelessWidget {
     required this.caption,
     required this.onTap,
     this.menuButton,
+    this.pendingRequestsCount = 0,
+    this.onPendingRequestsTap,
   });
 
   bool get _hasPreview =>
@@ -72,28 +77,12 @@ class BoardCardFrame extends StatelessWidget {
                     File(previewPath!),
                     fit: BoxFit.cover,
                     gaplessPlayback: true,
+                    errorBuilder: (context, error, stackTrace) =>
+                        _buildPlaceholder(isDark),
                   ),
                 )
               else
-                Positioned(
-                  top: (132 - 44) / 2,
-                  left: 0,
-                  right: 0,
-                  height: 44,
-                  child: Center(
-                    child: SizedBox(
-                      width: 80,
-                      height: 44,
-                      child: CustomPaint(
-                        painter: _SquigglePainter(
-                          color: isDark
-                              ? const Color(0xFF4B4F59)
-                              : const Color(0xFFC4C4CC),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+                _buildPlaceholder(isDark),
               Positioned(
                 left: 6,
                 right: 6,
@@ -105,7 +94,76 @@ class BoardCardFrame extends StatelessWidget {
                   menuButton: menuButton,
                 ),
               ),
+              if (pendingRequestsCount > 0)
+                Positioned(
+                  top: 10,
+                  left: 10,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onPendingRequestsTap,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: tokens.accent,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: tokens.accent.withValues(alpha: 0.35),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            LucideIcons.userCheck,
+                            size: 12,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            pendingRequestsCount > 9
+                                ? '9+'
+                                : '$pendingRequestsCount',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder(bool isDark) {
+    return Positioned(
+      top: (132 - 44) / 2,
+      left: 0,
+      right: 0,
+      height: 44,
+      child: Center(
+        child: SizedBox(
+          width: 80,
+          height: 44,
+          child: CustomPaint(
+            painter: _SquigglePainter(
+              color: isDark
+                  ? const Color(0xFF4B4F59)
+                  : const Color(0xFFC4C4CC),
+            ),
           ),
         ),
       ),

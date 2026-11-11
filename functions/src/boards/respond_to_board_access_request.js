@@ -3,6 +3,7 @@ const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
 const { sendUserNotification } = require('../utils/notification_sender');
+const { addBoardMember, publishBoardEvent } = require('../utils/redis');
 
 const ROLE_EDITOR = 'editor';
 const ROLE_VIEWER = 'viewer';
@@ -97,6 +98,7 @@ module.exports = async (request) => {
 
         // Avoid incrementing the member count when the requester is already a member
         if (!isAlreadyActiveMember) {
+          boardUpdates.membersCount = admin.firestore.FieldValue.increment(1);
           boardUpdates[FirestorePaths.MEMBER_COUNT] =
             admin.firestore.FieldValue.increment(1);
         }
@@ -150,6 +152,10 @@ module.exports = async (request) => {
               uid: cleanRequesterUid,
               role: ROLE_EDITOR,
               status: 'active',
+              joinedAt:
+                memberData && memberData.joinedAt
+                  ? memberData.joinedAt
+                  : admin.firestore.FieldValue.serverTimestamp(),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             },
             { merge: true },
@@ -164,6 +170,17 @@ module.exports = async (request) => {
             },
             { merge: true },
           );
+
+          if (!isAlreadyActiveMember) {
+            transaction.set(
+              requesterRef,
+              {
+                [FirestorePaths.BOARD_COUNT]:
+                  admin.firestore.FieldValue.increment(1),
+              },
+              { merge: true },
+            );
+          }
         }
 
         // Mark owner notification as accepted if notificationId is provided
@@ -190,6 +207,13 @@ module.exports = async (request) => {
 
     // Notify requester after transaction commits
     if (result.action === 'accepted') {
+      addBoardMember(cleanBoardId, cleanRequesterUid).catch(() => {});
+      publishBoardEvent({
+        type: 'role_updated',
+        boardId: cleanBoardId,
+        uid: cleanRequesterUid,
+        role: cleanType === 'edit' ? ROLE_EDITOR : ROLE_VIEWER,
+      }).catch(() => {});
       await sendUserNotification({
         recipientUid: cleanRequesterUid,
         title:

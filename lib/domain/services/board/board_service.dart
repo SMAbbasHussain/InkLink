@@ -60,6 +60,7 @@ abstract class BoardService {
     String role,
   );
   Future<void> removeBoardMember(String boardId, String targetUid);
+  Future<void> leaveBoard(String boardId);
   Future<SendBoardInviteResult> sendBoardInvite({
     required String boardId,
     required String boardTitle,
@@ -318,6 +319,16 @@ class BoardServiceImpl implements BoardService {
       'boardId': boardId.trim(),
       'targetUid': targetUid.trim(),
     });
+  }
+
+  @override
+  Future<void> leaveBoard(String boardId) async {
+    final uid = _boardRepository.currentUserId;
+    if (uid == null || uid.isEmpty) {
+      throw Exception('User not authenticated.');
+    }
+    await removeBoardMember(boardId, uid);
+    await _boardRepository.removeBoardSync(boardId.trim());
   }
 
   @override

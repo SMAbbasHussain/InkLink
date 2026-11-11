@@ -14,6 +14,7 @@ import '../../theme/bloc/theme_bloc.dart';
 import '../../dashboard/bloc/dashboard_bloc.dart';
 import '../../dashboard/view/create_board_route.dart';
 import '../../dashboard/view/board_settings_route.dart';
+import '../../dashboard/view/board_edit_requests_screen.dart';
 import '../../dashboard/view/public_board_discovery_route.dart';
 import '../../dashboard/view/widgets/board_card.dart';
 import '../../../ui/theme/ink_colors.dart';
@@ -23,6 +24,7 @@ import '../../../ui/theme/ink_type.dart';
 import '../../../ui/widgets/command_bar.dart';
 import '../../../ui/widgets/desk_background.dart';
 import '../../../ui/widgets/empty_state.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../../../ui/widgets/glass_panel.dart';
 import '../../../ui/widgets/ink_logo.dart';
 import '../../../ui/widgets/ink_dialog.dart';
@@ -157,29 +159,21 @@ class _HomeScreenState extends State<HomeScreen>
           listener: (context, state) async {
             if (state is! DashboardLoaded) return;
             final dashboardBloc = this.context.read<DashboardBloc>();
-            final scaffoldMessenger = ScaffoldMessenger.of(this.context);
             final navigator = Navigator.of(this.context);
 
             if (state.actionError != null) {
-              scaffoldMessenger.showSnackBar(
-                SnackBar(
-                  content: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(LucideIcons.ban, size: 16, color: tokens.danger),
-                      const SizedBox(width: InkSpacing.s8),
-                      Flexible(child: Text(state.actionError!)),
-                    ],
-                  ),
-                ),
+              AppSnackBar.showError(
+                this.context,
+                state.actionError!,
               );
               dashboardBloc.add(DashboardConsumeEffects());
               return;
             }
 
             if (state.actionInfo != null) {
-              scaffoldMessenger.showSnackBar(
-                SnackBar(content: Text(state.actionInfo!)),
+              AppSnackBar.showSuccess(
+                this.context,
+                state.actionInfo!,
               );
             }
 
@@ -575,6 +569,26 @@ class _HomeScreenState extends State<HomeScreen>
         );
       }
 
+      final notifState = context.watch<NotificationsBloc>().state;
+      int getPendingEditRequestsCount(String boardId) {
+        if (notifState is! NotificationsLoaded) return 0;
+        return notifState.notifications.where((n) {
+          final type = n['type']?.toString();
+          final status = n['status']?.toString();
+          final extraData = n['extraData'] is Map
+              ? (n['extraData'] as Map).cast<String, dynamic>()
+              : <String, dynamic>{};
+          final bId =
+              extraData['boardId']?.toString() ?? n['targetId']?.toString();
+          final reqType = extraData['requestType']?.toString() ??
+              (type == 'board_edit_request' ? 'edit' : 'join');
+          return (type == 'board_edit_request' ||
+                  (type == 'board_access_request' && reqType == 'edit')) &&
+              status == 'pending' &&
+              bId == boardId;
+        }).length;
+      }
+
       return GridView.builder(
         physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
         padding: const EdgeInsets.fromLTRB(16, 24, 16, 160),
@@ -588,26 +602,54 @@ class _HomeScreenState extends State<HomeScreen>
         itemBuilder: (context, index) {
           final board = displayedBoards[index];
           final isBoardOwner = board.ownerId == currentUserId;
+          final pendingRequests =
+              isBoardOwner ? getPendingEditRequestsCount(board.id) : 0;
 
           return BoardCard(
             board: board,
             isOwner: isBoardOwner,
+            pendingRequestsCount: pendingRequests,
+            onOpenRequests: isBoardOwner
+                ? () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => BoardEditRequestsScreen(
+                          boardId: board.id,
+                          boardTitle: board.title,
+                        ),
+                      ),
+                    );
+                  }
+                : null,
             onDelete: (id) => context.read<DashboardBloc>().add(
               DashboardDeleteBoardRequested(id),
             ),
+            onLeave: !isBoardOwner
+                ? (id) async {
+                    final confirmed = await showInkConfirmDialog(
+                      context,
+                      title: 'Leave Board',
+                      message:
+                          'Are you sure you want to leave "${board.title}"? You will need to be re-invited or join again to access it.',
+                      confirmLabel: 'Leave',
+                      destructive: true,
+                    );
+                    if (confirmed == true && context.mounted) {
+                      context.read<DashboardBloc>().add(DashboardLeaveBoardRequested(id));
+                    }
+                  }
+                : null,
             onDuplicate: (isBoardOwner || board.allowMembersToCopy)
                 ? () {
                     context.read<DashboardBloc>().add(
                       DashboardDuplicateBoardRequested(board.id),
                     );
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          isBoardOwner
-                              ? 'Board duplicate created!'
-                              : 'Board copy created!',
-                        ),
-                      ),
+                    AppSnackBar.showSuccess(
+                      context,
+                      isBoardOwner
+                          ? 'Board duplicate created!'
+                          : 'Board copy created!',
                     );
                   }
                 : null,
@@ -615,26 +657,26 @@ class _HomeScreenState extends State<HomeScreen>
               context.read<DashboardBloc>().add(
                 DashboardArchiveBoardRequested(board.id),
               );
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Board moved to archive.')),
+              AppSnackBar.showSuccess(
+                context,
+                'Board moved to archive.',
               );
             },
             onUnarchive: () {
               context.read<DashboardBloc>().add(
                 DashboardUnarchiveBoardRequested(board.id),
               );
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Board unarchived.')),
+              AppSnackBar.showSuccess(
+                context,
+                'Board unarchived.',
               );
             },
-            onOpenSettings: isBoardOwner
-                ? () {
-                    Navigator.push(
-                      context,
-                      buildBoardSettingsRoute(context, board: board),
-                    );
-                  }
-                : null,
+            onOpenSettings: () {
+              Navigator.push(
+                context,
+                buildBoardSettingsRoute(context, board: board),
+              );
+            },
           );
         },
       );

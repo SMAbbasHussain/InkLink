@@ -17,6 +17,7 @@ import '../../../ui/widgets/ink_initials.dart';
 import '../../../ui/widgets/ink_text_field.dart';
 import '../../../ui/widgets/paper_card.dart';
 import '../../../ui/widgets/status_chip.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../../profile/view/profile_route.dart';
 import '../bloc/workspace_bloc.dart';
@@ -63,8 +64,9 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
     final name = _nameController.text.trim();
     final description = _descriptionController.text.trim();
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Workspace name is required.')),
+      AppSnackBar.showMessage(
+        context,
+        'Workspace name is required.',
       );
       return;
     }
@@ -384,15 +386,17 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
           if (state is! WorkspaceLoaded) return;
 
           if (state.actionError != null && state.actionError!.isNotEmpty) {
-            ScaffoldMessenger.of(
+            AppSnackBar.showMessage(
               context,
-            ).showSnackBar(SnackBar(content: Text(state.actionError!)));
+              state.actionError!,
+            );
           }
 
           if (state.actionInfo != null && state.actionInfo!.isNotEmpty) {
-            ScaffoldMessenger.of(
+            AppSnackBar.showMessage(
               context,
-            ).showSnackBar(SnackBar(content: Text(state.actionInfo!)));
+              state.actionInfo!,
+            );
           }
 
           if (_isSaving &&

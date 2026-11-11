@@ -15,6 +15,7 @@ import '../../../ui/widgets/ink_button.dart';
 import '../../../ui/widgets/ink_dialog.dart';
 import '../../../ui/widgets/ink_text_field.dart';
 import '../../canvas/view/canvas_route.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../bloc/workspace_bloc.dart';
 import 'workspace_settings_screen.dart';
 
@@ -162,10 +163,9 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
     ].where((w) => w.id != currentWorkspaceId).toList();
 
     if (otherWorkspaces.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No other workspaces available to move this board to.'),
-        ),
+      AppSnackBar.showMessage(
+        context,
+        'No other workspaces available to move this board to.',
       );
       return;
     }
@@ -197,8 +197,9 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
                       boardId: board.id,
                     ),
                   );
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Board moved to "${target.name}".')),
+                  AppSnackBar.showMessage(
+                    context,
+                    'Board moved to "${target.name}".',
                   );
                 },
               );
@@ -425,8 +426,9 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
             onPressed: () {
               final title = titleController.text.trim();
               if (title.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Board title is required')),
+                AppSnackBar.showMessage(
+                  context,
+                  'Board title is required',
                 );
                 return;
               }

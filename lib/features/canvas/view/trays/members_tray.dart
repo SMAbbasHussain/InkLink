@@ -11,6 +11,8 @@ import '../../../../ui/widgets/ink_button.dart';
 import '../../../../ui/widgets/ink_dialog.dart';
 import '../../../../ui/widgets/ink_initials.dart';
 import '../../../../ui/widgets/ink_text_field.dart';
+import '../../../dashboard/view/board_edit_requests_screen.dart';
+import '../../../notifications/bloc/notifications_bloc.dart';
 import '../../bloc/canvas_bloc.dart';
 import '../widgets/sliding_tray.dart';
 
@@ -194,10 +196,19 @@ class _MembersTrayState extends State<MembersTray> {
                         ),
                       ),
                       TextButton(
-                        onPressed: () {
-                          context
-                              .read<CanvasBloc>()
-                              .add(const CanvasRequestEditAccess());
+                        onPressed: () async {
+                          final confirmed = await showInkConfirmDialog(
+                            context,
+                            title: 'Request Edit Access?',
+                            message:
+                                'Send a request to the board owner to grant you editor access?',
+                            confirmLabel: 'Send Request',
+                          );
+                          if (confirmed && context.mounted) {
+                            context
+                                .read<CanvasBloc>()
+                                .add(const CanvasRequestEditAccess());
+                          }
                         },
                         style: TextButton.styleFrom(
                           padding: const EdgeInsets.symmetric(
@@ -216,6 +227,87 @@ class _MembersTrayState extends State<MembersTray> {
                     ],
                   ),
                 ),
+
+              Builder(
+                builder: (context) {
+                  if (state.currentUserRole != Board.roleOwner) {
+                    return const SizedBox.shrink();
+                  }
+                  final notifState = context.watch<NotificationsBloc>().state;
+                  final boardId = context.read<CanvasBloc>().boardId;
+                  final pendingCount = (notifState is NotificationsLoaded)
+                      ? notifState.notifications.where((n) {
+                          final type = n['type']?.toString();
+                          final status = n['status']?.toString();
+                          final extraData = n['extraData'] is Map
+                              ? (n['extraData'] as Map).cast<String, dynamic>()
+                              : <String, dynamic>{};
+                          final bId = extraData['boardId']?.toString() ??
+                              n['targetId']?.toString();
+                          final reqType = extraData['requestType']?.toString() ??
+                              (type == 'board_edit_request' ? 'edit' : 'join');
+                          return (type == 'board_edit_request' ||
+                                  (type == 'board_access_request' &&
+                                      reqType == 'edit')) &&
+                              status == 'pending' &&
+                              bId == boardId;
+                        }).length
+                      : 0;
+
+                  if (pendingCount == 0) return const SizedBox.shrink();
+
+                  return Container(
+                    margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: tokens.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border:
+                          Border.all(color: tokens.accent.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(LucideIcons.userCheck,
+                            size: 14, color: tokens.accent),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '$pendingCount pending edit request${pendingCount == 1 ? '' : 's'}',
+                            style: InkType.caption(tokens.ink),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => BoardEditRequestsScreen(
+                                  boardId: boardId,
+                                  boardTitle: state.boardTitle,
+                                ),
+                              ),
+                            );
+                          },
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: Text(
+                            'Review',
+                            style: InkType.caption(tokens.accent)
+                                .copyWith(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
 
               /// Members list grouped by role
               Expanded(

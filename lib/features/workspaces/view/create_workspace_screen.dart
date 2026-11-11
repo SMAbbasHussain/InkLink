@@ -9,6 +9,7 @@ import '../../../ui/theme/ink_type.dart';
 import '../../../ui/widgets/ink_button.dart';
 import '../../../ui/widgets/ink_text_field.dart';
 import '../../../ui/widgets/paper_card.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../bloc/workspace_bloc.dart';
 
 class CreateWorkspaceScreen extends StatefulWidget {
@@ -45,8 +46,9 @@ class _CreateWorkspaceScreenState extends State<CreateWorkspaceScreen> {
     final description = _descriptionController.text.trim();
 
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Workspace name is required')),
+      AppSnackBar.showMessage(
+        context,
+        'Workspace name is required',
       );
       return;
     }

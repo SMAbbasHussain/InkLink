@@ -16,6 +16,7 @@ import 'widgets/workspace_card.dart';
 import 'create_workspace_route.dart';
 import 'workspace_detail_route.dart';
 import 'workspace_invites_screen.dart';
+import '../../../core/utils/app_snackbar.dart';
 
 class WorkspacesScreen extends StatefulWidget {
   const WorkspacesScreen({super.key});
@@ -143,7 +144,8 @@ class _WorkspacesScreenState extends State<WorkspacesScreen>
       listener: (context, state) {
         if (state is WorkspaceLoaded) {
           if (state.actionError != null) {
-            ScaffoldMessenger.of(context).showSnackBar(
+            AppSnackBar.show(
+              context,
               SnackBar(
                 content: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -156,8 +158,9 @@ class _WorkspacesScreenState extends State<WorkspacesScreen>
               ),
             );
           } else if (state.actionInfo != null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(state.actionInfo!)),
+            AppSnackBar.showMessage(
+              context,
+              state.actionInfo!,
             );
           }
         }

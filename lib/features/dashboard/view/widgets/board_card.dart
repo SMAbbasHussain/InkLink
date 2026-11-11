@@ -6,25 +6,32 @@ import '../../../canvas/view/canvas_route.dart';
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_type.dart';
 import '../../../../ui/widgets/board_card_frame.dart';
+import '../../../../core/utils/app_snackbar.dart';
 
 class BoardCard extends StatelessWidget {
   final Board board;
   final bool isOwner;
   final Function(String) onDelete;
+  final Function(String)? onLeave;
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onOpenRequests;
   final VoidCallback? onDuplicate;
   final VoidCallback? onArchive;
   final VoidCallback? onUnarchive;
+  final int pendingRequestsCount;
 
   const BoardCard({
     super.key,
     required this.board,
     required this.isOwner,
     required this.onDelete,
+    this.onLeave,
     this.onOpenSettings,
+    this.onOpenRequests,
     this.onDuplicate,
     this.onArchive,
     this.onUnarchive,
+    this.pendingRequestsCount = 0,
   });
 
   @override
@@ -39,21 +46,25 @@ class BoardCard extends StatelessWidget {
       previewPath: board.previewPath,
       title: board.title,
       caption: captionText,
-      onTap: () {
+      pendingRequestsCount: isOwner ? pendingRequestsCount : 0,
+      onPendingRequestsTap: isOwner ? onOpenRequests : null,
+      onTap: () async {
         HapticFeedback.lightImpact();
-        Navigator.push(context, buildCanvasRoute(context, boardId: board.id));
+        await Navigator.push(context, buildCanvasRoute(context, boardId: board.id));
       },
       menuButton: PopupMenuButton<String>(
         tooltip: 'Board options',
         icon: Icon(LucideIcons.ellipsisVertical, size: 18, color: tokens.ink),
         onSelected: (value) {
-          if (value == 'copy') {
+          if (value == 'requests') {
+            HapticFeedback.lightImpact();
+            onOpenRequests?.call();
+          } else if (value == 'copy') {
             HapticFeedback.mediumImpact();
             Clipboard.setData(ClipboardData(text: board.id));
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Join Code (Board ID) copied to clipboard!'),
-              ),
+            AppSnackBar.showMessage(
+              context,
+              'Join Code (Board ID) copied to clipboard!',
             );
           } else if (value == 'duplicate') {
             HapticFeedback.lightImpact();
@@ -67,15 +78,33 @@ class BoardCard extends StatelessWidget {
           } else if (value == 'delete') {
             HapticFeedback.mediumImpact();
             onDelete(board.id);
+          } else if (value == 'leave') {
+            HapticFeedback.mediumImpact();
+            onLeave?.call(board.id);
           } else if (value == 'settings') {
             HapticFeedback.lightImpact();
             onOpenSettings?.call();
           }
         },
         itemBuilder: (context) => [
+          if (isOwner && pendingRequestsCount > 0)
+            PopupMenuItem(
+              value: 'requests',
+              child: _menuRow(
+                LucideIcons.userCheck,
+                'Edit Requests ($pendingRequestsCount)',
+                tokens.accent,
+              ),
+            ),
           PopupMenuItem(
             value: 'settings',
-            child: _menuRow(LucideIcons.slidersHorizontal, 'Settings', tokens.ink),
+            child: _menuRow(
+              LucideIcons.slidersHorizontal,
+              (isOwner && pendingRequestsCount > 0)
+                  ? 'Settings ($pendingRequestsCount)'
+                  : 'Settings',
+              tokens.ink,
+            ),
           ),
           PopupMenuItem(
             value: 'copy',
@@ -104,6 +133,11 @@ class BoardCard extends StatelessWidget {
             PopupMenuItem(
               value: 'delete',
               child: _menuRow(LucideIcons.trash2, 'Delete', tokens.danger),
+            ),
+          if (!isOwner && onLeave != null)
+            PopupMenuItem(
+              value: 'leave',
+              child: _menuRow(LucideIcons.logOut, 'Leave Board', tokens.danger),
             ),
         ],
       ),

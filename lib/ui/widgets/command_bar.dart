@@ -5,7 +5,6 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../theme/ink_theme.dart';
 import '../theme/ink_tokens.dart';
 import '../theme/ink_type.dart';
-import 'glass_panel.dart';
 
 /// The glass command bar with the accent glow, a sparkles icon, a text
 /// field and trailing action slots (e.g. Join Board / New Board).
@@ -32,15 +31,29 @@ class CommandBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final barColor = tokens.isDark ? tokens.paper : Colors.white;
 
-    return GlassPanel(
-      radius: InkRadii.glassBar,
-      accentGlow: true,
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+    return Container(
+      decoration: BoxDecoration(
+        color: barColor,
+        borderRadius: BorderRadius.circular(InkRadii.glassBar),
+        border: Border.all(
+          color: tokens.glassStroke,
+          width: 1,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            offset: Offset(0, 8),
+            blurRadius: 24,
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       child: Row(
         children: [
-          const SizedBox(width: 8),
-          Icon(LucideIcons.sparkles, size: 18, color: tokens.accent),
+          const SizedBox(width: 4),
+          Icon(LucideIcons.search, size: 18, color: tokens.inkSecondary),
           const SizedBox(width: 10),
           Expanded(
             child: TextField(
@@ -51,9 +64,15 @@ class CommandBar extends StatelessWidget {
               decoration: InputDecoration(
                 hintText: hintText,
                 hintStyle: InkType.body(tokens.inkMuted),
+                filled: true,
+                fillColor: Colors.transparent,
                 border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                errorBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
                 isDense: true,
-                contentPadding: EdgeInsets.zero,
+                contentPadding: const EdgeInsets.symmetric(vertical: 8),
               ),
             ),
           ),
@@ -115,7 +134,7 @@ class CommandBarAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
-    final bg = backgroundColor ?? tokens.field;
+    final bg = backgroundColor ?? Colors.transparent;
     final fg = iconColor ?? tokens.ink;
 
     return Tooltip(

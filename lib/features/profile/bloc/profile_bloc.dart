@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../core/utils/app_error_formatter.dart';
 import '../../../domain/services/presence/presence_service.dart';
 import '../../../domain/services/profile/profile_service.dart';
 
@@ -144,7 +145,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
         await _startLiveProfileListener(event.userId);
         await _startPresenceListener(event.userId);
       } catch (e) {
-        emit(ProfileError(e.toString()));
+        emit(ProfileError(AppErrorFormatter.cleanMessage(e)));
       }
     });
 
@@ -306,7 +307,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             ),
           );
         } catch (e) {
-          emit(ProfileError("Failed to upload photo: ${e.toString()}"));
+          emit(ProfileError("Failed to upload photo: ${AppErrorFormatter.cleanMessage(e)}"));
           // Restore previous state if error occurs
           emit(currentState);
         }
@@ -364,7 +365,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             isOnline: currentState.isOnline,
             lastActive: currentState.lastActive,
             errorMessage:
-                'Name and bio updated, but failed to upload photo: ${e.toString()}',
+                'Name and bio updated, but failed to upload photo: ${AppErrorFormatter.cleanMessage(e)}',
           ),
         );
       }

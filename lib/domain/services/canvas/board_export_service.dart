@@ -179,7 +179,6 @@ class BoardExportServiceImpl implements BoardExportService {
       result = await SharePlus.instance.share(
         ShareParams(
           files: [XFile(file.path, mimeType: _mimeTypeForFile(file))],
-          text: 'Exported board "$boardTitle" from InkLink',
           subject: boardTitle,
           title: boardTitle,
           // Required to anchor the popover on iPad/Mac; without it the native

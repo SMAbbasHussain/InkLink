@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
@@ -109,12 +110,30 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen>
               request: req,
               isAccepting: state.acceptingRequestIds.contains(requestId),
               isDeclining: state.decliningRequestIds.contains(requestId),
-              onAccept: () => context.read<FriendsBloc>().add(
-                AcceptFriendRequestRequested(req['id'], req['fromUid']),
-              ),
-              onDecline: () => context.read<FriendsBloc>().add(
-                DeclineFriendRequestRequested(req['id']),
-              ),
+              onAccept: () {
+                final name = req['fromName']?.toString() ??
+                    req['fromEmail']?.toString() ??
+                    'User';
+                context.read<FriendsBloc>().add(
+                  AcceptFriendRequestRequested(req['id'], req['fromUid']),
+                );
+                AppSnackBar.showSuccess(
+                  context,
+                  'Friend request from $name accepted!',
+                );
+              },
+              onDecline: () {
+                final name = req['fromName']?.toString() ??
+                    req['fromEmail']?.toString() ??
+                    'User';
+                context.read<FriendsBloc>().add(
+                  DeclineFriendRequestRequested(req['id']),
+                );
+                AppSnackBar.showMessage(
+                  context,
+                  'Friend request from $name declined.',
+                );
+              },
             ),
           );
         }),
@@ -221,6 +240,10 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen>
                                 '',
                             toUid,
                           ),
+                        );
+                        AppSnackBar.showMessage(
+                          context,
+                          'Friend request to $displayName canceled.',
                         );
                       },
               ),

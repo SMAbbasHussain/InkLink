@@ -10,6 +10,7 @@ import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
 import '../../../ui/widgets/board_card_frame.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../bloc/public_boards/public_boards_bloc.dart';
 import '../bloc/public_boards/public_boards_event.dart';
 import '../bloc/public_boards/public_boards_state.dart';
@@ -98,25 +99,9 @@ class _PublicBoardDiscoveryScreenState
         listener: (context, state) {
           if (state.errorMessage != null &&
               state.status == PublicBoardsStatus.failure) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(state.errorMessage!),
-                backgroundColor: tokens.danger,
-              ),
-            );
+            AppSnackBar.showError(context, state.errorMessage!);
           } else if (state.actionSuccessMessage != null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    Icon(LucideIcons.checkCircle2, size: 16, color: tokens.success),
-                    const SizedBox(width: InkSpacing.s8),
-                    Flexible(child: Text(state.actionSuccessMessage!)),
-                  ],
-                ),
-                backgroundColor: tokens.paper,
-              ),
-            );
+            AppSnackBar.showSuccess(context, state.actionSuccessMessage!);
           }
         },
         builder: (context, state) {
@@ -229,43 +214,45 @@ class _PublicBoardDiscoveryScreenState
   }
 
   Widget _buildSearchBar(BuildContext context, InkTokens tokens) {
-    return Container(
-      decoration: BoxDecoration(
-        color: tokens.paper,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: tokens.glassStroke,
-          width: 1,
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      child: Row(
-        children: [
-          Icon(LucideIcons.search, size: 20, color: tokens.inkSecondary),
-          const SizedBox(width: 10),
-          Expanded(
-            child: TextField(
-              controller: _searchController,
-              onChanged: _onSearchChanged,
-              style: InkType.body(tokens.ink),
-              decoration: InputDecoration(
-                hintText: 'Search by title, topic, or keyword...',
-                hintStyle: InkType.body(tokens.inkMuted),
-                border: InputBorder.none,
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            ),
-          ),
-          if (_searchController.text.isNotEmpty)
-            IconButton(
+    final barColor = tokens.isDark ? tokens.paper : Colors.white;
+
+    return TextField(
+      controller: _searchController,
+      onChanged: _onSearchChanged,
+      style: InkType.body(tokens.ink),
+      decoration: InputDecoration(
+        hintText: 'Search by title, topic, or keyword...',
+        hintStyle: InkType.body(tokens.inkMuted),
+        prefixIcon: Icon(LucideIcons.search, size: 20, color: tokens.inkSecondary),
+        suffixIcon: ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _searchController,
+          builder: (context, value, _) {
+            if (value.text.isEmpty) return const SizedBox.shrink();
+            return IconButton(
               icon: Icon(LucideIcons.x, size: 18, color: tokens.inkSecondary),
               onPressed: () {
                 _searchController.clear();
                 _onSearchChanged('');
               },
-            ),
-        ],
+            );
+          },
+        ),
+        filled: true,
+        fillColor: barColor,
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: tokens.glassStroke, width: 1),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: tokens.glassStroke, width: 1),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: tokens.accent, width: 1.5),
+        ),
       ),
     );
   }
@@ -472,12 +459,15 @@ class _PublicBoardDiscoveryScreenState
       previewPath: board.previewPath,
       title: board.title,
       caption: caption,
-      onTap: () {
+      onTap: () async {
         HapticFeedback.lightImpact();
-        Navigator.push(
+        await Navigator.push(
           context,
           buildCanvasRoute(context, boardId: board.id),
         );
+        if (context.mounted) {
+          context.read<PublicBoardsBloc>().add(const PublicBoardsRefreshRequested());
+        }
       },
       menuButton: PopupMenuButton<String>(
         tooltip: 'Board options',
@@ -507,12 +497,15 @@ class _PublicBoardDiscoveryScreenState
             ],
           ),
         ),
-        onSelected: (val) {
+        onSelected: (val) async {
           if (val == 'open') {
-            Navigator.push(
+            await Navigator.push(
               context,
               buildCanvasRoute(context, boardId: board.id),
             );
+            if (context.mounted) {
+              context.read<PublicBoardsBloc>().add(const PublicBoardsRefreshRequested());
+            }
           } else if (val == 'join') {
             HapticFeedback.lightImpact();
             context.read<PublicBoardsBloc>().add(
@@ -522,7 +515,8 @@ class _PublicBoardDiscoveryScreenState
             final link = 'inklink://board/${board.id}';
             Clipboard.setData(ClipboardData(text: link));
             HapticFeedback.selectionClick();
-            ScaffoldMessenger.of(context).showSnackBar(
+            AppSnackBar.show(
+              context,
               SnackBar(
                 content: Row(
                   children: [
@@ -532,7 +526,6 @@ class _PublicBoardDiscoveryScreenState
                   ],
                 ),
                 backgroundColor: tokens.paper,
-                duration: const Duration(seconds: 2),
               ),
             );
           } else if (val == 'request_edit') {

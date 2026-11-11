@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../../../core/utils/app_error_formatter.dart';
 import '../../../domain/services/auth/auth_session_service.dart';
 import 'auth_event.dart';
 import 'auth_state.dart';
@@ -114,7 +115,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         emit(_toAuthenticated(user));
       } catch (e) {
         developer.log('LoginRequested: caught error=$e', name: 'AuthBloc');
-        emit(AuthError(e.toString()));
+        emit(AuthError(AppErrorFormatter.cleanMessage(e)));
       }
     });
 
@@ -141,7 +142,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         await authService.onAuthenticated(user);
         emit(_toAuthenticated(user, fallbackName: event.name));
       } catch (e) {
-        emit(AuthError(e.toString()));
+        emit(AuthError(AppErrorFormatter.cleanMessage(e)));
       }
     });
 
@@ -163,7 +164,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         }
       } catch (e) {
         developer.log('GoogleSignInRequested: caught error=$e', name: 'AuthBloc');
-        emit(AuthError("Login failed: ${e.toString()}"));
+        emit(AuthError(AppErrorFormatter.cleanMessage(e)));
         emit(Unauthenticated());
       }
     });
@@ -184,7 +185,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         emit(Unauthenticated());
       } catch (e) {
         developer.log('DeleteAccountRequested: caught error=$e', name: 'AuthBloc');
-        emit(AuthError(e.toString()));
+        emit(AuthError(AppErrorFormatter.cleanMessage(e)));
       }
     });
 
@@ -208,7 +209,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         emit(_toAuthenticated(event.user));
       } catch (e) {
         developer.log('AuthenticatedUserAvailable: error=$e', name: 'AuthBloc');
-        emit(AuthError(e.toString()));
+        emit(AuthError(AppErrorFormatter.cleanMessage(e)));
       }
     });
 
@@ -223,7 +224,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         await authService.sendPasswordResetEmail(event.email);
         emit(PasswordResetSent(event.email));
       } catch (e) {
-        emit(AuthError(e.toString()));
+        emit(AuthError(AppErrorFormatter.cleanMessage(e)));
       }
     });
 
@@ -251,11 +252,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           emit(AuthEmailUnverified(
             user: current.user,
             email: current.email,
-            message: e.toString(),
+            message: AppErrorFormatter.cleanMessage(e),
             isChecking: false,
           ));
         } else {
-          emit(AuthError(e.toString()));
+          emit(AuthError(AppErrorFormatter.cleanMessage(e)));
         }
       }
     });
@@ -308,7 +309,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
             isChecking: false,
           ));
         } else {
-          emit(AuthError(e.toString()));
+          emit(AuthError(AppErrorFormatter.cleanMessage(e)));
         }
       }
     });

@@ -13,6 +13,7 @@ import '../../../ui/widgets/ink_button.dart';
 import '../../../ui/widgets/ink_initials.dart';
 import '../../../ui/widgets/sticky_note.dart';
 import '../../../features/canvas/view/canvas_route.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../bloc/board_invitations_bloc.dart';
 
 class BoardInvitesScreen extends StatefulWidget {
@@ -45,21 +46,11 @@ class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
     return BlocConsumer<BoardInvitationsBloc, BoardInvitationsState>(
       listener: (context, state) {
         if (state is BoardInvitationsLoaded && state.message != null) {
-          final tokens = context.ink;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: state.isError
-                  ? Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(LucideIcons.ban, size: 16, color: tokens.danger),
-                        const SizedBox(width: InkSpacing.s8),
-                        Flexible(child: Text(state.message!)),
-                      ],
-                    )
-                  : Text(state.message!),
-            ),
-          );
+          if (state.isError) {
+            AppSnackBar.showError(context, state.message!);
+          } else {
+            AppSnackBar.showSuccess(context, state.message!);
+          }
 
           if (state.openedBoardId != null && !state.isError) {
             Navigator.push(

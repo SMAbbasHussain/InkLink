@@ -7,6 +7,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:image/image.dart' as img;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import '../../../../core/utils/app_error_formatter.dart';
+import '../../../../core/utils/app_snackbar.dart';
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_tokens.dart';
 import '../../../../ui/theme/ink_type.dart';
@@ -83,10 +85,9 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
         final cameraStatus = await Permission.camera.request();
         if (!cameraStatus.isGranted) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Camera permission is required to take photos'),
-              ),
+            AppSnackBar.showMessage(
+              context,
+              'Camera permission is required to take photos',
             );
           }
           return;
@@ -98,12 +99,9 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
           final readStatus = await Permission.storage.request();
           if (!readStatus.isGranted) {
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Photo library access is required to select photos',
-                  ),
-                ),
+              AppSnackBar.showMessage(
+                context,
+                'Photo library access is required to select photos',
               );
             }
             return;
@@ -123,13 +121,10 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
       final ext = pickedFile.name.toLowerCase().split('.').last;
       if (!['jpg', 'jpeg', 'png'].contains(ext)) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Invalid image format. Only PNG, JPEG, and JPG images are supported.',
-              ),
-              backgroundColor: context.ink.danger,
-            ),
+          AppSnackBar.showMessage(
+            context,
+            'Invalid image format. Only PNG, JPEG, and JPG images are supported.',
+            backgroundColor: context.ink.danger,
           );
         }
         return;
@@ -153,13 +148,10 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
 
       if (!isJpeg && !isPng) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Invalid image content. Only valid PNG, JPEG, and JPG images are accepted.',
-              ),
-              backgroundColor: context.ink.danger,
-            ),
+          AppSnackBar.showMessage(
+            context,
+            'Invalid image content. Only valid PNG, JPEG, and JPG images are accepted.',
+            backgroundColor: context.ink.danger,
           );
         }
         return;
@@ -193,8 +185,12 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
       } catch (e) {
         if (!mounted) return;
         Navigator.pop(context); // Close loading dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error processing image: ${e.toString()}')),
+        AppSnackBar.showMessage(
+          context,
+          AppErrorFormatter.cleanMessage(
+            e,
+            fallback: 'Failed to process image. Please try another photo.',
+          ),
         );
       }
     } on PlatformException catch (e) {
@@ -210,7 +206,8 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
               ? 'Camera permission was denied.'
               : 'Failed to access camera: ${e.message ?? e.code}';
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppSnackBar.show(
+        context,
         SnackBar(
           content: Text(message),
           action: isNoCamera
@@ -223,8 +220,12 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error picking image: ${e.toString()}')),
+      AppSnackBar.showMessage(
+        context,
+        AppErrorFormatter.cleanMessage(
+          e,
+          fallback: 'Failed to pick image. Please try again.',
+        ),
       );
     }
   }
@@ -357,13 +358,9 @@ class _EditProfileSheetState extends State<EditProfileSheet> {
     return BlocListener<ProfileBloc, ProfileState>(
       listener: (context, state) {
         if (state is ProfileError) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(state.message)));
+          AppSnackBar.showMessage(context, state.message);
         } else if (state is ProfileLoaded && state.errorMessage != null) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(state.errorMessage!)));
+          AppSnackBar.showMessage(context, state.errorMessage!);
         }
       },
       child: Padding(

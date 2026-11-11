@@ -15,6 +15,7 @@ import '../../../ui/widgets/ink_chip.dart';
 import '../../../ui/widgets/ink_segmented.dart';
 import '../../../ui/widgets/ink_text_field.dart';
 import '../../../ui/widgets/paper_card.dart';
+import '../../../core/utils/app_snackbar.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../bloc/dashboard_bloc.dart';
 
@@ -71,18 +72,18 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
     }
 
     if (normalized.length > 20) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Each tag can be at most 20 characters.')),
+      AppSnackBar.showMessage(
+        context,
+        'Each tag can be at most 20 characters.',
       );
       return;
     }
 
     final validTagRegex = RegExp(r'^[a-z0-9\-]+$');
     if (!validTagRegex.hasMatch(normalized)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Tags can only contain lowercase letters, numbers, and hyphens.'),
-        ),
+      AppSnackBar.showMessage(
+        context,
+        'Tags can only contain lowercase letters, numbers, and hyphens.',
       );
       return;
     }
@@ -93,8 +94,9 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
     }
 
     if (_tags.length >= 5) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('You can add up to 5 tags.')),
+      AppSnackBar.showMessage(
+        context,
+        'You can add up to 5 tags.',
       );
       return;
     }
@@ -108,8 +110,9 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
   void _submit() {
     final title = _titleController.text.trim();
     if (title.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a board name.')),
+      AppSnackBar.showMessage(
+        context,
+        'Please enter a board name.',
       );
       return;
     }
