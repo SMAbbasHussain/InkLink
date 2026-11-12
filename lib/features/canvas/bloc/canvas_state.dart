@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../domain/models/board.dart';
+import '../../../domain/models/history/board_activity_block.dart';
+import '../../../domain/models/history/board_operation.dart';
+import '../../../domain/models/history/revert_plan.dart';
+import '../../../domain/models/history/undo_request.dart';
 import '../models/board_chat_message.dart';
 import '../models/canvas_comment.dart';
 import '../models/canvas_element.dart';
@@ -53,6 +57,19 @@ class CanvasState {
   final String? activeCommentId;
   final bool isPlacingComment;
 
+  // ── Board history (owner-only) + member undo ──
+  final bool isViewingHistory;
+  final int? historyPreviewVersion;
+  final List<CanvasElement> historyPreviewElements;
+  final List<BoardActivityBlock> activityBlocks;
+  final List<UndoRequest> undoRequests;
+  final RevertPlan? activeRevertPlan;
+  final bool isHistoryLoading;
+  final String? selectedUserUid;
+  final List<BoardOperation> userOps;
+  final bool hasMoreUserOps;
+  final int? userOpsNextBeforeVersion;
+
   const CanvasState({
     this.boardTitle,
     this.elements = const [],
@@ -96,6 +113,17 @@ class CanvasState {
     this.isCommentsTrayOpen = false,
     this.activeCommentId,
     this.isPlacingComment = false,
+    this.isViewingHistory = false,
+    this.historyPreviewVersion,
+    this.historyPreviewElements = const [],
+    this.activityBlocks = const [],
+    this.undoRequests = const [],
+    this.activeRevertPlan,
+    this.isHistoryLoading = false,
+    this.selectedUserUid,
+    this.userOps = const [],
+    this.hasMoreUserOps = false,
+    this.userOpsNextBeforeVersion,
   });
 
   static const Object _unset = Object();
@@ -143,6 +171,17 @@ class CanvasState {
     bool? isCommentsTrayOpen,
     Object? activeCommentId = _unset,
     bool? isPlacingComment,
+    bool? isViewingHistory,
+    Object? historyPreviewVersion = _unset,
+    List<CanvasElement>? historyPreviewElements,
+    List<BoardActivityBlock>? activityBlocks,
+    List<UndoRequest>? undoRequests,
+    Object? activeRevertPlan = _unset,
+    bool? isHistoryLoading,
+    Object? selectedUserUid = _unset,
+    List<BoardOperation>? userOps,
+    bool? hasMoreUserOps,
+    Object? userOpsNextBeforeVersion = _unset,
   }) {
     return CanvasState(
       boardTitle: boardTitle == _unset
@@ -214,6 +253,26 @@ class CanvasState {
           ? this.activeCommentId
           : activeCommentId as String?,
       isPlacingComment: isPlacingComment ?? this.isPlacingComment,
+      isViewingHistory: isViewingHistory ?? this.isViewingHistory,
+      historyPreviewVersion: historyPreviewVersion == _unset
+          ? this.historyPreviewVersion
+          : historyPreviewVersion as int?,
+      historyPreviewElements:
+          historyPreviewElements ?? this.historyPreviewElements,
+      activityBlocks: activityBlocks ?? this.activityBlocks,
+      undoRequests: undoRequests ?? this.undoRequests,
+      activeRevertPlan: activeRevertPlan == _unset
+          ? this.activeRevertPlan
+          : activeRevertPlan as RevertPlan?,
+      isHistoryLoading: isHistoryLoading ?? this.isHistoryLoading,
+      selectedUserUid: selectedUserUid == _unset
+          ? this.selectedUserUid
+          : selectedUserUid as String?,
+      userOps: userOps ?? this.userOps,
+      hasMoreUserOps: hasMoreUserOps ?? this.hasMoreUserOps,
+      userOpsNextBeforeVersion: userOpsNextBeforeVersion == _unset
+          ? this.userOpsNextBeforeVersion
+          : userOpsNextBeforeVersion as int?,
     );
   }
 
@@ -273,7 +332,18 @@ class CanvasState {
           isChatDrawerOpen == other.isChatDrawerOpen &&
           isCommentsTrayOpen == other.isCommentsTrayOpen &&
           activeCommentId == other.activeCommentId &&
-          isPlacingComment == other.isPlacingComment;
+          isPlacingComment == other.isPlacingComment &&
+          isViewingHistory == other.isViewingHistory &&
+          historyPreviewVersion == other.historyPreviewVersion &&
+          historyPreviewElements == other.historyPreviewElements &&
+          activityBlocks == other.activityBlocks &&
+          undoRequests == other.undoRequests &&
+          activeRevertPlan == other.activeRevertPlan &&
+          isHistoryLoading == other.isHistoryLoading &&
+          selectedUserUid == other.selectedUserUid &&
+          userOps == other.userOps &&
+          hasMoreUserOps == other.hasMoreUserOps &&
+          userOpsNextBeforeVersion == other.userOpsNextBeforeVersion;
 
   @override
   int get hashCode =>
@@ -318,7 +388,18 @@ class CanvasState {
       isChatDrawerOpen.hashCode ^
       isCommentsTrayOpen.hashCode ^
       activeCommentId.hashCode ^
-      isPlacingComment.hashCode;
+      isPlacingComment.hashCode ^
+      isViewingHistory.hashCode ^
+      historyPreviewVersion.hashCode ^
+      historyPreviewElements.hashCode ^
+      activityBlocks.hashCode ^
+      undoRequests.hashCode ^
+      activeRevertPlan.hashCode ^
+      isHistoryLoading.hashCode ^
+      selectedUserUid.hashCode ^
+      userOps.hashCode ^
+      hasMoreUserOps.hashCode ^
+      userOpsNextBeforeVersion.hashCode;
 }
 
 class CanvasInitial extends CanvasState {

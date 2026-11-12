@@ -642,4 +642,129 @@ class CanvasConsumeInfoMessage extends CanvasEvent {
   const CanvasConsumeInfoMessage();
 }
 
+// ============================================================
+// Board history (owner-only) + member undo (D2/D3/D15)
+// ============================================================
+
+/// Subscribe to the owner-only activity feed (`activity_index`).
+class CanvasHistoryFeedRequested extends CanvasEvent {
+  const CanvasHistoryFeedRequested();
+}
+
+/// Internal: the Firestore activity-feed stream emitted a new page.
+class CanvasHistoryFeedUpdated extends CanvasEvent {
+  final List<BoardActivityBlock> blocks;
+  const CanvasHistoryFeedUpdated(this.blocks);
+}
+
+/// Preview a past version read-only.
+class CanvasHistoryPreviewRequested extends CanvasEvent {
+  final int version;
+  const CanvasHistoryPreviewRequested(this.version);
+}
+
+/// Leave preview mode and return to the live board.
+class CanvasHistoryPreviewExited extends CanvasEvent {
+  const CanvasHistoryPreviewExited();
+}
+
+/// Owner wants to restore the previewed version.
+class CanvasHistoryRestoreRequested extends CanvasEvent {
+  final int version;
+  const CanvasHistoryRestoreRequested(this.version);
+}
+
+/// Owner wants to plan a revert of one user's work.
+class CanvasHistoryRevertUserRequested extends CanvasEvent {
+  final String targetUid;
+  final DateTime? fromTime;
+  final DateTime? toTime;
+  const CanvasHistoryRevertUserRequested(
+    this.targetUid, {
+    this.fromTime,
+    this.toTime,
+  });
+}
+
+/// Owner opens the review flow for a pending undo request (D5).
+class CanvasHistoryUndoRequestReviewRequested extends CanvasEvent {
+  final String requestId;
+  const CanvasHistoryUndoRequestReviewRequested(this.requestId);
+}
+
+/// Load (or page) one user's action timeline (D15).
+class CanvasHistoryUserOpsRequested extends CanvasEvent {
+  final String targetUid;
+  final DateTime? fromTime;
+  final DateTime? toTime;
+  final int? beforeVersion;
+  const CanvasHistoryUserOpsRequested(
+    this.targetUid, {
+    this.fromTime,
+    this.toTime,
+    this.beforeVersion,
+  });
+}
+
+/// A user-timeline page arrived.
+class CanvasHistoryUserOpsUpdated extends CanvasEvent {
+  final String targetUid;
+  final List<BoardOperation> ops;
+  final bool hasMore;
+  final int? nextBeforeVersion;
+  final bool append;
+  const CanvasHistoryUserOpsUpdated({
+    required this.targetUid,
+    required this.ops,
+    required this.hasMore,
+    this.nextBeforeVersion,
+    this.append = false,
+  });
+}
+
+/// Close the per-user timeline view.
+class CanvasHistoryUserTimelineExited extends CanvasEvent {
+  const CanvasHistoryUserTimelineExited();
+}
+
+/// A server-built revert plan is ready for review.
+class CanvasHistoryPlanLoaded extends CanvasEvent {
+  final RevertPlan plan;
+  const CanvasHistoryPlanLoaded(this.plan);
+}
+
+/// Owner confirmed the per-element keep/revert decisions.
+class CanvasHistoryApplyRevert extends CanvasEvent {
+  final String planId;
+  final Map<String, String> decisions;
+  final String? requestId;
+  const CanvasHistoryApplyRevert({
+    required this.planId,
+    required this.decisions,
+    this.requestId,
+  });
+}
+
+/// Dismiss the revert review sheet without applying.
+class CanvasHistoryPlanDismissed extends CanvasEvent {
+  const CanvasHistoryPlanDismissed();
+}
+
+/// Cross-device fallback for a member's own ≤15-minute edits (D2).
+class CanvasHistoryUndoOwn extends CanvasEvent {
+  const CanvasHistoryUndoOwn();
+}
+
+/// Owner's undo-request list changed.
+class CanvasUndoRequestsUpdated extends CanvasEvent {
+  final List<UndoRequest> requests;
+  const CanvasUndoRequestsUpdated(this.requests);
+}
+
+/// Internal: a plan-build request failed.
+class CanvasHistoryPlanFailed extends CanvasEvent {
+  final String message;
+  const CanvasHistoryPlanFailed(this.message);
+}
+
 

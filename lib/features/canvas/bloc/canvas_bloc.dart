@@ -10,6 +10,12 @@ import 'package:uuid/uuid.dart';
 import '../../../core/crdt/canvas_crdt_adapter.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../domain/models/board.dart';
+import '../../../domain/models/history/board_activity_block.dart';
+import '../../../domain/models/history/board_operation.dart';
+import '../../../domain/models/history/revert_plan.dart';
+import '../../../domain/models/history/undo_request.dart';
+import '../../../domain/repositories/history/board_history_repository.dart';
+import '../../../domain/services/history/board_history_service.dart';
 import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/board_chat_service.dart';
 import '../../../domain/services/canvas/board_comments_service.dart';
@@ -41,6 +47,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final BoardCommentsService? _boardCommentsService;
   final BoardChatService? _boardChatService;
   final VoiceService? _voiceService;
+  final BoardHistoryService? _historyService;
+  final BoardHistoryRepository? _historyRepository;
   final Uuid _uuid = const Uuid();
   final math.Random _random = math.Random();
   static const Duration _previewPublishThrottle = Duration(milliseconds: 32);
@@ -54,6 +62,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   StreamSubscription<List<VoiceParticipant>>? _voiceParticipantsSub;
   StreamSubscription<bool>? _voiceCallStatusSub;
   StreamSubscription<bool>? _voiceMuteStatusSub;
+  StreamSubscription<List<BoardActivityBlock>>? _historyFeedSub;
+  StreamSubscription<List<UndoRequest>>? _undoRequestsSub;
   CanvasDocAdapter? _crdtAdapter;
   List<CanvasElement>? _cachedCrdtElements;
   Future<void>? _crdtInitFuture;
@@ -87,6 +97,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     BoardCommentsService? boardCommentsService,
     BoardChatService? boardChatService,
     VoiceService? voiceService,
+    BoardHistoryService? historyService,
+    BoardHistoryRepository? historyRepository,
     String currentUserId = '',
     String boardId = '',
   }) : _canvasService = canvasService,
@@ -95,6 +107,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
        _boardCommentsService = boardCommentsService,
        _boardChatService = boardChatService,
        _voiceService = voiceService,
+       _historyService = historyService,
+       _historyRepository = historyRepository,
        _boardId = boardId,
        super(CanvasInitial(currentUserId: currentUserId)) {
     on<CanvasRenameBoardRequested>(_onCanvasRenameBoardRequested);
@@ -180,6 +194,24 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasLeaveVoiceCallRequested>(_onCanvasLeaveVoiceCallRequested);
     on<CanvasToggleVoiceMuteRequested>(_onCanvasToggleVoiceMuteRequested);
     on<CanvasVoiceSpeakingChanged>(_onCanvasVoiceSpeakingChanged);
+    on<CanvasHistoryFeedRequested>(_onHistoryFeedRequested);
+    on<CanvasHistoryFeedUpdated>(_onHistoryFeedUpdated);
+    on<CanvasHistoryPreviewRequested>(_onHistoryPreviewRequested);
+    on<CanvasHistoryPreviewExited>(_onHistoryPreviewExited);
+    on<CanvasHistoryRestoreRequested>(_onHistoryRestoreRequested);
+    on<CanvasHistoryRevertUserRequested>(_onHistoryRevertUserRequested);
+    on<CanvasHistoryUndoRequestReviewRequested>(
+      _onHistoryUndoRequestReviewRequested,
+    );
+    on<CanvasHistoryUserOpsRequested>(_onHistoryUserOpsRequested);
+    on<CanvasHistoryUserOpsUpdated>(_onHistoryUserOpsUpdated);
+    on<CanvasHistoryUserTimelineExited>(_onHistoryUserTimelineExited);
+    on<CanvasHistoryPlanLoaded>(_onHistoryPlanLoaded);
+    on<CanvasHistoryPlanFailed>(_onHistoryPlanFailed);
+    on<CanvasHistoryPlanDismissed>(_onHistoryPlanDismissed);
+    on<CanvasHistoryApplyRevert>(_onHistoryApplyRevert);
+    on<CanvasHistoryUndoOwn>(_onHistoryUndoOwn);
+    on<CanvasUndoRequestsUpdated>(_onUndoRequestsUpdated);
   }
 
   String get boardId => _boardId;
@@ -215,6 +247,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     _currentUserRole = event.currentUserRole;
+    _syncHistorySubscriptions();
     emit(state.copyWith(
       boardTitle: event.title,
       currentUserRole: event.currentUserRole,
@@ -434,6 +467,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         final bytes = base64Decode(snapshot.payloadBase64);
         if (bytes.isEmpty) continue;
         adapter.applyUpdate(bytes, origin: 'remote');
+        // A full-state hydration replaces the board, so the local stack is
+        // meaningless afterwards (D14).
+        adapter.clearLocalHistory();
         _appliedCrdtUpdateIds.add(snapshot.updateId);
         _remotePreviewClearsBoard = false;
         _remotePreviewElements.clear();
@@ -461,6 +497,21 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           continue;
         }
         adapter.applyUpdate(bytes, origin: 'remote');
+        // D14: an owner's revert/restore/clear is authoritative locally — the
+        // member may redraw but cannot resurrect the reverted work via Ctrl+Z.
+        if (update.sourceClientId != state.currentUserId) {
+          switch (update.action) {
+            case 'restore':
+            case 'clear':
+              adapter.clearLocalHistory();
+              break;
+            case 'revert':
+              adapter.pruneReverted(
+                (update.affectedElementIds ?? const <String>[]).toSet(),
+              );
+              break;
+          }
+        }
         _remotePreviewClearsBoard = false;
         if (update.elementId != null) {
           _remotePreviewElements.remove(update.elementId);
@@ -594,8 +645,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       data: previewData,
     );
     final elementId = objectId;
-    final publishedUpdateId =
-        await _publishCrdtUpdate(update, elementId: elementId);
+    // D13 hint: only a whole-board delete is a 'clear' (which forces a durable
+    // pre-clear checkpoint server-side). The archive worker derives truth from
+    // the CRDT diff, so this is never trusted for attribution.
+    final actionHint = action == 'delete'
+        ? (type == 'board' ? 'clear' : 'delete')
+        : 'upsert';
+    final publishedUpdateId = await _publishCrdtUpdate(
+      update,
+      elementId: elementId,
+      action: actionHint,
+    );
     if (publishedUpdateId != null) {
       _lastShapeUpdateId[objectId] = publishedUpdateId;
     }
@@ -604,6 +664,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   Future<String?> _publishCrdtUpdate(
     Uint8List update, {
     String? elementId,
+    String action = 'upsert',
   }) async {
     if (!_canSync || update.isEmpty) return null;
     final canvasService = _canvasService;
@@ -615,6 +676,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       updateId: updateId,
       payload: update,
       elementId: elementId,
+      action: action,
     );
     return updateId;
   }
@@ -1379,7 +1441,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final adapter = _crdtAdapter;
     if (adapter == null) return;
     final update = adapter.undoLast(origin: 'local');
-    if (update == null || update.isEmpty) return;
+    if (update == null || update.isEmpty) {
+      // D2: the local stack is empty OR its top entry is older than 15 minutes.
+      // Either way the server-side log fallback is the correct path.
+      await _undoOwnViaLog(emit);
+      return;
+    }
     // Undo can revert an element to a payload identical to the last one
     // received from a peer; clear the dedup guard so the next remote
     // update is not silently dropped.
@@ -1394,7 +1461,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final adapter = _crdtAdapter;
     if (adapter == null) return;
     final update = adapter.redoLast(origin: 'local');
-    if (update == null || update.isEmpty) return;
+    if (update == null || update.isEmpty) {
+      // Redo is local-only and equally 15-minute capped: there is no log redo.
+      emit(state.copyWith(infoMessage: 'Nothing to redo.', error: null));
+      return;
+    }
     // Redo can re-apply a payload identical to the last one received from
     // a peer; clear the dedup guard so the next remote update is not
     // silently dropped.
@@ -2709,6 +2780,372 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   }
 
   // ──────────────────────────────────────────────
+  // Board history (owner-only) + member undo (D2/D3/D15)
+  // ──────────────────────────────────────────────
+
+  String _historyMessage(Object error) {
+    if (error is HistoryServiceException) {
+      switch (error.code) {
+        case 'forbidden':
+          return 'Only the board owner can view board history.';
+        case 'archive_unavailable':
+        case 'persistence_unavailable':
+          return 'Board history is temporarily unavailable. Please try again.';
+        case 'plan_expired':
+          return 'That revert expired. Please try again.';
+        case 'socket_unavailable':
+        case 'unauthenticated':
+          return 'Could not reach the history service. Please retry.';
+        default:
+          return 'History request failed. Please try again.';
+      }
+    }
+    return AppErrorFormatter.cleanMessage(
+      error,
+      fallback: 'History request failed. Please try again.',
+    );
+  }
+
+  /// Owner-only: keeps the undo-request list live for the history tray.
+  void _syncHistorySubscriptions() {
+    final repo = _historyRepository;
+    if (repo == null || _boardId.isEmpty || isClosed) return;
+    if (_currentUserRole == Board.roleOwner) {
+      _undoRequestsSub ??= repo.watchUndoRequests(_boardId).listen(
+        (requests) {
+          if (!isClosed) add(CanvasUndoRequestsUpdated(requests));
+        },
+        onError: (_) {},
+      );
+    } else {
+      _undoRequestsSub?.cancel();
+      _undoRequestsSub = null;
+    }
+  }
+
+  void _onHistoryFeedRequested(
+    CanvasHistoryFeedRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    final repo = _historyRepository;
+    if (repo == null || _currentUserRole != Board.roleOwner) return;
+    _syncHistorySubscriptions();
+    _historyFeedSub?.cancel();
+    _historyFeedSub = repo.watchActivityFeed(_boardId).listen(
+      (blocks) {
+        if (!isClosed) add(CanvasHistoryFeedUpdated(blocks));
+      },
+      onError: (_) {},
+    );
+  }
+
+  void _onHistoryFeedUpdated(
+    CanvasHistoryFeedUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (_currentUserRole != Board.roleOwner) return;
+    emit(state.copyWith(activityBlocks: event.blocks));
+  }
+
+  Future<void> _onHistoryPreviewRequested(
+    CanvasHistoryPreviewRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(error: 'Only the board owner can view board history.'));
+      return;
+    }
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final preview = await service.previewVersion(_boardId, event.version);
+      // Render through a TEMPORARY adapter — never the live one.
+      final temp = await CanvasDocAdapterFactory.create();
+      if (preview.stateUpdateBytes.isNotEmpty) {
+        temp.applyUpdate(preview.stateUpdateBytes, origin: 'remote');
+      }
+      final previewElements =
+          _rebuildElementsFromCrdtState(temp.materializeElements());
+      if (isClosed) return;
+      emit(state.copyWith(
+        isViewingHistory: true,
+        historyPreviewVersion: preview.version,
+        historyPreviewElements: previewElements,
+        isHistoryLoading: false,
+        selectedShapeId: null,
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  void _onHistoryPreviewExited(
+    CanvasHistoryPreviewExited event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(
+      isViewingHistory: false,
+      historyPreviewVersion: null,
+      historyPreviewElements: const [],
+    ));
+  }
+
+  Future<void> _planHistoryRevert({
+    required String mode,
+    required Emitter<CanvasState> emit,
+    int? targetVersion,
+    String? targetUid,
+    DateTime? fromTime,
+    DateTime? toTime,
+    List<String>? elementIds,
+    String? requestId,
+  }) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(error: 'Only the board owner can revert edits.'));
+      return;
+    }
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final plan = await service.planRevert(
+        _boardId,
+        mode: mode,
+        targetVersion: targetVersion,
+        targetUid: targetUid,
+        fromTime: fromTime,
+        toTime: toTime,
+        elementIds: elementIds,
+        requestId: requestId,
+      );
+      if (isClosed) return;
+      if (plan.items.isEmpty) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          infoMessage: 'Nothing to revert — the board already matches.',
+        ));
+        return;
+      }
+      emit(state.copyWith(isHistoryLoading: false, activeRevertPlan: plan));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  Future<void> _onHistoryRestoreRequested(
+    CanvasHistoryRestoreRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _planHistoryRevert(
+      mode: 'restore',
+      targetVersion: event.version,
+      emit: emit,
+    );
+  }
+
+  Future<void> _onHistoryRevertUserRequested(
+    CanvasHistoryRevertUserRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _planHistoryRevert(
+      mode: 'user',
+      targetUid: event.targetUid,
+      fromTime: event.fromTime,
+      toTime: event.toTime,
+      emit: emit,
+    );
+  }
+
+  Future<void> _onHistoryUndoRequestReviewRequested(
+    CanvasHistoryUndoRequestReviewRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _planHistoryRevert(
+      mode: 'user',
+      requestId: event.requestId,
+      emit: emit,
+    );
+  }
+
+  Future<void> _onHistoryUserOpsRequested(
+    CanvasHistoryUserOpsRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) return;
+    emit(state.copyWith(
+      isHistoryLoading: true,
+      selectedUserUid: event.targetUid,
+      error: null,
+    ));
+    try {
+      final page = await service.getUserOps(
+        _boardId,
+        event.targetUid,
+        fromTime: event.fromTime,
+        toTime: event.toTime,
+        beforeVersion: event.beforeVersion,
+      );
+      if (isClosed) return;
+      add(
+        CanvasHistoryUserOpsUpdated(
+          targetUid: event.targetUid,
+          ops: page.ops,
+          hasMore: page.hasMore,
+          nextBeforeVersion: page.nextBeforeVersion,
+          append: event.beforeVersion != null,
+        ),
+      );
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  void _onHistoryUserOpsUpdated(
+    CanvasHistoryUserOpsUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(
+      isHistoryLoading: false,
+      selectedUserUid: event.targetUid,
+      userOps: event.append ? [...state.userOps, ...event.ops] : event.ops,
+      hasMoreUserOps: event.hasMore,
+      userOpsNextBeforeVersion: event.nextBeforeVersion,
+    ));
+  }
+
+  void _onHistoryUserTimelineExited(
+    CanvasHistoryUserTimelineExited event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(
+      selectedUserUid: null,
+      userOps: const [],
+      hasMoreUserOps: false,
+      userOpsNextBeforeVersion: null,
+    ));
+  }
+
+  void _onHistoryPlanLoaded(
+    CanvasHistoryPlanLoaded event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(activeRevertPlan: event.plan, isHistoryLoading: false));
+  }
+
+  void _onHistoryPlanFailed(
+    CanvasHistoryPlanFailed event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(isHistoryLoading: false, error: event.message));
+  }
+
+  void _onHistoryPlanDismissed(
+    CanvasHistoryPlanDismissed event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(activeRevertPlan: null));
+  }
+
+  Future<void> _onHistoryApplyRevert(
+    CanvasHistoryApplyRevert event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final result = await service.applyRevert(
+        _boardId,
+        planId: event.planId,
+        decisions: event.decisions,
+        requestId: event.requestId,
+      );
+      // The canvas itself converges through the normal crdt_update broadcast.
+      if (event.requestId != null) {
+        try {
+          await service.resolveUndoRequest(
+            boardId: _boardId,
+            requestId: event.requestId!,
+            status: 'approved',
+            appliedVersion: result.appliedVersion,
+          );
+        } catch (_) {}
+      }
+      if (isClosed) return;
+      final message = result.skipped.isEmpty
+          ? 'Reverted ${result.reverted.length} change(s).'
+          : 'Reverted ${result.reverted.length}; kept ${result.skipped.length} change(s) others modified.';
+      emit(state.copyWith(
+        isHistoryLoading: false,
+        activeRevertPlan: null,
+        infoMessage: message,
+        isViewingHistory: false,
+        historyPreviewVersion: null,
+        historyPreviewElements: const [],
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  Future<void> _onHistoryUndoOwn(
+    CanvasHistoryUndoOwn event,
+    Emitter<CanvasState> emit,
+  ) async {
+    await _undoOwnViaLog(emit);
+  }
+
+  /// D2: cross-device fallback for a member's own ≤15-minute edits.
+  Future<void> _undoOwnViaLog(Emitter<CanvasState> emit) async {
+    final service = _historyService;
+    if (service == null || !_canSync) return;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final result = await service.undoOwn(_boardId);
+      if (isClosed) return;
+      if (result.reverted.isEmpty) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          error:
+              'No edits to undo from the last 15 minutes. Older edits can only be reverted by the board owner.',
+        ));
+        return;
+      }
+      final message = result.skipped.isEmpty
+          ? 'Undid ${result.reverted.length} recent edit(s).'
+          : 'Undid ${result.reverted.length}; ${result.skipped.length} could not be undone because others modified them.';
+      emit(state.copyWith(isHistoryLoading: false, infoMessage: message));
+    } on HistoryServiceException catch (e) {
+      if (isClosed) return;
+      final message = (e.code == 'nothing_to_undo' || e.code == 'window_expired')
+          ? 'No edits to undo from the last 15 minutes. Older edits can only be reverted by the board owner.'
+          : _historyMessage(e);
+      emit(state.copyWith(isHistoryLoading: false, error: message));
+    } catch (e) {
+      if (!isClosed) emit(state.copyWith(isHistoryLoading: false));
+    }
+  }
+
+  void _onUndoRequestsUpdated(
+    CanvasUndoRequestsUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (_currentUserRole != Board.roleOwner) return;
+    emit(state.copyWith(undoRequests: event.requests));
+  }
+
+  // ──────────────────────────────────────────────
   // Permission checks
   // ──────────────────────────────────────────────
 
@@ -2720,6 +3157,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit, {
     required bool clearStroke,
   }) {
+    if (state.isViewingHistory) {
+      if (clearStroke && state.currentStroke.isNotEmpty) {
+        emit(state.copyWith(currentStroke: const []));
+      }
+      emit(state.copyWith(
+        error: 'You are viewing history. Exit preview to edit the board.',
+      ));
+      return false;
+    }
     if (_currentUserRole != Board.roleViewer) return true;
     const warningMessage =
         'You are a viewer. Request editor role from the owner to edit this board.';
@@ -3065,6 +3511,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _membersSub = null;
     await _crdtUpdatesSub?.cancel();
     _crdtUpdatesSub = null;
+    await _historyFeedSub?.cancel();
+    _historyFeedSub = null;
+    await _undoRequestsSub?.cancel();
+    _undoRequestsSub = null;
     await _previewUpdatesSub?.cancel();
     _previewUpdatesSub = null;
     await _canvasService?.stopCrdtRemoteSync(_boardId);

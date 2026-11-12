@@ -16,6 +16,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../../core/utils/app_snackbar.dart';
 
 import '../../../domain/models/board.dart';
+import '../../../domain/services/history/board_history_service.dart';
 import '../../../core/utils/app_error_formatter.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
 import '../../../ui/theme/ink_theme.dart';
@@ -37,8 +38,12 @@ import 'trays/ai_tray.dart';
 import 'trays/brush_tray.dart';
 import 'trays/canvas_shape_type.dart';
 import 'trays/members_tray.dart';
+import 'trays/history_tray.dart';
 import 'trays/shapes_tray.dart';
 import 'trays/tools_tray.dart';
+import 'widgets/history_preview_banner.dart';
+import 'widgets/revert_review_sheet.dart';
+import 'widgets/undo_request_sheet.dart';
 import 'chat/board_chat_drawer.dart';
 import 'trays/comments_tray.dart';
 import 'voice/voice_call_hud.dart';
@@ -157,7 +162,36 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
 
   void _toggleTray(String tray) {
     HapticFeedback.lightImpact();
+    if (tray == 'history' && _canvasBloc.state.activeTray != 'history') {
+      _canvasBloc.add(const CanvasHistoryFeedRequested());
+    }
     _canvasBloc.add(CanvasToggleTray(tray));
+  }
+
+  Future<void> _restoreHistoryVersion(CanvasState state) async {
+    final version = state.historyPreviewVersion;
+    if (version == null) return;
+    final confirmed = await showInkConfirmDialog(
+      context,
+      title: 'Restore version $version?',
+      message:
+          'This reverts every change made after version $version. Nothing is '
+          'deleted from history — you can restore to another version later.',
+      confirmLabel: 'Restore',
+      destructive: false,
+    );
+    if (!mounted || !confirmed) return;
+    _canvasBloc.add(CanvasHistoryRestoreRequested(version));
+  }
+
+  void _openUndoRequestSheet() {
+    final service = context.read<BoardHistoryService>();
+    showUndoRequestSheet(
+      context,
+      service: service,
+      boardId: widget.boardId,
+      elements: _canvasBloc.state.elements,
+    );
   }
 
   Offset _toWorld(Offset localPoint) {
@@ -1539,8 +1573,11 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
         },
         child: BlocBuilder<CanvasBloc, CanvasState>(
           builder: (context, state) {
-            _syncDecodedUiImages(state.elements);
-            final mappedElements = _mapElements(state.elements);
+            final displayElements = state.isViewingHistory
+                ? state.historyPreviewElements
+                : state.elements;
+            _syncDecodedUiImages(displayElements);
+            final mappedElements = _mapElements(displayElements);
             final title =
                 state.boardTitle ??
                 'Board ${widget.boardId.substring(0, math.min(6, widget.boardId.length))}';
@@ -1976,6 +2013,15 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                           if (state.selectedShapeId != null)
                             _buildSelectionOutline(state, mappedElements),
                           _buildAllTrays(state),
+                          _buildHistoryPlanListener(),
+                          if (state.isViewingHistory)
+                            HistoryPreviewBanner(
+                              version: state.historyPreviewVersion,
+                              onRestore: () => _restoreHistoryVersion(state),
+                              onExit: () => _canvasBloc.add(
+                                const CanvasHistoryPreviewExited(),
+                              ),
+                            ),
                           const BoardChatDrawer(),
                           const CommentsTray(),
                           const VoiceCallHud(),
@@ -3587,6 +3633,25 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
     );
   }
 
+  /// Opens the per-element revert review whenever a plan arrives (D4/D12).
+  Widget _buildHistoryPlanListener() {
+    return BlocListener<CanvasBloc, CanvasState>(
+      listenWhen: (previous, current) =>
+          previous.activeRevertPlan?.planId != current.activeRevertPlan?.planId,
+      listener: (context, state) {
+        final plan = state.activeRevertPlan;
+        if (plan == null) return;
+        showRevertReviewSheet(
+          context,
+          bloc: _canvasBloc,
+          plan: plan,
+          requestId: plan.requestId,
+        );
+      },
+      child: const SizedBox.shrink(),
+    );
+  }
+
   Widget _buildAllTrays(CanvasState state) {
     return Stack(
       children: [
@@ -3619,8 +3684,23 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
           onAddStickyNote: _addStickyNoteDialog,
           onAddConnector: _addConnectorDialog,
           onExport: () => _showExportOptionsSheet(context),
+          onHistory: state.currentUserRole == Board.roleOwner
+              ? () => _openTray('history')
+              : null,
+          onRequestUndo: state.currentUserRole == Board.roleEditor
+              ? _openUndoRequestSheet
+              : null,
           onClose: () => _toggleTray('tools'),
         ),
+        if (state.currentUserRole == Board.roleOwner)
+          HistoryTray(
+            isOpen: state.activeTray == 'history',
+            boardId: widget.boardId,
+            state: state,
+            bloc: _canvasBloc,
+            historyService: context.read<BoardHistoryService>(),
+            onClose: () => _toggleTray('history'),
+          ),
         ShapesTray(
           isOpen: state.activeTray == 'shapes',
           onSelectShapeForDrawing: _selectShapeForDrawing,
