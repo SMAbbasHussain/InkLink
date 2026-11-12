@@ -72,6 +72,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final Map<String, CanvasElement> _remotePreviewElements =
       <String, CanvasElement>{};
   final Set<String> _remotePreviewDeletedIds = <String>{};
+  /// When each remote preview arrived. Previews are transient overlays: without
+  /// an expiry a peer's in-flight drag (or a preview that never got a matching
+  /// committed update) masks the element's real state on this device forever.
+  final Map<String, DateTime> _remotePreviewReceivedAt =
+      <String, DateTime>{};
+  static const Duration _remotePreviewTtl = Duration(seconds: 3);
   bool _remotePreviewClearsBoard = false;
   final Map<String, String> _lastShapePayloadFingerprint = <String, String>{};
   final Map<String, String> _lastShapeUpdateId =
@@ -513,8 +519,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           }
         }
         _remotePreviewClearsBoard = false;
+        // A committed update supersedes any preview/deletion overlay for that
+        // element, otherwise a stale preview would keep masking the real value.
         if (update.elementId != null) {
-          _remotePreviewElements.remove(update.elementId);
+          _forgetPreviews(update.elementId!);
         }
         _appliedCrdtUpdateIds.add(update.updateId);
       } catch (_) {
@@ -574,6 +582,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         if (action == 'delete') {
           _remotePreviewDeletedIds.add(elementId);
           _remotePreviewElements.remove(elementId);
+          _remotePreviewReceivedAt.remove(elementId);
           continue;
         }
         _remotePreviewDeletedIds.remove(elementId);
@@ -601,6 +610,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         }
         _remotePreviewElements[preview.elementId!] =
             CanvasElement.fromMap(elementId, decoded);
+        _remotePreviewReceivedAt[preview.elementId!] = DateTime.now();
       } catch (_) {}
     }
     _refreshFromCrdtAdapter(emit, rebuildFromCrdt: false);
@@ -618,6 +628,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     required Emitter<CanvasState> emit,
   }) async {
     _cancelPendingPreview(objectId);
+    // Our own edit wins over any overlay still being shown for this element.
+    _forgetPreviews(objectId);
     if (!_canSync) return;
     await _ensureCrdtReady();
     final adapter = _crdtAdapter;
@@ -730,6 +742,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     List<CanvasElement> committedElements,
   ) {
     if (_remotePreviewClearsBoard) return const <CanvasElement>[];
+    _pruneExpiredPreviews();
     if (_remotePreviewElements.isEmpty && _remotePreviewDeletedIds.isEmpty) {
       return committedElements;
     }
@@ -746,6 +759,47 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       return a.id.compareTo(b.id);
     });
     return composed;
+  }
+
+  void _pruneExpiredPreviews() {
+    if (_remotePreviewElements.isEmpty) return;
+    final now = DateTime.now();
+    _remotePreviewElements.removeWhere((id, _) {
+      final receivedAt = _remotePreviewReceivedAt[id];
+      final expired = receivedAt != null &&
+          now.difference(receivedAt) > _remotePreviewTtl;
+      if (expired) _remotePreviewReceivedAt.remove(id);
+      return expired;
+    });
+  }
+
+  /// Drop every preview overlay for [elementId]. Called as soon as this device
+  /// commits its own edit, so a collaborator's in-flight preview can never keep
+  /// showing the pre-edit version to the person who just changed it.
+  void _forgetPreviews(String elementId) {
+    _remotePreviewElements.remove(elementId);
+    _remotePreviewDeletedIds.remove(elementId);
+    _remotePreviewReceivedAt.remove(elementId);
+  }
+
+  /// Payload of the element as committed to the CRDT document.
+  ///
+  /// Edits must never be built from `state.elements`, because that view is
+  /// composited with transient collaborator previews: persisting it would copy
+  /// a preview's stale values over the real ones (an opacity change rewriting
+  /// the stroke width, a colour change rewriting the points, ...).
+  Map<String, dynamic>? _committedElementPayload(String elementId) {
+    final adapter = _crdtAdapter;
+    if (adapter != null) {
+      final payload = adapter.materializeElements()[elementId];
+      if (payload != null) return Map<String, dynamic>.from(payload);
+    }
+    for (final element in state.elements) {
+      if (element.id == elementId) {
+        return Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap());
+      }
+    }
+    return null;
   }
 
   Future<void> _publishSelectedShapePreview(
@@ -1840,7 +1894,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       );
       return;
     }
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['cx'] = event.center.dx
       ..['cy'] = event.center.dy
       ..['z'] = nextZ;
@@ -1854,7 +1908,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final shape = _selectedShape();
     if (shape == null || !_ensureCanEdit(emit)) return;
     final normalized = _normalizeRotation(event.rotation);
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['rotation'] = normalized;
     emit(state.copyWith(selectedShapeRotation: normalized));
     await _updateShape(shape.id, data, emit);
@@ -1866,7 +1920,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['size'] = event.size.clamp(24.0, 320.0);
     await _updateShape(shape.id, data, emit);
   }
@@ -1877,7 +1931,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['isFilled'] = event.isFilled;
     emit(state.copyWith(selectedShapeIsFilled: event.isFilled));
     await _updateShape(shape.id, data, emit);
@@ -1889,7 +1943,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['color'] = event.color.value;
     await _updateShape(shape.id, data, emit);
   }
@@ -1904,7 +1958,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final size = shape.size;
     final maxRadius = (size / 2).clamp(0.0, 180.0);
     final clampedRadius = event.borderRadius.clamp(0.0, maxRadius);
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['borderRadius'] = clampedRadius;
     emit(state.copyWith(selectedShapeBorderRadius: clampedRadius));
     await _updateShape(shape.id, data, emit);
@@ -1917,7 +1971,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (!_ensureCanEdit(emit)) return;
     final shape = _selectedShape();
     if (shape == null) return;
-    final data = Map<String, dynamic>.from(shape.toMap());
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap());
     for (final entry in event.pendingData.entries) {
       if (entry.key == 'rotation') {
         final rotation = _toDoubleValue(entry.value);
@@ -1999,7 +2053,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final element = _selectedShape();
     if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(element.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap())
       ..['color'] = event.color;
     emit(state.copyWith(selectedStrokeColor: event.color));
     await _updateStroke(element.id, data, emit);
@@ -2011,7 +2065,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final element = _selectedShape();
     if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(element.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap())
       ..['strokeWidth'] = event.strokeWidth;
     emit(state.copyWith(selectedStrokeWidth: event.strokeWidth));
     await _updateStroke(element.id, data, emit);
@@ -2023,7 +2077,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final element = _selectedShape();
     if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(element.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap())
       ..['opacity'] = event.opacity;
     emit(state.copyWith(selectedStrokeOpacity: event.opacity));
     await _updateStroke(element.id, data, emit);
@@ -2035,7 +2089,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final element = _selectedShape();
     if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(element.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap())
       ..['brushType'] = event.brushType;
     emit(state.copyWith(selectedStrokeBrushType: event.brushType));
     await _updateStroke(element.id, data, emit);
@@ -2259,7 +2313,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     if (shape == null || canvasService == null || _boardId.isEmpty) return;
     if (!_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap());
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap());
     for (final entry in event.pendingData.entries) {
       if (entry.key == 'rotation') {
         final rotation = _toDoubleValue(entry.value);
@@ -2296,7 +2350,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     // drag end, so there is no cx/cy preview to publish here.
     if (shape is ConnectorElement) return;
     if (!_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['cx'] = event.center.dx
       ..['cy'] = event.center.dy;
     if (shape is ImageElement) {
@@ -2313,7 +2367,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     if (shape == null || canvasService == null || _boardId.isEmpty) return;
     if (!_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['size'] = event.size.clamp(24.0, 320.0);
     if (shape is ImageElement) {
       data.remove('imageBase64');
@@ -2331,7 +2385,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     if (shape == null || canvasService == null || _boardId.isEmpty) return;
     if (!_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['rotation'] = _normalizeRotation(event.rotation);
     await _publishSelectedShapePreview(shape.id, data);
   }
