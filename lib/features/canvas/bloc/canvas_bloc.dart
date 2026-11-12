@@ -796,7 +796,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     for (final element in state.elements) {
       if (element.id == elementId) {
-        return Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap());
+        return Map<String, dynamic>.from(element.toMap());
       }
     }
     return null;
@@ -3115,6 +3115,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final service = _historyService;
     if (service == null) return;
+    // D3: reverting board history is the owner's right; the server rejects it
+    // too, but a member should never reach the request in the first place.
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(
+        error: 'Only the board owner can revert board history.',
+      ));
+      return;
+    }
     emit(state.copyWith(isHistoryLoading: true, error: null));
     try {
       final result = await service.applyRevert(
@@ -3166,7 +3174,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   /// D2: cross-device fallback for a member's own ≤15-minute edits.
   Future<void> _undoOwnViaLog(Emitter<CanvasState> emit) async {
     final service = _historyService;
-    if (service == null || !_canSync) return;
+    // Server-side undo only needs the history socket, not canvas sync: a device
+    // that has not finished its CRDT handshake can still undo its own edits.
+    if (service == null || _boardId.isEmpty) return;
     emit(state.copyWith(isHistoryLoading: true, error: null));
     try {
       final result = await service.undoOwn(_boardId);

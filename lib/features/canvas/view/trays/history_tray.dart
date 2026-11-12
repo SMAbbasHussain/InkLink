@@ -12,9 +12,16 @@ import '../../bloc/canvas_bloc.dart';
 import '../widgets/sliding_tray.dart';
 import '../widgets/user_history_timeline.dart';
 
-/// Owner-only board history: archived blocks, per-contributor timelines and
-/// pending undo requests. Members never see this tray (D3).
-class HistoryTray extends StatelessWidget {
+/// Section filter for the owner's history tray.
+enum HistoryFilter { all, versions, restores, requests }
+
+/// Owner-only board history: archived versions, the people who made them and
+/// the undo requests waiting on a decision (D3/D5).
+///
+/// Everything here is a *view* over `CanvasState`: the tray never talks to the
+/// socket itself, it dispatches bloc events so the owner-rights rules stay in
+/// one place.
+class HistoryTray extends StatefulWidget {
   final bool isOpen;
   final String boardId;
   final CanvasState state;
@@ -33,89 +40,249 @@ class HistoryTray extends StatelessWidget {
   });
 
   @override
+  State<HistoryTray> createState() => _HistoryTrayState();
+}
+
+class _HistoryTrayState extends State<HistoryTray> {
+  final TextEditingController _search = TextEditingController();
+  HistoryFilter _filter = HistoryFilter.all;
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  CanvasState get state => widget.state;
+
+  List<UndoRequest> get _pending =>
+      state.undoRequests.where((r) => r.isPending).toList(growable: false);
+
+  bool _matchesQuery(BoardActivityBlock block) {
+    final query = _search.text.trim().toLowerCase();
+    if (query.isEmpty) return true;
+    final range = 'v${block.fromVersion} v${block.toVersion}'.toLowerCase();
+    if (range.contains(query)) return true;
+    for (final uid in block.contributorUids) {
+      final name = block.summary[uid]?.name.toLowerCase() ?? uid.toLowerCase();
+      if (name.contains(query)) return true;
+    }
+    return false;
+  }
+
+  List<BoardActivityBlock> get _visibleBlocks {
+    if (_filter == HistoryFilter.requests) return const [];
+    return state.activityBlocks
+        .where((block) {
+          if (_filter == HistoryFilter.restores && block.restores.isEmpty) {
+            return false;
+          }
+          return _matchesQuery(block);
+        })
+        .toList(growable: false);
+  }
+
+  bool get _showRequests =>
+      _filter == HistoryFilter.all || _filter == HistoryFilter.requests;
+
+  int get _latestVersion => state.activityBlocks.isEmpty
+      ? 0
+      : state.activityBlocks
+            .map((b) => b.toVersion)
+            .reduce((a, b) => a > b ? a : b);
+
+  @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
-    final pendingRequests =
-        state.undoRequests.where((request) => request.isPending).toList();
+    final blocks = _visibleBlocks;
+    final pending = _pending;
 
     return SlidingTray(
-      isOpen: isOpen,
+      isOpen: widget.isOpen,
       direction: TrayDirection.right,
       title: 'History',
-      width: 300,
-      height: 480,
+      width: 320,
+      height: 520,
       bottomOffset: 60,
-      onClose: onClose,
-      child: Padding(
-        padding: const EdgeInsets.all(InkSpacing.s12),
-        child: state.selectedUserUid != null
-            ? UserHistoryTimeline(
+      onClose: widget.onClose,
+      child: state.selectedUserUid != null
+          ? Padding(
+              padding: const EdgeInsets.all(InkSpacing.s12),
+              child: UserHistoryTimeline(
                 state: state,
-                bloc: bloc,
+                bloc: widget.bloc,
                 targetUid: state.selectedUserUid!,
                 displayName: _displayNameFor(state.selectedUserUid!),
-              )
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (state.isHistoryLoading) ...[
-                    LinearProgressIndicator(
-                      minHeight: 2,
-                      color: tokens.accentText,
-                      backgroundColor: tokens.field,
+              ),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (state.isHistoryLoading)
+                  LinearProgressIndicator(
+                    minHeight: 2,
+                    color: tokens.accentText,
+                    backgroundColor: tokens.field,
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    InkSpacing.s12,
+                    InkSpacing.s8,
+                    InkSpacing.s12,
+                    0,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        state.activityBlocks.isEmpty
+                            ? 'No archived versions yet'
+                            : 'Latest v$_latestVersion · '
+                                  '${state.activityBlocks.length} version(s)'
+                                  '${pending.isEmpty ? '' : ' · ${pending.length} request(s)'}',
+                        style: InkType.caption(tokens.inkMuted),
+                      ),
+                      const SizedBox(height: InkSpacing.s8),
+                      _buildSearchField(tokens),
+                      const SizedBox(height: InkSpacing.s8),
+                      _buildFilterChips(tokens, pending.length),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: InkSpacing.s8),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(
+                      InkSpacing.s12,
+                      0,
+                      InkSpacing.s12,
+                      InkSpacing.s12,
                     ),
-                    const SizedBox(height: InkSpacing.s8),
-                  ],
-                  Expanded(
-                    child: ListView(
-                      children: [
-                        Text(
-                          'Versions',
-                          style: InkType.bodyStrong(tokens.ink),
+                    children: [
+                      if (_showRequests && pending.isNotEmpty) ...[
+                        _SectionHeader(
+                          label: 'Undo requests',
+                          trailing: '${pending.length} waiting',
+                        ),
+                        ...pending.map(
+                          (request) => _UndoRequestRow(
+                            request: request,
+                            onReview: () => widget.bloc.add(
+                              CanvasHistoryUndoRequestReviewRequested(
+                                request.requestId,
+                              ),
+                            ),
+                            onDeny: () => _denyRequest(context, request),
+                          ),
                         ),
                         const SizedBox(height: InkSpacing.s8),
-                        if (state.activityBlocks.isEmpty)
+                      ],
+                      if (_filter != HistoryFilter.requests) ...[
+                        const _SectionHeader(label: 'Versions'),
+                        if (blocks.isEmpty)
                           Text(
-                            'No archived versions yet. History appears after the first block is archived (500 ops or a 5-minute flush).',
+                            _emptyVersionsMessage(),
                             style: InkType.caption(tokens.inkMuted),
                           )
                         else
-                          ...state.activityBlocks.map(
+                          ...blocks.map(
                             (block) => _BlockRow(
                               block: block,
-                              onPreview: () => bloc.add(
+                              onPreview: () => widget.bloc.add(
                                 CanvasHistoryPreviewRequested(block.toVersion),
                               ),
-                              onSelectContributor: (uid) => bloc.add(
+                              onRestore: () => _confirmRestore(block),
+                              onSelectContributor: (uid) => widget.bloc.add(
                                 CanvasHistoryUserOpsRequested(uid),
                               ),
                             ),
                           ),
-                        if (pendingRequests.isNotEmpty) ...[
-                          const SizedBox(height: InkSpacing.s16),
-                          Text(
-                            'Undo requests',
-                            style: InkType.bodyStrong(tokens.ink),
-                          ),
-                          const SizedBox(height: InkSpacing.s8),
-                          ...pendingRequests.map(
-                            (request) => _UndoRequestRow(
-                              request: request,
-                              onReview: () => bloc.add(
-                                CanvasHistoryUndoRequestReviewRequested(
-                                  request.requestId,
-                                ),
-                              ),
-                              onDeny: () => _denyRequest(context, request),
-                            ),
-                          ),
-                        ],
                       ],
-                    ),
+                      if (_filter == HistoryFilter.requests &&
+                          pending.isEmpty)
+                        Text(
+                          'No undo requests right now. Members can ask you to '
+                          'undo their own recent edits from the tools tray.',
+                          style: InkType.caption(tokens.inkMuted),
+                        ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
+            ),
+    );
+  }
+
+  String _emptyVersionsMessage() {
+    if (state.activityBlocks.isEmpty) {
+      return 'History appears after the first block is archived '
+          '(500 ops or a 5-minute flush).';
+    }
+    if (_search.text.trim().isNotEmpty) {
+      return 'No versions match "${_search.text.trim()}".';
+    }
+    return 'No version in this list contains a restore.';
+  }
+
+  Widget _buildSearchField(InkTokens tokens) {
+    return TextField(
+      controller: _search,
+      onChanged: (_) => setState(() {}),
+      style: InkType.caption(tokens.ink),
+      decoration: InputDecoration(
+        isDense: true,
+        filled: true,
+        fillColor: tokens.field,
+        hintText: 'Search versions or people',
+        hintStyle: InkType.caption(tokens.inkMuted),
+        prefixIcon: Icon(LucideIcons.search, size: 14, color: tokens.inkMuted),
+        prefixIconConstraints: const BoxConstraints(minWidth: 30),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: InkSpacing.s8,
+          vertical: InkSpacing.s8,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(InkRadii.chip),
+          borderSide: BorderSide.none,
+        ),
       ),
+    );
+  }
+
+  Widget _buildFilterChips(InkTokens tokens, int pendingCount) {
+    final entries = <HistoryFilter, String>{
+      HistoryFilter.all: 'All',
+      HistoryFilter.versions: 'Versions',
+      HistoryFilter.restores: 'Restores',
+      HistoryFilter.requests:
+          pendingCount == 0 ? 'Requests' : 'Requests ($pendingCount)',
+    };
+    return Wrap(
+      spacing: InkSpacing.s4,
+      runSpacing: InkSpacing.s4,
+      children: entries.entries.map((entry) {
+        final selected = _filter == entry.key;
+        return InkWell(
+          onTap: () => setState(() => _filter = entry.key),
+          borderRadius: BorderRadius.circular(InkRadii.chip),
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: InkSpacing.s8,
+              vertical: 3,
+            ),
+            decoration: BoxDecoration(
+              color: selected ? tokens.accentText : tokens.field,
+              borderRadius: BorderRadius.circular(InkRadii.chip),
+            ),
+            child: Text(
+              entry.value,
+              style: InkType.caption(
+                selected ? tokens.paper : tokens.inkSecondary,
+              ),
+            ),
+          ),
+        );
+      }).toList(growable: false),
     );
   }
 
@@ -131,11 +298,34 @@ class HistoryTray extends StatelessWidget {
     return 'User';
   }
 
-  Future<void> _denyRequest(
-    BuildContext context,
-    UndoRequest request,
-  ) async {
-    final service = historyService;
+  Future<void> _confirmRestore(BoardActivityBlock block) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Restore this version?'),
+        content: Text(
+          'The board will be set back to v${block.toVersion}. Everything added '
+          'after it is reverted — the history itself is kept, so you can undo '
+          'the restore later.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Restore'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    widget.bloc.add(CanvasHistoryRestoreRequested(block.toVersion));
+  }
+
+  Future<void> _denyRequest(BuildContext context, UndoRequest request) async {
+    final service = widget.historyService;
     if (service == null) return;
     final note = await showDialog<String>(
       context: context,
@@ -144,7 +334,7 @@ class HistoryTray extends StatelessWidget {
     if (note == null) return;
     try {
       await service.resolveUndoRequest(
-        boardId: boardId,
+        boardId: widget.boardId,
         requestId: request.requestId,
         status: 'denied',
         note: note,
@@ -160,14 +350,38 @@ class HistoryTray extends StatelessWidget {
   }
 }
 
+class _SectionHeader extends StatelessWidget {
+  final String label;
+  final String? trailing;
+
+  const _SectionHeader({required this.label, this.trailing});
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: InkSpacing.s8),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: InkType.bodyStrong(tokens.ink))),
+          if (trailing != null)
+            Text(trailing!, style: InkType.caption(tokens.inkMuted)),
+        ],
+      ),
+    );
+  }
+}
+
 class _BlockRow extends StatelessWidget {
   final BoardActivityBlock block;
   final VoidCallback onPreview;
+  final VoidCallback onRestore;
   final ValueChanged<String> onSelectContributor;
 
   const _BlockRow({
     required this.block,
     required this.onPreview,
+    required this.onRestore,
     required this.onSelectContributor,
   });
 
@@ -181,9 +395,24 @@ class _BlockRow extends StatelessWidget {
     return '${fmt(first)}–${fmt(last)}';
   }
 
+  ({int adds, int updates, int deletes}) get _totals {
+    var adds = 0;
+    var updates = 0;
+    var deletes = 0;
+    for (final summary in block.summary.values) {
+      adds += summary.adds;
+      updates += summary.updates;
+      deletes += summary.deletes;
+    }
+    return (adds: adds, updates: updates, deletes: deletes);
+  }
+
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final totals = _totals;
+    final restore = block.restores.isEmpty ? null : block.restores.last;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: InkSpacing.s8),
       child: InkWell(
@@ -210,38 +439,59 @@ class _BlockRow extends StatelessWidget {
                     '${block.operationCount} ops',
                     style: InkType.caption(tokens.inkMuted),
                   ),
+                  _VersionMenu(onPreview: onPreview, onRestore: onRestore),
                 ],
               ),
               const SizedBox(height: 2),
               Text(_range, style: InkType.caption(tokens.inkMuted)),
-              const SizedBox(height: InkSpacing.s4),
-              Wrap(
-                spacing: InkSpacing.s4,
-                runSpacing: InkSpacing.s4,
-                children: block.contributorUids
-                    .map(
-                      (uid) => InkWell(
-                        onTap: () => onSelectContributor(uid),
-                        borderRadius: BorderRadius.circular(InkRadii.chip),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: InkSpacing.s8,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: tokens.glassStroke,
-                            borderRadius: BorderRadius.circular(InkRadii.chip),
-                          ),
-                          child: Text(
-                            '${block.summary[uid]?.name ?? uid}'
-                            ' • ${block.summary[uid]?.ops ?? 0}',
-                            style: InkType.caption(tokens.inkSecondary),
+              const SizedBox(height: 2),
+              Text(
+                '${totals.adds} added · ${totals.updates} edited · '
+                '${totals.deletes} removed',
+                style: InkType.caption(tokens.inkMuted),
+              ),
+              if (restore != null) ...[
+                const SizedBox(height: InkSpacing.s4),
+                _Tag(
+                  icon: LucideIcons.history,
+                  label: restore.restoredFromVersion == null
+                      ? 'restored'
+                      : 'restored to v${restore.restoredFromVersion}',
+                  color: tokens.pending,
+                ),
+              ],
+              if (block.contributorUids.isNotEmpty) ...[
+                const SizedBox(height: InkSpacing.s4),
+                Wrap(
+                  spacing: InkSpacing.s4,
+                  runSpacing: InkSpacing.s4,
+                  children: block.contributorUids
+                      .map(
+                        (uid) => InkWell(
+                          onTap: () => onSelectContributor(uid),
+                          borderRadius: BorderRadius.circular(InkRadii.chip),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: InkSpacing.s8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: tokens.glassStroke,
+                              borderRadius: BorderRadius.circular(
+                                InkRadii.chip,
+                              ),
+                            ),
+                            child: Text(
+                              '${block.summary[uid]?.name ?? uid}'
+                              ' • ${block.summary[uid]?.ops ?? 0}',
+                              style: InkType.caption(tokens.inkSecondary),
+                            ),
                           ),
                         ),
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
+                      )
+                      .toList(growable: false),
+                ),
+              ],
             ],
           ),
         ),
@@ -250,7 +500,65 @@ class _BlockRow extends StatelessWidget {
   }
 }
 
+class _VersionMenu extends StatelessWidget {
+  final VoidCallback onPreview;
+  final VoidCallback onRestore;
+
+  const _VersionMenu({required this.onPreview, required this.onRestore});
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return PopupMenuButton<String>(
+      tooltip: 'Version actions',
+      icon: Icon(LucideIcons.ellipsisVertical, size: 16, color: tokens.inkMuted),
+      padding: EdgeInsets.zero,
+      onSelected: (value) {
+        if (value == 'preview') onPreview();
+        if (value == 'restore') onRestore();
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(
+          value: 'preview',
+          child: Text('Preview version'),
+        ),
+        PopupMenuItem(
+          value: 'restore',
+          child: Text('Restore to this version…'),
+        ),
+      ],
+    );
+  }
+}
+
+class _Tag extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  const _Tag({required this.icon, required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: color),
+        const SizedBox(width: 4),
+        Text(label, style: InkType.caption(color)),
+      ],
+    );
+  }
+}
+
 class _UndoRequestRow extends StatelessWidget {
+  static final ButtonStyle _actionStyle = TextButton.styleFrom(
+    minimumSize: Size.zero,
+    padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s8, vertical: 4),
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    visualDensity: VisualDensity.compact,
+  );
+
   final UndoRequest request;
   final VoidCallback onReview;
   final VoidCallback onDeny;
@@ -261,6 +569,16 @@ class _UndoRequestRow extends StatelessWidget {
     required this.onDeny,
   });
 
+  String get _age {
+    final createdAt = request.createdAt;
+    if (createdAt == null) return '';
+    final delta = DateTime.now().difference(createdAt);
+    if (delta.inMinutes < 1) return 'just now';
+    if (delta.inMinutes < 60) return '${delta.inMinutes}m ago';
+    if (delta.inHours < 24) return '${delta.inHours}h ago';
+    return '${delta.inDays}d ago';
+  }
+
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
@@ -270,30 +588,48 @@ class _UndoRequestRow extends StatelessWidget {
       decoration: BoxDecoration(
         color: tokens.field,
         borderRadius: BorderRadius.circular(InkRadii.chip),
+        border: Border.all(color: tokens.pending.withValues(alpha: 0.35)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            request.requesterName,
-            style: InkType.bodyStrong(tokens.ink),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  request.requesterName,
+                  style: InkType.bodyStrong(tokens.ink),
+                ),
+              ),
+              if (_age.isNotEmpty)
+                Text(_age, style: InkType.caption(tokens.inkMuted)),
+            ],
           ),
           Text(
-            '${request.targetElementIds.length} element(s) • ${request.reason}',
+            '${request.targetElementIds.length} element(s)',
             style: InkType.caption(tokens.inkMuted),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            request.reason.isEmpty ? 'No reason given.' : request.reason,
+            style: InkType.caption(tokens.inkSecondary),
             maxLines: 3,
             overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: InkSpacing.s4),
-          Row(
+          // Wrap + compact buttons so a narrow tray can never overflow here.
+          Wrap(
+            spacing: InkSpacing.s4,
             children: [
               TextButton.icon(
                 onPressed: onReview,
+                style: _actionStyle,
                 icon: const Icon(LucideIcons.eye, size: 14),
                 label: const Text('Review'),
               ),
               TextButton.icon(
                 onPressed: onDeny,
+                style: _actionStyle,
                 icon: const Icon(LucideIcons.x, size: 14),
                 label: const Text('Decline'),
               ),

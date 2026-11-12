@@ -291,7 +291,15 @@ async function applyPlan(boardId, plan, decisions, redis, actingUid) {
   }, 'server-revert');
 
   const update = Y.encodeStateAsUpdate(curDoc, beforeVector);
-  return { update, baseVersion: plan.baseVersion, applied, skipped, current };
+  // `current` is the state AFTER the revert (callers report on the result),
+  // not the snapshot that was read before applying it.
+  return {
+    update,
+    baseVersion: plan.baseVersion,
+    applied,
+    skipped,
+    current: elements.toJSON(),
+  };
 }
 
 module.exports = {
