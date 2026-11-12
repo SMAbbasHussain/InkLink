@@ -496,6 +496,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           ..updateId = (map['updateId'] as String?) ?? ''
           ..boardId = (map['boardId'] as String?) ?? boardId
           ..elementId = map['elementId'] as String?
+          ..action = map['action'] as String?
+          ..affectedElementIds =
+              (map['affectedElementIds'] as List?)?.whereType<String>().toList()
           ..payloadBase64 = map['payloadBase64'] as String? ?? ''
           ..sourceClientId = map['sourceClientId'] as String? ?? ''
           ..appliedAt = appliedAtStr != null
@@ -643,6 +646,10 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
                     ''
                 ..boardId = boardId
                 ..elementId = payload['elementId'] as String?
+                ..action = payload['action'] as String?
+                ..affectedElementIds = (payload['affectedElementIds'] as List?)
+                    ?.whereType<String>()
+                    .toList()
                 ..payloadBase64 = payload['payloadBase64'] as String? ?? ''
                 ..sourceClientId = payload['sourceClientId'] as String? ?? ''
                 ..appliedAt = DateTime.now()
@@ -698,6 +705,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     required String payloadBase64,
     required String sourceClientId,
     String? elementId,
+    String action = 'upsert',
   }) async {
     if (payloadBase64.isEmpty ||
         payloadBase64.length > _maxPayloadBase64Length) {
@@ -722,6 +730,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           'payloadBase64': payloadBase64,
           'sourceClientId': sourceClientId,
           'elementId': elementId,
+          'action': action,
         };
         if (_isSingleUserBoard) {
           updateData['_singleUser'] = true;
@@ -783,6 +792,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
             'payloadBase64': local.payloadBase64,
             'sourceClientId': userId,
             'elementId': local.elementId,
+            'action': local.action ?? 'upsert',
           };
           if (_isSingleUserBoard) {
             updateData['_singleUser'] = true;

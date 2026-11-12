@@ -18,6 +18,22 @@ abstract class CanvasDocAdapter {
   Uint8List? undoLast({String origin = 'local'});
   Uint8List? redoLast({String origin = 'local'});
   Map<String, Map<String, dynamic>> materializeElements();
+
+  /// Remove every undo/redo entry that touches any of [elementIds].
+  /// Called when an owner's remote 'revert' arrives (D14).
+  void pruneReverted(Set<String> elementIds);
+
+  /// Drop the entire local undo/redo history (remote 'restore'/'clear' or a
+  /// full snapshot hydration replaces the board, so the stack is meaningless).
+  void clearLocalHistory();
+}
+
+/// Ledger entry stored on a Yjs undo stack item: the ORIGINAL local edit time
+/// (never refreshed by undo/redo) plus the element keys that entry touches.
+class _UndoMeta {
+  final DateTime createdAt;
+  final Set<String> elementIds;
+  _UndoMeta(this.createdAt, this.elementIds);
 }
 
 class CanvasDocAdapterFactory {
@@ -34,7 +50,39 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
   final YMap<Object?> _elements;
   final UndoManager _undoManager;
 
-  CanvasCrdtAdapter._(this._doc, this._elements, this._undoManager);
+  static const Duration undoWindow = Duration(minutes: 15); // D2
+  static const String _metaKey = 'inklinkUndo'; // key into StackItem.meta
+
+  CanvasCrdtAdapter._(this._doc, this._elements, this._undoManager) {
+    _undoManager.on('stack-item-added', (dynamic data, [dynamic _]) {
+      final map = data as Map;
+      if (map['origin'] != _localOrigin) return; // only genuine local edits
+      final item = map['stackItem']; // inferred StackItem; never name the type
+      (item.meta as Map<Object, Object?>)[_metaKey] =
+          _UndoMeta(DateTime.now(), _changedElementIds(map['changedParentTypes']));
+    });
+    _undoManager.on('stack-item-updated', (dynamic data, [dynamic _]) {
+      final map = data as Map;
+      if (map['origin'] != _localOrigin) return;
+      final item = map['stackItem'];
+      final meta = (item.meta as Map<Object, Object?>)[_metaKey] as _UndoMeta?;
+      // Merge: keep the ORIGINAL createdAt, accumulate touched keys.
+      meta?.elementIds.addAll(_changedElementIds(map['changedParentTypes']));
+    });
+  }
+
+  Set<String> _changedElementIds(dynamic changed) {
+    final keys = <String>{};
+    if (changed is Map) {
+      final events = changed[_elements]; // List<YEvent> for our YMap
+      if (events is List) {
+        for (final event in events) {
+          if (event is YEvent) keys.addAll(event.keysChanged);
+        }
+      }
+    }
+    return keys;
+  }
 
   static Future<CanvasCrdtAdapter> create() async {
     final doc = Doc();
@@ -107,24 +155,65 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
 
   @override
   Uint8List? undoLast({String origin = 'local'}) {
-    if (!_undoManager.canUndo()) {
+    final um = _undoManager;
+    if (!um.canUndo()) return null;
+    final top = um.undoStack.last;
+    final meta = top.meta[_metaKey] as _UndoMeta?;
+    // D2: refuse when we cannot prove the edit is within the window. The bloc
+    // then falls back to server-side undo_own (§6.9). Because the stack is LIFO
+    // an expired top means everything beneath it is older too.
+    if (meta == null || DateTime.now().difference(meta.createdAt) > undoWindow) {
       return null;
     }
-
+    final redoLenBefore = um.redoStack.length;
     final beforeVector = encodeStateVector();
-    _undoManager.undo();
+    um.undo();
+    // The inverse item was created with origin == manager (untagged). Carry the
+    // ORIGINAL timestamp onto it so a later redo is validated against the same
+    // window (ping-ponging cannot keep an edit alive past 15 minutes).
+    if (um.redoStack.length > redoLenBefore) {
+      um.redoStack.last.meta[_metaKey] = meta;
+    }
     return encodeStateUpdate(vector: beforeVector);
   }
 
   @override
   Uint8List? redoLast({String origin = 'local'}) {
-    if (!_undoManager.canRedo()) {
+    final um = _undoManager;
+    if (!um.canRedo()) return null;
+    final top = um.redoStack.last;
+    final meta = top.meta[_metaKey] as _UndoMeta?;
+    if (meta == null || DateTime.now().difference(meta.createdAt) > undoWindow) {
       return null;
     }
-
+    final undoLenBefore = um.undoStack.length;
     final beforeVector = encodeStateVector();
-    _undoManager.redo();
+    um.redo();
+    // Only tag when the stack actually grew — otherwise the last item is a
+    // pre-existing entry and overwriting its meta would corrupt it.
+    if (um.undoStack.length > undoLenBefore) {
+      um.undoStack.last.meta[_metaKey] = meta;
+    }
     return encodeStateUpdate(vector: beforeVector);
+  }
+
+  @override
+  void pruneReverted(Set<String> elementIds) {
+    if (elementIds.isEmpty) return;
+    final um = _undoManager;
+    bool touches(dynamic item) {
+      final meta = (item.meta as Map<Object, Object?>)[_metaKey] as _UndoMeta?;
+      return meta != null && meta.elementIds.intersection(elementIds).isNotEmpty;
+    }
+
+    um.undoStack.removeWhere(touches);
+    um.redoStack.removeWhere(touches);
+    um.stopCapturing(); // the next local edit starts a fresh entry
+  }
+
+  @override
+  void clearLocalHistory() {
+    _undoManager.clear();
   }
 
   @override

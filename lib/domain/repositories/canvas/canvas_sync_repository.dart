@@ -45,6 +45,7 @@ abstract class CanvasSyncRepository {
     required String payloadBase64,
     required String sourceClientId,
     String? elementId,
+    String action = 'upsert',
   });
 
   /// Mark the current board as single-user so CRDT updates carry a server-side

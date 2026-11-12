@@ -17,39 +17,45 @@ const LocalCrdtUpdateSchema = CollectionSchema(
   name: r'LocalCrdtUpdate',
   id: -702672807571368826,
   properties: {
+    r'action': PropertySchema(id: 0, name: r'action', type: IsarType.string),
+    r'affectedElementIds': PropertySchema(
+      id: 1,
+      name: r'affectedElementIds',
+      type: IsarType.stringList,
+    ),
     r'appliedAt': PropertySchema(
-      id: 0,
+      id: 2,
       name: r'appliedAt',
       type: IsarType.dateTime,
     ),
-    r'boardId': PropertySchema(id: 1, name: r'boardId', type: IsarType.string),
+    r'boardId': PropertySchema(id: 3, name: r'boardId', type: IsarType.string),
     r'elementId': PropertySchema(
-      id: 2,
+      id: 4,
       name: r'elementId',
       type: IsarType.string,
     ),
     r'isDeleted': PropertySchema(
-      id: 3,
+      id: 5,
       name: r'isDeleted',
       type: IsarType.bool,
     ),
-    r'isSynced': PropertySchema(id: 4, name: r'isSynced', type: IsarType.bool),
+    r'isSynced': PropertySchema(id: 6, name: r'isSynced', type: IsarType.bool),
     r'payloadBase64': PropertySchema(
-      id: 5,
+      id: 7,
       name: r'payloadBase64',
       type: IsarType.string,
     ),
     r'sourceClientId': PropertySchema(
-      id: 6,
+      id: 8,
       name: r'sourceClientId',
       type: IsarType.string,
     ),
     r'updateId': PropertySchema(
-      id: 7,
+      id: 9,
       name: r'updateId',
       type: IsarType.string,
     ),
-    r'version': PropertySchema(id: 8, name: r'version', type: IsarType.long),
+    r'version': PropertySchema(id: 10, name: r'version', type: IsarType.long),
   },
 
   estimateSize: _localCrdtUpdateEstimateSize,
@@ -113,6 +119,24 @@ int _localCrdtUpdateEstimateSize(
   Map<Type, List<int>> allOffsets,
 ) {
   var bytesCount = offsets.last;
+  {
+    final value = object.action;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
+  {
+    final list = object.affectedElementIds;
+    if (list != null) {
+      bytesCount += 3 + list.length * 3;
+      {
+        for (var i = 0; i < list.length; i++) {
+          final value = list[i];
+          bytesCount += value.length * 3;
+        }
+      }
+    }
+  }
   bytesCount += 3 + object.boardId.length * 3;
   {
     final value = object.elementId;
@@ -132,15 +156,17 @@ void _localCrdtUpdateSerialize(
   List<int> offsets,
   Map<Type, List<int>> allOffsets,
 ) {
-  writer.writeDateTime(offsets[0], object.appliedAt);
-  writer.writeString(offsets[1], object.boardId);
-  writer.writeString(offsets[2], object.elementId);
-  writer.writeBool(offsets[3], object.isDeleted);
-  writer.writeBool(offsets[4], object.isSynced);
-  writer.writeString(offsets[5], object.payloadBase64);
-  writer.writeString(offsets[6], object.sourceClientId);
-  writer.writeString(offsets[7], object.updateId);
-  writer.writeLong(offsets[8], object.version);
+  writer.writeString(offsets[0], object.action);
+  writer.writeStringList(offsets[1], object.affectedElementIds);
+  writer.writeDateTime(offsets[2], object.appliedAt);
+  writer.writeString(offsets[3], object.boardId);
+  writer.writeString(offsets[4], object.elementId);
+  writer.writeBool(offsets[5], object.isDeleted);
+  writer.writeBool(offsets[6], object.isSynced);
+  writer.writeString(offsets[7], object.payloadBase64);
+  writer.writeString(offsets[8], object.sourceClientId);
+  writer.writeString(offsets[9], object.updateId);
+  writer.writeLong(offsets[10], object.version);
 }
 
 LocalCrdtUpdate _localCrdtUpdateDeserialize(
@@ -150,16 +176,18 @@ LocalCrdtUpdate _localCrdtUpdateDeserialize(
   Map<Type, List<int>> allOffsets,
 ) {
   final object = LocalCrdtUpdate();
-  object.appliedAt = reader.readDateTime(offsets[0]);
-  object.boardId = reader.readString(offsets[1]);
-  object.elementId = reader.readStringOrNull(offsets[2]);
+  object.action = reader.readStringOrNull(offsets[0]);
+  object.affectedElementIds = reader.readStringList(offsets[1]);
+  object.appliedAt = reader.readDateTime(offsets[2]);
+  object.boardId = reader.readString(offsets[3]);
+  object.elementId = reader.readStringOrNull(offsets[4]);
   object.id = id;
-  object.isDeleted = reader.readBool(offsets[3]);
-  object.isSynced = reader.readBool(offsets[4]);
-  object.payloadBase64 = reader.readString(offsets[5]);
-  object.sourceClientId = reader.readString(offsets[6]);
-  object.updateId = reader.readString(offsets[7]);
-  object.version = reader.readLong(offsets[8]);
+  object.isDeleted = reader.readBool(offsets[5]);
+  object.isSynced = reader.readBool(offsets[6]);
+  object.payloadBase64 = reader.readString(offsets[7]);
+  object.sourceClientId = reader.readString(offsets[8]);
+  object.updateId = reader.readString(offsets[9]);
+  object.version = reader.readLong(offsets[10]);
   return object;
 }
 
@@ -171,22 +199,26 @@ P _localCrdtUpdateDeserializeProp<P>(
 ) {
   switch (propertyId) {
     case 0:
-      return (reader.readDateTime(offset)) as P;
-    case 1:
-      return (reader.readString(offset)) as P;
-    case 2:
       return (reader.readStringOrNull(offset)) as P;
+    case 1:
+      return (reader.readStringList(offset)) as P;
+    case 2:
+      return (reader.readDateTime(offset)) as P;
     case 3:
-      return (reader.readBool(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 4:
-      return (reader.readBool(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 5:
-      return (reader.readString(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 6:
-      return (reader.readString(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 7:
       return (reader.readString(offset)) as P;
     case 8:
+      return (reader.readString(offset)) as P;
+    case 9:
+      return (reader.readString(offset)) as P;
+    case 10:
       return (reader.readLong(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -528,6 +560,395 @@ extension LocalCrdtUpdateQueryWhere
 
 extension LocalCrdtUpdateQueryFilter
     on QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QFilterCondition> {
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  actionIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'action'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  actionIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'action'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  actionEqualTo(String? value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'action',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  actionGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'action',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  actionLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'action',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  actionBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'action',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  actionStartsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'action',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  actionEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'action',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  actionContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'action',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  actionMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'action',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  actionIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'action', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  actionIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'action', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNull(property: r'affectedElementIds'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        const FilterCondition.isNotNull(property: r'affectedElementIds'),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsElementEqualTo(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(
+          property: r'affectedElementIds',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsElementGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(
+          include: include,
+          property: r'affectedElementIds',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsElementLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.lessThan(
+          include: include,
+          property: r'affectedElementIds',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsElementBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.between(
+          property: r'affectedElementIds',
+          lower: lower,
+          includeLower: includeLower,
+          upper: upper,
+          includeUpper: includeUpper,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsElementStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.startsWith(
+          property: r'affectedElementIds',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsElementEndsWith(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.endsWith(
+          property: r'affectedElementIds',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsElementContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.contains(
+          property: r'affectedElementIds',
+          value: value,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsElementMatches(
+    String pattern, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.matches(
+          property: r'affectedElementIds',
+          wildcard: pattern,
+          caseSensitive: caseSensitive,
+        ),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsElementIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.equalTo(property: r'affectedElementIds', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsElementIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(
+        FilterCondition.greaterThan(property: r'affectedElementIds', value: ''),
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsLengthEqualTo(int length) {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(
+        r'affectedElementIds',
+        length,
+        true,
+        length,
+        true,
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(r'affectedElementIds', 0, true, 0, true);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(r'affectedElementIds', 0, false, 999999, true);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsLengthLessThan(int length, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(r'affectedElementIds', 0, true, length, include);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsLengthGreaterThan(int length, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(
+        r'affectedElementIds',
+        length,
+        include,
+        999999,
+        true,
+      );
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
+  affectedElementIdsLengthBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(
+        r'affectedElementIds',
+        lower,
+        includeLower,
+        upper,
+        includeUpper,
+      );
+    });
+  }
+
   QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterFilterCondition>
   appliedAtEqualTo(DateTime value) {
     return QueryBuilder.apply(this, (query) {
@@ -1443,6 +1864,19 @@ extension LocalCrdtUpdateQueryLinks
 
 extension LocalCrdtUpdateQuerySortBy
     on QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QSortBy> {
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy> sortByAction() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'action', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  sortByActionDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'action', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
   sortByAppliedAt() {
     return QueryBuilder.apply(this, (query) {
@@ -1570,6 +2004,19 @@ extension LocalCrdtUpdateQuerySortBy
 
 extension LocalCrdtUpdateQuerySortThenBy
     on QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QSortThenBy> {
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy> thenByAction() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'action', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
+  thenByActionDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'action', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QAfterSortBy>
   thenByAppliedAt() {
     return QueryBuilder.apply(this, (query) {
@@ -1709,6 +2156,21 @@ extension LocalCrdtUpdateQuerySortThenBy
 
 extension LocalCrdtUpdateQueryWhereDistinct
     on QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QDistinct> {
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QDistinct> distinctByAction({
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'action', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QDistinct>
+  distinctByAffectedElementIds() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'affectedElementIds');
+    });
+  }
+
   QueryBuilder<LocalCrdtUpdate, LocalCrdtUpdate, QDistinct>
   distinctByAppliedAt() {
     return QueryBuilder.apply(this, (query) {
@@ -1786,6 +2248,19 @@ extension LocalCrdtUpdateQueryProperty
   QueryBuilder<LocalCrdtUpdate, int, QQueryOperations> idProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'id');
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, String?, QQueryOperations> actionProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'action');
+    });
+  }
+
+  QueryBuilder<LocalCrdtUpdate, List<String>?, QQueryOperations>
+  affectedElementIdsProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'affectedElementIds');
     });
   }
 
