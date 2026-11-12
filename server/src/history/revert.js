@@ -232,8 +232,10 @@ async function buildPlan(boardId, opts, redis, actingUid) {
     analysis = analyzeElementHistory(touches, opts.targetUid, opts);
     target = { ...current };
     scope = Object.keys(analysis);
+    // Conflicted elements are ALSO given a target value (the state before the
+    // user's first in-scope op) so the owner can review them per element (D4).
+    // They simply default to "keep", so a member's auto-apply skips them.
     for (const [elementId, a] of Object.entries(analysis)) {
-      if (a.conflict) continue; // owner decides; member auto-skips
       if (a.before === undefined) delete target[elementId];
       else target[elementId] = a.before;
     }

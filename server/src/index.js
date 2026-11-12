@@ -1806,6 +1806,9 @@ io.on('connection', (socket) => {
       }
 
       const plan = await buildPlan(boardId, opts, redis, uid);
+      // Remember which request this plan answers so apply cannot resolve a
+      // different one.
+      if (requestId) plan.requestId = String(requestId);
       const now = Date.now();
       for (const [key, entry] of historyPlanCache.entries()) {
         if (entry.expiresAt <= now) historyPlanCache.delete(key);
@@ -1844,6 +1847,9 @@ io.on('connection', (socket) => {
     if (!cached || cached.boardId !== boardId || cached.expiresAt <= Date.now()) {
       historyPlanCache.delete(planId);
       return historyError(ack, 'plan_expired');
+    }
+    if (requestId && cached.plan.requestId && cached.plan.requestId !== requestId) {
+      return historyError(ack, 'invalid_payload');
     }
     try {
       const { update, applied, skipped } = await applyPlan(
@@ -1893,7 +1899,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('history_undo_own', async ({ boardId } = {}, ack) => {
+  socket.on('history_undo_own', async ({ boardId, updateIds } = {}, ack) => {
     if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
     if (!isValidBoardId(boardId)) return historyError(ack, 'invalid_payload');
     if (!redisAvailable) return historyError(ack, 'persistence_unavailable');
@@ -1903,9 +1909,26 @@ io.on('connection', (socket) => {
       // The server window is authoritative and always uses the server-stamped
       // op timestamp — never client time (D2).
       const fromTime = new Date(Date.now() - UNDO_WINDOW_MS).toISOString();
+      // Optional explicit updateIds: narrow the plan to the elements those own,
+      // in-window updates touched. Unmatched ids are ignored, so a stale client
+      // cannot widen its undo reach.
+      let elementIds;
+      if (Array.isArray(updateIds) && updateIds.length) {
+        const wanted = new Set(updateIds.filter(id => typeof id === 'string' && id));
+        const ownOps = await collectUserOps(boardId, uid, { fromTime }, redis);
+        const touched = new Set();
+        for (const op of ownOps) {
+          if (!wanted.has(op.updateId)) continue;
+          if (op.elementId) touched.add(op.elementId);
+          for (const c of (op.changes || [])) {
+            if (c.elementId) touched.add(c.elementId);
+          }
+        }
+        if (touched.size) elementIds = [...touched];
+      }
       const plan = await buildPlan(
         boardId,
-        { mode: 'user', targetUid: uid, fromTime },
+        { mode: 'user', targetUid: uid, fromTime, elementIds },
         redis,
         uid,
       );

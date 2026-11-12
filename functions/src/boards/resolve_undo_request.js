@@ -36,7 +36,13 @@ module.exports = async (request) => {
     if (cleanNote.length > MAX_NOTE_LENGTH) {
       throw new HttpsError('invalid-argument', 'Note is too long.');
     }
-    const cleanAppliedVersion = Number.isFinite(Number(appliedVersion))
+    // `Number(null)` is 0, so check presence first: a denial (or any resolution
+    // without an applied version) must stay null rather than claiming version 0.
+    const hasAppliedVersion = appliedVersion !== undefined
+      && appliedVersion !== null
+      && appliedVersion !== '';
+    const cleanAppliedVersion = hasAppliedVersion
+      && Number.isFinite(Number(appliedVersion))
       ? Math.trunc(Number(appliedVersion))
       : null;
 
