@@ -1054,13 +1054,18 @@ function parseStreamEntry(fields) {
 // ============================================================
 async function seedRedisFromFirestore(boardId) {
   if (!redisAvailable || !db) return;
-  if (seededBoards.has(boardId)) return;
   const versionKey = `board:${boardId}:version`;
   const exists = await redis.exists(versionKey);
   if (exists) {
     seededBoards.add(boardId);
     return;
   }
+  // The version key carries a 7-day TTL and Redis can be flushed/restarted
+  // while this process stays up. `seededBoards` is process-local, so trusting
+  // it here let INCR silently restart at 1: version numbers rewound below the
+  // last snapshot version and archiving stalled for the board. Always verify
+  // the key actually exists; the set only spares us the Firestore read.
+  seededBoards.delete(boardId);
 
   try {
     const snap = await db.collection('boards').doc(boardId)
@@ -1932,8 +1937,26 @@ io.on('connection', (socket) => {
         redis,
         uid,
       );
-      if (!plan.items.some(item => !item.conflict)) {
-        return historyError(ack, 'nothing_to_undo');
+      if (!plan.items.length) return historyError(ack, 'nothing_to_undo');
+      const conflicted = plan.items.filter(item => item.conflict);
+      const conflicts = conflicted.map(item => ({
+        elementId: item.elementId,
+        lastEditorUid: item.lastEditorUid || null,
+      }));
+      if (conflicted.length === plan.items.length) {
+        // Every in-window edit was later changed by someone else. Report WHICH
+        // elements conflict so the client can offer the "send a request to the
+        // owner" flow instead of a dead-end error (§7.2 conflict UX).
+        if (typeof ack === 'function') {
+          ack({
+            status: 'success',
+            appliedVersion: plan.baseVersion,
+            reverted: [],
+            skipped: [],
+            conflicts,
+          });
+        }
+        return;
       }
       const decisions = {};
       for (const item of plan.items) {
@@ -1953,7 +1976,13 @@ io.on('connection', (socket) => {
         affectedElementIds: applied,
       });
       if (typeof ack === 'function') {
-        ack({ status: 'success', appliedVersion, reverted: applied, skipped });
+        ack({
+          status: 'success',
+          appliedVersion,
+          reverted: applied,
+          skipped,
+          conflicts,
+        });
       }
     } catch (e) {
       console.warn(`[history_undo_own] ${e.message}`);

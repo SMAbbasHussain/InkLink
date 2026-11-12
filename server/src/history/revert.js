@@ -40,9 +40,22 @@ function opMatches(op, opts) {
   return inTimeRange(op.timestamp, opts.fromTime, opts.toTime);
 }
 
-// Replay every op in version order, recording the per-element touch history
+// Replay ops in version order, recording the per-element touch history
 // ({version, uid, before, after}) so conflicts can be detected precisely.
-async function replayTouches(boardId, redis) {
+//
+// The replay may start from a milestone snapshot (`base`), but that milestone
+// must sit BEFORE the earliest op that still matters. D8 puts a milestone at
+// the end of every archived block, so "just start from the latest milestone"
+// used to skip every archived block and `replayTouches` only ever saw the
+// un-archived stream tail — conflict analysis for anything already archived
+// came back empty and both undo_own and owner reverts silently found nothing.
+//
+// When opts.fromTime is given (undo_own always provides it), blocks whose ops
+// all predate the window are skippable: conflict detection only needs touches
+// from the target's first in-window op onwards, plus the board state right
+// before it, which a milestone below the first relevant block supplies. Without
+// a fromTime the whole retained history must be replayed.
+async function replayTouches(boardId, redis, opts = {}) {
   const db = admin.firestore();
   const doc = new Y.Doc();
   const elements = doc.getMap('elements');
@@ -54,33 +67,69 @@ async function replayTouches(boardId, redis) {
   } catch (_) {
     milestones = [];
   }
-  const base = milestones.length ? milestones[milestones.length - 1] : null;
-  if (base != null) {
-    try {
-      const buf = await r2.getBytesGzip(`${boardId}/milestones/state_v${base}.bin.gz`);
-      Y.applyUpdate(doc, buf);
-    } catch (_) { /* replay from empty */ }
-  }
 
-  const ops = [];
+  const blocks = [];
   try {
     const idx = await db.collection('boards').doc(boardId)
       .collection('activity_index').orderBy('fromVersion').get();
     for (const d of idx.docs) {
       const b = d.data() || {};
-      if (base != null && b.toVersion <= base) continue;
-      let blockOps = [];
-      try {
-        blockOps = await r2.getGzipJson(b.r2BlockKey);
-      } catch (_) {
-        continue;
-      }
-      for (const op of (blockOps || [])) {
-        if (base != null && op.version <= base) continue;
-        ops.push(op);
-      }
+      if (!b.r2BlockKey) continue;
+      blocks.push(b);
     }
   } catch (_) { /* no index — rely on the stream */ }
+
+  let base = null;
+  if (opts.fromTime) {
+    const from = Date.parse(opts.fromTime);
+    if (Number.isFinite(from)) {
+      // First block that may contain an in-window op (an unparseable
+      // lastOpAt is treated as relevant — never skip what we cannot date).
+      let firstRelevant = null;
+      for (const b of blocks) {
+        const lastAt = Date.parse(b.lastOpAt || '');
+        if (!Number.isFinite(lastAt) || lastAt >= from) {
+          firstRelevant = b;
+          break;
+        }
+      }
+      if (firstRelevant != null) {
+        const candidates = milestones.filter(
+          v => v < (parseInt(firstRelevant.fromVersion, 10) || 0),
+        );
+        base = candidates.length ? candidates[candidates.length - 1] : null;
+      } else {
+        // Everything archived is older than the window; the latest milestone
+        // still seeds a correct base state for the stream tail.
+        base = milestones.length ? milestones[milestones.length - 1] : null;
+      }
+    }
+  }
+
+  if (base != null) {
+    try {
+      const buf = await r2.getBytesGzip(`${boardId}/milestones/state_v${base}.bin.gz`);
+      Y.applyUpdate(doc, buf);
+    } catch (_) {
+      // Without the snapshot we must replay the covered blocks ourselves.
+      base = null;
+    }
+  }
+
+  const ops = [];
+  for (const b of blocks) {
+    if (base != null && b.toVersion <= base) continue;
+    let blockOps = [];
+    try {
+      blockOps = await r2.getGzipJson(b.r2BlockKey);
+    } catch (_) {
+      continue;
+    }
+    for (const op of (blockOps || [])) {
+      if (base != null && op.version <= base) continue;
+      ops.push(op);
+    }
+  }
 
   if (redis) {
     try {
@@ -228,7 +277,7 @@ async function buildPlan(boardId, opts, redis, actingUid) {
     target = r.elementMap;
     scope = unionKeys(current, target);
   } else {
-    const touches = await replayTouches(boardId, redis);
+    const touches = await replayTouches(boardId, redis, opts);
     analysis = analyzeElementHistory(touches, opts.targetUid, opts);
     target = { ...current };
     scope = Object.keys(analysis);
