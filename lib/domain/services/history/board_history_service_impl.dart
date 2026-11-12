@@ -298,9 +298,12 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
 
   @override
   Future<List<BoardOperation>> getBlock(String boardId, String blockId) async {
-    final cached = _blockCache.remove(blockId);
+    // Block ids are only version ranges (`block_000001_000500`), so they repeat
+    // across boards — always scope the cache key by board.
+    final cacheKey = '$boardId/$blockId';
+    final cached = _blockCache.remove(cacheKey);
     if (cached != null) {
-      _blockCache[blockId] = cached; // mark most-recently used
+      _blockCache[cacheKey] = cached; // mark most-recently used
       return cached;
     }
 
@@ -319,7 +322,7 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
       }
     }
 
-    _blockCache[blockId] = ops;
+    _blockCache[cacheKey] = ops;
     while (_blockCache.length > _blockCacheCapacity) {
       _blockCache.remove(_blockCache.keys.first);
     }

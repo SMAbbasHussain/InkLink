@@ -3080,6 +3080,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           );
         } catch (_) {}
       }
+      // Our own revert is a new op the local stack never saw; drop the stack
+      // entries it replaced so Ctrl+Z cannot re-apply them.
+      _crdtAdapter?.pruneReverted(result.reverted.toSet());
       if (isClosed) return;
       final message = result.skipped.isEmpty
           ? 'Reverted ${result.reverted.length} change(s).'
@@ -3122,6 +3125,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         ));
         return;
       }
+      // The server already reverted these elements on our behalf, so drop the
+      // matching local stack entries — otherwise a later Ctrl+Z would undo the
+      // same edits a second time (D14 semantics, applied to our own ops).
+      _crdtAdapter?.pruneReverted(result.reverted.toSet());
       final message = result.skipped.isEmpty
           ? 'Undid ${result.reverted.length} recent edit(s).'
           : 'Undid ${result.reverted.length}; ${result.skipped.length} could not be undone because others modified them.';

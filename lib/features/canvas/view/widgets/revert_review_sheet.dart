@@ -210,40 +210,49 @@ class _ReviewRow extends StatelessWidget {
         color: tokens.field,
         borderRadius: BorderRadius.circular(InkRadii.chip),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(_icon, size: 16, color: accent),
-          const SizedBox(width: InkSpacing.s8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${item.elementType} • ${item.elementId}',
-                  style: InkType.bodyStrong(tokens.ink),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+          Row(
+            children: [
+              Icon(_icon, size: 16, color: accent),
+              const SizedBox(width: InkSpacing.s8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${item.elementType} • ${item.elementId}',
+                      style: InkType.bodyStrong(tokens.ink),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      item.conflict
+                          ? 'Someone modified this after the target edit'
+                          : 'Will be ${item.kind == 'delete' ? 'removed' : 'restored'}',
+                      style: InkType.caption(tokens.inkMuted),
+                    ),
+                  ],
                 ),
-                Text(
-                  item.conflict
-                      ? 'Someone modified this after the target edit'
-                      : 'Will be ${item.kind == 'delete' ? 'removed' : 'restored'}',
-                  style: InkType.caption(tokens.inkMuted),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: InkSpacing.s8),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'keep', label: Text('Keep')),
-              ButtonSegment(value: 'revert', label: Text('Revert')),
+              ),
             ],
-            selected: {decision},
-            showSelectedIcon: false,
-            onSelectionChanged: (selection) {
-              if (selection.isNotEmpty) onChanged(selection.first);
-            },
+          ),
+          const SizedBox(height: InkSpacing.s8),
+          // Own line so narrow screens cannot overflow the row.
+          Align(
+            alignment: Alignment.centerRight,
+            child: SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'keep', label: Text('Keep')),
+                ButtonSegment(value: 'revert', label: Text('Revert')),
+              ],
+              selected: {decision},
+              showSelectedIcon: false,
+              onSelectionChanged: (selection) {
+                if (selection.isNotEmpty) onChanged(selection.first);
+              },
+            ),
           ),
         ],
       ),

@@ -67,17 +67,24 @@ class BoardHistoryRepositoryImpl implements BoardHistoryRepository {
     if (_authService.getCurrentUserId() != uid) {
       return Stream.value(const <UndoRequest>[]);
     }
+    // No orderBy here on purpose: equality filter + orderBy on another field
+    // needs a composite index. Sort the (small) result client-side instead.
     return _firestoreService
         .collection('boards')
         .doc(boardId)
         .collection('undo_requests')
         .where('requesterUid', isEqualTo: uid)
-        .orderBy('createdAt', descending: true)
         .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map((doc) => UndoRequest.fromMap(doc.id, doc.data()))
-              .toList(growable: false),
-        );
+        .map((snapshot) {
+      final requests = snapshot.docs
+          .map((doc) => UndoRequest.fromMap(doc.id, doc.data()))
+          .toList(growable: false);
+      return requests
+        ..sort((a, b) {
+          final aAt = a.createdAt?.millisecondsSinceEpoch ?? 0;
+          final bAt = b.createdAt?.millisecondsSinceEpoch ?? 0;
+          return bAt.compareTo(aAt);
+        });
+    });
   }
 }

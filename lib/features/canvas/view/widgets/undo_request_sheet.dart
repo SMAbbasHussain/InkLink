@@ -24,6 +24,9 @@ Future<void> showUndoRequestSheet(
     backgroundColor: Colors.transparent,
     elevation: 0,
     builder: (_) => _UndoRequestSheet(
+      // Kept for post-pop snackbars: this sheet's own context is deactivated
+      // once Navigator.pop runs.
+      hostContext: context,
       service: service,
       boardId: boardId,
       elements: elements,
@@ -32,11 +35,13 @@ Future<void> showUndoRequestSheet(
 }
 
 class _UndoRequestSheet extends StatefulWidget {
+  final BuildContext hostContext;
   final BoardHistoryService service;
   final String boardId;
   final List<CanvasElement> elements;
 
   const _UndoRequestSheet({
+    required this.hostContext,
     required this.service,
     required this.boardId,
     required this.elements,
@@ -76,10 +81,12 @@ class _UndoRequestSheetState extends State<_UndoRequestSheet> {
       );
       if (!mounted) return;
       Navigator.pop(context);
-      AppSnackBar.showSuccess(
-        context,
-        'Undo request sent to the board owner.',
-      );
+      if (widget.hostContext.mounted) {
+        AppSnackBar.showSuccess(
+          widget.hostContext,
+          'Undo request sent to the board owner.',
+        );
+      }
     } on HistoryServiceException catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);

@@ -137,31 +137,10 @@ class HistoryTray extends StatelessWidget {
   ) async {
     final service = historyService;
     if (service == null) return;
-    final controller = TextEditingController();
     final note = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Decline undo request'),
-        content: TextField(
-          controller: controller,
-          maxLines: 3,
-          decoration: const InputDecoration(
-            hintText: 'Optional note for the requester',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, controller.text),
-            child: const Text('Decline'),
-          ),
-        ],
-      ),
+      builder: (_) => const _DenyNoteDialog(),
     );
-    controller.dispose();
     if (note == null) return;
     try {
       await service.resolveUndoRequest(
@@ -322,6 +301,49 @@ class _UndoRequestRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Owns its own [TextEditingController] so the field is never used after being
+/// disposed while the dialog route animates out.
+class _DenyNoteDialog extends StatefulWidget {
+  const _DenyNoteDialog();
+
+  @override
+  State<_DenyNoteDialog> createState() => _DenyNoteDialogState();
+}
+
+class _DenyNoteDialogState extends State<_DenyNoteDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Decline undo request'),
+      content: TextField(
+        controller: _controller,
+        maxLines: 3,
+        decoration: const InputDecoration(
+          hintText: 'Optional note for the requester',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: const Text('Decline'),
+        ),
+      ],
     );
   }
 }
