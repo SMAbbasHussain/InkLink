@@ -7,6 +7,12 @@ import '../../../../ui/theme/ink_type.dart';
 import '../widgets/sliding_tray.dart';
 
 class ToolsTray extends StatelessWidget {
+  /// Height of one tool row plus the gap that follows it.
+  static const double _rowHeight = 58;
+
+  /// Handle + title bar + divider + content padding.
+  static const double _chromeHeight = 92;
+
   final bool isOpen;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
@@ -35,17 +41,29 @@ class ToolsTray extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    // Size the tray from the rows that are actually shown: a fixed height
+    // clipped it as soon as a role-specific action (Clear All / History /
+    // Request undo) was added, since members and owners get different sets.
+    final rowCount = [
+      onAddStickyNote,
+      onAddConnector,
+      onUndo,
+      onRedo,
+      onClearAll,
+      onHistory,
+      onRequestUndo,
+      onExport,
+    ].where((action) => action != null).length;
     return SlidingTray(
       isOpen: isOpen,
       direction: TrayDirection.left,
       title: 'Editing Tools',
-      height: onHistory != null
-          ? 490
-          : (onClearAll != null ? 440 : 380),
+      height: _chromeHeight + rowCount * _rowHeight,
       width: 230,
       bottomOffset: 60,
       onClose: onClose,
-      child: Padding(
+      child: SingleChildScrollView(
+        // Safety net: the row math can be off on unusual text scales.
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
