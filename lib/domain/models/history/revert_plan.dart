@@ -1,3 +1,30 @@
+/// One current-vs-desired field row in a revert plan item.
+class RevertDiffField {
+  final String label;
+  final String before;
+  final String after;
+
+  const RevertDiffField({
+    required this.label,
+    required this.before,
+    required this.after,
+  });
+
+  factory RevertDiffField.fromMap(Map<String, dynamic> map) {
+    return RevertDiffField(
+      label: (map['label'] as String?) ?? '',
+      before: (map['before'] as String?) ?? '',
+      after: (map['after'] as String?) ?? '',
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+    'label': label,
+    'before': before,
+    'after': after,
+  };
+}
+
 /// One element in a revert plan.
 class RevertPlanItem {
   final String elementId;
@@ -7,6 +34,12 @@ class RevertPlanItem {
   final Map<String, dynamic>? before;
   final Map<String, dynamic>? after;
   final String? lastEditorUid;
+  /// Human noun for the element, e.g. "blue rectangle".
+  final String? label;
+  /// Plain-English description of what applying the revert changes.
+  final String? summary;
+  /// Field-level current (`before`) vs desired (`after`) rows.
+  final List<RevertDiffField> fields;
 
   const RevertPlanItem({
     required this.elementId,
@@ -15,11 +48,23 @@ class RevertPlanItem {
     this.before,
     this.after,
     this.lastEditorUid,
+    this.label,
+    this.summary,
+    this.fields = const [],
   });
 
   factory RevertPlanItem.fromMap(Map<String, dynamic> map) {
     final before = map['before'];
     final after = map['after'];
+    final rawFields = map['fields'];
+    final fields = <RevertDiffField>[];
+    if (rawFields is List) {
+      for (final entry in rawFields) {
+        if (entry is Map) {
+          fields.add(RevertDiffField.fromMap(Map<String, dynamic>.from(entry)));
+        }
+      }
+    }
     return RevertPlanItem(
       elementId: (map['elementId'] as String?) ?? '',
       kind: (map['kind'] as String?) ?? 'update',
@@ -27,6 +72,9 @@ class RevertPlanItem {
       before: before is Map ? Map<String, dynamic>.from(before) : null,
       after: after is Map ? Map<String, dynamic>.from(after) : null,
       lastEditorUid: map['lastEditorUid'] as String?,
+      label: map['label'] as String?,
+      summary: map['summary'] as String?,
+      fields: fields,
     );
   }
 
@@ -43,6 +91,9 @@ class RevertPlanItem {
     'before': before,
     'after': after,
     'lastEditorUid': lastEditorUid,
+    'label': label,
+    'summary': summary,
+    'fields': fields.map((f) => f.toMap()).toList(growable: false),
   };
 }
 

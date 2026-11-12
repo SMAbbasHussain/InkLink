@@ -3,17 +3,28 @@ class ElementChange {
   final String elementId;
   /// `add` | `update` | `delete`
   final String kind;
+  /// Plain-English description, e.g. "Blue rectangle: moved 120 px right".
+  final String? detail;
 
-  const ElementChange({required this.elementId, required this.kind});
+  const ElementChange({
+    required this.elementId,
+    required this.kind,
+    this.detail,
+  });
 
   factory ElementChange.fromMap(Map<String, dynamic> map) {
     return ElementChange(
       elementId: (map['elementId'] as String?) ?? '',
       kind: (map['kind'] as String?) ?? 'update',
+      detail: map['detail'] as String?,
     );
   }
 
-  Map<String, dynamic> toMap() => {'elementId': elementId, 'kind': kind};
+  Map<String, dynamic> toMap() => {
+    'elementId': elementId,
+    'kind': kind,
+    'detail': detail,
+  };
 }
 
 /// One archived operation (an element of an R2 block array, §5.5).
@@ -30,6 +41,8 @@ class BoardOperation {
   final String payloadBase64;
   final DateTime? timestamp;
   final int? restoredFromVersion;
+  /// One-line English summary of the whole operation.
+  final String? summary;
 
   const BoardOperation({
     required this.version,
@@ -43,6 +56,7 @@ class BoardOperation {
     this.payloadBase64 = '',
     this.timestamp,
     this.restoredFromVersion,
+    this.summary,
   });
 
   factory BoardOperation.fromMap(Map<String, dynamic> map) {
@@ -70,6 +84,7 @@ class BoardOperation {
       payloadBase64: (map['payloadBase64'] as String?) ?? '',
       timestamp: _parseOperationDate(map['timestamp']),
       restoredFromVersion: (map['restoredFromVersion'] as num?)?.toInt(),
+      summary: map['summary'] as String?,
     );
   }
 
@@ -86,6 +101,7 @@ class BoardOperation {
     'timestamp': timestamp?.toIso8601String(),
     if (restoredFromVersion != null)
       'restoredFromVersion': restoredFromVersion,
+    'summary': summary,
   };
 }
 

@@ -8,6 +8,7 @@ import 'package:inklink/core/database/collections/local_crdt_update.dart';
 import 'package:inklink/domain/models/board.dart';
 import 'package:inklink/domain/models/history/board_operation.dart';
 import 'package:inklink/domain/models/history/revert_plan.dart';
+import 'package:inklink/domain/models/history/undo_request.dart';
 import 'package:inklink/domain/services/canvas/canvas_service.dart';
 import 'package:inklink/domain/services/history/board_history_service.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
@@ -138,6 +139,7 @@ class _FakeHistoryService implements BoardHistoryService {
     required String boardId,
     required List<String> elementIds,
     required String reason,
+    UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,
   }) => throw UnimplementedError();

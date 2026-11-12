@@ -80,8 +80,10 @@ class UserHistoryTimeline extends StatelessWidget {
               shrinkWrap: true,
               itemCount: state.userOps.length,
               separatorBuilder: (_, _) => const SizedBox(height: InkSpacing.s4),
-              itemBuilder: (context, index) =>
-                  _OperationRow(operation: state.userOps[index]),
+              itemBuilder: (context, index) => _OperationRow(
+                operation: state.userOps[index],
+                bloc: bloc,
+              ),
             ),
           ),
         if (state.hasMoreUserOps) ...[
@@ -111,8 +113,9 @@ class UserHistoryTimeline extends StatelessWidget {
 
 class _OperationRow extends StatelessWidget {
   final BoardOperation operation;
+  final CanvasBloc bloc;
 
-  const _OperationRow({required this.operation});
+  const _OperationRow({required this.operation, required this.bloc});
 
   IconData get _icon {
     switch (operation.action) {
@@ -129,53 +132,112 @@ class _OperationRow extends StatelessWidget {
     }
   }
 
-  String get _subtitle {
+  /// Plain-English headline. Prefers the server summary, then the per-change
+  /// details, then a generic action label — never a raw element id.
+  String get _headline {
+    final summary = operation.summary;
+    if (summary != null && summary.trim().isNotEmpty) return summary;
+    final details = operation.changes
+        .map((c) => c.detail)
+        .whereType<String>()
+        .where((d) => d.trim().isNotEmpty)
+        .toList(growable: false);
+    if (details.length == 1) return details.first;
+    if (details.length > 1) {
+      return '${details.first}  (+${details.length - 1} more)';
+    }
+    return _fallbackLabel;
+  }
+
+  String get _fallbackLabel {
+    final n = operation.changes.length;
+    switch (operation.action) {
+      case 'clear':
+        return 'Cleared the board';
+      case 'restore':
+        final from = operation.restoredFromVersion;
+        return from == null
+            ? 'Restored the board'
+            : 'Restored the board to version $from';
+      case 'revert':
+        return n > 0 ? 'Reverted $n change(s)' : 'Reverted changes';
+      case 'delete':
+        return n > 0 ? 'Removed $n element(s)' : 'Removed an element';
+      case 'add':
+        return n > 0 ? 'Added $n element(s)' : 'Added an element';
+      default:
+        return n > 0 ? 'Edited $n element(s)' : 'Edited the board';
+    }
+  }
+
+  String get _meta {
     final stamp = operation.timestamp;
     final time = stamp == null
         ? ''
         : ' • ${stamp.hour.toString().padLeft(2, '0')}:'
               '${stamp.minute.toString().padLeft(2, '0')}';
+    return 'v${operation.version}$time';
+  }
+
+  void _openPreview() {
+    final ids = operation.changes
+        .map((c) => c.elementId)
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
     final elementId = operation.elementId;
-    final target = elementId != null && elementId.isNotEmpty
-        ? elementId
-        : '${operation.changes.length} element(s)';
-    return '${operation.action} $target$time';
+    final highlight = ids.isNotEmpty
+        ? ids
+        : (elementId != null && elementId.isNotEmpty
+            ? [elementId]
+            : const <String>[]);
+    bloc.add(CanvasHistoryPreviewRequested(
+      operation.version,
+      highlightElementIds: highlight,
+      title: _headline,
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: InkSpacing.s8,
-        vertical: InkSpacing.s8,
-      ),
-      decoration: BoxDecoration(
-        color: tokens.field,
-        borderRadius: BorderRadius.circular(InkRadii.chip),
-      ),
-      child: Row(
-        children: [
-          Icon(_icon, size: 14, color: tokens.inkSecondary),
-          const SizedBox(width: InkSpacing.s8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _subtitle,
-                  style: InkType.caption(tokens.ink),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  'v${operation.version}',
-                  style: InkType.caption(tokens.inkMuted),
-                ),
-              ],
+    return InkWell(
+      onTap: _openPreview,
+      borderRadius: BorderRadius.circular(InkRadii.chip),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: InkSpacing.s8,
+          vertical: InkSpacing.s8,
+        ),
+        decoration: BoxDecoration(
+          color: tokens.field,
+          borderRadius: BorderRadius.circular(InkRadii.chip),
+        ),
+        child: Row(
+          children: [
+            Icon(_icon, size: 14, color: tokens.inkSecondary),
+            const SizedBox(width: InkSpacing.s8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _headline,
+                    style: InkType.caption(tokens.ink),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _meta,
+                    style: InkType.caption(tokens.inkMuted),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: InkSpacing.s4),
+            Icon(LucideIcons.eye, size: 14, color: tokens.inkMuted),
+          ],
+        ),
       ),
     );
   }

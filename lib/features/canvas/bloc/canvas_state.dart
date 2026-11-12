@@ -61,6 +61,14 @@ class CanvasState {
   final bool isViewingHistory;
   final int? historyPreviewVersion;
   final List<CanvasElement> historyPreviewElements;
+  final List<String> historyHighlightElementIds;
+  final String? historyPreviewTitle;
+  final String? historyPreviewReturnTray;
+  final String? historyPreviewReturnUserUid;
+  final Rect? historyPreviewFocusBounds;
+  final String? historyPreviewRequestId;
+  final bool historyPreviewShowsDesired;
+  final bool isSelectingUndoRequestArea;
   final List<BoardActivityBlock> activityBlocks;
   final List<UndoRequest> undoRequests;
   final RevertPlan? activeRevertPlan;
@@ -121,6 +129,14 @@ class CanvasState {
     this.isViewingHistory = false,
     this.historyPreviewVersion,
     this.historyPreviewElements = const [],
+    this.historyHighlightElementIds = const [],
+    this.historyPreviewTitle,
+    this.historyPreviewReturnTray,
+    this.historyPreviewReturnUserUid,
+    this.historyPreviewFocusBounds,
+    this.historyPreviewRequestId,
+    this.historyPreviewShowsDesired = false,
+    this.isSelectingUndoRequestArea = false,
     this.activityBlocks = const [],
     this.undoRequests = const [],
     this.activeRevertPlan,
@@ -180,6 +196,14 @@ class CanvasState {
     bool? isViewingHistory,
     Object? historyPreviewVersion = _unset,
     List<CanvasElement>? historyPreviewElements,
+    List<String>? historyHighlightElementIds,
+    Object? historyPreviewTitle = _unset,
+    Object? historyPreviewReturnTray = _unset,
+    Object? historyPreviewReturnUserUid = _unset,
+    Object? historyPreviewFocusBounds = _unset,
+    Object? historyPreviewRequestId = _unset,
+    bool? historyPreviewShowsDesired,
+    bool? isSelectingUndoRequestArea,
     List<BoardActivityBlock>? activityBlocks,
     List<UndoRequest>? undoRequests,
     Object? activeRevertPlan = _unset,
@@ -266,6 +290,27 @@ class CanvasState {
           : historyPreviewVersion as int?,
       historyPreviewElements:
           historyPreviewElements ?? this.historyPreviewElements,
+      historyHighlightElementIds:
+          historyHighlightElementIds ?? this.historyHighlightElementIds,
+      historyPreviewTitle: historyPreviewTitle == _unset
+          ? this.historyPreviewTitle
+          : historyPreviewTitle as String?,
+      historyPreviewReturnTray: historyPreviewReturnTray == _unset
+          ? this.historyPreviewReturnTray
+          : historyPreviewReturnTray as String?,
+      historyPreviewReturnUserUid: historyPreviewReturnUserUid == _unset
+          ? this.historyPreviewReturnUserUid
+          : historyPreviewReturnUserUid as String?,
+      historyPreviewFocusBounds: historyPreviewFocusBounds == _unset
+          ? this.historyPreviewFocusBounds
+          : historyPreviewFocusBounds as Rect?,
+      historyPreviewRequestId: historyPreviewRequestId == _unset
+          ? this.historyPreviewRequestId
+          : historyPreviewRequestId as String?,
+      historyPreviewShowsDesired:
+          historyPreviewShowsDesired ?? this.historyPreviewShowsDesired,
+      isSelectingUndoRequestArea:
+          isSelectingUndoRequestArea ?? this.isSelectingUndoRequestArea,
       activityBlocks: activityBlocks ?? this.activityBlocks,
       undoRequests: undoRequests ?? this.undoRequests,
       activeRevertPlan: activeRevertPlan == _unset
@@ -346,6 +391,14 @@ class CanvasState {
           isViewingHistory == other.isViewingHistory &&
           historyPreviewVersion == other.historyPreviewVersion &&
           historyPreviewElements == other.historyPreviewElements &&
+          _listEquals(historyHighlightElementIds, other.historyHighlightElementIds) &&
+          historyPreviewTitle == other.historyPreviewTitle &&
+          historyPreviewReturnTray == other.historyPreviewReturnTray &&
+          historyPreviewReturnUserUid == other.historyPreviewReturnUserUid &&
+          historyPreviewFocusBounds == other.historyPreviewFocusBounds &&
+          historyPreviewRequestId == other.historyPreviewRequestId &&
+          historyPreviewShowsDesired == other.historyPreviewShowsDesired &&
+          isSelectingUndoRequestArea == other.isSelectingUndoRequestArea &&
           activityBlocks == other.activityBlocks &&
           undoRequests == other.undoRequests &&
           activeRevertPlan == other.activeRevertPlan &&
@@ -403,6 +456,14 @@ class CanvasState {
       isViewingHistory.hashCode ^
       historyPreviewVersion.hashCode ^
       historyPreviewElements.hashCode ^
+      Object.hashAll(historyHighlightElementIds) ^
+      historyPreviewTitle.hashCode ^
+      historyPreviewReturnTray.hashCode ^
+      historyPreviewReturnUserUid.hashCode ^
+      historyPreviewFocusBounds.hashCode ^
+      historyPreviewRequestId.hashCode ^
+      historyPreviewShowsDesired.hashCode ^
+      isSelectingUndoRequestArea.hashCode ^
       activityBlocks.hashCode ^
       undoRequests.hashCode ^
       activeRevertPlan.hashCode ^

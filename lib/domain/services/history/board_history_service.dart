@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../../models/history/board_operation.dart';
 import '../../models/history/revert_plan.dart';
+import '../../models/history/undo_request.dart';
 
 /// Thrown when a history socket request fails. [code] is the server's error
 /// token (e.g. `forbidden`, `plan_expired`, `window_expired`, `nothing_to_undo`).
@@ -123,6 +124,7 @@ abstract class BoardHistoryService {
     required String boardId,
     required List<String> elementIds,
     required String reason,
+    UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,
   });

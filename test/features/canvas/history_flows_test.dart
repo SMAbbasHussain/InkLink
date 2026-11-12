@@ -120,6 +120,7 @@ class _FakeHistoryService implements BoardHistoryService {
     required String boardId,
     required List<String> elementIds,
     required String reason,
+    UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,
   }) => throw UnimplementedError();

@@ -657,15 +657,38 @@ class CanvasHistoryFeedUpdated extends CanvasEvent {
   const CanvasHistoryFeedUpdated(this.blocks);
 }
 
-/// Preview a past version read-only.
+/// Preview a past version read-only. [highlightElementIds] marks the elements
+/// the owner is inspecting; [focusBounds] (world space) overrides the camera
+/// focus when set (e.g. a request's selected area).
 class CanvasHistoryPreviewRequested extends CanvasEvent {
   final int version;
-  const CanvasHistoryPreviewRequested(this.version);
+  final List<String> highlightElementIds;
+  final String? title;
+  final Rect? focusBounds;
+  const CanvasHistoryPreviewRequested(
+    this.version, {
+    this.highlightElementIds = const [],
+    this.title,
+    this.focusBounds,
+  });
 }
 
 /// Leave preview mode and return to the live board.
 class CanvasHistoryPreviewExited extends CanvasEvent {
   const CanvasHistoryPreviewExited();
+}
+
+/// Owner opens a pending undo request's attached evidence in a board preview,
+/// comparing the live board against the state the member is asking for (D5).
+class CanvasHistoryRequestEvidenceRequested extends CanvasEvent {
+  final String requestId;
+  const CanvasHistoryRequestEvidenceRequested(this.requestId);
+}
+
+/// Switch the evidence preview between the live board and the requested state.
+class CanvasHistoryEvidenceViewToggled extends CanvasEvent {
+  final bool showDesired;
+  const CanvasHistoryEvidenceViewToggled(this.showDesired);
 }
 
 /// Owner wants to restore the previewed version.
@@ -758,6 +781,14 @@ class CanvasHistoryPlanDismissed extends CanvasEvent {
 /// Cross-device fallback for a member's own ≤15-minute edits (D2).
 class CanvasHistoryUndoOwn extends CanvasEvent {
   const CanvasHistoryUndoOwn();
+}
+
+/// Toggle marquee area-selection mode so a member can pick a whole region for
+/// an undo request. The screen computes the intersecting elements locally and
+/// never reads the owner-only log (D3).
+class CanvasToggleUndoRequestAreaSelection extends CanvasEvent {
+  final bool? enable;
+  const CanvasToggleUndoRequestAreaSelection({this.enable});
 }
 
 /// Owner's undo-request list changed.

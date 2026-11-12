@@ -1,3 +1,36 @@
+/// World-space rectangle a member selected when asking for an undo.
+class UndoRequestArea {
+  final double left;
+  final double top;
+  final double width;
+  final double height;
+
+  const UndoRequestArea({
+    required this.left,
+    required this.top,
+    required this.width,
+    required this.height,
+  });
+
+  factory UndoRequestArea.fromMap(Map<String, dynamic> map) {
+    return UndoRequestArea(
+      left: (map['left'] as num?)?.toDouble() ?? 0,
+      top: (map['top'] as num?)?.toDouble() ?? 0,
+      width: (map['width'] as num?)?.toDouble() ?? 0,
+      height: (map['height'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
+  bool get isValid => width > 0 && height > 0;
+
+  Map<String, dynamic> toMap() => {
+    'left': left,
+    'top': top,
+    'width': width,
+    'height': height,
+  };
+}
+
 /// `boards/{boardId}/undo_requests/{requestId}` (D5).
 class UndoRequest {
   final String requestId;
@@ -6,6 +39,7 @@ class UndoRequest {
   final String requesterName;
   final String? requesterPhotoUrl;
   final List<String> targetElementIds;
+  final UndoRequestArea? area;
   final DateTime? timeRangeStart;
   final DateTime? timeRangeEnd;
   final String reason;
@@ -24,6 +58,7 @@ class UndoRequest {
     this.requesterName = 'InkLink User',
     this.requesterPhotoUrl,
     this.targetElementIds = const [],
+    this.area,
     this.timeRangeStart,
     this.timeRangeEnd,
     this.reason = '',
@@ -36,6 +71,7 @@ class UndoRequest {
   });
 
   factory UndoRequest.fromMap(String id, Map<String, dynamic> map) {
+    final rawArea = map['area'];
     return UndoRequest(
       requestId: (map['requestId'] as String?) ?? id,
       boardId: (map['boardId'] as String?) ?? '',
@@ -46,6 +82,9 @@ class UndoRequest {
               ?.whereType<String>()
               .toList() ??
           const [],
+      area: rawArea is Map
+          ? UndoRequestArea.fromMap(Map<String, dynamic>.from(rawArea))
+          : null,
       timeRangeStart: _parseRequestDate(map['timeRangeStart']),
       timeRangeEnd: _parseRequestDate(map['timeRangeEnd']),
       reason: (map['reason'] as String?) ?? '',
@@ -67,6 +106,7 @@ class UndoRequest {
     'requesterName': requesterName,
     'requesterPhotoUrl': requesterPhotoUrl,
     'targetElementIds': targetElementIds,
+    'area': area?.toMap(),
     'timeRangeStart': timeRangeStart?.toIso8601String(),
     'timeRangeEnd': timeRangeEnd?.toIso8601String(),
     'reason': reason,

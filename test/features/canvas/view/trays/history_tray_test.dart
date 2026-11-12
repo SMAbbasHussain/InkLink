@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -15,6 +17,8 @@ class _RecordingHistory implements BoardHistoryService {
   int planCalls = 0;
   String? mode;
   int? targetVersion;
+  String? requestId;
+  Completer<RevertPlan>? planCompleter;
 
   @override
   Future<RevertPlan> planRevert(
@@ -30,12 +34,16 @@ class _RecordingHistory implements BoardHistoryService {
     planCalls++;
     this.mode = mode;
     this.targetVersion = targetVersion;
-    return RevertPlan(
+    this.requestId = requestId;
+    final plan = RevertPlan(
       planId: 'p1',
       mode: mode,
       baseVersion: 5,
       items: const [RevertPlanItem(elementId: 'e', kind: 'update')],
     );
+    final completer = planCompleter;
+    if (completer != null) return completer.future;
+    return plan;
   }
 
   @override
@@ -73,6 +81,7 @@ class _RecordingHistory implements BoardHistoryService {
     required String boardId,
     required List<String> elementIds,
     required String reason,
+    UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,
   }) => throw UnimplementedError();
@@ -150,6 +159,7 @@ void main() {
     requesterUid: 'bob',
     requesterName: 'Bob',
     targetElementIds: const ['e-1', 'e-2'],
+    area: const UndoRequestArea(left: 10, top: 20, width: 100, height: 80),
     reason: 'removed the wrong layer',
     createdAt: DateTime.now().subtract(const Duration(minutes: 3)),
   );
@@ -212,7 +222,8 @@ void main() {
     expect(find.textContaining('4 added'), findsOneWidget);
     expect(find.text('Bob'), findsWidgets);
     expect(find.text('removed the wrong layer'), findsOneWidget);
-    expect(find.text('2 element(s)'), findsOneWidget);
+    expect(find.text('2 elements · area 100 × 80 px'), findsOneWidget);
+    expect(find.text('Evidence'), findsOneWidget);
 
     // The tray is a fixed-height list: later versions need scrolling.
     await tester.scrollUntilVisible(
@@ -274,5 +285,41 @@ void main() {
     expect(history.planCalls, 1);
     expect(history.mode, 'restore');
     expect(history.targetVersion, 10);
+  });
+
+  testWidgets('evidence opens the request preview focused on its area', (
+    tester,
+  ) async {
+    await pumpTray(tester);
+    bloc.add(const CanvasBoardTitleUpdated(null, currentUserRole: Board.roleOwner));
+    bloc.add(CanvasUndoRequestsUpdated([request]));
+    await tester.pumpAndSettle();
+
+    history.planCompleter = Completer<RevertPlan>();
+    await tester.tap(find.text('Evidence'));
+    await tester.pump();
+
+    expect(history.planCalls, 1);
+    expect(history.mode, 'user');
+    expect(history.requestId, 'req-1');
+    expect(bloc.state.isHistoryLoading, isTrue);
+
+    history.planCompleter!.complete(
+      RevertPlan(
+        planId: 'p1',
+        mode: 'user',
+        baseVersion: 5,
+        items: const [RevertPlanItem(elementId: 'e', kind: 'update')],
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(bloc.state.error, isNull);
+    expect(bloc.state.isViewingHistory, isTrue);
+    expect(bloc.state.historyPreviewRequestId, 'req-1');
+    expect(bloc.state.historyPreviewShowsDesired, isTrue);
+    expect(bloc.state.historyPreviewFocusBounds, const Rect.fromLTWH(10, 20, 100, 80));
+    expect(bloc.state.historyHighlightElementIds, ['e-1', 'e-2']);
   });
 }

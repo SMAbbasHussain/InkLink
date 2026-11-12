@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../core/utils/app_snackbar.dart';
+import '../../../../domain/models/history/undo_request.dart';
 import '../../../../domain/services/history/board_history_service.dart';
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_tokens.dart';
@@ -21,6 +22,8 @@ Future<void> showUndoRequestSheet(
   required String boardId,
   required List<CanvasElement> elements,
   List<String>? preselectedIds,
+  UndoRequestArea? area,
+  VoidCallback? onSelectArea,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -35,6 +38,8 @@ Future<void> showUndoRequestSheet(
       boardId: boardId,
       elements: elements,
       preselectedIds: preselectedIds,
+      area: area,
+      onSelectArea: onSelectArea,
     ),
   );
 }
@@ -45,6 +50,8 @@ class _UndoRequestSheet extends StatefulWidget {
   final String boardId;
   final List<CanvasElement> elements;
   final List<String>? preselectedIds;
+  final UndoRequestArea? area;
+  final VoidCallback? onSelectArea;
 
   const _UndoRequestSheet({
     required this.hostContext,
@@ -52,6 +59,8 @@ class _UndoRequestSheet extends StatefulWidget {
     required this.boardId,
     required this.elements,
     this.preselectedIds,
+    this.area,
+    this.onSelectArea,
   });
 
   @override
@@ -62,11 +71,13 @@ class _UndoRequestSheetState extends State<_UndoRequestSheet> {
   late final Set<String> _selected;
   final TextEditingController _reasonController = TextEditingController();
   bool _submitting = false;
+  UndoRequestArea? _area;
 
   @override
   void initState() {
     super.initState();
     _selected = widget.preselectedIds?.toSet() ?? <String>{};
+    _area = widget.area;
   }
 
   @override
@@ -91,6 +102,7 @@ class _UndoRequestSheetState extends State<_UndoRequestSheet> {
         boardId: widget.boardId,
         elementIds: _selected.toList(growable: false),
         reason: reason,
+        area: _area,
       );
       if (!mounted) return;
       Navigator.pop(context);
@@ -152,6 +164,29 @@ class _UndoRequestSheetState extends State<_UndoRequestSheet> {
                   style: InkType.caption(tokens.inkMuted),
                 ),
                 const SizedBox(height: InkSpacing.s12),
+                if (_area != null) ...[
+                  _AreaChip(
+                    area: _area!,
+                    onClear: _submitting
+                        ? null
+                        : () => setState(() => _area = null),
+                  ),
+                  const SizedBox(height: InkSpacing.s8),
+                ],
+                if (widget.onSelectArea != null) ...[
+                  InkButton.secondary(
+                    label: 'Select an area on the canvas',
+                    icon: const Icon(LucideIcons.scan),
+                    compact: true,
+                    onPressed: _submitting
+                        ? null
+                        : () {
+                            Navigator.pop(context);
+                            widget.onSelectArea!();
+                          },
+                  ),
+                  const SizedBox(height: InkSpacing.s8),
+                ],
                 if (widget.elements.isEmpty)
                   Text(
                     'This board has no elements to select.',
@@ -164,18 +199,20 @@ class _UndoRequestSheetState extends State<_UndoRequestSheet> {
                       itemCount: widget.elements.length,
                       itemBuilder: (context, index) {
                         final element = widget.elements[index];
-                        final type =
-                            (element.toMap()['type'] as String?) ?? 'element';
                         final selected = _selected.contains(element.id);
                         return CheckboxListTile(
                           dense: true,
                           contentPadding: EdgeInsets.zero,
                           value: selected,
                           title: Text(
-                            '$type • ${element.id}',
+                            _elementLabel(element),
                             style: InkType.body(tokens.ink),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            _kindLabel(element),
+                            style: InkType.caption(tokens.inkMuted),
                           ),
                           onChanged: _submitting
                               ? null
@@ -212,6 +249,122 @@ class _UndoRequestSheetState extends State<_UndoRequestSheet> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Short noun phrase identifying a live element without exposing its id.
+/// Mirrors the server's `elementNoun` so members and the owner read the same
+/// words for the same thing.
+String _elementLabel(CanvasElement element) {
+  switch (element) {
+    case ShapeElement():
+      return '${_colorName(element.color)} ${element.shapeType.name}';
+    case StrokeElement():
+      return '${_colorName(element.color)} ${element.brushType} stroke';
+    case TextElement():
+      final snippet = _snippet(element.text);
+      return snippet.isEmpty ? 'Text' : 'Text: “$snippet”';
+    case StickyNoteElement():
+      final snippet = _snippet(element.text);
+      return snippet.isEmpty ? 'Sticky note' : 'Sticky note: “$snippet”';
+    case ImageElement():
+      return 'Image';
+    case ConnectorElement():
+      return '${_colorName(element.color)} connector';
+  }
+}
+
+String _kindLabel(CanvasElement element) {
+  switch (element) {
+    case ShapeElement():
+      return 'Shape';
+    case StrokeElement():
+      return 'Freehand stroke';
+    case TextElement():
+      return 'Text';
+    case StickyNoteElement():
+      return 'Sticky note';
+    case ImageElement():
+      return 'Image';
+    case ConnectorElement():
+      return 'Connector';
+  }
+}
+
+String _snippet(String text) {
+  final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (flat.length <= 40) return flat;
+  return '${flat.substring(0, 39)}…';
+}
+
+/// Human colour name, matching the server's HSL bucketing in describe.js.
+String _colorName(Color color) {
+  if (color.a < 16 / 255) return 'transparent';
+  final hsl = HSLColor.fromColor(color);
+  final h = hsl.hue;
+  final s = hsl.saturation;
+  final l = hsl.lightness;
+  if (s < 0.1) {
+    if (l > 0.93) return 'white';
+    if (l < 0.12) return 'black';
+    if (l > 0.7) return 'light grey';
+    if (l < 0.35) return 'dark grey';
+    return 'grey';
+  }
+  if (h >= 15 && h < 45 && l < 0.42) return 'brown';
+  if ((h < 15 || h >= 345) && l < 0.32) return 'dark red';
+  if (h < 15 || h >= 345) return l > 0.75 ? 'light red' : 'red';
+  if (h < 45) return l > 0.7 ? 'peach' : 'orange';
+  if (h < 70) return l > 0.7 ? 'pale yellow' : 'yellow';
+  if (h < 150) {
+    return l > 0.7 ? 'light green' : (l < 0.3 ? 'dark green' : 'green');
+  }
+  if (h < 195) return l > 0.7 ? 'light teal' : 'teal';
+  if (h < 250) {
+    return l > 0.7 ? 'light blue' : (l < 0.3 ? 'navy' : 'blue');
+  }
+  if (h < 290) return l > 0.7 ? 'lavender' : 'purple';
+  return l > 0.7 ? 'pink' : 'magenta';
+}
+
+class _AreaChip extends StatelessWidget {
+  final UndoRequestArea area;
+  final VoidCallback? onClear;
+
+  const _AreaChip({required this.area, this.onClear});
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: InkSpacing.s8,
+        vertical: InkSpacing.s4,
+      ),
+      decoration: BoxDecoration(
+        color: tokens.accentSoft,
+        borderRadius: BorderRadius.circular(InkRadii.chip),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(LucideIcons.scan, size: 14, color: tokens.accentText),
+          const SizedBox(width: InkSpacing.s4),
+          Text(
+            'Area: ${area.width.round()} × ${area.height.round()} px',
+            style: InkType.caption(tokens.accentText),
+          ),
+          if (onClear != null) ...[
+            const SizedBox(width: InkSpacing.s4),
+            InkWell(
+              onTap: onClear,
+              borderRadius: BorderRadius.circular(InkRadii.chip),
+              child: Icon(LucideIcons.x, size: 14, color: tokens.accentText),
+            ),
+          ],
+        ],
       ),
     );
   }

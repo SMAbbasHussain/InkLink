@@ -219,6 +219,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasHistoryFeedUpdated>(_onHistoryFeedUpdated);
     on<CanvasHistoryPreviewRequested>(_onHistoryPreviewRequested);
     on<CanvasHistoryPreviewExited>(_onHistoryPreviewExited);
+    on<CanvasHistoryRequestEvidenceRequested>(
+      _onHistoryRequestEvidenceRequested,
+    );
+    on<CanvasHistoryEvidenceViewToggled>(_onHistoryEvidenceViewToggled);
     on<CanvasHistoryRestoreRequested>(_onHistoryRestoreRequested);
     on<CanvasHistoryRevertUserRequested>(_onHistoryRevertUserRequested);
     on<CanvasHistoryUndoRequestReviewRequested>(
@@ -232,6 +236,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasHistoryPlanDismissed>(_onHistoryPlanDismissed);
     on<CanvasHistoryApplyRevert>(_onHistoryApplyRevert);
     on<CanvasHistoryUndoOwn>(_onHistoryUndoOwn);
+    on<CanvasToggleUndoRequestAreaSelection>(
+      _onToggleUndoRequestAreaSelection,
+    );
     on<CanvasUndoRequestsUpdated>(_onUndoRequestsUpdated);
     on<CanvasUndoConflictDismissed>(_onUndoConflictDismissed);
   }
@@ -3126,6 +3133,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       emit(state.copyWith(error: 'Only the board owner can view board history.'));
       return;
     }
+    // Remember where the owner launched the preview from so exiting returns
+    // them to the same tray/timeline. Preserve the original anchor when
+    // hopping between versions while already previewing.
+    final returnTray = state.isViewingHistory
+        ? state.historyPreviewReturnTray
+        : state.activeTray;
+    final returnUserUid = state.isViewingHistory
+        ? state.historyPreviewReturnUserUid
+        : state.selectedUserUid;
     emit(state.copyWith(isHistoryLoading: true, error: null));
     try {
       final preview = await service.previewVersion(_boardId, event.version);
@@ -3141,7 +3157,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         isViewingHistory: true,
         historyPreviewVersion: preview.version,
         historyPreviewElements: previewElements,
+        historyHighlightElementIds: event.highlightElementIds,
+        historyPreviewTitle: event.title,
+        historyPreviewReturnTray: returnTray,
+        historyPreviewReturnUserUid: returnUserUid,
+        historyPreviewFocusBounds: event.focusBounds,
+        historyPreviewRequestId: null,
+        historyPreviewShowsDesired: false,
         isHistoryLoading: false,
+        activeTray: null,
         selectedShapeId: null,
       ));
     } catch (e) {
@@ -3155,11 +3179,130 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasHistoryPreviewExited event,
     Emitter<CanvasState> emit,
   ) {
+    final returnTray = state.historyPreviewReturnTray;
+    final returnUserUid = state.historyPreviewReturnUserUid;
     emit(state.copyWith(
       isViewingHistory: false,
       historyPreviewVersion: null,
       historyPreviewElements: const [],
+      historyHighlightElementIds: const [],
+      historyPreviewTitle: null,
+      historyPreviewReturnTray: null,
+      historyPreviewReturnUserUid: null,
+      historyPreviewFocusBounds: null,
+      historyPreviewRequestId: null,
+      historyPreviewShowsDesired: false,
+      activeTray: returnTray,
+      selectedUserUid: returnUserUid,
     ));
+  }
+
+  Future<void> _onHistoryRequestEvidenceRequested(
+    CanvasHistoryRequestEvidenceRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(
+        error: 'Only the board owner can review undo requests.',
+      ));
+      return;
+    }
+    UndoRequest? request;
+    for (final r in state.undoRequests) {
+      if (r.requestId == event.requestId) {
+        request = r;
+        break;
+      }
+    }
+    final returnTray = state.isViewingHistory
+        ? state.historyPreviewReturnTray
+        : state.activeTray;
+    final returnUserUid = state.isViewingHistory
+        ? state.historyPreviewReturnUserUid
+        : state.selectedUserUid;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      // Build the desired board directly from the plan instead of emitting
+      // activeRevertPlan, which would auto-open the review sheet on top of the
+      // evidence preview.
+      final plan = await service.planRevert(
+        _boardId,
+        mode: 'user',
+        requestId: event.requestId,
+      );
+      if (isClosed) return;
+      final desiredElements = _buildDesiredElements(plan.items);
+      final highlightIds =
+          (request != null && request.targetElementIds.isNotEmpty)
+              ? request.targetElementIds
+              : plan.items.map((i) => i.elementId).toList(growable: false);
+      final area = request?.area;
+      final focusBounds = (area != null && area.isValid)
+          ? Rect.fromLTWH(area.left, area.top, area.width, area.height)
+          : null;
+      emit(state.copyWith(
+        isViewingHistory: true,
+        historyPreviewVersion: null,
+        historyPreviewElements: desiredElements,
+        historyHighlightElementIds: highlightIds,
+        historyPreviewTitle: request != null
+            ? 'Undo request from ${request.requesterName}'
+            : 'Undo request evidence',
+        historyPreviewReturnTray: returnTray,
+        historyPreviewReturnUserUid: returnUserUid,
+        historyPreviewFocusBounds: focusBounds,
+        historyPreviewRequestId: event.requestId,
+        historyPreviewShowsDesired: true,
+        isHistoryLoading: false,
+        activeRevertPlan: null,
+        activeTray: null,
+        selectedShapeId: null,
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  void _onHistoryEvidenceViewToggled(
+    CanvasHistoryEvidenceViewToggled event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (!state.isViewingHistory || state.historyPreviewRequestId == null) return;
+    emit(state.copyWith(historyPreviewShowsDesired: event.showDesired));
+  }
+
+  void _onToggleUndoRequestAreaSelection(
+    CanvasToggleUndoRequestAreaSelection event,
+    Emitter<CanvasState> emit,
+  ) {
+    final enable = event.enable ?? !state.isSelectingUndoRequestArea;
+    if (enable && state.isViewingHistory) return;
+    emit(state.copyWith(
+      isSelectingUndoRequestArea: enable,
+      activeTray: null,
+      selectedShapeId: null,
+    ));
+  }
+
+  /// The full board as it would look after applying [items]: live elements with
+  /// each plan item's desired (`after`) value upserted, or removed when null.
+  List<CanvasElement> _buildDesiredElements(List<RevertPlanItem> items) {
+    final maps = <String, Map<String, dynamic>>{
+      for (final e in state.elements) e.id: e.toMap(),
+    };
+    for (final item in items) {
+      final after = item.after;
+      if (after == null) {
+        maps.remove(item.elementId);
+      } else {
+        maps[item.elementId] = after;
+      }
+    }
+    return _rebuildElementsFromCrdtState(maps);
   }
 
   Future<void> _planHistoryRevert({
@@ -3366,6 +3509,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       final message = result.skipped.isEmpty
           ? 'Reverted ${result.reverted.length} change(s).'
           : 'Reverted ${result.reverted.length}; kept ${result.skipped.length} change(s) others modified.';
+      final wasPreviewing = state.isViewingHistory;
+      final returnTray = state.historyPreviewReturnTray;
+      final returnUserUid = state.historyPreviewReturnUserUid;
       emit(state.copyWith(
         isHistoryLoading: false,
         activeRevertPlan: null,
@@ -3373,6 +3519,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         isViewingHistory: false,
         historyPreviewVersion: null,
         historyPreviewElements: const [],
+        historyHighlightElementIds: const [],
+        historyPreviewTitle: null,
+        historyPreviewReturnTray: null,
+        historyPreviewReturnUserUid: null,
+        historyPreviewFocusBounds: null,
+        historyPreviewRequestId: null,
+        historyPreviewShowsDesired: false,
+        activeTray: wasPreviewing ? returnTray : state.activeTray,
+        selectedUserUid: wasPreviewing ? returnUserUid : state.selectedUserUid,
       ));
     } catch (e) {
       if (!isClosed) {

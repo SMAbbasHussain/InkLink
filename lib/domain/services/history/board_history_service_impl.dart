@@ -12,6 +12,7 @@ import '../../../core/services/cloud_functions_service.dart';
 import '../../../core/utils/network_config.dart';
 import '../../models/history/board_operation.dart';
 import '../../models/history/revert_plan.dart';
+import '../../models/history/undo_request.dart';
 import 'board_history_service.dart';
 
 /// Thin socket transport abstraction so the service can be unit-tested
@@ -490,6 +491,7 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
     required String boardId,
     required List<String> elementIds,
     required String reason,
+    UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,
   }) async {
@@ -502,6 +504,7 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
         'boardId': boardId,
         'targetElementIds': elementIds,
         'reason': reason,
+        if (area != null) 'area': area.toMap(),
         if (fromTime != null) 'timeRangeStart': fromTime.toUtc().toIso8601String(),
         if (toTime != null) 'timeRangeEnd': toTime.toUtc().toIso8601String(),
       });

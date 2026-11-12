@@ -172,6 +172,11 @@ class _HistoryTrayState extends State<HistoryTray> {
                                 request.requestId,
                               ),
                             ),
+                            onEvidence: () => widget.bloc.add(
+                              CanvasHistoryRequestEvidenceRequested(
+                                request.requestId,
+                              ),
+                            ),
                             onDeny: () => _denyRequest(context, request),
                           ),
                         ),
@@ -561,13 +566,26 @@ class _UndoRequestRow extends StatelessWidget {
 
   final UndoRequest request;
   final VoidCallback onReview;
+  final VoidCallback onEvidence;
   final VoidCallback onDeny;
 
   const _UndoRequestRow({
     required this.request,
     required this.onReview,
+    required this.onEvidence,
     required this.onDeny,
   });
+
+  String get _selectionSummary {
+    final n = request.targetElementIds.length;
+    final elements = '$n element${n == 1 ? '' : 's'}';
+    final area = request.area;
+    if (area != null && area.isValid) {
+      return '$elements · area ${area.width.round()} × '
+          '${area.height.round()} px';
+    }
+    return elements;
+  }
 
   String get _age {
     final createdAt = request.createdAt;
@@ -606,7 +624,7 @@ class _UndoRequestRow extends StatelessWidget {
             ],
           ),
           Text(
-            '${request.targetElementIds.length} element(s)',
+            _selectionSummary,
             style: InkType.caption(tokens.inkMuted),
           ),
           const SizedBox(height: 2),
@@ -621,6 +639,12 @@ class _UndoRequestRow extends StatelessWidget {
           Wrap(
             spacing: InkSpacing.s4,
             children: [
+              TextButton.icon(
+                onPressed: onEvidence,
+                style: _actionStyle,
+                icon: const Icon(LucideIcons.scan, size: 14),
+                label: const Text('Evidence'),
+              ),
               TextButton.icon(
                 onPressed: onReview,
                 style: _actionStyle,

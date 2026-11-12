@@ -127,6 +127,21 @@ class _RevertReviewSheetState extends State<_RevertReviewSheet> {
                   ),
                 ),
                 const SizedBox(height: InkSpacing.s16),
+                if (widget.requestId != null) ...[
+                  InkButton.secondary(
+                    label: 'Preview on board',
+                    icon: const Icon(LucideIcons.eye),
+                    onPressed: () {
+                      final id = widget.requestId!;
+                      widget.bloc.add(const CanvasHistoryPlanDismissed());
+                      Navigator.pop(context);
+                      widget.bloc.add(
+                        CanvasHistoryRequestEvidenceRequested(id),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: InkSpacing.s12),
+                ],
                 Row(
                   children: [
                     Expanded(
@@ -197,6 +212,27 @@ class _ReviewRow extends StatelessWidget {
     }
   }
 
+  String get _title {
+    final label = item.label;
+    if (label != null && label.trim().isNotEmpty) {
+      return label[0].toUpperCase() + label.substring(1);
+    }
+    return item.elementType;
+  }
+
+  String get _subtitle {
+    final summary = item.summary;
+    if (summary != null && summary.trim().isNotEmpty) return summary;
+    switch (item.kind) {
+      case 'delete':
+        return 'Will be removed from the board';
+      case 'add':
+        return 'Will be added back to the board';
+      default:
+        return 'Will be restored to the requested state';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
@@ -214,6 +250,7 @@ class _ReviewRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(_icon, size: 16, color: accent),
               const SizedBox(width: InkSpacing.s8),
@@ -222,22 +259,34 @@ class _ReviewRow extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${item.elementType} • ${item.elementId}',
+                      _title,
                       style: InkType.bodyStrong(tokens.ink),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     Text(
-                      item.conflict
-                          ? 'Someone modified this after the target edit'
-                          : 'Will be ${item.kind == 'delete' ? 'removed' : 'restored'}',
+                      _subtitle,
                       style: InkType.caption(tokens.inkMuted),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
+                    if (item.conflict)
+                      Text(
+                        'Someone edited this after the target change — '
+                        'kept by default.',
+                        style: InkType.caption(tokens.danger),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                   ],
                 ),
               ),
             ],
           ),
+          if (item.fields.isNotEmpty) ...[
+            const SizedBox(height: InkSpacing.s8),
+            ...item.fields.map((field) => _DiffFieldRow(field: field)),
+          ],
           const SizedBox(height: InkSpacing.s8),
           // Own line so narrow screens cannot overflow the row.
           Align(
@@ -253,6 +302,56 @@ class _ReviewRow extends StatelessWidget {
                 if (selection.isNotEmpty) onChanged(selection.first);
               },
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One field-level row of the current-vs-desired diff. `before` is the live
+/// board value; `after` is what the board becomes if the revert is applied.
+class _DiffFieldRow extends StatelessWidget {
+  final RevertDiffField field;
+
+  const _DiffFieldRow({required this.field});
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return Padding(
+      padding: const EdgeInsets.only(top: InkSpacing.s4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(field.label, style: InkType.caption(tokens.inkMuted)),
+          const SizedBox(height: 2),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  field.before,
+                  style: InkType.caption(tokens.inkSecondary),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: InkSpacing.s4,
+                ),
+                child: Text('→', style: InkType.caption(tokens.inkMuted)),
+              ),
+              Expanded(
+                child: Text(
+                  field.after,
+                  style: InkType.caption(tokens.accentText),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
           ),
         ],
       ),
