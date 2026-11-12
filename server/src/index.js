@@ -9,7 +9,8 @@ const crypto = require('crypto');
 const historyR2 = require('./history/r2');
 const { getProfile } = require('./history/profiles');
 const { reconstruct } = require('./history/reconstruct');
-const { buildPlan, applyPlan, collectUserOps, UNDO_WINDOW_MS } = require('./history/revert');
+const { buildPlan, applyPlan, collectUserOps, describeOps, UNDO_WINDOW_MS } = require('./history/revert');
+const { describeChange, summarizeOperation } = require('./history/describe');
 // Official Agora token generator for Node. NOTE: the npm package is
 // "agora-token" (verified against registry.npmjs.org in Oct 2026 —
 // "agora-token-builder" does not exist on npm; only the Dart/Flutter and
@@ -1204,16 +1205,20 @@ async function runSnapshot(boardId) {
     const after = elementsMap.toJSON();
 
     // Authoritative per-element diff — never the client hint (§5.6).
+    // Only the one-line `detail` is archived; the field-level diff table is
+    // rebuilt live by buildPlan, so blocks do not carry per-field rows.
     const changes = [];
     for (const key of Object.keys(after)) {
       if (!(key in before)) {
-        changes.push({ elementId: key, kind: 'add' });
+        changes.push({ elementId: key, kind: 'add', detail: describeChange(undefined, after[key]).detail });
       } else if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
-        changes.push({ elementId: key, kind: 'update' });
+        changes.push({ elementId: key, kind: 'update', detail: describeChange(before[key], after[key]).detail });
       }
     }
     for (const key of Object.keys(before)) {
-      if (!(key in after)) changes.push({ elementId: key, kind: 'delete' });
+      if (!(key in after)) {
+        changes.push({ elementId: key, kind: 'delete', detail: describeChange(before[key], undefined).detail });
+      }
     }
 
     let action = entry.action;
@@ -1228,7 +1233,7 @@ async function runSnapshot(boardId) {
     const authorUid = entry.sourceClientId || '';
     const profile = profileCache.get(authorUid)
       || { displayName: 'InkLink User', photoURL: null };
-    rawOps.push({
+    const opRecord = {
       version: entry.version,
       updateId: entry.updateId,
       userId: authorUid,
@@ -1242,7 +1247,9 @@ async function runSnapshot(boardId) {
       ...(entry.restoredFromVersion
         ? { restoredFromVersion: parseInt(entry.restoredFromVersion, 10) }
         : {}),
-    });
+    };
+    opRecord.summary = summarizeOperation(opRecord, changes);
+    rawOps.push(opRecord);
   }
 
   const stateUpdate = Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64');
@@ -1711,7 +1718,8 @@ io.on('connection', (socket) => {
       if (!doc.exists) return historyError(ack, 'not_found');
       const block = doc.data() || {};
       const ops = await historyR2.getGzipJson(block.r2BlockKey);
-      if (typeof ack === 'function') ack({ status: 'success', block, ops: ops || [] });
+      const described = await describeOps(boardId, ops || [], redis);
+      if (typeof ack === 'function') ack({ status: 'success', block, ops: described });
     } catch (e) {
       console.warn(`[history_get_block] ${e.message}`);
       historyError(ack, 'archive_unavailable');
@@ -1736,8 +1744,9 @@ io.on('connection', (socket) => {
       const page = filtered.slice(0, pageSize);
       const hasMore = filtered.length > pageSize;
       const nextBeforeVersion = page.length ? page[page.length - 1].version : null;
+      const described = await describeOps(boardId, page, redis);
       if (typeof ack === 'function') {
-        ack({ status: 'success', ops: page, hasMore, nextBeforeVersion });
+        ack({ status: 'success', ops: described, hasMore, nextBeforeVersion });
       }
     } catch (e) {
       console.warn(`[history_get_user_ops] ${e.message}`);

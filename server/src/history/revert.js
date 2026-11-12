@@ -8,6 +8,7 @@ const Y = require('yjs');
 const admin = require('firebase-admin');
 const r2 = require('./r2');
 const { reconstruct, parseStreamFields } = require('./reconstruct');
+const { describeChange, summarizeOperation, elementNoun } = require('./describe');
 
 const UNDO_WINDOW_MS = 15 * 60 * 1000; // D2
 
@@ -264,6 +265,99 @@ async function collectUserOps(boardId, targetUid, opts = {}, redis) {
   return ops;
 }
 
+// Attach plain-English `detail` per change and a one-line `summary` per op.
+//
+// Blocks archived before describe.js existed carry no wording, and the Redis
+// tail never went through the archiver at all, so both are described here on
+// demand. Only the resulting strings are cached (never the element snapshots,
+// which can carry base64 image payloads), and the replay is bounded by the
+// oldest op that still needs wording: replayTouches seeds from the milestone
+// below that point instead of replaying the board's whole life.
+const descriptionCache = new Map(); // boardId -> { descriptions: Map, expiresAt }
+const DESCRIPTION_TTL_MS = 10 * 60 * 1000;
+const DESCRIPTION_CACHE_MAX = 20;
+
+async function describeOps(boardId, ops, redis) {
+  const list = ops || [];
+  if (!list.some(op => !op.summary)) return list;
+
+  const now = Date.now();
+  for (const [key, entry] of descriptionCache.entries()) {
+    if (entry.expiresAt <= now) descriptionCache.delete(key);
+  }
+  let cached = descriptionCache.get(boardId);
+  if (!cached) {
+    cached = { descriptions: new Map(), expiresAt: now + DESCRIPTION_TTL_MS };
+  }
+
+  const missing = list.filter(op => !op.summary && !cached.descriptions.has(op.version));
+  if (missing.length) {
+    let fromTime = null;
+    for (const op of missing) {
+      const t = Date.parse(op.timestamp || '');
+      if (!Number.isFinite(t)) continue;
+      const iso = new Date(t).toISOString();
+      if (fromTime == null || iso < fromTime) fromTime = iso;
+    }
+
+    const byVersion = new Map();
+    try {
+      const touches = await replayTouches(boardId, redis, fromTime ? { fromTime } : {});
+      for (const [elementId, touchList] of touches.entries()) {
+        for (const touch of touchList) {
+          let perElement = byVersion.get(touch.version);
+          if (!perElement) {
+            perElement = new Map();
+            byVersion.set(touch.version, perElement);
+          }
+          perElement.set(elementId, { before: touch.before, after: touch.after });
+        }
+      }
+    } catch (_) {
+      // Without a replay we can still label ops from their recorded kinds.
+    }
+
+    for (const op of missing) {
+      const snapshots = byVersion.get(op.version) || new Map();
+      const recorded = Array.isArray(op.changes) ? op.changes : [];
+      const ids = recorded.length ? recorded.map(c => c.elementId) : [...snapshots.keys()];
+
+      const changes = ids.map((elementId) => {
+        const snap = snapshots.get(elementId);
+        const recordedKind = recorded.find(c => c.elementId === elementId)?.kind;
+        if (!snap) {
+          const kind = recordedKind || 'update';
+          const verb = kind === 'add' ? 'Added' : (kind === 'delete' ? 'Removed' : 'Updated');
+          return { elementId, kind, detail: `${verb} an element` };
+        }
+        const described = describeChange(snap.before, snap.after);
+        return { elementId, kind: recordedKind || described.kind, detail: described.detail };
+      });
+
+      cached.descriptions.set(op.version, {
+        changes,
+        summary: summarizeOperation(op, changes),
+      });
+    }
+  }
+
+  for (const op of list) {
+    if (op.summary) continue;
+    const described = cached.descriptions.get(op.version);
+    if (!described) continue;
+    op.changes = described.changes;
+    op.summary = described.summary;
+  }
+
+  cached.expiresAt = now + DESCRIPTION_TTL_MS;
+  descriptionCache.delete(boardId);
+  descriptionCache.set(boardId, cached);
+  while (descriptionCache.size > DESCRIPTION_CACHE_MAX) {
+    descriptionCache.delete(descriptionCache.keys().next().value);
+  }
+  return list;
+}
+
 // mode: 'restore' (targetVersion) | 'user' (targetUid + optional window/elementIds)
 async function buildPlan(boardId, opts, redis, actingUid) {
   const { elementMap: current, version: baseVersion } = await reconstruct(boardId, null, redis);
@@ -296,6 +390,9 @@ async function buildPlan(boardId, opts, redis, actingUid) {
     const kind = !inTgt ? 'delete' : (!inCur ? 'add' : 'update');
     const conflict = opts.mode === 'user' ? !!(analysis && analysis[elementId]?.conflict) : false;
     const same = JSON.stringify(current[elementId] ?? null) === JSON.stringify(target[elementId] ?? null);
+    // `before` is the live board, `after` is what applying the revert produces,
+    // so this reads as the change the owner is about to approve.
+    const described = describeChange(current[elementId] ?? null, target[elementId] ?? null);
     return {
       elementId,
       kind,
@@ -304,6 +401,9 @@ async function buildPlan(boardId, opts, redis, actingUid) {
       before: current[elementId] ?? null,
       after: target[elementId] ?? null,
       lastEditorUid: analysis?.[elementId]?.lastEditorUid ?? null,
+      label: elementNoun(target[elementId] ?? current[elementId]),
+      summary: described.detail,
+      fields: described.fields,
     };
   }).filter(item => !item.noop);
 
@@ -355,6 +455,7 @@ module.exports = {
   buildPlan,
   applyPlan,
   collectUserOps,
+  describeOps,
   analyzeElementHistory,
   replayTouches,
   UNDO_WINDOW_MS,

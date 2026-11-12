@@ -8,6 +8,29 @@ const ROLE_OWNER = 'owner';
 const ROLE_EDITOR = 'editor';
 const MAX_ELEMENTS = 200;
 const MAX_REASON_LENGTH = 1000;
+const MAX_AREA_COORDINATE = 1000000;
+
+function parseOptionalArea(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new HttpsError('invalid-argument', 'area must be an object.');
+  }
+  const area = {};
+  for (const field of ['left', 'top', 'width', 'height']) {
+    const number = value[field];
+    if (typeof number !== 'number' || !Number.isFinite(number)) {
+      throw new HttpsError('invalid-argument', `area.${field} must be a finite number.`);
+    }
+    if (Math.abs(number) > MAX_AREA_COORDINATE) {
+      throw new HttpsError('invalid-argument', `area.${field} is out of range.`);
+    }
+    area[field] = number;
+  }
+  if (area.width <= 0 || area.height <= 0) {
+    throw new HttpsError('invalid-argument', 'area.width and area.height must be positive.');
+  }
+  return area;
+}
 
 function parseOptionalDate(value, fieldName) {
   if (value === undefined || value === null || value === '') return null;
@@ -24,6 +47,7 @@ module.exports = async (request) => {
     boardId,
     targetElementIds,
     reason,
+    area,
     timeRangeStart,
     timeRangeEnd,
   } = request.data || {};
@@ -56,6 +80,7 @@ module.exports = async (request) => {
       throw new HttpsError('invalid-argument', 'Reason is too long.');
     }
 
+    const selectedArea = parseOptionalArea(area);
     const rangeStart = parseOptionalDate(timeRangeStart, 'timeRangeStart');
     const rangeEnd = parseOptionalDate(timeRangeEnd, 'timeRangeEnd');
 
@@ -126,6 +151,7 @@ module.exports = async (request) => {
       requesterName,
       requesterPhotoUrl,
       targetElementIds: elementIds,
+      area: selectedArea,
       timeRangeStart: rangeStart
         ? admin.firestore.Timestamp.fromDate(rangeStart)
         : null,
