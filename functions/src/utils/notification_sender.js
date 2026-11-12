@@ -39,7 +39,8 @@ async function sendUserNotification({
     type === 'board_invite' ||
     type === 'workspace_invite' ||
     type === 'board_access_request' ||
-    type === 'board_edit_request'
+    type === 'board_edit_request' ||
+    type === 'undo_request'
       ? 'pending'
       : 'info';
 

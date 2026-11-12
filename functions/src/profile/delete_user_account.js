@@ -3,7 +3,8 @@ const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
 const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
-const { deleteBoardState } = require('../utils/redis');
+const { deleteBoardState, publishBoardEvent } = require('../utils/redis');
+const { purgeBoardPrefix } = require('../utils/r2_history');
 
 /**
  * Cloud Function: deleteUserAccount
@@ -49,6 +50,21 @@ module.exports = async (request) => {
 
         // Recursively delete board doc and all subcollections
         await firestore.recursiveDelete(doc.ref);
+
+        // D6: purge the private R2 history prefix too.
+        try {
+          await purgeBoardPrefix(boardId);
+        } catch (r2Err) {
+          logger.warn(`deleteUserAccount: R2 history purge for board ${boardId} failed: ${r2Err.message}`);
+        }
+
+        // B5: evict connected sockets — this cascade previously forgot to
+        // publish board_deleted, leaving peers in a dead room.
+        try {
+          await publishBoardEvent({ type: 'board_deleted', boardId });
+        } catch (evtErr) {
+          logger.warn(`deleteUserAccount: publishBoardEvent for board ${boardId} failed: ${evtErr.message}`);
+        }
       } catch (err) {
         logger.warn(`deleteUserAccount: Error deleting owned board ${boardId}: ${err.message}`);
       }

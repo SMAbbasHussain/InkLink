@@ -104,6 +104,16 @@ module.exports = async (request) => {
       } catch (e) {
         logger.error('Recursive delete of board subcollections failed', e);
       }
+
+      // D6: indefinite retention, purged only on deletion. recursiveDelete above
+      // already removed activity_index + undo_requests (board subcollections);
+      // the archived blocks/milestones live in the private R2 bucket.
+      try {
+        const { purgeBoardPrefix } = require('../utils/r2_history');
+        await purgeBoardPrefix(boardId.trim());
+      } catch (e) {
+        logger.error('R2 history purge failed', e);
+      }
     }
 
     logger.info('Board deleted successfully', {
