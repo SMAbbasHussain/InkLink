@@ -1050,6 +1050,7 @@ class _WorkspaceShareCardState extends State<_WorkspaceShareCard> {
         SnackBar(
           content: Text(
             'Failed to join workspace: ${AppErrorFormatter.cleanMessage(e, fallback: 'Please check your code or connection.')}',
+            style: const TextStyle(color: Colors.white),
           ),
           backgroundColor: Colors.redAccent,
         ),

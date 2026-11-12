@@ -522,7 +522,12 @@ class _PublicBoardDiscoveryScreenState
                   children: [
                     Icon(LucideIcons.copy, size: 16, color: tokens.success),
                     const SizedBox(width: InkSpacing.s8),
-                    Expanded(child: Text('Board link copied: $link')),
+                    Expanded(
+                      child: Text(
+                        'Board link copied: $link',
+                        style: TextStyle(color: tokens.ink),
+                      ),
+                    ),
                   ],
                 ),
                 backgroundColor: tokens.paper,

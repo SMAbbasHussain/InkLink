@@ -1549,7 +1549,12 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                       color: _tokens.pending,
                     ),
                     const SizedBox(width: InkSpacing.s8),
-                    Flexible(child: Text(message)),
+                    Flexible(
+                      child: Text(
+                        message,
+                        style: TextStyle(color: _tokens.ink),
+                      ),
+                    ),
                   ],
                 ),
                 backgroundColor: _tokens.paper,
