@@ -12,11 +12,15 @@ import '../../models/canvas_element.dart';
 
 /// Member → owner escalation (D5). Members select elements from the LIVE
 /// canvas only — they never read the log (D3).
+///
+/// [preselectedIds] pre-ticks the checkboxes (used by the undo-conflict flow,
+/// where the conflicted elements are already known).
 Future<void> showUndoRequestSheet(
   BuildContext context, {
   required BoardHistoryService service,
   required String boardId,
   required List<CanvasElement> elements,
+  List<String>? preselectedIds,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -30,6 +34,7 @@ Future<void> showUndoRequestSheet(
       service: service,
       boardId: boardId,
       elements: elements,
+      preselectedIds: preselectedIds,
     ),
   );
 }
@@ -39,12 +44,14 @@ class _UndoRequestSheet extends StatefulWidget {
   final BoardHistoryService service;
   final String boardId;
   final List<CanvasElement> elements;
+  final List<String>? preselectedIds;
 
   const _UndoRequestSheet({
     required this.hostContext,
     required this.service,
     required this.boardId,
     required this.elements,
+    this.preselectedIds,
   });
 
   @override
@@ -52,9 +59,15 @@ class _UndoRequestSheet extends StatefulWidget {
 }
 
 class _UndoRequestSheetState extends State<_UndoRequestSheet> {
-  final Set<String> _selected = <String>{};
+  late final Set<String> _selected;
   final TextEditingController _reasonController = TextEditingController();
   bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = widget.preselectedIds?.toSet() ?? <String>{};
+  }
 
   @override
   void dispose() {

@@ -462,7 +462,23 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
           const [],
       skipped: (response['skipped'] as List?)?.whereType<String>().toList() ??
           const [],
+      conflicts: _parseConflicts(response['conflicts']),
     );
+  }
+
+  /// Element ids the server refused to revert because someone else modified
+  /// them afterwards (`history_undo_own` §7.2 conflict report).
+  List<RevertConflict> _parseConflicts(dynamic raw) {
+    if (raw is! List) return const [];
+    final conflicts = <RevertConflict>[];
+    for (final entry in raw) {
+      if (entry is Map) {
+        conflicts.add(
+          RevertConflict.fromMap(Map<String, dynamic>.from(entry)),
+        );
+      }
+    }
+    return conflicts;
   }
 
   // ──────────────────────────────────────────────

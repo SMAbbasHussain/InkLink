@@ -19,6 +19,16 @@ abstract class CanvasDocAdapter {
   Uint8List? redoLast({String origin = 'local'});
   Map<String, Map<String, dynamic>> materializeElements();
 
+  /// Element ids the TOP undo entry would revert, without popping it.
+  /// Returns null when the stack is empty or the entry is older than the
+  /// 15-minute window (D2) — the caller should fall back to the server-side
+  /// log undo. Used to detect "someone changed my work" conflicts BEFORE the
+  /// entry is consumed (see [CanvasBloc._onUndo]).
+  Set<String>? peekUndoElementIds();
+
+  /// Same as [peekUndoElementIds] for the top REDO entry.
+  Set<String>? peekRedoElementIds();
+
   /// Remove every undo/redo entry that touches any of [elementIds].
   /// Called when an owner's remote 'revert' arrives (D14).
   void pruneReverted(Set<String> elementIds);
@@ -29,11 +39,17 @@ abstract class CanvasDocAdapter {
 }
 
 /// Ledger entry stored on a Yjs undo stack item: the ORIGINAL local edit time
-/// (never refreshed by undo/redo) plus the element keys that entry touches.
+/// (never refreshed by undo/redo), the element keys that entry touches, and
+/// what those elements held BEFORE the entry was applied (null = absent).
+/// The pre-state lets a pop that changed nothing visible (peer interference,
+/// §7.2) still be completed as an element-level revert (D10) and gives the
+/// matching redo entry its content.
 class _UndoMeta {
   final DateTime createdAt;
   final Set<String> elementIds;
-  _UndoMeta(this.createdAt, this.elementIds);
+  final Map<String, Map<String, dynamic>?> preState;
+  _UndoMeta(this.createdAt, this.elementIds, {Map<String, Map<String, dynamic>?>? preState})
+      : preState = preState ?? <String, Map<String, dynamic>?>{};
 }
 
 class CanvasDocAdapterFactory {
@@ -53,21 +69,36 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
   static const Duration undoWindow = Duration(minutes: 15); // D2
   static const String _metaKey = 'inklinkUndo'; // key into StackItem.meta
 
+  /// Element values captured immediately BEFORE a local edit transaction, so
+  /// the stack-item-added/updated events can attach them to the entry's meta.
+  Map<String, Map<String, dynamic>?>? _txnPreState;
+
   CanvasCrdtAdapter._(this._doc, this._elements, this._undoManager) {
     _undoManager.on('stack-item-added', (dynamic data, [dynamic _]) {
       final map = data as Map;
       if (map['origin'] != _localOrigin) return; // only genuine local edits
       final item = map['stackItem']; // inferred StackItem; never name the type
-      (item.meta as Map<Object, Object?>)[_metaKey] =
-          _UndoMeta(DateTime.now(), _changedElementIds(map['changedParentTypes']));
+      (item.meta as Map<Object, Object?>)[_metaKey] = _UndoMeta(
+        DateTime.now(),
+        _changedElementIds(map['changedParentTypes']),
+        preState: _txnPreState == null ? null : Map.of(_txnPreState!),
+      );
+      _txnPreState = null;
     });
     _undoManager.on('stack-item-updated', (dynamic data, [dynamic _]) {
       final map = data as Map;
       if (map['origin'] != _localOrigin) return;
       final item = map['stackItem'];
       final meta = (item.meta as Map<Object, Object?>)[_metaKey] as _UndoMeta?;
-      // Merge: keep the ORIGINAL createdAt, accumulate touched keys.
+      // Merge: keep the ORIGINAL createdAt and pre-state, accumulate touched
+      // keys.
       meta?.elementIds.addAll(_changedElementIds(map['changedParentTypes']));
+      if (meta != null && _txnPreState != null) {
+        _txnPreState!.forEach((id, value) {
+          meta.preState.putIfAbsent(id, () => value);
+        });
+      }
+      _txnPreState = null;
     });
   }
 
@@ -121,6 +152,7 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
     String origin = 'local',
   }) {
     final beforeVector = encodeStateVector();
+    _capturePreState(origin, {elementId: materializeElements()[elementId]});
     transact<void>(_doc, (_) {
       _elements.set(elementId, _cloneValue(payload));
     }, origin);
@@ -134,6 +166,7 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
     }
 
     final beforeVector = encodeStateVector();
+    _capturePreState(origin, {elementId: materializeElements()[elementId]});
     transact<void>(_doc, (_) {
       _elements.delete(elementId);
     }, origin);
@@ -147,10 +180,27 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
     }
 
     final beforeVector = encodeStateVector();
+    _capturePreState(
+      origin,
+      {
+        for (final entry in materializeElements().entries)
+          entry.key: entry.value,
+      },
+    );
     transact<void>(_doc, (_) {
       _elements.clear();
     }, origin);
     return encodeStateUpdate(vector: beforeVector);
+  }
+
+  /// Remember the element values present BEFORE a local edit transaction so
+  /// the entry's meta can carry them (see [_UndoMeta.preState]).
+  void _capturePreState(
+    String origin,
+    Map<String, Map<String, dynamic>?> values,
+  ) {
+    if (origin != _localOrigin) return;
+    _txnPreState = values;
   }
 
   @override
@@ -167,10 +217,41 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
     }
     final redoLenBefore = um.redoStack.length;
     final beforeVector = encodeStateVector();
+    final beforeElements = materializeElements();
     um.undo();
     // The inverse item was created with origin == manager (untagged). Carry the
     // ORIGINAL timestamp onto it so a later redo is validated against the same
     // window (ping-ponging cannot keep an edit alive past 15 minutes).
+    if (um.redoStack.length > redoLenBefore) {
+      um.redoStack.last.meta[_metaKey] = meta;
+    }
+    // A pop that leaves every element untouched achieved nothing visible —
+    // e.g. a collaborator overwrote our creation and then undid their own
+    // edit: yjs resurrects our value as a PEER-owned redo copy, so our stack
+    // item's own items are dead and undoing them changes nothing. Complete
+    // the undo OURSELVES as an element-level revert (D10): restore the
+    // pre-entry values, and make THAT restore the redo unit so undo/redo
+    // keeps ping-ponging (§7.2).
+    if (!_visibleStateEquals(beforeElements, materializeElements())) {
+      return encodeStateUpdate(vector: beforeVector);
+    }
+    if (um.redoStack.length > redoLenBefore) {
+      um.redoStack.removeLast(); // drop the empty entry the pop appended
+    }
+    um.undoing = true; // keep the redo stack; the restore IS its redo unit
+    try {
+      transact<void>(_doc, (_) {
+        meta.preState.forEach((id, value) {
+          if (value == null) {
+            if (_elements.has(id)) _elements.delete(id);
+          } else {
+            _elements.set(id, _cloneValue(value));
+          }
+        });
+      }, um);
+    } finally {
+      um.undoing = false;
+    }
     if (um.redoStack.length > redoLenBefore) {
       um.redoStack.last.meta[_metaKey] = meta;
     }
@@ -188,14 +269,41 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
     }
     final undoLenBefore = um.undoStack.length;
     final beforeVector = encodeStateVector();
+    final beforeElements = materializeElements();
     um.redo();
     // Only tag when the stack actually grew — otherwise the last item is a
     // pre-existing entry and overwriting its meta would corrupt it.
     if (um.undoStack.length > undoLenBefore) {
       um.undoStack.last.meta[_metaKey] = meta;
     }
+    // Same no-visible-change rule as undoLast: a redo whose target already
+    // holds the restored value (e.g. the peer undid their overwrite, which
+    // resurrected our content) is an honest no-op, not a success (§7.2).
+    if (_visibleStateEquals(beforeElements, materializeElements())) {
+      return Uint8List(0);
+    }
     return encodeStateUpdate(vector: beforeVector);
   }
+
+  /// Top-of-stack element ids without popping. Null = nothing to undo/redo
+  /// locally (empty stack, or the entry is outside the 15-minute D2 window).
+  Set<String>? _peekElementIds(bool undo) {
+    final um = _undoManager;
+    if (undo ? !um.canUndo() : !um.canRedo()) return null;
+    final stack = undo ? um.undoStack : um.redoStack;
+    if (stack.isEmpty) return null;
+    final meta = stack.last.meta[_metaKey] as _UndoMeta?;
+    if (meta == null || DateTime.now().difference(meta.createdAt) > undoWindow) {
+      return null;
+    }
+    return Set<String>.of(meta.elementIds);
+  }
+
+  @override
+  Set<String>? peekUndoElementIds() => _peekElementIds(true);
+
+  @override
+  Set<String>? peekRedoElementIds() => _peekElementIds(false);
 
   @override
   void pruneReverted(Set<String> elementIds) {
@@ -229,6 +337,41 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
     }
 
     return result;
+  }
+
+  /// Deep equality between two [materializeElements] snapshots, used to
+  /// detect whether an undo/redo pop actually changed anything a user could
+  /// see. Values come from the same doc, so nested lists keep their order.
+  bool _visibleStateEquals(
+    Map<String, Map<String, dynamic>> a,
+    Map<String, Map<String, dynamic>> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (final entry in a.entries) {
+      final other = b[entry.key];
+      if (other == null) return false;
+      if (!_leafEquals(entry.value, other)) return false;
+    }
+    return true;
+  }
+
+  bool _leafEquals(dynamic a, dynamic b) {
+    if (a is Map && b is Map) {
+      if (a.length != b.length) return false;
+      for (final key in a.keys) {
+        if (!b.containsKey(key)) return false;
+        if (!_leafEquals(a[key], b[key])) return false;
+      }
+      return true;
+    }
+    if (a is List && b is List) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (!_leafEquals(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    return a == b;
   }
 
   dynamic _cloneValue(dynamic value) {

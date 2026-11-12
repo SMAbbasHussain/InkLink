@@ -65,6 +65,11 @@ class CanvasState {
   final List<UndoRequest> undoRequests;
   final RevertPlan? activeRevertPlan;
   final bool isHistoryLoading;
+
+  /// Non-null while an undo/redo was blocked because a collaborator changed
+  /// the element(s) the top stack entry would revert (§7.2). The screen shows
+  /// the conflict dialog from this; dismissed via [CanvasUndoConflictDismissed].
+  final CanvasUndoConflict? undoConflict;
   final String? selectedUserUid;
   final List<BoardOperation> userOps;
   final bool hasMoreUserOps;
@@ -120,6 +125,7 @@ class CanvasState {
     this.undoRequests = const [],
     this.activeRevertPlan,
     this.isHistoryLoading = false,
+    this.undoConflict,
     this.selectedUserUid,
     this.userOps = const [],
     this.hasMoreUserOps = false,
@@ -178,6 +184,7 @@ class CanvasState {
     List<UndoRequest>? undoRequests,
     Object? activeRevertPlan = _unset,
     bool? isHistoryLoading,
+    Object? undoConflict = _unset,
     Object? selectedUserUid = _unset,
     List<BoardOperation>? userOps,
     bool? hasMoreUserOps,
@@ -265,6 +272,9 @@ class CanvasState {
           ? this.activeRevertPlan
           : activeRevertPlan as RevertPlan?,
       isHistoryLoading: isHistoryLoading ?? this.isHistoryLoading,
+      undoConflict: undoConflict == _unset
+          ? this.undoConflict
+          : undoConflict as CanvasUndoConflict?,
       selectedUserUid: selectedUserUid == _unset
           ? this.selectedUserUid
           : selectedUserUid as String?,
@@ -340,6 +350,7 @@ class CanvasState {
           undoRequests == other.undoRequests &&
           activeRevertPlan == other.activeRevertPlan &&
           isHistoryLoading == other.isHistoryLoading &&
+          undoConflict == other.undoConflict &&
           selectedUserUid == other.selectedUserUid &&
           userOps == other.userOps &&
           hasMoreUserOps == other.hasMoreUserOps &&
@@ -396,6 +407,7 @@ class CanvasState {
       undoRequests.hashCode ^
       activeRevertPlan.hashCode ^
       isHistoryLoading.hashCode ^
+      undoConflict.hashCode ^
       selectedUserUid.hashCode ^
       userOps.hashCode ^
       hasMoreUserOps.hashCode ^
@@ -420,4 +432,33 @@ class CanvasErrorState extends CanvasState {
   final String message;
 
   const CanvasErrorState(this.message) : super(error: message);
+}
+
+/// An undo/redo entry could not be applied because the element(s) it would
+/// revert have since been changed by another user. Carried on [CanvasState]
+/// until the user dismisses the dialog or chooses an action (member: send an
+/// undo request to the owner; owner: review their own changes).
+class CanvasUndoConflict {
+  /// Elements the collaborator changed on top of this user's work.
+  final List<String> elementIds;
+
+  const CanvasUndoConflict({required this.elementIds});
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CanvasUndoConflict &&
+          runtimeType == other.runtimeType &&
+          _listEquals(elementIds, other.elementIds);
+
+  @override
+  int get hashCode => Object.hashAll(elementIds);
+}
+
+bool _listEquals(List<String> a, List<String> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }

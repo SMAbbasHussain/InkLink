@@ -80,6 +80,21 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   static const Duration _remotePreviewTtl = Duration(seconds: 3);
   bool _remotePreviewClearsBoard = false;
   final Map<String, String> _lastShapePayloadFingerprint = <String, String>{};
+  /// The payload THIS device last committed to the CRDT per element id
+  /// (upsert → payload, delete → null). Undo/redo compares the live CRDT
+  /// value against it: a mismatch means a collaborator changed the element
+  /// on top of our work, and the undo entry must NOT be consumed (§7.2
+  /// conflict flow). Key order-insensitive deep equality is used.
+  final Map<String, Map<String, dynamic>?> _myCommittedPayload =
+      <String, Map<String, dynamic>?>{};
+  /// What each element held when the matching undo entry was captured — the
+  /// value a REDO of that entry must restore. The redo conflict gate compares
+  /// the live value against THIS (not the post-undo baseline): after a peer
+  /// undoes their overwrite, the element holds our value again, which is
+  /// exactly what the redo would produce — a harmless no-op, not a conflict
+  /// (§7.2).
+  final Map<String, Map<String, dynamic>?> _myRedoTarget =
+      <String, Map<String, dynamic>?>{};
   final Map<String, String> _lastShapeUpdateId =
       <String, String>{};
   final Map<String, _QueuedPreviewPublish> _pendingPreviewPublishes =
@@ -218,6 +233,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasHistoryApplyRevert>(_onHistoryApplyRevert);
     on<CanvasHistoryUndoOwn>(_onHistoryUndoOwn);
     on<CanvasUndoRequestsUpdated>(_onUndoRequestsUpdated);
+    on<CanvasUndoConflictDismissed>(_onUndoConflictDismissed);
   }
 
   String get boardId => _boardId;
@@ -252,8 +268,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasBoardTitleUpdated event,
     Emitter<CanvasState> emit,
   ) {
+    final wasOwner = _currentUserRole == Board.roleOwner;
     _currentUserRole = event.currentUserRole;
     _syncHistorySubscriptions();
+    // The role can resolve AFTER the owner already opened the history tray
+    // (the first feed request early-returns for non-owners and would never
+    // be retried). Retry now that we know the role.
+    if (!wasOwner &&
+        _currentUserRole == Board.roleOwner &&
+        state.activeTray == 'history') {
+      _ensureHistoryFeedSubscription();
+    }
     emit(state.copyWith(
       boardTitle: event.title,
       currentUserRole: event.currentUserRole,
@@ -477,6 +502,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         // meaningless afterwards (D14).
         adapter.clearLocalHistory();
         _appliedCrdtUpdateIds.add(snapshot.updateId);
+        _myCommittedPayload.clear();
+        _myRedoTarget.clear();
         _remotePreviewClearsBoard = false;
         _remotePreviewElements.clear();
         _remotePreviewDeletedIds.clear();
@@ -510,10 +537,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             case 'restore':
             case 'clear':
               adapter.clearLocalHistory();
+              _myCommittedPayload.clear();
+              _myRedoTarget.clear();
               break;
             case 'revert':
               adapter.pruneReverted(
                 (update.affectedElementIds ?? const <String>[]).toSet(),
+              );
+              // D14: the owner's revert replaced those entries; their commit
+              // baselines are meaningless now (a fresh local edit re-records).
+              _dropCommitRecords(
+                update.affectedElementIds ?? const <String>[],
               );
               break;
           }
@@ -636,11 +670,19 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (adapter == null) return;
     Uint8List update;
     if (action == 'delete' && type == 'board') {
+      // D13 clear: every element in the CRDT doc is removed by this device.
+      // Record the removals so a later undo compares against the right
+      // baseline (an undo of the clear must not look like a conflict).
+      for (final id in adapter.materializeElements().keys) {
+        _myCommittedPayload[id] = null;
+      }
       update = adapter.clearElements(origin: 'local');
     } else if (action == 'delete') {
+      _myCommittedPayload[objectId] = null;
       update = adapter.deleteElement(objectId, origin: 'local');
     } else {
       final payload = <String, dynamic>{'type': type, ...data};
+      _myCommittedPayload[objectId] = _deepCopyPayload(payload);
       update = adapter.upsertElement(objectId, payload, origin: 'local');
     }
     _refreshFromCrdtAdapter(emit);
@@ -1490,10 +1532,142 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   // Undo / Redo / Clear / Delete
   // ──────────────────────────────────────────────
 
+  /// Detaches a payload map from the caller's (possibly mutated) object.
+  static Map<String, dynamic> _deepCopyPayload(Map<String, dynamic> source) {
+    dynamic copy(dynamic value) {
+      if (value is Map) {
+        return value.map((k, v) => MapEntry(k.toString(), copy(v)));
+      }
+      if (value is List) {
+        return value.map(copy).toList();
+      }
+      return value; // JSON-safe leaves are immutable
+    }
+
+    return Map<String, dynamic>.from(
+      source.map((k, v) => MapEntry(k, copy(v))),
+    );
+  }
+
+  /// Deep equality that ignores Map key order (Yjs and payload builders do
+  /// not guarantee it) but keeps List order (stroke points are ordered).
+  static bool _payloadEquals(dynamic a, dynamic b) {
+    if (identical(a, b)) return true;
+    if (a is Map && b is Map) {
+      if (a.length != b.length) return false;
+      for (final key in a.keys) {
+        if (!b.containsKey(key)) return false;
+        if (!_payloadEquals(a[key], b[key])) return false;
+      }
+      return true;
+    }
+    if (a is List && b is List) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (!_payloadEquals(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    return a == b;
+  }
+
+  /// Elements among [ids] whose live CRDT value no longer matches what this
+  /// device last committed there — i.e. a collaborator changed our work.
+  /// A missing record means this device never committed that element locally
+  /// (e.g. a stack item restored across a snapshot), which is treated as a
+  /// conflict so a stale undo can never clobber unknown state.
+  List<String> _myCommitConflicts(Set<String> ids) {
+    final adapter = _crdtAdapter;
+    if (adapter == null) return const [];
+    final live = adapter.materializeElements();
+    final conflicts = <String>[];
+    for (final id in ids) {
+      final recorded = _myCommittedPayload[id];
+      final current = live[id];
+      if (_payloadEquals(current, recorded)) continue;
+      conflicts.add(id);
+    }
+    return conflicts;
+  }
+
+  /// After a successful local undo/redo the elements now hold the value this
+  /// device produced by reverting — re-record it so the NEXT conflict check
+  /// compares against the right baseline. (Once a collaborator undoes their
+  /// overwrite, our recorded value matches the live one again and our undo
+  /// works — the 15-minute window permitting, per D2.)
+  void _refreshCommitRecords(Set<String> ids) {
+    final adapter = _crdtAdapter;
+    if (adapter == null || ids.isEmpty) return;
+    final live = adapter.materializeElements();
+    for (final id in ids) {
+      _myCommittedPayload[id] = live[id];
+    }
+  }
+
+  /// The stack these ids belonged to is gone (owner revert, own server undo,
+  /// full restore): drop the baselines too so they cannot cause false
+  /// conflicts if the elements are edited again later.
+  void _dropCommitRecords(Iterable<String> ids) {
+    for (final id in ids) {
+      _myCommittedPayload.remove(id);
+      _myRedoTarget.remove(id);
+    }
+  }
+
+  /// Before the commit baselines are refreshed to the post-undo values,
+  /// remember what the elements held when the entry was captured: a later
+  /// REDO must restore exactly this, so this is what its conflict gate
+  /// compares against.
+  void _captureRedoTargets(Set<String> ids) {
+    for (final id in ids) {
+      _myRedoTarget[id] = _myCommittedPayload[id];
+    }
+  }
+
+  /// Elements among [ids] whose live CRDT value differs from BOTH the value
+  /// left by the matching undo (the commit baseline) AND the value the redo
+  /// would restore (the pre-undo target). That means a collaborator changed
+  /// the element to something else since our undo, and redoing would clobber
+  /// their content. When the live value equals either one, redoing is either
+  /// exactly right or an honest no-op (e.g. the peer undid their overwrite,
+  /// which already restored our content) — not a conflict (§7.2).
+  List<String> _myRedoConflicts(Set<String> ids) {
+    final adapter = _crdtAdapter;
+    if (adapter == null) return const [];
+    final live = adapter.materializeElements();
+    final conflicts = <String>[];
+    for (final id in ids) {
+      final target = _myRedoTarget[id] ?? _myCommittedPayload[id];
+      final baseline = _myCommittedPayload[id];
+      if (_payloadEquals(live[id], baseline)) continue;
+      if (_payloadEquals(live[id], target)) continue;
+      conflicts.add(id);
+    }
+    return conflicts;
+  }
+
+  /// Baselines for the pending local undo/redo: a peeked top entry whose
+  /// elements no longer match what this device committed means a collaborator
+  /// changed our work.
   Future<void> _onUndo(CanvasUndo event, Emitter<CanvasState> emit) async {
     if (!_ensureCanEdit(emit)) return;
     final adapter = _crdtAdapter;
     if (adapter == null) return;
+    final peeked = adapter.peekUndoElementIds();
+    if (peeked != null) {
+      final conflicts = _myCommitConflicts(peeked);
+      if (conflicts.isNotEmpty) {
+        // Do NOT pop the stack item: Yjs would leave the collaborator's newer
+        // value visible (LWW per key, D10) while consuming the entry, making
+        // the undo a silent no-op that also destroys redo. Surface the
+        // conflict instead (§7.2).
+        emit(state.copyWith(
+          undoConflict: CanvasUndoConflict(elementIds: conflicts),
+          isHistoryLoading: false,
+        ));
+        return;
+      }
+    }
     final update = adapter.undoLast(origin: 'local');
     if (update == null || update.isEmpty) {
       // D2: the local stack is empty OR its top entry is older than 15 minutes.
@@ -1506,6 +1680,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     // update is not silently dropped.
     _lastShapePayloadFingerprint.clear();
     _refreshFromCrdtAdapter(emit);
+    // The reverted elements now hold the value THIS device produced; re-record
+    // it so the next conflict check compares against the right baseline. The
+    // PRE-undo values are captured first — that is what a later REDO of this
+    // entry must restore, and what its conflict gate compares against.
+    if (peeked != null) _captureRedoTargets(peeked);
+    if (peeked != null) _refreshCommitRecords(peeked);
     emit(state.copyWith(activeTray: null));
     await _publishCrdtUpdate(update);
   }
@@ -1514,9 +1694,22 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (!_ensureCanEdit(emit)) return;
     final adapter = _crdtAdapter;
     if (adapter == null) return;
+    final peeked = adapter.peekRedoElementIds();
+    if (peeked != null) {
+      final conflicts = _myRedoConflicts(peeked);
+      if (conflicts.isNotEmpty) {
+        emit(state.copyWith(
+          undoConflict: CanvasUndoConflict(elementIds: conflicts),
+          isHistoryLoading: false,
+        ));
+        return;
+      }
+    }
     final update = adapter.redoLast(origin: 'local');
     if (update == null || update.isEmpty) {
       // Redo is local-only and equally 15-minute capped: there is no log redo.
+      // Empty also covers a redo whose target already holds the restored
+      // value (the peer undid their overwrite) — an honest no-op.
       emit(state.copyWith(infoMessage: 'Nothing to redo.', error: null));
       return;
     }
@@ -1525,6 +1718,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     // silently dropped.
     _lastShapePayloadFingerprint.clear();
     _refreshFromCrdtAdapter(emit);
+    if (peeked != null) _refreshCommitRecords(peeked);
+    // The entry was consumed; its redo target is meaningless now.
+    if (peeked != null) {
+      for (final id in peeked) {
+        _myRedoTarget.remove(id);
+      }
+    }
     emit(state.copyWith(activeTray: null));
     await _publishCrdtUpdate(update);
   }
@@ -2667,6 +2867,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   void _onToggleTray(CanvasToggleTray event, Emitter<CanvasState> emit) {
     final nextTray = state.activeTray == event.trayName ? null : event.trayName;
     emit(state.copyWith(activeTray: nextTray));
+    // The archived-blocks feed is what the history tray renders. Subscribe on
+    // EVERY open path — the ToolsTray History button and the tray toggle both
+    // funnel through here, so an owner opening history could previously see
+    // "No archived versions yet" forever when the feed was never subscribed.
+    if (nextTray == 'history') {
+      _ensureHistoryFeedSubscription();
+    }
   }
 
   void _onShowTrayTips(CanvasShowTrayTips event, Emitter<CanvasState> emit) {
@@ -2877,20 +3084,28 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
   }
 
-  void _onHistoryFeedRequested(
-    CanvasHistoryFeedRequested event,
-    Emitter<CanvasState> emit,
-  ) {
+  /// Owner-only: subscribe to the archived-block feed. Idempotent so every
+  /// history-tray entry point (ToolsTray button, tray toggle, role resolving
+  /// late) can call it without stacking duplicate Firestore listeners.
+  void _ensureHistoryFeedSubscription() {
     final repo = _historyRepository;
     if (repo == null || _currentUserRole != Board.roleOwner) return;
-    _syncHistorySubscriptions();
-    _historyFeedSub?.cancel();
+    if (_boardId.isEmpty || isClosed || _historyFeedSub != null) return;
     _historyFeedSub = repo.watchActivityFeed(_boardId).listen(
       (blocks) {
         if (!isClosed) add(CanvasHistoryFeedUpdated(blocks));
       },
       onError: (_) {},
     );
+  }
+
+  void _onHistoryFeedRequested(
+    CanvasHistoryFeedRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (_currentUserRole != Board.roleOwner) return;
+    _syncHistorySubscriptions();
+    _ensureHistoryFeedSubscription();
   }
 
   void _onHistoryFeedUpdated(
@@ -3011,6 +3226,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       targetUid: event.targetUid,
       fromTime: event.fromTime,
       toTime: event.toTime,
+      elementIds: event.elementIds,
       emit: emit,
     );
   }
@@ -3145,6 +3361,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       // Our own revert is a new op the local stack never saw; drop the stack
       // entries it replaced so Ctrl+Z cannot re-apply them.
       _crdtAdapter?.pruneReverted(result.reverted.toSet());
+      _dropCommitRecords(result.reverted);
       if (isClosed) return;
       final message = result.skipped.isEmpty
           ? 'Reverted ${result.reverted.length} change(s).'
@@ -3182,6 +3399,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       final result = await service.undoOwn(_boardId);
       if (isClosed) return;
       if (result.reverted.isEmpty) {
+        if (result.conflicts.isNotEmpty) {
+          // Every in-window edit was later changed by someone else. Show the
+          // conflict flow instead of a dead-end "nothing to undo" error
+          // (§7.2): members can send the owner an undo request.
+          emit(state.copyWith(
+            isHistoryLoading: false,
+            undoConflict: CanvasUndoConflict(
+              elementIds: result.conflicts.map((c) => c.elementId).toList(),
+            ),
+          ));
+          return;
+        }
         emit(state.copyWith(
           isHistoryLoading: false,
           error:
@@ -3193,6 +3422,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       // matching local stack entries — otherwise a later Ctrl+Z would undo the
       // same edits a second time (D14 semantics, applied to our own ops).
       _crdtAdapter?.pruneReverted(result.reverted.toSet());
+      _dropCommitRecords(result.reverted);
       final message = result.skipped.isEmpty
           ? 'Undid ${result.reverted.length} recent edit(s).'
           : 'Undid ${result.reverted.length}; ${result.skipped.length} could not be undone because others modified them.';
@@ -3206,6 +3436,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     } catch (e) {
       if (!isClosed) emit(state.copyWith(isHistoryLoading: false));
     }
+  }
+
+  void _onUndoConflictDismissed(
+    CanvasUndoConflictDismissed event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(undoConflict: null));
   }
 
   void _onUndoRequestsUpdated(

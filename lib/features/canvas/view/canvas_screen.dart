@@ -2014,6 +2014,7 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                             _buildSelectionOutline(state, mappedElements),
                           _buildAllTrays(state),
                           _buildHistoryPlanListener(),
+                          _buildUndoConflictListener(),
                           if (state.isViewingHistory)
                             HistoryPreviewBanner(
                               version: state.historyPreviewVersion,
@@ -3647,6 +3648,56 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
           plan: plan,
           requestId: plan.requestId,
         );
+      },
+      child: const SizedBox.shrink(),
+    );
+  }
+
+  /// "Your work has been changed" (§7.2): an undo/redo was blocked because a
+  /// collaborator edited the element(s) the entry would revert. Members can
+  /// send the owner an undo request; the owner reviews their own changes.
+  Widget _buildUndoConflictListener() {
+    return BlocListener<CanvasBloc, CanvasState>(
+      listenWhen: (previous, current) =>
+          previous.undoConflict != current.undoConflict,
+      listener: (dialogContext, state) async {
+        final conflict = state.undoConflict;
+        if (conflict == null || conflict.elementIds.isEmpty) return;
+        final isOwner = state.currentUserRole == Board.roleOwner;
+        final count = conflict.elementIds.length;
+        final confirmed = await showInkConfirmDialog(
+          dialogContext,
+          title: 'Your work has been changed',
+          message: count == 1
+              ? 'Someone edited the element you are about to undo. To revert '
+                  'it, ${isOwner ? 'review the changes' : 'send a request to the board owner'}.'
+              : 'Someone edited $count elements you are about to undo. To '
+                  'revert them, ${isOwner ? 'review the changes' : 'send a request to the board owner'}.',
+          confirmLabel: isOwner ? 'Review changes' : 'Send undo request',
+          destructive: false,
+        );
+        if (!mounted) return;
+        _canvasBloc.add(const CanvasUndoConflictDismissed());
+        if (!confirmed) return;
+        if (isOwner) {
+          _canvasBloc.add(
+            CanvasHistoryRevertUserRequested(
+              state.currentUserId,
+              elementIds: conflict.elementIds,
+            ),
+          );
+        } else {
+          final conflictedIds = conflict.elementIds.toSet();
+          showUndoRequestSheet(
+            context,
+            service: context.read<BoardHistoryService>(),
+            boardId: widget.boardId,
+            elements: _canvasBloc.state.elements
+                .where((e) => conflictedIds.contains(e.id))
+                .toList(growable: false),
+            preselectedIds: conflict.elementIds,
+          );
+        }
       },
       child: const SizedBox.shrink(),
     );

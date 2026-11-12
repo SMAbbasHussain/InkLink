@@ -29,16 +29,41 @@ class HistoryPreview {
   });
 }
 
+/// One element whose latest state was written by someone else than the user
+/// asking for the undo. The client turns these into the "your work has been
+/// changed — send a request to the owner" flow (§7.2).
+class RevertConflict {
+  final String elementId;
+  final String? lastEditorUid;
+
+  const RevertConflict({required this.elementId, this.lastEditorUid});
+
+  factory RevertConflict.fromMap(Map<String, dynamic> map) {
+    return RevertConflict(
+      elementId: (map['elementId'] ?? '').toString(),
+      lastEditorUid: (map['lastEditorUid'] as String?)?.isEmpty == true
+          ? null
+          : map['lastEditorUid'] as String?,
+    );
+  }
+}
+
 /// Result of `history_apply_revert` / `history_undo_own`.
 class RevertResult {
   final int appliedVersion;
   final List<String> reverted;
   final List<String> skipped;
 
+  /// Elements the server could not revert because another user modified them
+  /// afterwards. Empty when the revert succeeded cleanly. Non-empty with an
+  /// empty [reverted] means the entire undo was blocked by conflicts.
+  final List<RevertConflict> conflicts;
+
   const RevertResult({
     this.appliedVersion = 0,
     this.reverted = const [],
     this.skipped = const [],
+    this.conflicts = const [],
   });
 }
 

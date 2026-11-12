@@ -679,10 +679,15 @@ class CanvasHistoryRevertUserRequested extends CanvasEvent {
   final String targetUid;
   final DateTime? fromTime;
   final DateTime? toTime;
+
+  /// When set (e.g. from the undo-conflict dialog), the plan is scoped to
+  /// exactly these elements instead of the user's whole in-range history.
+  final List<String>? elementIds;
   const CanvasHistoryRevertUserRequested(
     this.targetUid, {
     this.fromTime,
     this.toTime,
+    this.elementIds,
   });
 }
 
@@ -765,6 +770,11 @@ class CanvasUndoRequestsUpdated extends CanvasEvent {
 class CanvasHistoryPlanFailed extends CanvasEvent {
   final String message;
   const CanvasHistoryPlanFailed(this.message);
+}
+
+/// Dismiss the "your work has been changed" conflict dialog without acting.
+class CanvasUndoConflictDismissed extends CanvasEvent {
+  const CanvasUndoConflictDismissed();
 }
 
 
