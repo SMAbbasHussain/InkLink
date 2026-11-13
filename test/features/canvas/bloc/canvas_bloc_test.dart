@@ -602,6 +602,50 @@ void main() {
       await bloc.close();
     });
 
+    test('resizing a sticky note updates its width and height', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddStickyNote(center: Offset(100, 100)));
+      await Future<void>.delayed(Duration.zero);
+
+      // Grow wider than default without changing height.
+      bloc.add(const CanvasResizeSelectedShape(
+        240,
+        width: 240,
+        height: 120,
+      ));
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      final note = bloc.state.elements.first as StickyNoteElement;
+      expect(note.width, 240);
+      expect(note.height, 120);
+      await bloc.close();
+    });
+
+    test('sticky notes can shrink below their default 160px size', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddStickyNote(center: Offset(100, 100)));
+      await Future<void>.delayed(Duration.zero);
+
+      bloc.add(const CanvasResizeSelectedShape(
+        80,
+        width: 80,
+        height: 60,
+      ));
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      final note = bloc.state.elements.first as StickyNoteElement;
+      expect(note.width, 80);
+      expect(note.height, 60);
+      expect(note.width, lessThan(160));
+      await bloc.close();
+    });
+
     test('CanvasAddConnector adds a ConnectorElement to state', () async {
       final bloc = CanvasBloc();
       _grantEditor(bloc);

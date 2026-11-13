@@ -2388,6 +2388,21 @@ io.on('connection', (socket) => {
         return;
       }
 
+      // Validate the RTC configuration BEFORE registering the participant.
+      // Previously a join without AGORA_APP_ID/AGORA_APP_CERTIFICATE still
+      // broadcast `voice_participant_joined`, leaving everyone else showing a
+      // caller who was never able to connect to the RTC channel.
+      const channelName = `board_${boardId}`;
+      const appId = process.env.AGORA_APP_ID;
+      const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+      if (!appId || !appCertificate) {
+        console.warn(`[voice] Agora RTC not configured (AGORA_APP_ID/AGORA_APP_CERTIFICATE); rejecting join from ${uid}`);
+        if (typeof callback === 'function') callback({ status: 'error', message: 'agora certificate not configured' });
+        return;
+      }
+
+      const { token } = buildAgoraRtcToken(appId, appCertificate, channelName);
+
       const participant = {
         uid,
         displayName: displayName || 'Anonymous',
@@ -2410,17 +2425,6 @@ io.on('connection', (socket) => {
       // `board_voice:` (they never call watch_board), so emitting to
       // `board_room:` would leave participants blind to each other.
       io.to(`board_voice:${boardId}`).emit('voice_participant_joined', participant);
-
-      const channelName = `board_${boardId}`;
-      const appId = process.env.AGORA_APP_ID;
-      const appCertificate = process.env.AGORA_APP_CERTIFICATE;
-      if (!appId || !appCertificate) {
-        console.warn(`[voice] Agora RTC not configured (AGORA_APP_ID/AGORA_APP_CERTIFICATE); rejecting join from ${uid}`);
-        if (typeof callback === 'function') callback({ status: 'error', message: 'agora certificate not configured' });
-        return;
-      }
-
-      const { token } = buildAgoraRtcToken(appId, appCertificate, channelName);
 
       console.log(`[voice] User ${uid} joined voice channel ${channelName}`);
       if (typeof callback === 'function') {

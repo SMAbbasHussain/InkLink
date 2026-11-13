@@ -1082,6 +1082,35 @@ void main() {
     );
 
     test(
+      'DM addressed to the lowercased form of the current UID is delivered',
+      () async {
+        auth.currentUid = 'UserABC';
+        await service.login('UserABC');
+
+        // Older clients that opened an empty synced DM used Agora's
+        // lowercased username as the conversation id, so their messages
+        // carried `targetUid: 'userabc'` instead of the exact Firebase UID.
+        final msg = _makeAgoraTextMsg(
+          msgId: 'lowercase-target-1',
+          from: 'peer_uid',
+          to: 'userabc',
+          content: 'Hello lowercased target',
+          serverTime: 1700000009000,
+          attributes: {
+            'senderUid': 'peer-uid',
+            'targetUid': 'userabc',
+            'senderName': 'Peer Uid',
+          },
+        );
+        sdk.chatEventHandler!.onMessagesReceived!([msg]);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        final msgs = await service.getMessages('peer-uid');
+        expect(msgs.map((m) => m.content), ['Hello lowercased target']);
+      },
+    );
+
+    test(
       'Comment 4: group sync replaces stale cached members and admins and prunes removed groups',
       () async {
         auth.currentUid = 'me';

@@ -1,5 +1,6 @@
 import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:inklink/domain/services/presence/presence_service.dart';
 import 'package:inklink/domain/services/settings/settings_service.dart';
@@ -14,6 +15,7 @@ import '../../settings/bloc/settings_bloc.dart';
 import '../../settings/view/settings_screen.dart';
 import '../../dashboard/view/home_screen.dart';
 import '../../workspaces/view/workspaces_screen.dart';
+import '../back_exit_policy.dart';
 import '../bloc/nav_bloc.dart';
 
 const _navItems = [
@@ -49,6 +51,7 @@ class MainWrapper extends StatefulWidget {
 class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
   bool _presenceActive = false;
   PresenceService? _presenceService;
+  final BackExitPolicy _backExitPolicy = BackExitPolicy();
 
   @override
   void initState() {
@@ -114,6 +117,30 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
     }
   }
 
+  void _handleBackPress() {
+    final navState = context.read<NavBloc>().state;
+    if (navState.index != 0) {
+      _backExitPolicy.reset();
+      context.read<NavBloc>().add(ChangeTab(0));
+      return;
+    }
+
+    if (_backExitPolicy.shouldExit(DateTime.now())) {
+      SystemNavigator.pop();
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text(BackExitPolicy.exitHint),
+          duration: Duration(seconds: 5),
+        ),
+      );
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<Widget> screens = [
@@ -138,20 +165,29 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
 
     return BlocBuilder<NavBloc, NavState>(
       builder: (context, state) {
-        return Scaffold(
-          body: Stack(
-            children: [
-              IndexedStack(index: state.index, children: screens),
-              Align(
-                alignment: Alignment.bottomCenter,
-                child: GlassNavBar(
-                  items: _navItems,
-                  currentIndex: state.index,
-                  onTap: (index) =>
-                      context.read<NavBloc>().add(ChangeTab(index)),
+        return PopScope(
+          // The shell owns back navigation: any non-home tab goes home first,
+          // and exiting from home requires a second press within 5 seconds.
+          canPop: false,
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) return;
+            _handleBackPress();
+          },
+          child: Scaffold(
+            body: Stack(
+              children: [
+                IndexedStack(index: state.index, children: screens),
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: GlassNavBar(
+                    items: _navItems,
+                    currentIndex: state.index,
+                    onTap: (index) =>
+                        context.read<NavBloc>().add(ChangeTab(index)),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },

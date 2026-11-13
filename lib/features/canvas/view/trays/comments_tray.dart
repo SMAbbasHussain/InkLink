@@ -79,12 +79,17 @@ class _CommentsTrayState extends State<CommentsTray> {
         final isOwner = state.currentUserRole == 'owner';
 
         final topInset = MediaQuery.of(context).padding.top + 64;
+        // The canvas Scaffold uses `resizeToAvoidBottomInset: false`, so the
+        // tray itself has to clear the keyboard or the comment input (and the
+        // text being typed into it) disappears behind the keyboard.
+        final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+        final availableWidth = MediaQuery.sizeOf(context).width - 32;
 
         return Positioned(
           top: topInset,
           right: 16,
-          bottom: 96,
-          width: 350,
+          bottom: 96 + keyboardInset,
+          width: availableWidth < 350 ? availableWidth : 350,
           child: GlassPanel(
             radius: InkRadii.card,
             padding: EdgeInsets.zero,

@@ -413,8 +413,10 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
     _canvasBloc.add(CanvasMoveSelectedShape(center));
   }
 
-  void _resizeSelectedShape(double size) {
-    _canvasBloc.add(CanvasResizeSelectedShape(size));
+  void _resizeSelectedShape(double size, {double? width, double? height}) {
+    _canvasBloc.add(
+      CanvasResizeSelectedShape(size, width: width, height: height),
+    );
   }
 
   void _deferredResizeSelectedShape(double size) {
@@ -3734,6 +3736,14 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                               height: nextH,
                             ),
                           );
+                        } else if (shape.kind == _ElementKind.stickyNote) {
+                          _canvasBloc.add(
+                            CanvasPreviewResizeSelectedShape(
+                              nextSize,
+                              width: nextW,
+                              height: nextH,
+                            ),
+                          );
                         } else {
                           _canvasBloc.add(CanvasPreviewResizeSelectedShape(nextSize));
                         }
@@ -3749,6 +3759,12 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                                 width: draft.width ?? draft.size,
                                 height: draft.height ?? draft.size,
                               ),
+                            );
+                          } else if (shape.kind == _ElementKind.stickyNote) {
+                            _resizeSelectedShape(
+                              draft.size,
+                              width: draft.width,
+                              height: draft.height,
                             );
                           } else {
                             _resizeSelectedShape(draft.size);

@@ -372,14 +372,21 @@ class CanvasPreviewMoveSelectedShape extends CanvasEvent {
 class CanvasResizeSelectedShape extends CanvasEvent {
   final double size;
 
-  const CanvasResizeSelectedShape(this.size);
+  /// Sticky notes are not square-by-definition: their resize handle drags the
+  /// width and height independently, so both are carried alongside `size`.
+  final double? width;
+  final double? height;
+
+  const CanvasResizeSelectedShape(this.size, {this.width, this.height});
 }
 
 /// Publish an in-progress selected-shape resize preview.
 class CanvasPreviewResizeSelectedShape extends CanvasEvent {
   final double size;
+  final double? width;
+  final double? height;
 
-  const CanvasPreviewResizeSelectedShape(this.size);
+  const CanvasPreviewResizeSelectedShape(this.size, {this.width, this.height});
 }
 
 /// Toggle fill mode for selected shape

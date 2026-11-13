@@ -2129,6 +2129,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (shape == null || !_ensureCanEdit(emit)) return;
     final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['size'] = event.size.clamp(24.0, 320.0);
+    if (shape is StickyNoteElement) {
+      // Sticky notes are drawn from width/height; `size` is only used by the
+      // slider/resize gesture. Without this the note never changes size.
+      final width = (event.width ?? event.size).clamp(40.0, 480.0).toDouble();
+      final height = (event.height ?? event.size).clamp(40.0, 480.0).toDouble();
+      data['width'] = width;
+      data['height'] = height;
+    }
     await _updateShape(shape.id, data, emit);
   }
 
@@ -2187,7 +2195,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       } else if (entry.key == 'size') {
         final size = _toDoubleValue(entry.value);
         if (size == null) continue;
-        data[entry.key] = size.clamp(24.0, 320.0);
+        final clamped = size.clamp(24.0, 320.0);
+        data[entry.key] = clamped;
+        if (shape is StickyNoteElement) {
+          final noteSize = clamped.clamp(40.0, 480.0);
+          data['width'] = noteSize;
+          data['height'] = noteSize;
+        }
       } else if (entry.key == 'borderRadius') {
         final borderRadius = _toDoubleValue(entry.value);
         if (borderRadius == null) continue;
@@ -2529,7 +2543,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       } else if (entry.key == 'size') {
         final size = _toDoubleValue(entry.value);
         if (size == null) continue;
-        data[entry.key] = size.clamp(24.0, 320.0);
+        final clamped = size.clamp(24.0, 320.0);
+        data[entry.key] = clamped;
+        if (shape is StickyNoteElement) {
+          final noteSize = clamped.clamp(40.0, 480.0);
+          data['width'] = noteSize;
+          data['height'] = noteSize;
+        }
       } else if (entry.key == 'borderRadius') {
         final borderRadius = _toDoubleValue(entry.value);
         if (borderRadius == null) continue;
@@ -2580,6 +2600,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       data.remove('imageBase64');
       data['width'] = event.size.clamp(80.0, 720.0);
       data['height'] = event.size.clamp(80.0, 720.0);
+    } else if (shape is StickyNoteElement) {
+      data['width'] = (event.width ?? event.size).clamp(40.0, 480.0);
+      data['height'] = (event.height ?? event.size).clamp(40.0, 480.0);
     }
     await _publishSelectedShapePreview(shape.id, data);
   }

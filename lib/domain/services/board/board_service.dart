@@ -20,6 +20,35 @@ class SendBoardInviteResult {
   const SendBoardInviteResult({this.unresolvedEmails = const []});
 }
 
+/// Thrown when a join code belongs to a private, invite-only board. The
+/// request has already been forwarded to the board owner.
+class BoardJoinApprovalRequiredException implements Exception {
+  final String boardId;
+
+  const BoardJoinApprovalRequiredException(this.boardId);
+
+  @override
+  String toString() =>
+      'Join request sent to the board owner. You will be added once it is approved.';
+}
+
+/// Accepts a bare code, a pasted deep link (e.g. https://inklink.app/board/abc)
+/// or a code with surrounding whitespace and returns just the board id.
+String normalizeBoardJoinCode(String raw) {
+  var value = raw.trim();
+  if (value.isEmpty) return '';
+
+  final uri = Uri.tryParse(value);
+  if (uri != null && uri.hasScheme && uri.pathSegments.isNotEmpty) {
+    final segments = uri.pathSegments.where((s) => s.trim().isNotEmpty);
+    if (segments.isNotEmpty) value = segments.last;
+  }
+
+  value = value.split('?').first.split('#').first.trim();
+  if (value.endsWith('/')) value = value.substring(0, value.length - 1);
+  return value.trim();
+}
+
 abstract class BoardService {
   Future<void> startBoardsSync();
   Future<void> stopBoardsSync();
@@ -213,19 +242,33 @@ class BoardServiceImpl implements BoardService {
 
   @override
   Future<void> joinBoard(String boardId) async {
+    final joinCode = normalizeBoardJoinCode(boardId);
+    if (joinCode.isEmpty) {
+      throw Exception('Please enter a join code.');
+    }
+
     try {
       await _cloudFunctionsService.httpsCallable('joinBoardByCode').call({
-        'joinCode': boardId.trim(),
+        'joinCode': joinCode,
       });
-      await _boardRepository.ensureBoardCached(boardId.trim());
+      await _boardRepository.ensureBoardCached(joinCode);
     } on FirebaseFunctionsException catch (e) {
+      // Private boards default to invite-only. Instead of dead-ending the
+      // user, turn the code into an access request the owner can approve.
+      if (e.code == 'failed-precondition') {
+        await requestBoardAccess(
+          boardId: joinCode,
+          requestType: 'join',
+          message: 'Requested via join code.',
+        );
+        throw BoardJoinApprovalRequiredException(joinCode);
+      }
       final message = e.message?.trim();
       if (message != null && message.isNotEmpty) {
         throw Exception(message);
       }
       switch (e.code) {
         case 'permission-denied':
-        case 'failed-precondition':
           throw Exception(
             'This board can only be joined by invitation from the owner.',
           );

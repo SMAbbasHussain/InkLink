@@ -39,6 +39,7 @@ class _ChatThreadView extends StatefulWidget {
 class _ChatThreadViewState extends State<_ChatThreadView> {
   final ScrollController _scrollController = ScrollController();
   ChatMessageModel? _replyingTo;
+  int _lastMessageCount = 0;
 
   @override
   void dispose() {
@@ -46,14 +47,33 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
     super.dispose();
   }
 
-  void _scrollToBottom() {
-    if (_scrollController.hasClients) {
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOutCubic,
-      );
-    }
+  /// The list is reversed, so the newest message lives at offset 0.
+  void _scrollToLatest() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _handleLoadedMessages(ChatThreadLoaded state) {
+    final count = state.messages.length;
+    final hadMessages = _lastMessageCount > 0;
+    final hasNewMessages = count > _lastMessageCount;
+    _lastMessageCount = count;
+    if (!hasNewMessages) return;
+
+    // A reversed ListView already opens on the newest message. Only follow
+    // incoming messages when the user is at (or near) the bottom, otherwise
+    // reading older history would be interrupted on every read receipt or
+    // reaction update.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final isNearBottom =
+          !hadMessages || _scrollController.offset <= 120;
+      if (isNearBottom) _scrollToLatest();
+    });
   }
 
   @override
@@ -187,7 +207,9 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
             child: BlocConsumer<ChatThreadBloc, ChatThreadState>(
               listener: (context, state) {
                 if (state is ChatThreadLoaded) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+                  _handleLoadedMessages(state);
+                } else {
+                  _lastMessageCount = 0;
                 }
               },
               builder: (context, state) {
@@ -241,19 +263,23 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
                     );
                   }
 
+                  // Reversed so the thread always opens on the latest message
+                  // and never needs a post-layout jump to reach the bottom.
                   return ListView.builder(
                     controller: _scrollController,
+                    reverse: true,
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     itemCount: messages.length,
                     itemBuilder: (context, index) {
-                      final message = messages[index];
+                      final messageIndex = messages.length - 1 - index;
+                      final message = messages[messageIndex];
                       final isMe = currentUid.isNotEmpty &&
                           message.senderId == currentUid;
 
                       // Message grouping logic
-                      final bool isFirstInGroup = index == 0 ||
-                          messages[index - 1].senderId != message.senderId ||
-                          message.timestamp.difference(messages[index - 1].timestamp).inMinutes > 5;
+                      final bool isFirstInGroup = messageIndex == 0 ||
+                          messages[messageIndex - 1].senderId != message.senderId ||
+                          message.timestamp.difference(messages[messageIndex - 1].timestamp).inMinutes > 5;
 
                       return ChatBubble(
                         key: ValueKey(message.id),
