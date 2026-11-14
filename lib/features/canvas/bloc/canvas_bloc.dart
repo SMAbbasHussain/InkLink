@@ -10,6 +10,12 @@ import 'package:uuid/uuid.dart';
 import '../../../core/crdt/canvas_crdt_adapter.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../domain/models/board.dart';
+import '../../../domain/models/history/board_activity_block.dart';
+import '../../../domain/models/history/board_operation.dart';
+import '../../../domain/models/history/history_scrub.dart';
+import '../../../domain/models/history/revert_plan.dart';
+import '../../../domain/models/history/undo_request.dart';
+import '../../../domain/services/history/board_history_service.dart';
 import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/board_chat_service.dart';
 import '../../../domain/services/canvas/board_comments_service.dart';
@@ -41,6 +47,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final BoardCommentsService? _boardCommentsService;
   final BoardChatService? _boardChatService;
   final VoiceService? _voiceService;
+  final BoardHistoryService? _historyService;
+
+  /// Temporary CRDT doc backing the active history scrub preview — never the
+  /// live adapter. Rebuilt from the base state whenever the slider moves back
+  /// (CRDT deltas are not invertible).
+  CanvasDocAdapter? _historyScrubAdapter;
+
   final Uuid _uuid = const Uuid();
   final math.Random _random = math.Random();
   static const Duration _previewPublishThrottle = Duration(milliseconds: 32);
@@ -54,6 +67,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   StreamSubscription<List<VoiceParticipant>>? _voiceParticipantsSub;
   StreamSubscription<bool>? _voiceCallStatusSub;
   StreamSubscription<bool>? _voiceMuteStatusSub;
+  StreamSubscription<List<BoardActivityBlock>>? _historyFeedSub;
+  StreamSubscription<List<UndoRequest>>? _undoRequestsSub;
+  List<BoardActivityBlock> _archivedBlocks = const [];
+  BoardActivityBlock? _liveTailBlock;
+  Timer? _liveTailDebounceTimer;
   CanvasDocAdapter? _crdtAdapter;
   List<CanvasElement>? _cachedCrdtElements;
   Future<void>? _crdtInitFuture;
@@ -62,8 +80,29 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final Map<String, CanvasElement> _remotePreviewElements =
       <String, CanvasElement>{};
   final Set<String> _remotePreviewDeletedIds = <String>{};
+  /// When each remote preview arrived. Previews are transient overlays: without
+  /// an expiry a peer's in-flight drag (or a preview that never got a matching
+  /// committed update) masks the element's real state on this device forever.
+  final Map<String, DateTime> _remotePreviewReceivedAt =
+      <String, DateTime>{};
+  static const Duration _remotePreviewTtl = Duration(seconds: 3);
   bool _remotePreviewClearsBoard = false;
   final Map<String, String> _lastShapePayloadFingerprint = <String, String>{};
+  /// The payload THIS device last committed to the CRDT per element id
+  /// (upsert → payload, delete → null). Undo/redo compares the live CRDT
+  /// value against it: a mismatch means a collaborator changed the element
+  /// on top of our work, and the undo entry must NOT be consumed (§7.2
+  /// conflict flow). Key order-insensitive deep equality is used.
+  final Map<String, Map<String, dynamic>?> _myCommittedPayload =
+      <String, Map<String, dynamic>?>{};
+  /// What each element held when the matching undo entry was captured — the
+  /// value a REDO of that entry must restore. The redo conflict gate compares
+  /// the live value against THIS (not the post-undo baseline): after a peer
+  /// undoes their overwrite, the element holds our value again, which is
+  /// exactly what the redo would produce — a harmless no-op, not a conflict
+  /// (§7.2).
+  final Map<String, Map<String, dynamic>?> _myRedoTarget =
+      <String, Map<String, dynamic>?>{};
   final Map<String, String> _lastShapeUpdateId =
       <String, String>{};
   final Map<String, _QueuedPreviewPublish> _pendingPreviewPublishes =
@@ -77,6 +116,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   String _boardId;
   String _currentUserRole = Board.roleViewer;
   DateTime? _lastViewerWarningAt;
+  DateTime? _lastArchivedWarningAt;
 
   final BoardExportService _boardExportService;
 
@@ -87,6 +127,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     BoardCommentsService? boardCommentsService,
     BoardChatService? boardChatService,
     VoiceService? voiceService,
+    BoardHistoryService? historyService,
     String currentUserId = '',
     String boardId = '',
   }) : _canvasService = canvasService,
@@ -95,6 +136,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
        _boardCommentsService = boardCommentsService,
        _boardChatService = boardChatService,
        _voiceService = voiceService,
+       _historyService = historyService,
        _boardId = boardId,
        super(CanvasInitial(currentUserId: currentUserId)) {
     on<CanvasRenameBoardRequested>(_onCanvasRenameBoardRequested);
@@ -180,6 +222,46 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasLeaveVoiceCallRequested>(_onCanvasLeaveVoiceCallRequested);
     on<CanvasToggleVoiceMuteRequested>(_onCanvasToggleVoiceMuteRequested);
     on<CanvasVoiceSpeakingChanged>(_onCanvasVoiceSpeakingChanged);
+    on<CanvasHistoryFeedRequested>(_onHistoryFeedRequested);
+    on<CanvasHistoryFeedUpdated>(_onHistoryFeedUpdated);
+    on<CanvasHistoryLiveTailUpdated>(_onHistoryLiveTailUpdated);
+    on<CanvasHistoryPreviewRequested>(_onHistoryPreviewRequested);
+    on<CanvasHistoryPreviewExited>(_onHistoryPreviewExited);
+    on<CanvasHistoryRequestEvidenceRequested>(
+      _onHistoryRequestEvidenceRequested,
+    );
+    on<CanvasHistoryEvidenceViewToggled>(_onHistoryEvidenceViewToggled);
+    on<CanvasHistoryRestoreRequested>(_onHistoryRestoreRequested);
+    on<CanvasHistoryRevertUserRequested>(_onHistoryRevertUserRequested);
+    on<CanvasHistoryUndoRequestReviewRequested>(
+      _onHistoryUndoRequestReviewRequested,
+    );
+    on<CanvasHistoryUserOpsRequested>(_onHistoryUserOpsRequested);
+    on<CanvasHistoryUserOpsUpdated>(_onHistoryUserOpsUpdated);
+    on<CanvasHistoryUserTimelineExited>(_onHistoryUserTimelineExited);
+    on<CanvasHistoryVersionScrubRequested>(_onHistoryVersionScrubRequested);
+    on<CanvasHistoryUserScrubRequested>(_onHistoryUserScrubRequested);
+    on<CanvasHistoryScrubMoved>(_onHistoryScrubMoved);
+    on<CanvasHistoryScrubLoadOlderRequested>(_onHistoryScrubLoadOlderRequested);
+    on<CanvasHistoryOpCompareRequested>(_onHistoryOpCompareRequested);
+    on<CanvasHistoryRevertOpsRequested>(_onHistoryRevertOpsRequested);
+    on<CanvasHistoryPlanLoaded>(_onHistoryPlanLoaded);
+    on<CanvasHistoryPlanFailed>(_onHistoryPlanFailed);
+    on<CanvasHistoryPlanDismissed>(_onHistoryPlanDismissed);
+    on<CanvasHistoryApplyRevert>(_onHistoryApplyRevert);
+    on<CanvasHistoryUndoOwn>(_onHistoryUndoOwn);
+    on<CanvasToggleUndoRequestAreaSelection>(
+      _onToggleUndoRequestAreaSelection,
+    );
+    on<CanvasUndoRequestsUpdated>(_onUndoRequestsUpdated);
+    on<CanvasUndoConflictDismissed>(_onUndoConflictDismissed);
+    on<CanvasUndoRequestDraftStarted>(_onUndoRequestDraftStarted);
+    on<CanvasUndoRequestDraftElementToggled>(_onUndoRequestDraftElementToggled);
+    on<CanvasUndoRequestDraftAreaSet>(_onUndoRequestDraftAreaSet);
+    on<CanvasUndoRequestDraftCleared>(_onUndoRequestDraftCleared);
+    on<CanvasUndoRequestPreviewRequested>(_onUndoRequestPreviewRequested);
+    on<CanvasUndoRequestSubmitRequested>(_onUndoRequestSubmitRequested);
+    on<CanvasHistoryRevertOpsAfterRequested>(_onHistoryRevertOpsAfterRequested);
   }
 
   String get boardId => _boardId;
@@ -214,10 +296,33 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasBoardTitleUpdated event,
     Emitter<CanvasState> emit,
   ) {
+    final wasOwner = _currentUserRole == Board.roleOwner;
+    final wasArchived = state.isArchived;
     _currentUserRole = event.currentUserRole;
+    _syncHistorySubscriptions();
+    // The role can resolve AFTER the owner already opened the history screen
+    // (the first feed request early-returns for non-owners and would never
+    // be retried). Retry now that we know the role.
+    if (!wasOwner && _currentUserRole == Board.roleOwner) {
+      _ensureHistoryFeedSubscription();
+      unawaited(_refreshLiveTail());
+    }
+
+    String? transitionInfo;
+    if (!wasArchived && event.isArchived) {
+      transitionInfo = _currentUserRole == Board.roleOwner
+          ? 'This board is archived. Unarchive it from Settings to edit.'
+          : 'This board was archived by the owner. Edits are disabled.';
+    } else if (wasArchived && !event.isArchived) {
+      transitionInfo = 'Board has been unarchived. Editing is enabled.';
+    }
+
     emit(state.copyWith(
       boardTitle: event.title,
       currentUserRole: event.currentUserRole,
+      isArchived: event.isArchived,
+      currentStroke: event.isArchived ? const [] : null,
+      infoMessage: transitionInfo,
     ));
   }
 
@@ -241,6 +346,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _hasSeenBoardMetadata = false;
     _boardUnavailableTimer?.cancel();
     _boardUnavailableTimer = null;
+    _liveTailDebounceTimer?.cancel();
+    _liveTailDebounceTimer = null;
     emit(state.copyWith(isLoading: true, error: null));
     try {
       if (isClosed) return;
@@ -359,6 +466,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           add(CanvasBoardTitleUpdated(
             board.title,
             currentUserRole: board.currentUserRole,
+            isArchived: board.isArchived,
           ));
         }
       },
@@ -434,7 +542,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         final bytes = base64Decode(snapshot.payloadBase64);
         if (bytes.isEmpty) continue;
         adapter.applyUpdate(bytes, origin: 'remote');
+        // A full-state hydration replaces the board, so the local stack is
+        // meaningless afterwards (D14).
+        adapter.clearLocalHistory();
         _appliedCrdtUpdateIds.add(snapshot.updateId);
+        _myCommittedPayload.clear();
+        _myRedoTarget.clear();
         _remotePreviewClearsBoard = false;
         _remotePreviewElements.clear();
         _remotePreviewDeletedIds.clear();
@@ -461,9 +574,33 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           continue;
         }
         adapter.applyUpdate(bytes, origin: 'remote');
+        // D14: an owner's revert/restore/clear is authoritative locally — the
+        // member may redraw but cannot resurrect the reverted work via Ctrl+Z.
+        if (update.sourceClientId != state.currentUserId) {
+          switch (update.action) {
+            case 'restore':
+            case 'clear':
+              adapter.clearLocalHistory();
+              _myCommittedPayload.clear();
+              _myRedoTarget.clear();
+              break;
+            case 'revert':
+              adapter.pruneReverted(
+                (update.affectedElementIds ?? const <String>[]).toSet(),
+              );
+              // D14: the owner's revert replaced those entries; their commit
+              // baselines are meaningless now (a fresh local edit re-records).
+              _dropCommitRecords(
+                update.affectedElementIds ?? const <String>[],
+              );
+              break;
+          }
+        }
         _remotePreviewClearsBoard = false;
+        // A committed update supersedes any preview/deletion overlay for that
+        // element, otherwise a stale preview would keep masking the real value.
         if (update.elementId != null) {
-          _remotePreviewElements.remove(update.elementId);
+          _forgetPreviews(update.elementId!);
         }
         _appliedCrdtUpdateIds.add(update.updateId);
       } catch (_) {
@@ -471,6 +608,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       }
     }
     _refreshFromCrdtAdapter(emit);
+    if (regularUpdates.isNotEmpty || snapshotUpdate.isNotEmpty) {
+      _scheduleLiveTailRefresh();
+    }
   }
 
   Future<void> _onApplyRemotePreview(
@@ -523,6 +663,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         if (action == 'delete') {
           _remotePreviewDeletedIds.add(elementId);
           _remotePreviewElements.remove(elementId);
+          _remotePreviewReceivedAt.remove(elementId);
           continue;
         }
         _remotePreviewDeletedIds.remove(elementId);
@@ -550,6 +691,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         }
         _remotePreviewElements[preview.elementId!] =
             CanvasElement.fromMap(elementId, decoded);
+        _remotePreviewReceivedAt[preview.elementId!] = DateTime.now();
       } catch (_) {}
     }
     _refreshFromCrdtAdapter(emit, rebuildFromCrdt: false);
@@ -567,17 +709,27 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     required Emitter<CanvasState> emit,
   }) async {
     _cancelPendingPreview(objectId);
+    // Our own edit wins over any overlay still being shown for this element.
+    _forgetPreviews(objectId);
     if (!_canSync) return;
     await _ensureCrdtReady();
     final adapter = _crdtAdapter;
     if (adapter == null) return;
     Uint8List update;
     if (action == 'delete' && type == 'board') {
+      // D13 clear: every element in the CRDT doc is removed by this device.
+      // Record the removals so a later undo compares against the right
+      // baseline (an undo of the clear must not look like a conflict).
+      for (final id in adapter.materializeElements().keys) {
+        _myCommittedPayload[id] = null;
+      }
       update = adapter.clearElements(origin: 'local');
     } else if (action == 'delete') {
+      _myCommittedPayload[objectId] = null;
       update = adapter.deleteElement(objectId, origin: 'local');
     } else {
       final payload = <String, dynamic>{'type': type, ...data};
+      _myCommittedPayload[objectId] = _deepCopyPayload(payload);
       update = adapter.upsertElement(objectId, payload, origin: 'local');
     }
     _refreshFromCrdtAdapter(emit);
@@ -594,8 +746,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       data: previewData,
     );
     final elementId = objectId;
-    final publishedUpdateId =
-        await _publishCrdtUpdate(update, elementId: elementId);
+    // D13 hint: only a whole-board delete is a 'clear' (which forces a durable
+    // pre-clear checkpoint server-side). The archive worker derives truth from
+    // the CRDT diff, so this is never trusted for attribution.
+    final actionHint = action == 'delete'
+        ? (type == 'board' ? 'clear' : 'delete')
+        : 'upsert';
+    final publishedUpdateId = await _publishCrdtUpdate(
+      update,
+      elementId: elementId,
+      action: actionHint,
+    );
     if (publishedUpdateId != null) {
       _lastShapeUpdateId[objectId] = publishedUpdateId;
     }
@@ -604,6 +765,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   Future<String?> _publishCrdtUpdate(
     Uint8List update, {
     String? elementId,
+    String action = 'upsert',
   }) async {
     if (!_canSync || update.isEmpty) return null;
     final canvasService = _canvasService;
@@ -615,7 +777,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       updateId: updateId,
       payload: update,
       elementId: elementId,
+      action: action,
     );
+    _scheduleLiveTailRefresh();
     return updateId;
   }
 
@@ -668,6 +832,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     List<CanvasElement> committedElements,
   ) {
     if (_remotePreviewClearsBoard) return const <CanvasElement>[];
+    _pruneExpiredPreviews();
     if (_remotePreviewElements.isEmpty && _remotePreviewDeletedIds.isEmpty) {
       return committedElements;
     }
@@ -684,6 +849,47 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       return a.id.compareTo(b.id);
     });
     return composed;
+  }
+
+  void _pruneExpiredPreviews() {
+    if (_remotePreviewElements.isEmpty) return;
+    final now = DateTime.now();
+    _remotePreviewElements.removeWhere((id, _) {
+      final receivedAt = _remotePreviewReceivedAt[id];
+      final expired = receivedAt != null &&
+          now.difference(receivedAt) > _remotePreviewTtl;
+      if (expired) _remotePreviewReceivedAt.remove(id);
+      return expired;
+    });
+  }
+
+  /// Drop every preview overlay for [elementId]. Called as soon as this device
+  /// commits its own edit, so a collaborator's in-flight preview can never keep
+  /// showing the pre-edit version to the person who just changed it.
+  void _forgetPreviews(String elementId) {
+    _remotePreviewElements.remove(elementId);
+    _remotePreviewDeletedIds.remove(elementId);
+    _remotePreviewReceivedAt.remove(elementId);
+  }
+
+  /// Payload of the element as committed to the CRDT document.
+  ///
+  /// Edits must never be built from `state.elements`, because that view is
+  /// composited with transient collaborator previews: persisting it would copy
+  /// a preview's stale values over the real ones (an opacity change rewriting
+  /// the stroke width, a colour change rewriting the points, ...).
+  Map<String, dynamic>? _committedElementPayload(String elementId) {
+    final adapter = _crdtAdapter;
+    if (adapter != null) {
+      final payload = adapter.materializeElements()[elementId];
+      if (payload != null) return Map<String, dynamic>.from(payload);
+    }
+    for (final element in state.elements) {
+      if (element.id == elementId) {
+        return Map<String, dynamic>.from(element.toMap());
+      }
+    }
+    return null;
   }
 
   Future<void> _publishSelectedShapePreview(
@@ -1374,17 +1580,160 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   // Undo / Redo / Clear / Delete
   // ──────────────────────────────────────────────
 
+  /// Detaches a payload map from the caller's (possibly mutated) object.
+  static Map<String, dynamic> _deepCopyPayload(Map<String, dynamic> source) {
+    dynamic copy(dynamic value) {
+      if (value is Map) {
+        return value.map((k, v) => MapEntry(k.toString(), copy(v)));
+      }
+      if (value is List) {
+        return value.map(copy).toList();
+      }
+      return value; // JSON-safe leaves are immutable
+    }
+
+    return Map<String, dynamic>.from(
+      source.map((k, v) => MapEntry(k, copy(v))),
+    );
+  }
+
+  /// Deep equality that ignores Map key order (Yjs and payload builders do
+  /// not guarantee it) but keeps List order (stroke points are ordered).
+  static bool _payloadEquals(dynamic a, dynamic b) {
+    if (identical(a, b)) return true;
+    if (a is Map && b is Map) {
+      if (a.length != b.length) return false;
+      for (final key in a.keys) {
+        if (!b.containsKey(key)) return false;
+        if (!_payloadEquals(a[key], b[key])) return false;
+      }
+      return true;
+    }
+    if (a is List && b is List) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (!_payloadEquals(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    return a == b;
+  }
+
+  /// Elements among [ids] whose live CRDT value no longer matches what this
+  /// device last committed there — i.e. a collaborator changed our work.
+  /// A missing record means this device never committed that element locally
+  /// (e.g. a stack item restored across a snapshot), which is treated as a
+  /// conflict so a stale undo can never clobber unknown state.
+  List<String> _myCommitConflicts(Set<String> ids) {
+    final adapter = _crdtAdapter;
+    if (adapter == null) return const [];
+    final live = adapter.materializeElements();
+    final conflicts = <String>[];
+    for (final id in ids) {
+      final recorded = _myCommittedPayload[id];
+      final current = live[id];
+      if (_payloadEquals(current, recorded)) continue;
+      conflicts.add(id);
+    }
+    return conflicts;
+  }
+
+  /// After a successful local undo/redo the elements now hold the value this
+  /// device produced by reverting — re-record it so the NEXT conflict check
+  /// compares against the right baseline. (Once a collaborator undoes their
+  /// overwrite, our recorded value matches the live one again and our undo
+  /// works — the 15-minute window permitting, per D2.)
+  void _refreshCommitRecords(Set<String> ids) {
+    final adapter = _crdtAdapter;
+    if (adapter == null || ids.isEmpty) return;
+    final live = adapter.materializeElements();
+    for (final id in ids) {
+      _myCommittedPayload[id] = live[id];
+    }
+  }
+
+  /// The stack these ids belonged to is gone (owner revert, own server undo,
+  /// full restore): drop the baselines too so they cannot cause false
+  /// conflicts if the elements are edited again later.
+  void _dropCommitRecords(Iterable<String> ids) {
+    for (final id in ids) {
+      _myCommittedPayload.remove(id);
+      _myRedoTarget.remove(id);
+    }
+  }
+
+  /// Before the commit baselines are refreshed to the post-undo values,
+  /// remember what the elements held when the entry was captured: a later
+  /// REDO must restore exactly this, so this is what its conflict gate
+  /// compares against.
+  void _captureRedoTargets(Set<String> ids) {
+    for (final id in ids) {
+      _myRedoTarget[id] = _myCommittedPayload[id];
+    }
+  }
+
+  /// Elements among [ids] whose live CRDT value differs from BOTH the value
+  /// left by the matching undo (the commit baseline) AND the value the redo
+  /// would restore (the pre-undo target). That means a collaborator changed
+  /// the element to something else since our undo, and redoing would clobber
+  /// their content. When the live value equals either one, redoing is either
+  /// exactly right or an honest no-op (e.g. the peer undid their overwrite,
+  /// which already restored our content) — not a conflict (§7.2).
+  List<String> _myRedoConflicts(Set<String> ids) {
+    final adapter = _crdtAdapter;
+    if (adapter == null) return const [];
+    final live = adapter.materializeElements();
+    final conflicts = <String>[];
+    for (final id in ids) {
+      final target = _myRedoTarget[id] ?? _myCommittedPayload[id];
+      final baseline = _myCommittedPayload[id];
+      if (_payloadEquals(live[id], baseline)) continue;
+      if (_payloadEquals(live[id], target)) continue;
+      conflicts.add(id);
+    }
+    return conflicts;
+  }
+
+  /// Baselines for the pending local undo/redo: a peeked top entry whose
+  /// elements no longer match what this device committed means a collaborator
+  /// changed our work.
   Future<void> _onUndo(CanvasUndo event, Emitter<CanvasState> emit) async {
     if (!_ensureCanEdit(emit)) return;
     final adapter = _crdtAdapter;
     if (adapter == null) return;
+    final peeked = adapter.peekUndoElementIds();
+    if (peeked != null) {
+      final conflicts = _myCommitConflicts(peeked);
+      if (conflicts.isNotEmpty) {
+        // Do NOT pop the stack item: Yjs would leave the collaborator's newer
+        // value visible (LWW per key, D10) while consuming the entry, making
+        // the undo a silent no-op that also destroys redo. Surface the
+        // conflict instead (§7.2).
+        emit(state.copyWith(
+          undoConflict: CanvasUndoConflict(elementIds: conflicts),
+          isHistoryLoading: false,
+        ));
+        return;
+      }
+    }
     final update = adapter.undoLast(origin: 'local');
-    if (update == null || update.isEmpty) return;
+    if (update == null || update.isEmpty) {
+      // D2: the local stack is empty OR its top entry is older than 15 minutes.
+      // Either way the server-side log fallback is the correct path.
+      await _undoOwnViaLog(emit);
+      return;
+    }
     // Undo can revert an element to a payload identical to the last one
     // received from a peer; clear the dedup guard so the next remote
     // update is not silently dropped.
     _lastShapePayloadFingerprint.clear();
     _refreshFromCrdtAdapter(emit);
+    // The reverted elements now hold the value THIS device produced; re-record
+    // it so the next conflict check compares against the right baseline. The
+    // PRE-undo values are captured first — that is what a later REDO of this
+    // entry must restore, and what its conflict gate compares against.
+    if (peeked != null) _captureRedoTargets(peeked);
+    if (peeked != null) _refreshCommitRecords(peeked);
     emit(state.copyWith(activeTray: null));
     await _publishCrdtUpdate(update);
   }
@@ -1393,13 +1742,37 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (!_ensureCanEdit(emit)) return;
     final adapter = _crdtAdapter;
     if (adapter == null) return;
+    final peeked = adapter.peekRedoElementIds();
+    if (peeked != null) {
+      final conflicts = _myRedoConflicts(peeked);
+      if (conflicts.isNotEmpty) {
+        emit(state.copyWith(
+          undoConflict: CanvasUndoConflict(elementIds: conflicts),
+          isHistoryLoading: false,
+        ));
+        return;
+      }
+    }
     final update = adapter.redoLast(origin: 'local');
-    if (update == null || update.isEmpty) return;
+    if (update == null || update.isEmpty) {
+      // Redo is local-only and equally 15-minute capped: there is no log redo.
+      // Empty also covers a redo whose target already holds the restored
+      // value (the peer undid their overwrite) — an honest no-op.
+      emit(state.copyWith(infoMessage: 'Nothing to redo.', error: null));
+      return;
+    }
     // Redo can re-apply a payload identical to the last one received from
     // a peer; clear the dedup guard so the next remote update is not
     // silently dropped.
     _lastShapePayloadFingerprint.clear();
     _refreshFromCrdtAdapter(emit);
+    if (peeked != null) _refreshCommitRecords(peeked);
+    // The entry was consumed; its redo target is meaningless now.
+    if (peeked != null) {
+      for (final id in peeked) {
+        _myRedoTarget.remove(id);
+      }
+    }
     emit(state.copyWith(activeTray: null));
     await _publishCrdtUpdate(update);
   }
@@ -1769,7 +2142,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       );
       return;
     }
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['cx'] = event.center.dx
       ..['cy'] = event.center.dy
       ..['z'] = nextZ;
@@ -1783,7 +2156,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final shape = _selectedShape();
     if (shape == null || !_ensureCanEdit(emit)) return;
     final normalized = _normalizeRotation(event.rotation);
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['rotation'] = normalized;
     emit(state.copyWith(selectedShapeRotation: normalized));
     await _updateShape(shape.id, data, emit);
@@ -1795,8 +2168,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['size'] = event.size.clamp(24.0, 320.0);
+    if (shape is StickyNoteElement) {
+      // Sticky notes are drawn from width/height; `size` is only used by the
+      // slider/resize gesture. Without this the note never changes size.
+      final width = (event.width ?? event.size).clamp(40.0, 480.0).toDouble();
+      final height = (event.height ?? event.size).clamp(40.0, 480.0).toDouble();
+      data['width'] = width;
+      data['height'] = height;
+    }
     await _updateShape(shape.id, data, emit);
   }
 
@@ -1806,7 +2187,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['isFilled'] = event.isFilled;
     emit(state.copyWith(selectedShapeIsFilled: event.isFilled));
     await _updateShape(shape.id, data, emit);
@@ -1818,7 +2199,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['color'] = event.color.value;
     await _updateShape(shape.id, data, emit);
   }
@@ -1833,7 +2214,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final size = shape.size;
     final maxRadius = (size / 2).clamp(0.0, 180.0);
     final clampedRadius = event.borderRadius.clamp(0.0, maxRadius);
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['borderRadius'] = clampedRadius;
     emit(state.copyWith(selectedShapeBorderRadius: clampedRadius));
     await _updateShape(shape.id, data, emit);
@@ -1846,7 +2227,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (!_ensureCanEdit(emit)) return;
     final shape = _selectedShape();
     if (shape == null) return;
-    final data = Map<String, dynamic>.from(shape.toMap());
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap());
     for (final entry in event.pendingData.entries) {
       if (entry.key == 'rotation') {
         final rotation = _toDoubleValue(entry.value);
@@ -1855,7 +2236,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       } else if (entry.key == 'size') {
         final size = _toDoubleValue(entry.value);
         if (size == null) continue;
-        data[entry.key] = size.clamp(24.0, 320.0);
+        final clamped = size.clamp(24.0, 320.0);
+        data[entry.key] = clamped;
+        if (shape is StickyNoteElement) {
+          final noteSize = clamped.clamp(40.0, 480.0);
+          data['width'] = noteSize;
+          data['height'] = noteSize;
+        }
       } else if (entry.key == 'borderRadius') {
         final borderRadius = _toDoubleValue(entry.value);
         if (borderRadius == null) continue;
@@ -1928,7 +2315,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final element = _selectedShape();
     if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(element.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap())
       ..['color'] = event.color;
     emit(state.copyWith(selectedStrokeColor: event.color));
     await _updateStroke(element.id, data, emit);
@@ -1940,7 +2327,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final element = _selectedShape();
     if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(element.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap())
       ..['strokeWidth'] = event.strokeWidth;
     emit(state.copyWith(selectedStrokeWidth: event.strokeWidth));
     await _updateStroke(element.id, data, emit);
@@ -1952,7 +2339,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final element = _selectedShape();
     if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(element.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap())
       ..['opacity'] = event.opacity;
     emit(state.copyWith(selectedStrokeOpacity: event.opacity));
     await _updateStroke(element.id, data, emit);
@@ -1964,7 +2351,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final element = _selectedShape();
     if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(element.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap())
       ..['brushType'] = event.brushType;
     emit(state.copyWith(selectedStrokeBrushType: event.brushType));
     await _updateStroke(element.id, data, emit);
@@ -2188,7 +2575,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     if (shape == null || canvasService == null || _boardId.isEmpty) return;
     if (!_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap());
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap());
     for (final entry in event.pendingData.entries) {
       if (entry.key == 'rotation') {
         final rotation = _toDoubleValue(entry.value);
@@ -2197,7 +2584,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       } else if (entry.key == 'size') {
         final size = _toDoubleValue(entry.value);
         if (size == null) continue;
-        data[entry.key] = size.clamp(24.0, 320.0);
+        final clamped = size.clamp(24.0, 320.0);
+        data[entry.key] = clamped;
+        if (shape is StickyNoteElement) {
+          final noteSize = clamped.clamp(40.0, 480.0);
+          data['width'] = noteSize;
+          data['height'] = noteSize;
+        }
       } else if (entry.key == 'borderRadius') {
         final borderRadius = _toDoubleValue(entry.value);
         if (borderRadius == null) continue;
@@ -2225,7 +2618,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     // drag end, so there is no cx/cy preview to publish here.
     if (shape is ConnectorElement) return;
     if (!_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['cx'] = event.center.dx
       ..['cy'] = event.center.dy;
     if (shape is ImageElement) {
@@ -2242,12 +2635,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     if (shape == null || canvasService == null || _boardId.isEmpty) return;
     if (!_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['size'] = event.size.clamp(24.0, 320.0);
     if (shape is ImageElement) {
       data.remove('imageBase64');
       data['width'] = event.size.clamp(80.0, 720.0);
       data['height'] = event.size.clamp(80.0, 720.0);
+    } else if (shape is StickyNoteElement) {
+      data['width'] = (event.width ?? event.size).clamp(40.0, 480.0);
+      data['height'] = (event.height ?? event.size).clamp(40.0, 480.0);
     }
     await _publishSelectedShapePreview(shape.id, data);
   }
@@ -2260,7 +2656,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     if (shape == null || canvasService == null || _boardId.isEmpty) return;
     if (!_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(shape.toMap())
+    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['rotation'] = _normalizeRotation(event.rotation);
     await _publishSelectedShapePreview(shape.id, data);
   }
@@ -2542,6 +2938,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   void _onToggleTray(CanvasToggleTray event, Emitter<CanvasState> emit) {
     final nextTray = state.activeTray == event.trayName ? null : event.trayName;
     emit(state.copyWith(activeTray: nextTray));
+    // Kept for any legacy tray-toggle path: the archived-block feed is what
+    // the history screen renders, and opening it must subscribe even if the
+    // explicit history route request was missed.
+    if (nextTray == 'history') {
+      _ensureHistoryFeedSubscription();
+    }
   }
 
   void _onShowTrayTips(CanvasShowTrayTips event, Emitter<CanvasState> emit) {
@@ -2709,6 +3111,1248 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   }
 
   // ──────────────────────────────────────────────
+  // Board history (owner-only) + member undo (D2/D3/D15)
+  // ──────────────────────────────────────────────
+
+  String _historyMessage(Object error) {
+    if (error is HistoryServiceException) {
+      switch (error.code) {
+        case 'forbidden':
+          return 'Only the board owner can view board history.';
+        case 'archive_unavailable':
+        case 'persistence_unavailable':
+          return 'Board history is temporarily unavailable. Please try again.';
+        case 'plan_expired':
+          return 'That revert expired. Please try again.';
+        case 'socket_unavailable':
+        case 'unauthenticated':
+          return 'Could not reach the history service. Please retry.';
+        default:
+          return 'History request failed. Please try again.';
+      }
+    }
+    return AppErrorFormatter.cleanMessage(
+      error,
+      fallback: 'History request failed. Please try again.',
+    );
+  }
+
+  /// Owner-only: keeps the undo-request list live for the history screen.
+  void _syncHistorySubscriptions() {
+    final service = _historyService;
+    if (service == null || _boardId.isEmpty || isClosed) return;
+    if (_currentUserRole == Board.roleOwner) {
+      _undoRequestsSub ??= service.watchUndoRequests(_boardId).listen(
+        (requests) {
+          if (!isClosed) add(CanvasUndoRequestsUpdated(requests));
+        },
+        onError: (_) {},
+      );
+    } else {
+      _undoRequestsSub?.cancel();
+      _undoRequestsSub = null;
+    }
+  }
+
+  /// Owner-only: subscribe to the archived-block feed. Idempotent so every
+  /// history-screen entry point (ToolsTray button, role resolving late) can
+  /// call it without stacking duplicate Firestore listeners.
+  void _ensureHistoryFeedSubscription() {
+    final service = _historyService;
+    if (service == null || _currentUserRole != Board.roleOwner) return;
+    if (_boardId.isEmpty || isClosed || _historyFeedSub != null) return;
+    _historyFeedSub = service.watchActivityFeed(_boardId).listen(
+      (blocks) {
+        if (!isClosed) add(CanvasHistoryFeedUpdated(blocks));
+      },
+      onError: (_) {},
+    );
+  }
+
+  List<BoardActivityBlock> _composeActivityBlocks() {
+    final highestArchived = _archivedBlocks.isEmpty
+        ? 0
+        : _archivedBlocks.map((b) => b.toVersion).reduce(math.max);
+    final tail = _liveTailBlock;
+    if (tail == null ||
+        tail.operationCount <= 0 ||
+        tail.toVersion <= highestArchived) {
+      return _archivedBlocks;
+    }
+    return [tail, ..._archivedBlocks];
+  }
+
+  void _scheduleLiveTailRefresh() {
+    if (isClosed ||
+        _currentUserRole != Board.roleOwner ||
+        _historyService == null ||
+        _boardId.isEmpty) {
+      return;
+    }
+    _liveTailDebounceTimer?.cancel();
+    _liveTailDebounceTimer = Timer(const Duration(milliseconds: 250), () {
+      _liveTailDebounceTimer = null;
+      unawaited(_refreshLiveTail());
+    });
+  }
+
+  Future<void> _refreshLiveTail() async {
+    final service = _historyService;
+    if (isClosed ||
+        _currentUserRole != Board.roleOwner ||
+        service == null ||
+        _boardId.isEmpty) {
+      return;
+    }
+    try {
+      final block = await service.getLiveTail(_boardId);
+      if (!isClosed) {
+        add(CanvasHistoryLiveTailUpdated(block));
+      }
+    } catch (_) {
+      // Best-effort live tail sync; archived blocks from Firestore remain shown.
+    }
+  }
+
+  void _onHistoryFeedRequested(
+    CanvasHistoryFeedRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (_currentUserRole != Board.roleOwner) return;
+    _syncHistorySubscriptions();
+    _ensureHistoryFeedSubscription();
+    unawaited(_refreshLiveTail());
+  }
+
+  void _onHistoryFeedUpdated(
+    CanvasHistoryFeedUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (_currentUserRole != Board.roleOwner) return;
+    _archivedBlocks = event.blocks;
+    emit(state.copyWith(activityBlocks: _composeActivityBlocks()));
+    unawaited(_refreshLiveTail());
+  }
+
+  void _onHistoryLiveTailUpdated(
+    CanvasHistoryLiveTailUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (_currentUserRole != Board.roleOwner) return;
+    _liveTailBlock = event.block;
+    emit(state.copyWith(activityBlocks: _composeActivityBlocks()));
+  }
+
+  Future<void> _onHistoryPreviewRequested(
+    CanvasHistoryPreviewRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(error: 'Only the board owner can view board history.'));
+      return;
+    }
+    // Remember where the owner launched the preview from so exiting returns
+    // them to the same tray/timeline. Preserve the original anchor when
+    // hopping between versions while already previewing.
+    final returnTray = state.isViewingHistory
+        ? state.historyPreviewReturnTray
+        : state.activeTray;
+    final returnUserUid = state.isViewingHistory
+        ? state.historyPreviewReturnUserUid
+        : state.selectedUserUid;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final preview = await service.previewVersion(_boardId, event.version);
+      // Render through a TEMPORARY adapter — never the live one.
+      final temp = await CanvasDocAdapterFactory.create();
+      if (preview.stateUpdateBytes.isNotEmpty) {
+        temp.applyUpdate(preview.stateUpdateBytes, origin: 'remote');
+      }
+      final previewElements =
+          _rebuildElementsFromCrdtState(temp.materializeElements());
+      if (isClosed) return;
+      emit(state.copyWith(
+        isViewingHistory: true,
+        historyPreviewVersion: preview.version,
+        historyPreviewElements: previewElements,
+        historyHighlightElementIds: event.highlightElementIds,
+        historyPreviewTitle: event.title,
+        historyPreviewReturnTray: returnTray,
+        historyPreviewReturnUserUid: returnUserUid,
+        historyPreviewFocusBounds: event.focusBounds,
+        historyPreviewRequestId: null,
+        historyPreviewShowsDesired: false,
+        isHistoryLoading: false,
+        activeTray: null,
+        selectedShapeId: null,
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  void _onHistoryPreviewExited(
+    CanvasHistoryPreviewExited event,
+    Emitter<CanvasState> emit,
+  ) {
+    final returnTray = state.historyPreviewReturnTray;
+    final returnUserUid = state.historyPreviewReturnUserUid;
+    _historyScrubAdapter = null;
+    emit(state.copyWith(
+      isViewingHistory: false,
+      historyPreviewVersion: null,
+      historyPreviewElements: const [],
+      historyHighlightElementIds: const [],
+      historyPreviewTitle: null,
+      historyPreviewReturnTray: null,
+      historyPreviewReturnUserUid: null,
+      historyPreviewFocusBounds: null,
+      historyPreviewRequestId: null,
+      historyPreviewShowsDesired: false,
+      historyScrub: null,
+      historyScrubIndex: 0,
+      historyPreviewCompare: false,
+      historyPreviewOpVersions: const [],
+      // Leaving the preview abandons an in-progress member request too.
+      undoRequestDraft: null,
+      activeTray: returnTray,
+      selectedUserUid: returnUserUid,
+    ));
+  }
+
+  Future<void> _onHistoryRequestEvidenceRequested(
+    CanvasHistoryRequestEvidenceRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(
+        error: 'Only the board owner can review undo requests.',
+      ));
+      return;
+    }
+    UndoRequest? request;
+    for (final r in state.undoRequests) {
+      if (r.requestId == event.requestId) {
+        request = r;
+        break;
+      }
+    }
+    final returnTray = state.isViewingHistory
+        ? state.historyPreviewReturnTray
+        : state.activeTray;
+    final returnUserUid = state.isViewingHistory
+        ? state.historyPreviewReturnUserUid
+        : state.selectedUserUid;
+    final area = request?.area;
+    final focusBounds = (area != null && area.isValid)
+        ? Rect.fromLTWH(area.left, area.top, area.width, area.height)
+        : null;
+    final List<String>? highlightIds =
+        (request != null && request.targetElementIds.isNotEmpty)
+            ? request.targetElementIds
+            : null;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      // New-style requests carry the member's chosen stop version: the
+      // evidence is a scrub over everything that happened to the scope
+      // since that requested state, starting ON the requested state.
+      final targetVersion = request?.targetVersion;
+      final scopeIds = request?.targetElementIds ?? const <String>[];
+      if (request != null && targetVersion != null && scopeIds.isNotEmpty) {
+        final timeline = await service.getUserTimeline(
+          _boardId,
+          request.requesterUid,
+          elementIds: scopeIds,
+          afterVersion: targetVersion,
+        );
+        if (isClosed) return;
+        if (timeline.ops.isNotEmpty && timeline.steps.isNotEmpty) {
+          // Virtual first stop: the requested state itself (the base, with
+          // an empty delta). The slider then walks the window between what
+          // the member asked for and the current board.
+          final requestedStop = BoardOperation(
+            version: targetVersion,
+            summary: 'Requested state (v$targetVersion)',
+          );
+          final scrub = HistoryScrub(
+            stops: [requestedStop, ...timeline.ops],
+            baseStateBytes: timeline.baseStateBytes,
+            stepDeltas: [
+              Uint8List(0),
+              ...timeline.steps.map((step) => step.deltaBytes),
+            ],
+            targetUid: request.requesterUid,
+            elementIds: scopeIds,
+            hasMore: timeline.hasMore,
+            nextBeforeVersion: timeline.nextBeforeVersion,
+          );
+          await _enterScrub(
+            scrub,
+            emit: emit,
+            returnTray: returnTray,
+            returnUserUid: returnUserUid,
+            title: 'Undo request from ${request.requesterName}',
+            startIndex: 0,
+            requestId: event.requestId,
+            focusBounds: focusBounds,
+            highlightElementIds: highlightIds ?? const <String>[],
+          );
+          return;
+        }
+      }
+      // Legacy requests (no targetVersion) or an empty window: build the
+      // desired board directly from the plan instead of emitting
+      // activeRevertPlan, which would auto-open the review sheet on top of
+      // the evidence preview.
+      final plan = await service.planRevert(
+        _boardId,
+        mode: 'user',
+        requestId: event.requestId,
+      );
+      if (isClosed) return;
+      final desiredElements = _buildDesiredElements(plan.items);
+      emit(state.copyWith(
+        isViewingHistory: true,
+        historyPreviewVersion: null,
+        historyPreviewElements: desiredElements,
+        historyHighlightElementIds: highlightIds ??
+            plan.items.map((i) => i.elementId).toList(growable: false),
+        historyPreviewTitle: request != null
+            ? 'Undo request from ${request.requesterName}'
+            : 'Undo request evidence',
+        historyPreviewReturnTray: returnTray,
+        historyPreviewReturnUserUid: returnUserUid,
+        historyPreviewFocusBounds: focusBounds,
+        historyPreviewRequestId: event.requestId,
+        historyPreviewShowsDesired: true,
+        isHistoryLoading: false,
+        activeRevertPlan: null,
+        activeTray: null,
+        selectedShapeId: null,
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  void _onHistoryEvidenceViewToggled(
+    CanvasHistoryEvidenceViewToggled event,
+    Emitter<CanvasState> emit,
+  ) {
+    // The past/current toggle is shared by undo-request evidence and the
+    // per-log compare screen (historyPreviewCompare).
+    if (!state.isViewingHistory) return;
+    if (state.historyPreviewRequestId == null &&
+        !state.historyPreviewCompare) {
+      return;
+    }
+    emit(state.copyWith(historyPreviewShowsDesired: event.showDesired));
+  }
+
+  void _onToggleUndoRequestAreaSelection(
+    CanvasToggleUndoRequestAreaSelection event,
+    Emitter<CanvasState> emit,
+  ) {
+    final enable = event.enable ?? !state.isSelectingUndoRequestArea;
+    if (enable && state.isViewingHistory) return;
+    emit(state.copyWith(
+      isSelectingUndoRequestArea: enable,
+      activeTray: null,
+      selectedShapeId: null,
+    ));
+  }
+
+  // ──────────────────────────────────────────────
+  // Member undo request (D5): desired-state flow
+  // ──────────────────────────────────────────────
+
+  void _onUndoRequestDraftStarted(
+    CanvasUndoRequestDraftStarted event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(
+      undoRequestDraft: UndoRequestDraft(
+        elementIds: List<String>.unmodifiable(event.preselectedIds),
+        area: event.area,
+      ),
+    ));
+  }
+
+  void _onUndoRequestDraftElementToggled(
+    CanvasUndoRequestDraftElementToggled event,
+    Emitter<CanvasState> emit,
+  ) {
+    final draft = state.undoRequestDraft;
+    if (draft == null) return;
+    emit(state.copyWith(
+      undoRequestDraft: draft.withToggledElement(event.elementId),
+    ));
+  }
+
+  void _onUndoRequestDraftAreaSet(
+    CanvasUndoRequestDraftAreaSet event,
+    Emitter<CanvasState> emit,
+  ) {
+    final draft = state.undoRequestDraft ?? const UndoRequestDraft();
+    emit(state.copyWith(
+      undoRequestDraft: draft.withArea(event.area, event.elementIds),
+    ));
+  }
+
+  void _onUndoRequestDraftCleared(
+    CanvasUndoRequestDraftCleared event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (state.undoRequestDraft == null) return;
+    emit(state.copyWith(undoRequestDraft: null));
+  }
+
+  /// Loads the member's OWN timeline scoped to the draft's elements and opens
+  /// the request scrub: stop 0 is the virtual "before these changes" state,
+  /// the slider then walks through what they did in the scope.
+  Future<void> _onUndoRequestPreviewRequested(
+    CanvasUndoRequestPreviewRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    final draft = state.undoRequestDraft;
+    if (service == null || draft == null) return;
+    final scopeIds = draft.elementIds;
+    if (scopeIds.isEmpty) {
+      emit(state.copyWith(error: 'Select at least one element first.'));
+      return;
+    }
+    final returnTray = state.activeTray;
+    final returnUserUid = state.selectedUserUid;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final timeline = await service.getUserTimeline(
+        _boardId,
+        state.currentUserId,
+        elementIds: scopeIds,
+      );
+      if (isClosed) return;
+      if (timeline.ops.isEmpty || timeline.steps.isEmpty) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          error: 'No changes of yours are recorded in that scope yet.',
+        ));
+        return;
+      }
+      // Virtual first stop: the state before the page's first scoped op.
+      // Picking it asks the owner to undo ALL the member's in-scope changes
+      // on the page; picking any later stop asks for that moment instead.
+      final beforeStop = BoardOperation(
+        version: timeline.baseVersion,
+        summary: 'Before these changes (v${timeline.baseVersion})',
+      );
+      final scrub = HistoryScrub(
+        stops: [beforeStop, ...timeline.ops],
+        baseStateBytes: timeline.baseStateBytes,
+        stepDeltas: [
+          Uint8List(0),
+          ...timeline.steps.map((step) => step.deltaBytes),
+        ],
+        targetUid: state.currentUserId,
+        elementIds: scopeIds,
+        hasMore: timeline.hasMore,
+        nextBeforeVersion: timeline.nextBeforeVersion,
+      );
+      final area = draft.area;
+      await _enterScrub(
+        scrub,
+        emit: emit,
+        returnTray: returnTray,
+        returnUserUid: returnUserUid,
+        title: 'Your undo request',
+        startIndex: 0,
+        focusBounds: (area != null && area.isValid)
+            ? Rect.fromLTWH(area.left, area.top, area.width, area.height)
+            : null,
+        highlightElementIds: scopeIds,
+      );
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  /// Submits the request with the member's chosen desired state: the version
+  /// of the stop they settled on (never the newest — that would be a no-op).
+  Future<void> _onUndoRequestSubmitRequested(
+    CanvasUndoRequestSubmitRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    final draft = state.undoRequestDraft;
+    final scrub = state.historyScrub;
+    if (service == null || draft == null) return;
+    final reason = event.reason.trim();
+    if (reason.isEmpty) {
+      emit(state.copyWith(error: 'A reason is required.'));
+      return;
+    }
+    if (scrub == null || draft.elementIds.isEmpty) {
+      emit(state.copyWith(error: 'Pick what the owner should restore first.'));
+      return;
+    }
+    final index = state.historyScrubIndex.clamp(0, scrub.lastIndex);
+    if (index >= scrub.lastIndex) {
+      emit(state.copyWith(
+        error:
+            'Move the slider back to the state you want the owner to restore.',
+      ));
+      return;
+    }
+    final targetVersion = scrub.stops[index].version;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      await service.submitUndoRequest(
+        boardId: _boardId,
+        elementIds: draft.elementIds,
+        reason: reason,
+        targetVersion: targetVersion,
+        area: draft.area,
+      );
+      if (isClosed) return;
+      // The request is with the owner now: leave the preview, drop the draft.
+      _historyScrubAdapter = null;
+      emit(state.copyWith(
+        isHistoryLoading: false,
+        isViewingHistory: false,
+        historyPreviewVersion: null,
+        historyPreviewElements: const [],
+        historyHighlightElementIds: const [],
+        historyPreviewTitle: null,
+        historyPreviewReturnTray: null,
+        historyPreviewReturnUserUid: null,
+        historyPreviewFocusBounds: null,
+        historyPreviewRequestId: null,
+        historyPreviewShowsDesired: false,
+        historyScrub: null,
+        historyScrubIndex: 0,
+        historyPreviewCompare: false,
+        historyPreviewOpVersions: const [],
+        activeTray: null,
+        undoRequestDraft: null,
+        infoMessage: 'Undo request sent to the board owner.',
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // Owner: restore to a point between a request's state and now
+  // ──────────────────────────────────────────────
+
+  /// Plans the revert of the requester's in-scope ops after [afterVersion].
+  /// The review sheet confirms per element, exactly like the other ops
+  /// reverts (D4 conflicts default to keep).
+  Future<void> _onHistoryRevertOpsAfterRequested(
+    CanvasHistoryRevertOpsAfterRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _planHistoryRevert(
+      mode: 'ops',
+      targetUid: event.targetUid,
+      afterVersion: event.afterVersion,
+      elementIds: event.elementIds,
+      requestId: event.requestId,
+      emit: emit,
+    );
+  }
+
+  /// The full board as it would look after applying [items]: live elements with
+  /// each plan item's desired (`after`) value upserted, or removed when null.
+  List<CanvasElement> _buildDesiredElements(List<RevertPlanItem> items) {
+    final maps = <String, Map<String, dynamic>>{
+      for (final e in state.elements) e.id: e.toMap(),
+    };
+    for (final item in items) {
+      final after = item.after;
+      if (after == null) {
+        maps.remove(item.elementId);
+      } else {
+        maps[item.elementId] = after;
+      }
+    }
+    return _rebuildElementsFromCrdtState(maps);
+  }
+
+  Future<void> _planHistoryRevert({
+    required String mode,
+    required Emitter<CanvasState> emit,
+    int? targetVersion,
+    String? targetUid,
+    DateTime? fromTime,
+    DateTime? toTime,
+    List<String>? elementIds,
+    String? requestId,
+    List<int>? opVersions,
+    int? afterVersion,
+  }) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(error: 'Only the board owner can revert edits.'));
+      return;
+    }
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final plan = await service.planRevert(
+        _boardId,
+        mode: mode,
+        targetVersion: targetVersion,
+        targetUid: targetUid,
+        fromTime: fromTime,
+        toTime: toTime,
+        elementIds: elementIds,
+        requestId: requestId,
+        opVersions: opVersions,
+        afterVersion: afterVersion,
+      );
+      if (isClosed) return;
+      if (plan.items.isEmpty) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          infoMessage: 'Nothing to revert — the board already matches.',
+        ));
+        return;
+      }
+      emit(state.copyWith(isHistoryLoading: false, activeRevertPlan: plan));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  Future<void> _onHistoryRestoreRequested(
+    CanvasHistoryRestoreRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _planHistoryRevert(
+      mode: 'restore',
+      targetVersion: event.version,
+      emit: emit,
+    );
+  }
+
+  Future<void> _onHistoryRevertUserRequested(
+    CanvasHistoryRevertUserRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _planHistoryRevert(
+      mode: 'user',
+      targetUid: event.targetUid,
+      fromTime: event.fromTime,
+      toTime: event.toTime,
+      elementIds: event.elementIds,
+      emit: emit,
+    );
+  }
+
+  Future<void> _onHistoryUndoRequestReviewRequested(
+    CanvasHistoryUndoRequestReviewRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _planHistoryRevert(
+      mode: 'user',
+      requestId: event.requestId,
+      emit: emit,
+    );
+  }
+
+  Future<void> _onHistoryUserOpsRequested(
+    CanvasHistoryUserOpsRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) return;
+    emit(state.copyWith(
+      isHistoryLoading: true,
+      selectedUserUid: event.targetUid,
+      error: null,
+    ));
+    try {
+      final page = await service.getUserOps(
+        _boardId,
+        event.targetUid,
+        fromTime: event.fromTime,
+        toTime: event.toTime,
+        beforeVersion: event.beforeVersion,
+      );
+      if (isClosed) return;
+      add(
+        CanvasHistoryUserOpsUpdated(
+          targetUid: event.targetUid,
+          ops: page.ops,
+          hasMore: page.hasMore,
+          nextBeforeVersion: page.nextBeforeVersion,
+          append: event.beforeVersion != null,
+        ),
+      );
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  void _onHistoryUserOpsUpdated(
+    CanvasHistoryUserOpsUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(
+      isHistoryLoading: false,
+      selectedUserUid: event.targetUid,
+      userOps: event.append ? [...state.userOps, ...event.ops] : event.ops,
+      hasMoreUserOps: event.hasMore,
+      userOpsNextBeforeVersion: event.nextBeforeVersion,
+    ));
+  }
+
+  void _onHistoryUserTimelineExited(
+    CanvasHistoryUserTimelineExited event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(
+      selectedUserUid: null,
+      userOps: const [],
+      hasMoreUserOps: false,
+      userOpsNextBeforeVersion: null,
+    ));
+  }
+
+  // ──────────────────────────────────────────────
+  // Scrub previews: version slider + per-user replay (§ version scrub)
+  // ──────────────────────────────────────────────
+
+  String _memberLabel(String uid) {
+    for (final member in state.boardMembers) {
+      if (member.uid == uid) return member.label;
+    }
+    return 'User';
+  }
+
+  /// Version scrub: fetch the block's ops + the board state just before the
+  /// block starts, then replay them on a temporary adapter. The preview opens
+  /// on the block's LAST state; the banner slider moves back op-by-op.
+  Future<void> _onHistoryVersionScrubRequested(
+    CanvasHistoryVersionScrubRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(error: 'Only the board owner can view board history.'));
+      return;
+    }
+    final block = event.block;
+    final returnTray = state.isViewingHistory
+        ? state.historyPreviewReturnTray
+        : state.activeTray;
+    final returnUserUid = state.isViewingHistory
+        ? state.historyPreviewReturnUserUid
+        : state.selectedUserUid;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final ops = (await service.getBlock(_boardId, block.blockId))
+          .where((op) =>
+              op.version >= block.fromVersion && op.version <= block.toVersion)
+          .toList()
+        ..sort((a, b) => a.version.compareTo(b.version));
+      if (ops.isEmpty) {
+        throw const HistoryServiceException(
+          'block_empty',
+          'This version has no logged operations to scrub.',
+        );
+      }
+      // Base = the board right before the block's first op. Each block op is
+      // itself the delta to the previous state, so the ops replay the block.
+      final base = await service.previewVersion(
+        _boardId,
+        math.max(0, block.fromVersion - 1),
+      );
+      final scrub = HistoryScrub(
+        stops: ops,
+        baseStateBytes: base.stateUpdateBytes,
+        stepDeltas: [for (final op in ops) base64Decode(op.payloadBase64)],
+      );
+      if (isClosed) return;
+      await _enterScrub(
+        scrub,
+        returnTray: returnTray,
+        returnUserUid: returnUserUid,
+        title: 'Scrubbing v${block.fromVersion}–v${block.toVersion}',
+        emit: emit,
+      );
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  /// User scrub: the user's logged ops replayed as true board states. Opens
+  /// on their latest change; the slider moves back through their work.
+  Future<void> _onHistoryUserScrubRequested(
+    CanvasHistoryUserScrubRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(error: 'Only the board owner can view board history.'));
+      return;
+    }
+    final returnTray = state.isViewingHistory
+        ? state.historyPreviewReturnTray
+        : state.activeTray;
+    final returnUserUid = state.isViewingHistory
+        ? state.historyPreviewReturnUserUid
+        : state.selectedUserUid;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final timeline = await service.getUserTimeline(_boardId, event.targetUid);
+      if (isClosed) return;
+      if (timeline.ops.isEmpty || timeline.steps.isEmpty) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          error: 'No replayable changes recorded for this user yet.',
+        ));
+        return;
+      }
+      final scrub = HistoryScrub(
+        stops: timeline.ops,
+        baseStateBytes: timeline.baseStateBytes,
+        stepDeltas: [for (final step in timeline.steps) step.deltaBytes],
+        targetUid: event.targetUid,
+        hasMore: timeline.hasMore,
+        nextBeforeVersion: timeline.nextBeforeVersion,
+      );
+      final name = _memberLabel(event.targetUid);
+      await _enterScrub(
+        scrub,
+        returnTray: returnTray,
+        returnUserUid: returnUserUid,
+        title: "Replaying $name's changes",
+        emit: emit,
+      );
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  /// Renders a scrub session on a fresh temporary adapter. [startIndex]
+  /// defaults to the LAST stop (the newest state in range — the slider then
+  /// moves back from there); request/evidence scrubs open at 0 (the base
+  /// state: "before your changes" / "the requested state").
+  Future<void> _enterScrub(
+    HistoryScrub scrub, {
+    required String? returnTray,
+    required String? returnUserUid,
+    required Emitter<CanvasState> emit,
+    String? title,
+    int? startIndex,
+    String? requestId,
+    Rect? focusBounds,
+    List<String> highlightElementIds = const [],
+  }) async {
+    final adapter = await CanvasDocAdapterFactory.create();
+    if (scrub.baseStateBytes.isNotEmpty) {
+      adapter.applyUpdate(scrub.baseStateBytes, origin: 'remote');
+    }
+    final index = (startIndex ?? scrub.lastIndex).clamp(0, scrub.lastIndex);
+    for (var i = 0; i <= index; i++) {
+      final delta = scrub.stepDeltas[i];
+      if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
+    }
+    _historyScrubAdapter = adapter;
+    final previewElements =
+        _rebuildElementsFromCrdtState(adapter.materializeElements());
+    if (isClosed) return;
+    emit(state.copyWith(
+      isViewingHistory: true,
+      isHistoryLoading: false,
+      historyScrub: scrub,
+      historyScrubIndex: index,
+      historyPreviewVersion: scrub.stops[index].version,
+      historyPreviewElements: previewElements,
+      // Highlights are set once here (never per step), so the focus key does
+      // not change and the viewport never refits mid-scrub.
+      historyHighlightElementIds: highlightElementIds,
+      historyPreviewTitle: title,
+      historyPreviewReturnTray: returnTray,
+      historyPreviewReturnUserUid: returnUserUid,
+      historyPreviewFocusBounds: focusBounds,
+      historyPreviewRequestId: requestId,
+      historyPreviewShowsDesired: false,
+      historyPreviewCompare: false,
+      historyPreviewOpVersions: const [],
+      activeRevertPlan: null,
+      activeTray: null,
+      selectedShapeId: null,
+    ));
+  }
+
+  /// Slider moved: forward steps apply the committed deltas in order; moving
+  /// back rebuilds from the base because CRDT deltas cannot be inverted.
+  Future<void> _onHistoryScrubMoved(
+    CanvasHistoryScrubMoved event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final scrub = state.historyScrub;
+    final adapter = _historyScrubAdapter;
+    if (scrub == null || adapter == null) return;
+    final index = event.index.clamp(0, scrub.lastIndex);
+    if (index == state.historyScrubIndex) return;
+    if (index > state.historyScrubIndex) {
+      for (var i = state.historyScrubIndex + 1; i <= index; i++) {
+        final delta = scrub.stepDeltas[i];
+        if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
+      }
+    } else {
+      final rebuilt = await CanvasDocAdapterFactory.create();
+      if (scrub.baseStateBytes.isNotEmpty) {
+        rebuilt.applyUpdate(scrub.baseStateBytes, origin: 'remote');
+      }
+      for (var i = 0; i <= index; i++) {
+        final delta = scrub.stepDeltas[i];
+        if (delta.isNotEmpty) rebuilt.applyUpdate(delta, origin: 'remote');
+      }
+      _historyScrubAdapter = rebuilt;
+    }
+    final active = _historyScrubAdapter;
+    if (active == null || isClosed) return;
+    final previewElements =
+        _rebuildElementsFromCrdtState(active.materializeElements());
+    emit(state.copyWith(
+      historyScrubIndex: index,
+      historyPreviewElements: previewElements,
+      // historyPreviewVersion stays at the anchor so the viewport never
+      // refits mid-scrub; the banner reads the stop from historyScrub.
+    ));
+  }
+
+  /// Prepend the user's older ops to the active scrub. The adapter already
+  /// holds the board at the previously selected stop — the same op, now at a
+  /// shifted index — so no replay is needed, only the merged session.
+  Future<void> _onHistoryScrubLoadOlderRequested(
+    CanvasHistoryScrubLoadOlderRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    final scrub = state.historyScrub;
+    if (service == null || scrub == null || scrub.targetUid == null) return;
+    if (!scrub.hasMore || scrub.nextBeforeVersion == null) return;
+    if (state.isHistoryLoading) return;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final timeline = await service.getUserTimeline(
+        _boardId,
+        scrub.targetUid!,
+        beforeVersion: scrub.nextBeforeVersion,
+        // Request scrubs stay scoped to the picked elements; an evidence
+        // scrub is additionally anchored at the requested state, so its
+        // virtual stop 0 stays the window's floor.
+        elementIds: scrub.elementIds.isEmpty ? null : scrub.elementIds,
+        afterVersion: state.historyPreviewRequestId != null
+            ? scrub.stops.first.version
+            : null,
+      );
+      if (isClosed) return;
+      if (timeline.ops.isEmpty || timeline.steps.isEmpty) {
+        emit(state.copyWith(isHistoryLoading: false));
+        return;
+      }
+      final merged = HistoryScrub(
+        stops: [...timeline.ops, ...scrub.stops],
+        baseStateBytes: timeline.baseStateBytes,
+        stepDeltas: [
+          ...timeline.steps.map((step) => step.deltaBytes),
+          ...scrub.stepDeltas,
+        ],
+        targetUid: scrub.targetUid,
+        elementIds: scrub.elementIds,
+        hasMore: timeline.hasMore,
+        nextBeforeVersion: timeline.nextBeforeVersion,
+      );
+      emit(state.copyWith(
+        isHistoryLoading: false,
+        historyScrub: merged,
+        historyScrubIndex:
+            (state.historyScrubIndex + timeline.ops.length)
+                .clamp(0, merged.lastIndex),
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  /// Log compare: the board as it was when the tapped op was made (highlighted),
+  /// toggled against the live board from the banner. First view = the past.
+  Future<void> _onHistoryOpCompareRequested(
+    CanvasHistoryOpCompareRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(error: 'Only the board owner can view board history.'));
+      return;
+    }
+    final op = event.operation;
+    final highlight = <String>{
+      for (final change in op.changes)
+        if (change.elementId.isNotEmpty) change.elementId,
+      if (op.elementId != null && op.elementId!.isNotEmpty) op.elementId!,
+    }.toList(growable: false);
+    final returnTray = state.isViewingHistory
+        ? state.historyPreviewReturnTray
+        : state.activeTray;
+    final returnUserUid = state.isViewingHistory
+        ? state.historyPreviewReturnUserUid
+        : state.selectedUserUid;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final preview = await service.previewVersion(_boardId, op.version);
+      final temp = await CanvasDocAdapterFactory.create();
+      if (preview.stateUpdateBytes.isNotEmpty) {
+        temp.applyUpdate(preview.stateUpdateBytes, origin: 'remote');
+      }
+      final previewElements =
+          _rebuildElementsFromCrdtState(temp.materializeElements());
+      _historyScrubAdapter = null;
+      if (isClosed) return;
+      emit(state.copyWith(
+        isViewingHistory: true,
+        isHistoryLoading: false,
+        historyScrub: null,
+        historyScrubIndex: 0,
+        historyPreviewVersion: preview.version,
+        historyPreviewElements: previewElements,
+        historyHighlightElementIds: highlight,
+        historyPreviewTitle: op.headline,
+        historyPreviewReturnTray: returnTray,
+        historyPreviewReturnUserUid: returnUserUid,
+        historyPreviewFocusBounds: null,
+        historyPreviewRequestId: null,
+        // Start on the state when the change was made; the banner toggles to
+        // the live board.
+        historyPreviewShowsDesired: true,
+        historyPreviewCompare: true,
+        historyPreviewOpVersions: [op.version],
+        activeRevertPlan: null,
+        activeTray: null,
+        selectedShapeId: null,
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  /// Plan the undo of specific logged ops (per-op revert, a multi-selection,
+  /// or a scrub replay's tail). The review sheet confirms per element.
+  Future<void> _onHistoryRevertOpsRequested(
+    CanvasHistoryRevertOpsRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _planHistoryRevert(
+      mode: 'ops',
+      opVersions: event.opVersions,
+      emit: emit,
+    );
+  }
+
+  void _onHistoryPlanLoaded(
+    CanvasHistoryPlanLoaded event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(activeRevertPlan: event.plan, isHistoryLoading: false));
+  }
+
+  void _onHistoryPlanFailed(
+    CanvasHistoryPlanFailed event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(isHistoryLoading: false, error: event.message));
+  }
+
+  void _onHistoryPlanDismissed(
+    CanvasHistoryPlanDismissed event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(activeRevertPlan: null));
+  }
+
+  Future<void> _onHistoryApplyRevert(
+    CanvasHistoryApplyRevert event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    // D3: reverting board history is the owner's right; the server rejects it
+    // too, but a member should never reach the request in the first place.
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(
+        error: 'Only the board owner can revert board history.',
+      ));
+      return;
+    }
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final result = await service.applyRevert(
+        _boardId,
+        planId: event.planId,
+        decisions: event.decisions,
+        requestId: event.requestId,
+      );
+      // The canvas itself converges through the normal crdt_update broadcast.
+      if (event.requestId != null) {
+        try {
+          await service.resolveUndoRequest(
+            boardId: _boardId,
+            requestId: event.requestId!,
+            status: 'approved',
+            appliedVersion: result.appliedVersion,
+          );
+        } catch (_) {}
+      }
+      // Our own revert is a new op the local stack never saw; drop the stack
+      // entries it replaced so Ctrl+Z cannot re-apply them.
+      _crdtAdapter?.pruneReverted(result.reverted.toSet());
+      _dropCommitRecords(result.reverted);
+      _scheduleLiveTailRefresh();
+      if (isClosed) return;
+      final message = result.skipped.isEmpty
+          ? 'Reverted ${result.reverted.length} change(s).'
+          : 'Reverted ${result.reverted.length}; kept ${result.skipped.length} change(s) others modified.';
+      final wasPreviewing = state.isViewingHistory;
+      final returnTray = state.historyPreviewReturnTray;
+      final returnUserUid = state.historyPreviewReturnUserUid;
+      _historyScrubAdapter = null;
+      emit(state.copyWith(
+        isHistoryLoading: false,
+        activeRevertPlan: null,
+        infoMessage: message,
+        isViewingHistory: false,
+        historyPreviewVersion: null,
+        historyPreviewElements: const [],
+        historyHighlightElementIds: const [],
+        historyPreviewTitle: null,
+        historyPreviewReturnTray: null,
+        historyPreviewReturnUserUid: null,
+        historyPreviewFocusBounds: null,
+        historyPreviewRequestId: null,
+        historyPreviewShowsDesired: false,
+        historyScrub: null,
+        historyScrubIndex: 0,
+        historyPreviewCompare: false,
+        historyPreviewOpVersions: const [],
+        activeTray: wasPreviewing ? returnTray : state.activeTray,
+        selectedUserUid: wasPreviewing ? returnUserUid : state.selectedUserUid,
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  Future<void> _onHistoryUndoOwn(
+    CanvasHistoryUndoOwn event,
+    Emitter<CanvasState> emit,
+  ) async {
+    await _undoOwnViaLog(emit);
+  }
+
+  /// D2: cross-device fallback for a member's own ≤15-minute edits.
+  Future<void> _undoOwnViaLog(Emitter<CanvasState> emit) async {
+    final service = _historyService;
+    // Server-side undo only needs the history socket, not canvas sync: a device
+    // that has not finished its CRDT handshake can still undo its own edits.
+    if (service == null || _boardId.isEmpty) return;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final result = await service.undoOwn(_boardId);
+      if (isClosed) return;
+      if (result.reverted.isEmpty) {
+        if (result.conflicts.isNotEmpty) {
+          // Every in-window edit was later changed by someone else. Show the
+          // conflict flow instead of a dead-end "nothing to undo" error
+          // (§7.2): members can send the owner an undo request.
+          emit(state.copyWith(
+            isHistoryLoading: false,
+            undoConflict: CanvasUndoConflict(
+              elementIds: result.conflicts.map((c) => c.elementId).toList(),
+            ),
+          ));
+          return;
+        }
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          error:
+              'No edits to undo from the last 15 minutes. Older edits can only be reverted by the board owner.',
+        ));
+        return;
+      }
+      // The server already reverted these elements on our behalf, so drop the
+      // matching local stack entries — otherwise a later Ctrl+Z would undo the
+      // same edits a second time (D14 semantics, applied to our own ops).
+      _crdtAdapter?.pruneReverted(result.reverted.toSet());
+      _dropCommitRecords(result.reverted);
+      _scheduleLiveTailRefresh();
+      final message = result.skipped.isEmpty
+          ? 'Undid ${result.reverted.length} recent edit(s).'
+          : 'Undid ${result.reverted.length}; ${result.skipped.length} could not be undone because others modified them.';
+      emit(state.copyWith(isHistoryLoading: false, infoMessage: message));
+    } on HistoryServiceException catch (e) {
+      if (isClosed) return;
+      final message = (e.code == 'nothing_to_undo' || e.code == 'window_expired')
+          ? 'No edits to undo from the last 15 minutes. Older edits can only be reverted by the board owner.'
+          : _historyMessage(e);
+      emit(state.copyWith(isHistoryLoading: false, error: message));
+    } catch (e) {
+      if (!isClosed) emit(state.copyWith(isHistoryLoading: false));
+    }
+  }
+
+  void _onUndoConflictDismissed(
+    CanvasUndoConflictDismissed event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(undoConflict: null));
+  }
+
+  void _onUndoRequestsUpdated(
+    CanvasUndoRequestsUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (_currentUserRole != Board.roleOwner) return;
+    emit(state.copyWith(undoRequests: event.requests));
+  }
+
+  // ──────────────────────────────────────────────
   // Permission checks
   // ──────────────────────────────────────────────
 
@@ -2720,6 +4364,33 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit, {
     required bool clearStroke,
   }) {
+    if (state.isViewingHistory) {
+      if (clearStroke && state.currentStroke.isNotEmpty) {
+        emit(state.copyWith(currentStroke: const []));
+      }
+      emit(state.copyWith(
+        error: 'You are viewing history. Exit preview to edit the board.',
+      ));
+      return false;
+    }
+    if (state.isArchived) {
+      if (clearStroke && state.currentStroke.isNotEmpty) {
+        emit(state.copyWith(currentStroke: const []));
+      }
+      final now = DateTime.now();
+      final shouldShowWarning = _lastArchivedWarningAt == null ||
+          now.difference(_lastArchivedWarningAt!).inMilliseconds > 1200;
+      if (shouldShowWarning) {
+        _lastArchivedWarningAt = now;
+        emit(state.copyWith(error: null));
+        emit(state.copyWith(
+          error: _currentUserRole == Board.roleOwner
+              ? 'This board is archived. Unarchive it from Settings to edit.'
+              : 'This board was archived by the owner. Edits are disabled.',
+        ));
+      }
+      return false;
+    }
     if (_currentUserRole != Board.roleViewer) return true;
     const warningMessage =
         'You are a viewer. Request editor role from the owner to edit this board.';
@@ -3040,6 +4711,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   Future<void> close() async {
     _boardUnavailableTimer?.cancel();
     _boardUnavailableTimer = null;
+    _liveTailDebounceTimer?.cancel();
+    _liveTailDebounceTimer = null;
     for (final preview in _pendingPreviewPublishes.values) {
       preview.timer?.cancel();
     }
@@ -3065,6 +4738,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _membersSub = null;
     await _crdtUpdatesSub?.cancel();
     _crdtUpdatesSub = null;
+    await _historyFeedSub?.cancel();
+    _historyFeedSub = null;
+    await _undoRequestsSub?.cancel();
+    _undoRequestsSub = null;
     await _previewUpdatesSub?.cancel();
     _previewUpdatesSub = null;
     await _canvasService?.stopCrdtRemoteSync(_boardId);

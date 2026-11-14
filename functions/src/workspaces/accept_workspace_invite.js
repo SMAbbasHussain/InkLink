@@ -18,6 +18,10 @@ module.exports = async (request) => {
     }
 
     const firestore = admin.firestore();
+    // Hoisted out of the per-board branch below: the per-user board index
+    // write at the end of the loop also needs it, and declaring it inside the
+    // `if` made every accept fail with `userRef is not defined`.
+    const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
 
     const result = await firestore.runTransaction(async (transaction) => {
       const inviteRef = firestore.collection(FirestorePaths.WORKSPACE_INVITES).doc(inviteId.trim());
@@ -123,7 +127,7 @@ module.exports = async (request) => {
       }
 
       transaction.set(
-        firestore.collection(FirestorePaths.USERS).doc(uid),
+        userRef,
         {
           [FirestorePaths.WORKSPACE_IDS]: admin.firestore.FieldValue.arrayUnion(workspaceId),
           [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
@@ -174,7 +178,6 @@ module.exports = async (request) => {
             [FirestorePaths.MEMBER_COUNT]: admin.firestore.FieldValue.increment(1),
             [FirestorePaths.UPDATED_AT]: admin.firestore.FieldValue.serverTimestamp(),
           });
-          const userRef = firestore.collection(FirestorePaths.USERS).doc(uid);
           transaction.set(
             userRef,
             {

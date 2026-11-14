@@ -71,12 +71,16 @@ class _BoardChatDrawerState extends State<BoardChatDrawer> {
                     .firstOrNull);
 
         final topInset = MediaQuery.of(context).padding.top + 64;
+        // Match the comments tray: this drawer lives in the canvas Stack whose
+        // Scaffold does not resize for the keyboard, so lift it manually.
+        final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+        final availableWidth = MediaQuery.sizeOf(context).width - 32;
 
         return Positioned(
           top: topInset,
           right: 16,
-          bottom: 96,
-          width: 340,
+          bottom: 96 + keyboardInset,
+          width: availableWidth < 340 ? availableWidth : 340,
           child: GlassPanel(
             radius: InkRadii.card,
             padding: EdgeInsets.zero,

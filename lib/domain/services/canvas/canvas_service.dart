@@ -22,6 +22,7 @@ abstract class CanvasService {
     required String updateId,
     required Uint8List payload,
     String? elementId,
+    String action = 'upsert',
   });
   Future<void> publishCanvasPreview({
     required String boardId,
@@ -135,6 +136,7 @@ class CanvasServiceImpl implements CanvasService {
     required String updateId,
     required Uint8List payload,
     String? elementId,
+    String action = 'upsert',
   }) {
     final userId = _syncRepository.currentUserId;
     final payloadBase64 = base64Encode(payload);
@@ -145,6 +147,7 @@ class CanvasServiceImpl implements CanvasService {
             ..updateId = updateId
             ..boardId = boardId
             ..elementId = elementId
+            ..action = action
             ..payloadBase64 = payloadBase64
             ..sourceClientId = userId ?? 'anonymous'
             ..appliedAt = DateTime.now()
@@ -159,6 +162,7 @@ class CanvasServiceImpl implements CanvasService {
               payloadBase64: payloadBase64,
               sourceClientId: userId,
               elementId: elementId,
+              action: action,
             );
             await _syncPendingLocalUpdates(boardId, userId);
           } catch (error) {
