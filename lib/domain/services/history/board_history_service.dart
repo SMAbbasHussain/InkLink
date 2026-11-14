@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import '../../models/history/board_operation.dart';
 import '../../models/history/revert_plan.dart';
 import '../../models/history/undo_request.dart';
+import '../../models/history/user_timeline.dart';
 
 /// Thrown when a history socket request fails. [code] is the server's error
 /// token (e.g. `forbidden`, `plan_expired`, `window_expired`, `nothing_to_undo`).
@@ -28,9 +29,7 @@ class HistoryPreview {
     required this.stateUpdateBytes,
     required this.elementCount,
   });
-}
-
-/// One element whose latest state was written by someone else than the user
+}/// One element whose latest state was written by someone else than the user
 /// asking for the undo. The client turns these into the "your work has been
 /// changed — send a request to the owner" flow (§7.2).
 class RevertConflict {
@@ -95,6 +94,23 @@ abstract class BoardHistoryService {
     int limit = 50,
   });
 
+  /// One user's replay timeline (D15): the ops plus the board-state delta at
+  /// each of them, so the owner can scrub that user's work on the canvas.
+  /// Members may request their OWN timeline: [elementIds] scopes the stops to
+  /// the undo-request elements they picked and [afterVersion] anchors the
+  /// base at a version (the evidence window between a requested state and
+  /// the current one).
+  Future<UserTimeline> getUserTimeline(
+    String boardId,
+    String targetUid, {
+    DateTime? fromTime,
+    DateTime? toTime,
+    int? beforeVersion,
+    List<String>? elementIds,
+    int? afterVersion,
+    int limit = 100,
+  });
+
   /// Read-only reconstruction of a past version.
   Future<HistoryPreview> previewVersion(String boardId, int version);
 
@@ -106,6 +122,14 @@ abstract class BoardHistoryService {
     DateTime? fromTime,
     DateTime? toTime,
     List<String>? elementIds,
+
+    /// `ops` mode only: versions of the logged ops to undo. When omitted,
+    /// `targetUid` + [afterVersion] select that user's in-scope ops instead.
+    List<int>? opVersions,
+
+    /// `ops` mode only: undo the target user's ops AFTER this version (the
+    /// owner's restore point between a request's state and the current one).
+    int? afterVersion,
     String? requestId,
   });
 
@@ -119,11 +143,15 @@ abstract class BoardHistoryService {
   /// Cross-device fallback for a member's own ≤15-minute edits (D2).
   Future<RevertResult> undoOwn(String boardId, {List<String>? updateIds});
 
-  /// Member → owner escalation (D5).
+  /// Member → owner escalation (D5). The member sends a DESIRED STATE:
+  /// [targetVersion] is the stop they picked on their own replay slider — the
+  /// owner restores the scope to that version instead of deleting every edit
+  /// the member made.
   Future<String> submitUndoRequest({
     required String boardId,
     required List<String> elementIds,
     required String reason,
+    required int targetVersion,
     UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,

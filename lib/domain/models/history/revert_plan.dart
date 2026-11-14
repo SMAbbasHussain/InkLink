@@ -100,7 +100,7 @@ class RevertPlanItem {
 /// A server-built revert plan (cached server-side for `history_apply_revert`).
 class RevertPlan {
   final String planId;
-  /// `restore` | `user`
+  /// `restore` | `user` | `ops`
   final String mode;
   final int baseVersion;
   final List<RevertPlanItem> items;

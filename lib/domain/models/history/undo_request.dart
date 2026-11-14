@@ -39,6 +39,12 @@ class UndoRequest {
   final String requesterName;
   final String? requesterPhotoUrl;
   final List<String> targetElementIds;
+
+  /// The member's chosen stop version from their own replay slider: the
+  /// request asks the owner to restore the scope to THIS state, not to delete
+  /// every edit the member made. Null only on requests created before the
+  /// desired-state flow existed.
+  final int? targetVersion;
   final UndoRequestArea? area;
   final DateTime? timeRangeStart;
   final DateTime? timeRangeEnd;
@@ -58,6 +64,7 @@ class UndoRequest {
     this.requesterName = 'InkLink User',
     this.requesterPhotoUrl,
     this.targetElementIds = const [],
+    this.targetVersion,
     this.area,
     this.timeRangeStart,
     this.timeRangeEnd,
@@ -82,6 +89,7 @@ class UndoRequest {
               ?.whereType<String>()
               .toList() ??
           const [],
+      targetVersion: (map['targetVersion'] as num?)?.toInt(),
       area: rawArea is Map
           ? UndoRequestArea.fromMap(Map<String, dynamic>.from(rawArea))
           : null,
@@ -106,6 +114,7 @@ class UndoRequest {
     'requesterName': requesterName,
     'requesterPhotoUrl': requesterPhotoUrl,
     'targetElementIds': targetElementIds,
+    'targetVersion': targetVersion,
     'area': area?.toMap(),
     'timeRangeStart': timeRangeStart?.toIso8601String(),
     'timeRangeEnd': timeRangeEnd?.toIso8601String(),

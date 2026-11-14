@@ -23,6 +23,18 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   int _connectGeneration = 0;
   bool _isSingleUserBoard = false;
   final Map<String, int> _watchedBoardRefCounts = <String, int>{};
+  // The server only joins the board room after authorizing the member. Keep
+  // the confirmation per socket so a reconnect/replacement re-watches, and
+  // retry when the membership/access cache has not caught up yet.
+  final Map<String, String> _watchConfirmedSocketIds = <String, String>{};
+  final Map<String, Timer> _watchRetryTimers = <String, Timer>{};
+  final Map<String, int> _watchAttempts = <String, int>{};
+  final Set<String> _watchInFlight = <String>{};
+  final Map<String, void Function(dynamic)> _updateHandlers =
+      <String, void Function(dynamic)>{};
+  final Map<String, void Function(dynamic)> _previewHandlers =
+      <String, void Function(dynamic)>{};
+  io.Socket? _handlersBoundSocket;
   StreamController<List<LocalCrdtUpdate>>? _socketUpdatesController;
   StreamController<List<LocalCrdtUpdate>>? _socketPreviewController;
 
@@ -45,10 +57,12 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     final isar = await _localDatabaseService.database;
     await isar.writeTxn(() async {
       await isar.localCrdtUpdates.putByUpdateId(update);
-      final existing =
-          await isar.localCanvasSyncStates.getByBoardId(update.boardId);
+      final existing = await isar.localCanvasSyncStates.getByBoardId(
+        update.boardId,
+      );
       await isar.localCanvasSyncStates.putByBoardId(
-        (existing ?? LocalCanvasSyncState()..boardId = update.boardId)
+        (existing ?? LocalCanvasSyncState()
+            ..boardId = update.boardId)
           ..lastSyncedAppliedAt = update.appliedAt,
       );
     });
@@ -67,6 +81,14 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     if (specificSocket == null || identical(_socket, specificSocket)) {
       _socket = null;
       _connectedUserId = null;
+      for (final timer in _watchRetryTimers.values) {
+        timer.cancel();
+      }
+      _watchRetryTimers.clear();
+      _watchConfirmedSocketIds.clear();
+      _watchAttempts.clear();
+      _watchInFlight.clear();
+      _handlersBoundSocket = null;
     }
     if (stale == null) return;
     try {
@@ -150,10 +172,15 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     final connectCompleter = Completer<void>();
     socket.onConnect((_) {
       if (!connectCompleter.isCompleted) connectCompleter.complete();
-      // Re-subscribe to any actively watched boards upon reconnect
+      if (gen != _connectGeneration) return;
+      // Make this the active socket before re-watching; _watchBoard needs the
+      // authenticated socket to emit and await its acknowledgement.
+      _socket = socket;
+      _connectedUserId = targetUid;
+      _bindStoredSocketHandlers(socket);
       for (final boardId in _watchedBoardRefCounts.keys) {
         if ((_watchedBoardRefCounts[boardId] ?? 0) > 0) {
-          socket.emit('watch_board', boardId);
+          _watchBoard(boardId);
         }
       }
     });
@@ -172,11 +199,101 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     if (socket.connected) {
       _socket = socket;
       _connectedUserId = targetUid;
+      _bindStoredSocketHandlers(socket);
+      for (final boardId in _watchedBoardRefCounts.keys) {
+        if ((_watchedBoardRefCounts[boardId] ?? 0) > 0) {
+          _watchBoard(boardId);
+        }
+      }
       return true;
     }
 
     _teardownSocket(socket);
     return false;
+  }
+
+  /// Re-attaches the active board listeners when a disconnected socket is
+  /// replaced. Listeners are registered on the Socket.IO object, so a new
+  /// object would otherwise join the room but never receive its events.
+  void _bindStoredSocketHandlers(io.Socket socket) {
+    if (identical(_handlersBoundSocket, socket)) return;
+    _handlersBoundSocket = socket;
+    for (final handler in _updateHandlers.values) {
+      socket.on('crdt_update', handler);
+    }
+    for (final handler in _previewHandlers.values) {
+      socket.on('crdt_preview', handler);
+    }
+  }
+
+  /// Ensures this socket is in the board room, waiting for the server's
+  /// acknowledgement rather than optimistically assuming the join succeeded.
+  /// The server can reject a join while a newly accepted membership is still
+  /// propagating, so retry with backoff until it confirms or the board is
+  /// closed. `socket.join` is idempotent, making repeat emits safe.
+  void _watchBoard(String boardId) {
+    final socket = _socket;
+    if (socket == null || !socket.connected) return;
+    if (_watchConfirmedSocketIds[boardId] == socket.id) return;
+    if (_watchInFlight.contains(boardId)) return;
+    _watchRetryTimers.remove(boardId)?.cancel();
+    _watchInFlight.add(boardId);
+
+    final current = socket;
+    unawaited(() async {
+      try {
+        final ack = await _emitWithAck(
+          'watch_board',
+          boardId,
+          timeout: const Duration(seconds: 4),
+        );
+        if (!identical(_socket, current) || !current.connected) return;
+        final socketId = current.id;
+        if (ack != null && ack['status'] == 'success' && socketId != null) {
+          _watchConfirmedSocketIds[boardId] = socketId;
+          _watchAttempts.remove(boardId);
+          _watchRetryTimers.remove(boardId)?.cancel();
+          _logWs('WATCH CONFIRMED', boardId, 'watch_board');
+          return;
+        }
+
+        // A malformed board id will never succeed; stop retrying it.
+        if (ack != null && ack['message'] == 'invalid_board_id') return;
+
+        final attempt = (_watchAttempts[boardId] ?? 0) + 1;
+        _watchAttempts[boardId] = attempt;
+        if (attempt >= 12) {
+          _logWs(
+            'WATCH GAVE UP',
+            boardId,
+            'watch_board',
+            detail: ack == null
+                ? 'no_ack'
+                : (ack['message']?.toString() ?? 'not_joined'),
+          );
+          return;
+        }
+        // 500ms, 1s, 1.5s ... capped at 4s. Membership propagation is usually
+        // fast, but a server-side cache may need a few seconds to invalidate.
+        final delayMs = 500 * (attempt < 8 ? attempt : 8);
+        _watchRetryTimers[boardId]?.cancel();
+        _watchRetryTimers[boardId] = Timer(Duration(milliseconds: delayMs), () {
+          if ((_watchedBoardRefCounts[boardId] ?? 0) > 0) {
+            _watchBoard(boardId);
+          }
+        });
+        _logWs(
+          'WATCH RETRY',
+          boardId,
+          'watch_board',
+          detail: ack == null
+              ? 'no_ack'
+              : (ack['message']?.toString() ?? 'not_joined'),
+        );
+      } finally {
+        _watchInFlight.remove(boardId);
+      }
+    }());
   }
 
   void _bindBoardSocketStream({
@@ -191,21 +308,44 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     final prevCount = _watchedBoardRefCounts[boardId] ?? 0;
     _watchedBoardRefCounts[boardId] = prevCount + 1;
     if (prevCount == 0) {
-      socket.emit('watch_board', boardId);
+      _watchConfirmedSocketIds.remove(boardId);
     }
     _logWs('SUBSCRIBE SENT', boardId, subscribeLabel);
-    socket.on(eventName, handleEvent);
+    _watchBoard(boardId);
+    final handlers = eventName == 'crdt_update'
+        ? _updateHandlers
+        : _previewHandlers;
+    handlers[boardId] = handleEvent;
+    if (identical(_handlersBoundSocket, socket)) {
+      socket.on(eventName, handleEvent);
+    } else {
+      _bindStoredSocketHandlers(socket);
+    }
 
     controller.onCancel = () {
       try {
         final remaining = (_watchedBoardRefCounts[boardId] ?? 1) - 1;
         if (remaining <= 0) {
           _watchedBoardRefCounts.remove(boardId);
-          socket.emit('leave_board', boardId);
+          _watchRetryTimers.remove(boardId)?.cancel();
+          _watchConfirmedSocketIds.remove(boardId);
+          _watchAttempts.remove(boardId);
+          if (socket.connected) {
+            socket.emit('leave_board', boardId);
+          }
         } else {
           _watchedBoardRefCounts[boardId] = remaining;
         }
-        socket.off(eventName, handleEvent);
+        final handlers = eventName == 'crdt_update'
+            ? _updateHandlers
+            : _previewHandlers;
+        if (identical(handlers[boardId], handleEvent)) {
+          handlers.remove(boardId);
+        }
+        final handlerSocket = identical(_handlersBoundSocket, socket)
+            ? socket
+            : _handlersBoundSocket;
+        handlerSocket?.off(eventName, handleEvent);
       } catch (error, stackTrace) {
         _logError(
           'Failed while unsubscribing from board socket stream',
@@ -417,8 +557,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           String? cursor = lastSeenCursor;
           if (cursor == null) {
             final isar = await _localDatabaseService.database;
-            final syncState =
-                await isar.localCanvasSyncStates.getByBoardId(boardId);
+            final syncState = await isar.localCanvasSyncStates.getByBoardId(
+              boardId,
+            );
             cursor = syncState?.lastSeenCursor;
           }
 
@@ -473,15 +614,18 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         if (snapshotData != null) {
           final stateUpdate = snapshotData['stateUpdate'] as String?;
           if (stateUpdate != null && stateUpdate.isNotEmpty) {
-            allUpdates.add(LocalCrdtUpdate()
-              ..updateId = '__snapshot__${snapshotData['lastAppliedVersion'] ?? 0}'
-              ..boardId = boardId
-              ..elementId = null
-              ..payloadBase64 = stateUpdate
-              ..sourceClientId = '__server_snapshot__'
-              ..appliedAt = DateTime.now()
-              ..isSynced = true
-              ..version = snapshotData['lastAppliedVersion'] as int? ?? 0);
+            allUpdates.add(
+              LocalCrdtUpdate()
+                ..updateId =
+                    '__snapshot__${snapshotData['lastAppliedVersion'] ?? 0}'
+                ..boardId = boardId
+                ..elementId = null
+                ..payloadBase64 = stateUpdate
+                ..sourceClientId = '__server_snapshot__'
+                ..appliedAt = DateTime.now()
+                ..isSynced = true
+                ..version = snapshotData['lastAppliedVersion'] as int? ?? 0,
+            );
           }
         }
       }
@@ -490,22 +634,25 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       final updatesList = (response['updates'] as List?) ?? <dynamic>[];
       for (final data in updatesList) {
         final map = data as Map<String, dynamic>;
-        final appliedAtStr = map['appliedAt'] as String? ??
-            map['timestamp'] as String?;
-        allUpdates.add(LocalCrdtUpdate()
-          ..updateId = (map['updateId'] as String?) ?? ''
-          ..boardId = (map['boardId'] as String?) ?? boardId
-          ..elementId = map['elementId'] as String?
-          ..action = map['action'] as String?
-          ..affectedElementIds =
-              (map['affectedElementIds'] as List?)?.whereType<String>().toList()
-          ..payloadBase64 = map['payloadBase64'] as String? ?? ''
-          ..sourceClientId = map['sourceClientId'] as String? ?? ''
-          ..appliedAt = appliedAtStr != null
-              ? DateTime.tryParse(appliedAtStr) ?? DateTime.now()
-              : DateTime.now()
-          ..isSynced = true
-          ..version = (map['version'] as num?)?.toInt() ?? 0);
+        final appliedAtStr =
+            map['appliedAt'] as String? ?? map['timestamp'] as String?;
+        allUpdates.add(
+          LocalCrdtUpdate()
+            ..updateId = (map['updateId'] as String?) ?? ''
+            ..boardId = (map['boardId'] as String?) ?? boardId
+            ..elementId = map['elementId'] as String?
+            ..action = map['action'] as String?
+            ..affectedElementIds = (map['affectedElementIds'] as List?)
+                ?.whereType<String>()
+                .toList()
+            ..payloadBase64 = map['payloadBase64'] as String? ?? ''
+            ..sourceClientId = map['sourceClientId'] as String? ?? ''
+            ..appliedAt = appliedAtStr != null
+                ? DateTime.tryParse(appliedAtStr) ?? DateTime.now()
+                : DateTime.now()
+            ..isSynced = true
+            ..version = (map['version'] as num?)?.toInt() ?? 0,
+        );
       }
 
       // --- Store cursor ---
@@ -538,10 +685,10 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     try {
       final isar = await _localDatabaseService.database;
       await isar.writeTxn(() async {
-        final existing =
-            await isar.localCanvasSyncStates.getByBoardId(boardId);
+        final existing = await isar.localCanvasSyncStates.getByBoardId(boardId);
         await isar.localCanvasSyncStates.putByBoardId(
-          (existing ?? LocalCanvasSyncState()..boardId = boardId)
+          (existing ?? LocalCanvasSyncState()
+              ..boardId = boardId)
             ..lastSeenCursor = cursor,
         );
       });
@@ -714,7 +861,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
     final socketConnected = _socket != null && _socket!.connected;
 
-      // If socket send/ack fails, keep the update unsynced for retry
+    // If socket send/ack fails, keep the update unsynced for retry
     if (socketConnected) {
       try {
         _logWs(
@@ -816,7 +963,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
                 .filter()
                 .boardIdEqualTo(boardId)
                 .isSyncedEqualTo(true)
-                .appliedAtLessThan(DateTime.now().subtract(const Duration(hours: 1)))
+                .appliedAtLessThan(
+                  DateTime.now().subtract(const Duration(hours: 1)),
+                )
                 .deleteAll();
           });
           final latest = await isar.localCrdtUpdates
@@ -825,11 +974,13 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
               .sortByAppliedAtDesc()
               .findFirst();
           if (latest != null) {
-            final existing =
-                await isar.localCanvasSyncStates.getByBoardId(boardId);
+            final existing = await isar.localCanvasSyncStates.getByBoardId(
+              boardId,
+            );
             await isar.writeTxn(() async {
               await isar.localCanvasSyncStates.putByBoardId(
-                (existing ?? LocalCanvasSyncState()..boardId = boardId)
+                (existing ?? LocalCanvasSyncState()
+                    ..boardId = boardId)
                   ..lastSyncedAppliedAt = latest.appliedAt,
               );
             });
@@ -908,11 +1059,11 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       // Redis stream entry IDs.
       final cursor = '0-0:${latest.version}';
 
-      final existing =
-          await isar.localCanvasSyncStates.getByBoardId(boardId);
+      final existing = await isar.localCanvasSyncStates.getByBoardId(boardId);
       await isar.writeTxn(() async {
         await isar.localCanvasSyncStates.putByBoardId(
-          (existing ?? LocalCanvasSyncState()..boardId = boardId)
+          (existing ?? LocalCanvasSyncState()
+              ..boardId = boardId)
             ..lastSeenCursor = cursor,
         );
       });

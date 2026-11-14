@@ -111,3 +111,24 @@ DateTime? _parseOperationDate(dynamic value) {
   if (value is String) return DateTime.tryParse(value);
   return null;
 }
+
+/// Plain-English headline for an op. Prefers the server-generated summary
+/// ("Blue rectangle: moved 120 px right"), then the per-change details, and
+/// returns null when only a generic action label would be available — never a
+/// raw element id.
+extension BoardOperationHeadline on BoardOperation {
+  String? get headline {
+    final summary = this.summary;
+    if (summary != null && summary.trim().isNotEmpty) return summary;
+    final details = changes
+        .map((c) => c.detail)
+        .whereType<String>()
+        .where((d) => d.trim().isNotEmpty)
+        .toList(growable: false);
+    if (details.length == 1) return details.first;
+    if (details.length > 1) {
+      return '${details.first}  (+${details.length - 1} more)';
+    }
+    return null;
+  }
+}

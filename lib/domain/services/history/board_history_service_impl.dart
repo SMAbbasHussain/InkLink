@@ -13,6 +13,7 @@ import '../../../core/utils/network_config.dart';
 import '../../models/history/board_operation.dart';
 import '../../models/history/revert_plan.dart';
 import '../../models/history/undo_request.dart';
+import '../../models/history/user_timeline.dart';
 import 'board_history_service.dart';
 
 /// Thin socket transport abstraction so the service can be unit-tested
@@ -365,6 +366,35 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
   }
 
   @override
+  Future<UserTimeline> getUserTimeline(
+    String boardId,
+    String targetUid, {
+    DateTime? fromTime,
+    DateTime? toTime,
+    int? beforeVersion,
+    List<String>? elementIds,
+    int? afterVersion,
+    int limit = 100,
+  }) async {
+    final response = await _request(
+      'history_preview_user_timeline',
+      {
+        'boardId': boardId,
+        'targetUid': targetUid,
+        if (fromTime != null) 'fromTime': fromTime.toUtc().toIso8601String(),
+        if (toTime != null) 'toTime': toTime.toUtc().toIso8601String(),
+        if (beforeVersion != null) 'beforeVersion': beforeVersion,
+        if (elementIds != null && elementIds.isNotEmpty) 'elementIds': elementIds,
+        if (afterVersion != null) 'afterVersion': afterVersion,
+        'limit': limit,
+      },
+      // One server replay pass produces the base state + every delta.
+      timeout: const Duration(seconds: 45),
+    );
+    return UserTimeline.fromMap(response);
+  }
+
+  @override
   Future<HistoryPreview> previewVersion(String boardId, int version) async {
     final response = await _request(
       'history_preview_version',
@@ -394,6 +424,8 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
     DateTime? fromTime,
     DateTime? toTime,
     List<String>? elementIds,
+    List<int>? opVersions,
+    int? afterVersion,
     String? requestId,
   }) async {
     final response = await _request(
@@ -406,6 +438,8 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
         if (fromTime != null) 'fromTime': fromTime.toUtc().toIso8601String(),
         if (toTime != null) 'toTime': toTime.toUtc().toIso8601String(),
         if (elementIds != null) 'elementIds': elementIds,
+        if (opVersions != null) 'opVersions': opVersions,
+        if (afterVersion != null) 'afterVersion': afterVersion,
         if (requestId != null) 'requestId': requestId,
       },
       timeout: const Duration(seconds: 45),
@@ -491,6 +525,7 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
     required String boardId,
     required List<String> elementIds,
     required String reason,
+    required int targetVersion,
     UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,
@@ -503,6 +538,7 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
       final response = await functions.httpsCallable('submitUndoRequest').call({
         'boardId': boardId,
         'targetElementIds': elementIds,
+        'targetVersion': targetVersion,
         'reason': reason,
         if (area != null) 'area': area.toMap(),
         if (fromTime != null) 'timeRangeStart': fromTime.toUtc().toIso8601String(),
