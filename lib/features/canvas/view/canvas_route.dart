@@ -5,7 +5,6 @@ import '../../../core/services/auth_service.dart';
 import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/board_chat_service.dart';
 import '../../../domain/services/canvas/board_comments_service.dart';
-import '../../../domain/repositories/history/board_history_repository.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
 import '../../../domain/services/history/board_history_service.dart';
 import '../../../domain/services/settings/settings_service.dart';
@@ -71,7 +70,6 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
             boardChatService: context.read<BoardChatService>(),
             voiceService: context.read<VoiceService>(),
             historyService: context.read<BoardHistoryService>(),
-            historyRepository: context.read<BoardHistoryRepository>(),
             currentUserId:
                 context.read<AuthService>().getCurrentUserId() ?? '',
             boardId: widget.boardId,
@@ -81,6 +79,7 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
             showTrayTipsOnEntry: widget.showTrayTipsOnEntry,
             boardPreviewQuality: data?.quality ?? 'medium',
             boardPreviewCompressionEnabled: data?.compressionEnabled ?? true,
+            historyService: context.read<BoardHistoryService>(),
           ),
         );
       },

@@ -299,6 +299,7 @@ Future<void> _startApp() async {
           create: (context) => BoardHistoryServiceImpl(
             authService: context.read<AuthService>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
+            historyRepository: context.read<BoardHistoryRepository>(),
           ),
           dispose: (service) => service.dispose(),
         ),

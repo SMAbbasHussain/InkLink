@@ -88,7 +88,7 @@ class _FakeCanvasService implements CanvasService {
 }
 
 /// Records history calls; only `undoOwn` is exercised here.
-class _FakeHistoryService implements BoardHistoryService {
+class _FakeHistoryService extends BoardHistoryService {
   int undoOwnCalls = 0;
   RevertResult undoOwnResult = const RevertResult();
 

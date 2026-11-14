@@ -15,7 +15,6 @@ import '../../../domain/models/history/board_operation.dart';
 import '../../../domain/models/history/history_scrub.dart';
 import '../../../domain/models/history/revert_plan.dart';
 import '../../../domain/models/history/undo_request.dart';
-import '../../../domain/repositories/history/board_history_repository.dart';
 import '../../../domain/services/history/board_history_service.dart';
 import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/board_chat_service.dart';
@@ -49,7 +48,6 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final BoardChatService? _boardChatService;
   final VoiceService? _voiceService;
   final BoardHistoryService? _historyService;
-  final BoardHistoryRepository? _historyRepository;
 
   /// Temporary CRDT doc backing the active history scrub preview — never the
   /// live adapter. Rebuilt from the base state whenever the slider moves back
@@ -130,7 +128,6 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     BoardChatService? boardChatService,
     VoiceService? voiceService,
     BoardHistoryService? historyService,
-    BoardHistoryRepository? historyRepository,
     String currentUserId = '',
     String boardId = '',
   }) : _canvasService = canvasService,
@@ -140,7 +137,6 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
        _boardChatService = boardChatService,
        _voiceService = voiceService,
        _historyService = historyService,
-       _historyRepository = historyRepository,
        _boardId = boardId,
        super(CanvasInitial(currentUserId: currentUserId)) {
     on<CanvasRenameBoardRequested>(_onCanvasRenameBoardRequested);
@@ -3143,10 +3139,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
   /// Owner-only: keeps the undo-request list live for the history screen.
   void _syncHistorySubscriptions() {
-    final repo = _historyRepository;
-    if (repo == null || _boardId.isEmpty || isClosed) return;
+    final service = _historyService;
+    if (service == null || _boardId.isEmpty || isClosed) return;
     if (_currentUserRole == Board.roleOwner) {
-      _undoRequestsSub ??= repo.watchUndoRequests(_boardId).listen(
+      _undoRequestsSub ??= service.watchUndoRequests(_boardId).listen(
         (requests) {
           if (!isClosed) add(CanvasUndoRequestsUpdated(requests));
         },
@@ -3162,10 +3158,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   /// history-screen entry point (ToolsTray button, role resolving late) can
   /// call it without stacking duplicate Firestore listeners.
   void _ensureHistoryFeedSubscription() {
-    final repo = _historyRepository;
-    if (repo == null || _currentUserRole != Board.roleOwner) return;
+    final service = _historyService;
+    if (service == null || _currentUserRole != Board.roleOwner) return;
     if (_boardId.isEmpty || isClosed || _historyFeedSub != null) return;
-    _historyFeedSub = repo.watchActivityFeed(_boardId).listen(
+    _historyFeedSub = service.watchActivityFeed(_boardId).listen(
       (blocks) {
         if (!isClosed) add(CanvasHistoryFeedUpdated(blocks));
       },

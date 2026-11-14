@@ -59,6 +59,7 @@ class CanvasScreen extends StatefulWidget {
   final bool showTrayTipsOnEntry;
   final String boardPreviewQuality;
   final bool boardPreviewCompressionEnabled;
+  final BoardHistoryService? historyService;
 
   const CanvasScreen({
     super.key,
@@ -66,6 +67,7 @@ class CanvasScreen extends StatefulWidget {
     this.showTrayTipsOnEntry = false,
     this.boardPreviewQuality = 'medium',
     this.boardPreviewCompressionEnabled = true,
+    this.historyService,
   });
 
   @override
@@ -193,7 +195,8 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
 
   Future<void> _openHistoryScreen() async {
     HapticFeedback.lightImpact();
-    final historyService = context.read<BoardHistoryService>();
+    final historyService = widget.historyService;
+    if (historyService == null) return;
     final activeTray = _canvasBloc.state.activeTray;
     if (activeTray != null) {
       _canvasBloc.add(CanvasToggleTray(activeTray));

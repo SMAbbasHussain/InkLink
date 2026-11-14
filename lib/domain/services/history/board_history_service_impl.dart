@@ -15,6 +15,7 @@ import '../../models/history/board_operation.dart';
 import '../../models/history/revert_plan.dart';
 import '../../models/history/undo_request.dart';
 import '../../models/history/user_timeline.dart';
+import '../../repositories/history/board_history_repository.dart';
 import 'board_history_service.dart';
 
 /// Thin socket transport abstraction so the service can be unit-tested
@@ -79,6 +80,7 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
 
   final AuthService _authService;
   final CloudFunctionsService? _cloudFunctionsService;
+  final BoardHistoryRepository? _historyRepository;
   final BoardHistorySocketFactory _socketFactory;
   final Duration _connectTimeout;
 
@@ -97,10 +99,12 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
   BoardHistoryServiceImpl({
     required AuthService authService,
     CloudFunctionsService? cloudFunctionsService,
+    BoardHistoryRepository? historyRepository,
     BoardHistorySocketFactory? socketFactory,
     Duration connectTimeout = const Duration(seconds: 5),
   }) : _authService = authService,
        _cloudFunctionsService = cloudFunctionsService,
+       _historyRepository = historyRepository,
        _connectTimeout = connectTimeout,
        _socketFactory = socketFactory ?? _defaultSocketFactory;
 
@@ -298,6 +302,30 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
   // ──────────────────────────────────────────────
   // Reads
   // ──────────────────────────────────────────────
+
+  @override
+  Stream<List<BoardActivityBlock>> watchActivityFeed(
+    String boardId, {
+    int limit = 50,
+  }) {
+    final repo = _historyRepository;
+    if (repo == null) return const Stream.empty();
+    return repo.watchActivityFeed(boardId, limit: limit);
+  }
+
+  @override
+  Stream<List<UndoRequest>> watchUndoRequests(String boardId) {
+    final repo = _historyRepository;
+    if (repo == null) return const Stream.empty();
+    return repo.watchUndoRequests(boardId);
+  }
+
+  @override
+  Stream<List<UndoRequest>> watchMyUndoRequests(String boardId, String uid) {
+    final repo = _historyRepository;
+    if (repo == null) return const Stream.empty();
+    return repo.watchMyUndoRequests(boardId, uid);
+  }
 
   @override
   Future<BoardActivityBlock?> getLiveTail(String boardId) async {

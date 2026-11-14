@@ -3,22 +3,24 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/utils/app_error_formatter.dart';
 import '../../../../core/utils/app_snackbar.dart';
-import '../../../../domain/models/chat/chat_conversation_model.dart';
 import '../../../../domain/services/chat/chat_service.dart';
-import '../../auth/bloc/auth_bloc.dart';
-import '../../auth/bloc/auth_state.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../theme/chat_theme.dart';
 import 'widgets/group_avatar_picker.dart';
 
-Route<ChatConversationModel> buildCreateGroupRoute(BuildContext context) {
-  return MaterialPageRoute(
-    builder: (_) => const CreateGroupScreen(),
-  );
-}
+export 'create_group_route.dart';
 
 class CreateGroupScreen extends StatefulWidget {
-  const CreateGroupScreen({super.key});
+  final ChatService? chatService;
+  final String currentUserId;
+  final String currentUserEmail;
+
+  const CreateGroupScreen({
+    super.key,
+    this.chatService,
+    this.currentUserId = '',
+    this.currentUserEmail = '',
+  });
 
   @override
   State<CreateGroupScreen> createState() => _CreateGroupScreenState();
@@ -62,9 +64,15 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
       return;
     }
 
+    final chatService = widget.chatService;
+    if (chatService == null) {
+      AppSnackBar.showMessage(context, 'Chat service unavailable.');
+      return;
+    }
+
     setState(() => _isCreating = true);
     try {
-      final group = await context.read<ChatService>().createGroup(
+      final group = await chatService.createGroup(
             name: name,
             description: _descController.text.trim(),
             memberIds: _selectedMemberIds.toList(),
@@ -85,9 +93,9 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
 
   List<Map<String, dynamic>> _friendsFor(FriendsState friendsState) {
     if (friendsState is! FriendsLoaded) return const [];
-    final authState = context.read<AuthBloc>().state;
-    final myUid = authState is Authenticated ? authState.uid : null;
-    final myEmail = authState is Authenticated ? authState.email : null;
+    final myUid = widget.currentUserId.isNotEmpty ? widget.currentUserId : null;
+    final myEmail =
+        widget.currentUserEmail.isNotEmpty ? widget.currentUserEmail : null;
     final normalizedEmail = myEmail?.trim().toLowerCase();
     final query = _memberQuery.trim().toLowerCase();
 

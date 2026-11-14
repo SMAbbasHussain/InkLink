@@ -14,7 +14,7 @@ import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
 import 'package:inklink/features/canvas/view/history_screen.dart';
 import 'package:inklink/ui/theme/ink_theme.dart';
 
-class _RecordingHistory implements BoardHistoryService {
+class _RecordingHistory extends BoardHistoryService {
   int planCalls = 0;
   String? mode;
   int? targetVersion;

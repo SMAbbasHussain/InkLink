@@ -14,7 +14,7 @@ import 'package:inklink/features/canvas/view/trays/canvas_shape_type.dart';
 
 /// Records history calls and returns canned server responses so the workflow
 /// rules (D2/D3/D5/D8) can be asserted without a socket or Firestore.
-class _FakeHistoryService implements BoardHistoryService {
+class _FakeHistoryService extends BoardHistoryService {
   int previewCalls = 0;
   int planCalls = 0;
   int applyCalls = 0;

@@ -82,6 +82,21 @@ class UserOpsPage {
 }
 
 abstract class BoardHistoryService {
+  /// `boards/{boardId}/activity_index`, newest block first.
+  Stream<List<BoardActivityBlock>> watchActivityFeed(
+    String boardId, {
+    int limit = 50,
+  }) =>
+      const Stream.empty();
+
+  /// All undo requests on the board (owner view), newest first.
+  Stream<List<UndoRequest>> watchUndoRequests(String boardId) =>
+      const Stream.empty();
+
+  /// The signed-in member's own undo requests.
+  Stream<List<UndoRequest>> watchMyUndoRequests(String boardId, String uid) =>
+      const Stream.empty();
+
   /// Unarchived operations in Redis synthesized as a live in-progress version
   /// block (`blockId == 'live_tail'`). Returns `null` when there are no
   /// unarchived operations beyond the latest archived snapshot.
