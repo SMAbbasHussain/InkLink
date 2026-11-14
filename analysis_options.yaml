@@ -17,6 +17,7 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    - packages/**
   errors:
     deprecated_member_use: ignore
     use_null_aware_elements: ignore
