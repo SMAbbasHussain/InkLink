@@ -17,6 +17,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../../core/utils/app_snackbar.dart';
 
 import '../../../domain/models/board.dart';
+import '../../../domain/models/history/board_operation.dart';
 import '../../../domain/models/history/undo_request.dart';
 import '../../../domain/services/history/board_history_service.dart';
 import '../../../core/utils/app_error_formatter.dart';
@@ -40,7 +41,7 @@ import 'trays/ai_tray.dart';
 import 'trays/brush_tray.dart';
 import 'trays/canvas_shape_type.dart';
 import 'trays/members_tray.dart';
-import 'trays/history_tray.dart';
+import 'history_screen.dart';
 import 'trays/shapes_tray.dart';
 import 'trays/tools_tray.dart';
 import 'widgets/history_preview_banner.dart';
@@ -127,6 +128,18 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
   Offset? _areaSelectionStart;
   Offset? _areaSelectionCurrent;
   String? _historyPreviewFocusKey;
+  Timer? _scrubDebounce;
+
+  /// True while the undo-request sheet (scope or send stage) is open. Gates
+  /// canvas double-tap picking so picks only register when the member can see
+  /// the canvas (hint chip visible, sheet closed).
+  bool _undoRequestSheetOpen = false;
+
+  /// Manual double-tap timing while picking undo-request scope elements:
+  /// [GestureDetector.onTapDown] fires for both taps of a double-tap, and the
+  /// framework's [GestureDetector.onDoubleTap] opens editors we must not
+  /// open during picking.
+  DateTime? _lastPickTapDown;
 
   Rect? get _areaSelectionRect {
     final start = _areaSelectionStart;
@@ -175,10 +188,30 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
 
   void _toggleTray(String tray) {
     HapticFeedback.lightImpact();
-    if (tray == 'history' && _canvasBloc.state.activeTray != 'history') {
-      _canvasBloc.add(const CanvasHistoryFeedRequested());
-    }
     _canvasBloc.add(CanvasToggleTray(tray));
+  }
+
+  Future<void> _openHistoryScreen() async {
+    HapticFeedback.lightImpact();
+    final historyService = context.read<BoardHistoryService>();
+    final activeTray = _canvasBloc.state.activeTray;
+    if (activeTray != null) {
+      _canvasBloc.add(CanvasToggleTray(activeTray));
+    }
+    _canvasBloc.add(const CanvasHistoryFeedRequested());
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BlocProvider.value(
+          value: _canvasBloc,
+          child: BoardHistoryScreen(
+            boardId: widget.boardId,
+            boardTitle: _canvasBloc.state.boardTitle,
+            bloc: _canvasBloc,
+            historyService: historyService,
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _restoreHistoryVersion(CanvasState state) async {
@@ -197,39 +230,194 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
     _canvasBloc.add(CanvasHistoryRestoreRequested(version));
   }
 
+  /// Scrub slider: debounce bursts of drag events so the CRDT replay stays
+  /// smooth (one apply per ~90 ms settle instead of per tick).
+  void _onScrubSliderChanged(int index) {
+    _scrubDebounce?.cancel();
+    _scrubDebounce = Timer(const Duration(milliseconds: 90), () {
+      _canvasBloc.add(CanvasHistoryScrubMoved(index));
+    });
+  }
+
+  /// "Restore to this state" inside a scrub session: confirm, then restore to
+  /// the selected stop's version.
+  Future<void> _restoreScrubState(CanvasState state) async {
+    final scrub = state.historyScrub;
+    if (scrub == null) return;
+    final stop = scrub.stopAt(state.historyScrubIndex);
+    final confirmed = await showInkConfirmDialog(
+      context,
+      title: 'Restore version ${stop.version}?',
+      message:
+          'This reverts every change made after version ${stop.version}. '
+          'Nothing is deleted from history — you can restore again later.',
+      confirmLabel: 'Restore',
+      destructive: false,
+    );
+    if (!mounted || !confirmed) return;
+    _canvasBloc.add(CanvasHistoryRestoreRequested(stop.version));
+  }
+
+  /// "Undo [user] after this point": undo only that user's ops after the
+  /// selected stop. The revert review sheet is the confirmation step.
+  void _undoUserAfterScrub(CanvasState state) {
+    final scrub = state.historyScrub;
+    if (scrub == null) return;
+    final versions = [
+      for (var i = state.historyScrubIndex + 1; i < scrub.stops.length; i++)
+        scrub.stops[i].version,
+    ];
+    if (versions.isEmpty) return;
+    _canvasBloc.add(CanvasHistoryRevertOpsRequested(versions));
+  }
+
+  /// Owner reviewing an undo request's evidence scrub: restore the scope to
+  /// the selected stop — everything the requester did to it AFTER this point
+  /// is undone, everything before (and any stop chosen later) is kept. The
+  /// revert review sheet is the confirmation step; applying resolves the
+  /// request as approved.
+  void _restoreScrubStateInRequest(CanvasState state) {
+    final scrub = state.historyScrub;
+    final requestId = state.historyPreviewRequestId;
+    if (scrub == null || requestId == null || scrub.targetUid == null) return;
+    final index = state.historyScrubIndex.clamp(0, scrub.lastIndex);
+    if (index >= scrub.lastIndex) {
+      AppSnackBar.showMessage(
+        context,
+        'That is the current board — move the slider back to a state to restore.',
+      );
+      return;
+    }
+    final stop = scrub.stopAt(index);
+    _canvasBloc.add(
+      CanvasHistoryRevertOpsAfterRequested(
+        targetUid: scrub.targetUid!,
+        afterVersion: stop.version,
+        elementIds: scrub.elementIds,
+        requestId: requestId,
+      ),
+    );
+  }
+
+  /// Member on their request scrub: open the reason + send sheet with the
+  /// selected stop frozen as the desired state (the modal barrier makes the
+  /// slider unreachable while the sheet is open).
+  void _openUndoRequestSendSheet(CanvasState state) {
+    final scrub = state.historyScrub;
+    if (scrub == null) return;
+    final index = state.historyScrubIndex.clamp(0, scrub.lastIndex);
+    final stop = scrub.stopAt(index);
+    setState(() => _undoRequestSheetOpen = true);
+    showUndoRequestSendSheet(
+      context,
+      targetVersion: stop.version,
+      stopLabel: stop.headline,
+      elementCount: scrub.elementIds.length,
+      canSend: index < scrub.lastIndex,
+      onSubmit: (reason) {
+        _canvasBloc.add(CanvasUndoRequestSubmitRequested(reason));
+      },
+    ).whenComplete(() {
+      if (mounted) setState(() => _undoRequestSheetOpen = false);
+    });
+  }
+
+  /// "Revert this change" on a compared log: undo the op(s) behind the view.
+  /// The review sheet is the confirmation step, so no extra dialog.
+  void _revertPreviewOps(CanvasState state) {
+    final versions = state.historyPreviewOpVersions;
+    if (versions.isEmpty) return;
+    _canvasBloc.add(CanvasHistoryRevertOpsRequested(versions));
+  }
+
+  String? _memberDisplayName(CanvasState state, String uid) {
+    for (final member in state.boardMembers) {
+      if (member.uid == uid) return member.label;
+    }
+    return null;
+  }
+
+  /// Opens the undo-request scope sheet (stage 1). The draft lives in the
+  /// bloc; [initialIds]/[initialArea] are FRESH values (e.g. an area just
+  /// completed) because `bloc.add` is async and re-reading the state here
+  /// would miss the event just dispatched.
   void _openUndoRequestSheet({
-    List<String>? preselectedIds,
-    UndoRequestArea? area,
+    List<String>? initialIds,
+    UndoRequestArea? initialArea,
   }) {
-    final service = context.read<BoardHistoryService>();
+    final state = _canvasBloc.state;
+    final ids = initialIds ?? state.undoRequestDraft?.elementIds ?? const [];
+    final area = initialArea ?? state.undoRequestDraft?.area;
+    if (initialIds != null) {
+      // An explicitly resolved scope (conflict preselect or a just-completed
+      // area): restart the draft so stale picks never linger behind the
+      // sheet's own tick state.
+      _canvasBloc.add(
+        CanvasUndoRequestDraftStarted(preselectedIds: ids, area: area),
+      );
+    } else if (state.undoRequestDraft == null) {
+      _canvasBloc.add(
+        CanvasUndoRequestDraftStarted(preselectedIds: ids),
+      );
+    }
+    setState(() => _undoRequestSheetOpen = true);
     showUndoRequestSheet(
       context,
-      service: service,
-      boardId: widget.boardId,
-      elements: _canvasBloc.state.elements,
-      preselectedIds: preselectedIds,
-      area: area,
+      bloc: _canvasBloc,
+      elements: _scopeSheetElements(state, ids, area),
+      initialIds: ids,
+      initialArea: area,
       onSelectArea: () {
         _canvasBloc.add(
           const CanvasToggleUndoRequestAreaSelection(enable: true),
         );
       },
-    );
+      onPreview: () {
+        _canvasBloc.add(const CanvasUndoRequestPreviewRequested());
+      },
+    ).whenComplete(() {
+      if (mounted) setState(() => _undoRequestSheetOpen = false);
+    });
   }
 
+  /// The elements the scope sheet lists: with an area (or a picked scope) only
+  /// those elements — the member adjusts within their scope; on a fresh draft
+  /// the whole board.
+  List<CanvasElement> _scopeSheetElements(
+    CanvasState state,
+    List<String> ids,
+    UndoRequestArea? area,
+  ) {
+    if (area == null && ids.isEmpty) return state.elements;
+    final idSet = ids.toSet();
+    return state.elements
+        .where((element) => idSet.contains(element.id))
+        .toList(growable: false);
+  }
+
+  /// Member finished drawing the undo-request area: resolve it to the
+  /// elements it overlaps, merge in any double-tapped extras outside the
+  /// area, and reopen the scope sheet with the fresh values.
   void _completeAreaSelection() {
     final rect = _areaSelectionRect;
     setState(() {
       _areaSelectionStart = null;
       _areaSelectionCurrent = null;
     });
+    _canvasBloc.add(
+      const CanvasToggleUndoRequestAreaSelection(enable: false),
+    );
     if (rect == null || rect.width < 4 || rect.height < 4) {
-      _canvasBloc.add(
-        const CanvasToggleUndoRequestAreaSelection(enable: false),
-      );
+      // Too small to be intentional: back to the sheet, draft untouched.
       _openUndoRequestSheet();
       return;
     }
+    final area = UndoRequestArea(
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+    );
     final ids = _canvasBloc.state.elements
         .where((element) {
           final bounds = _computeContentBounds([element]);
@@ -242,20 +430,19 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
         context,
         'No elements in that area. Drag a larger region.',
       );
+      _openUndoRequestSheet();
       return;
     }
-    _canvasBloc.add(
-      const CanvasToggleUndoRequestAreaSelection(enable: false),
-    );
-    _openUndoRequestSheet(
-      preselectedIds: ids,
-      area: UndoRequestArea(
-        left: rect.left,
-        top: rect.top,
-        width: rect.width,
-        height: rect.height,
-      ),
-    );
+    // Keep double-tapped elements outside the area: an explicit pick should
+    // not be discarded by drawing a new area.
+    final extras =
+        _canvasBloc.state.undoRequestDraft?.elementIds ?? const <String>[];
+    final merged = <String>{
+      ...ids,
+      ...extras.where((id) => !ids.contains(id)),
+    }.toList(growable: false);
+    _canvasBloc.add(CanvasUndoRequestDraftAreaSet(area, merged));
+    _openUndoRequestSheet(initialIds: merged, initialArea: area);
   }
 
   void _maybeFocusHistoryPreview(
@@ -1690,11 +1877,14 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
         },
         child: BlocBuilder<CanvasBloc, CanvasState>(
           builder: (context, state) {
+            // Evidence and log-compare previews toggle between the past
+            // state and the live board; everything else always previews.
+            final showLive = state.isViewingHistory &&
+                (state.historyPreviewRequestId != null ||
+                    state.historyPreviewCompare) &&
+                !state.historyPreviewShowsDesired;
             final displayElements = state.isViewingHistory
-                ? (state.historyPreviewRequestId != null &&
-                      !state.historyPreviewShowsDesired
-                    ? state.elements
-                    : state.historyPreviewElements)
+                ? (showLive ? state.elements : state.historyPreviewElements)
                 : state.elements;
             _syncDecodedUiImages(displayElements);
             _maybeFocusHistoryPreview(state, displayElements);
@@ -1786,6 +1976,13 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                                   _areaSelectionStart = worldPoint;
                                   _areaSelectionCurrent = worldPoint;
                                 });
+                                return;
+                              }
+
+                              // While picking undo-request scope elements,
+                              // taps (double-taps) toggle the scope; no
+                              // strokes, drags, or pans.
+                              if (_isPickingUndoRequestScope(state)) {
                                 return;
                               }
 
@@ -2029,6 +2226,34 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                               );
                               _lastTapWorldPoint = worldPoint;
 
+                              // Undo-request picking: double-tap toggles the
+                              // element in the member's scope; every other
+                              // tap behaviour is suppressed. The framework's
+                              // onDoubleTap is guarded below so editors do
+                              // not open on the same gesture.
+                              if (_isPickingUndoRequestScope(state)) {
+                                final now = DateTime.now();
+                                final last = _lastPickTapDown;
+                                _lastPickTapDown = now;
+                                if (last != null &&
+                                    now.difference(last) <
+                                        const Duration(milliseconds: 300)) {
+                                  _lastPickTapDown = null;
+                                  final hitShapeId = _hitTestShape(
+                                    mappedElements,
+                                    worldPoint,
+                                  );
+                                  if (hitShapeId != null) {
+                                    _canvasBloc.add(
+                                      CanvasUndoRequestDraftElementToggled(
+                                        hitShapeId,
+                                      ),
+                                    );
+                                  }
+                                }
+                                return;
+                              }
+
                               // Pin comment placement flow:
                               if (state.isPlacingComment) {
                                 _promptNewCommentDialog(worldPoint);
@@ -2115,7 +2340,8 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                             },
                             onDoubleTap: () {
                               if (state.isViewingHistory ||
-                                  state.isSelectingUndoRequestArea) {
+                                  state.isSelectingUndoRequestArea ||
+                                  _isPickingUndoRequestScope(state)) {
                                 return;
                               }
                               final worldPoint = _lastTapWorldPoint;
@@ -2136,7 +2362,8 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                             },
                             onTap: () {
                               if (state.isViewingHistory ||
-                                  state.isSelectingUndoRequestArea) {
+                                  state.isSelectingUndoRequestArea ||
+                                  _isPickingUndoRequestScope(state)) {
                                 return;
                               }
                               // If in shape draw mode, tap switches back to doodle unless waiting for 2nd arrow connection
@@ -2219,7 +2446,10 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                               title: state.historyPreviewTitle,
                               requestId: state.historyPreviewRequestId,
                               showsDesired: state.historyPreviewShowsDesired,
-                              onRestore: state.historyPreviewRequestId == null
+                              onRestore:
+                                  state.historyPreviewRequestId == null &&
+                                      state.historyScrub == null &&
+                                      !state.historyPreviewCompare
                                   ? () => _restoreHistoryVersion(state)
                                   : null,
                               onExit: () => _canvasBloc.add(
@@ -2235,6 +2465,64 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                                         state.historyPreviewRequestId!,
                                       ),
                                     ),
+                              scrub: state.historyScrub,
+                              scrubIndex: state.historyScrubIndex,
+                              targetName: state.historyScrub?.targetUid ==
+                                      null
+                                  ? null
+                                  : _memberDisplayName(
+                                      state,
+                                      state.historyScrub!.targetUid!,
+                                    ),
+                              onScrubChanged: state.historyScrub == null
+                                  ? null
+                                  : _onScrubSliderChanged,
+                              // Member request scrub: send the chosen state;
+                              // no restore action (the owner does that).
+                              onRestoreToState: state.historyScrub == null
+                                  ? null
+                                  : state.undoRequestDraft != null &&
+                                          state.historyPreviewRequestId ==
+                                              null
+                                  ? null
+                                  : state.historyPreviewRequestId != null
+                                      ? () => _restoreScrubStateInRequest(
+                                          state,
+                                        )
+                                      : () => _restoreScrubState(state),
+                              onUndoUserAfter: state.historyScrub?.targetUid !=
+                                          null &&
+                                      state.historyPreviewRequestId == null &&
+                                      state.undoRequestDraft == null
+                                  ? () => _undoUserAfterScrub(state)
+                                  : null,
+                              onSendRequest: state.historyScrub != null &&
+                                      state.undoRequestDraft != null &&
+                                      state.historyPreviewRequestId == null
+                                  ? () => _openUndoRequestSendSheet(state)
+                                  : null,
+                              hint: state.historyScrub == null
+                                  ? null
+                                  : state.undoRequestDraft != null &&
+                                          state.historyPreviewRequestId ==
+                                              null
+                                      ? 'Move the slider back to the state '
+                                          'you want the owner to restore.'
+                                      : state.historyPreviewRequestId != null
+                                          ? 'Move the slider to compare the '
+                                              'requested state with now.'
+                                          : null,
+                              onRevertThisChange: state.historyPreviewCompare
+                                  ? () => _revertPreviewOps(state)
+                                  : null,
+                              onLoadOlder:
+                                  state.historyScrub?.targetUid != null &&
+                                      state.historyScrub!.hasMore
+                                  ? () => _canvasBloc.add(
+                                      const CanvasHistoryScrubLoadOlderRequested(),
+                                    )
+                                  : null,
+                              compareEnabled: state.historyPreviewCompare,
                             ),
                           const BoardChatDrawer(),
                           const CommentsTray(),
@@ -2253,6 +2541,9 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
 
                           if (state.isSelectingUndoRequestArea)
                             _buildAreaSelectionHint(),
+
+                          if (_isPickingUndoRequestScope(state))
+                            _buildUndoRequestPickHint(state),
 
                           if (state.showTrayTips)
                             TrayTipsOverlay(
@@ -3920,16 +4211,9 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
             ),
           );
         } else {
-          final conflictedIds = conflict.elementIds.toSet();
-          showUndoRequestSheet(
-            context,
-            service: context.read<BoardHistoryService>(),
-            boardId: widget.boardId,
-            elements: _canvasBloc.state.elements
-                .where((e) => conflictedIds.contains(e.id))
-                .toList(growable: false),
-            preselectedIds: conflict.elementIds,
-          );
+          // Start the draft with the conflicted elements pre-ticked; the
+          // scope sheet lets the member adjust before choosing a state.
+          _openUndoRequestSheet(initialIds: conflict.elementIds);
         }
       },
       child: const SizedBox.shrink(),
@@ -3969,22 +4253,13 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
           onAddConnector: _addConnectorDialog,
           onExport: () => _showExportOptionsSheet(context),
           onHistory: state.currentUserRole == Board.roleOwner
-              ? () => _openTray('history')
+              ? _openHistoryScreen
               : null,
           onRequestUndo: state.currentUserRole == Board.roleEditor
               ? _openUndoRequestSheet
               : null,
           onClose: () => _toggleTray('tools'),
         ),
-        if (state.currentUserRole == Board.roleOwner)
-          HistoryTray(
-            isOpen: state.activeTray == 'history',
-            boardId: widget.boardId,
-            state: state,
-            bloc: _canvasBloc,
-            historyService: context.read<BoardHistoryService>(),
-            onClose: () => _toggleTray('history'),
-          ),
         ShapesTray(
           isOpen: state.activeTray == 'shapes',
           onSelectShapeForDrawing: _selectShapeForDrawing,
@@ -4551,6 +4826,81 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
     );
   }
 
+  /// Member is picking undo-request scope elements on the live canvas: a
+  /// draft exists, they are not viewing history, no sheet is open, no area
+  /// is being drawn, and no history load is in flight (the sheet's preview
+  /// button already dispatched the scoped timeline request). Double-taps
+  /// toggle the scope; other canvas gestures are suppressed.
+  bool _isPickingUndoRequestScope(CanvasState state) {
+    return state.undoRequestDraft != null &&
+        !state.isViewingHistory &&
+        !state.isHistoryLoading &&
+        !state.isSelectingUndoRequestArea &&
+        !_undoRequestSheetOpen;
+  }
+
+  /// Hint chip shown while the member is picking scope elements: count,
+  /// back into the scope sheet, or abandon the request.
+  Widget _buildUndoRequestPickHint(CanvasState state) {
+    final tokens = _tokens;
+    final draft = state.undoRequestDraft!;
+    final count = draft.elementIds.length;
+    return Positioned(
+      left: 24,
+      right: 24,
+      bottom: 112,
+      child: GlassPanel(
+        radius: InkRadii.pill,
+        padding: const EdgeInsets.symmetric(
+          horizontal: InkSpacing.s12,
+          vertical: InkSpacing.s8,
+        ),
+        child: Row(
+          children: [
+            Icon(LucideIcons.mousePointerClick, size: 16, color: tokens.accentText),
+            const SizedBox(width: InkSpacing.s8),
+            Expanded(
+              child: Text(
+                count == 0
+                    ? 'Double-tap elements to add them to your request'
+                    : '$count element(s) in your request — double-tap to adjust',
+                style: InkType.caption(tokens.ink),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: InkSpacing.s8),
+            InkWell(
+              onTap: () => _openUndoRequestSheet(),
+              borderRadius: BorderRadius.circular(InkRadii.chip),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: InkSpacing.s8,
+                  vertical: InkSpacing.s4,
+                ),
+                child: Text(
+                  'Adjust',
+                  style: InkType.caption(tokens.accentText),
+                ),
+              ),
+            ),
+            const SizedBox(width: InkSpacing.s4),
+            InkWell(
+              onTap: () {
+                _canvasBloc.add(const CanvasUndoRequestDraftCleared());
+              },
+              borderRadius: BorderRadius.circular(InkRadii.chip),
+              child: Padding(
+                padding: const EdgeInsets.all(InkSpacing.s4),
+                child: Icon(LucideIcons.x, size: 16, color: tokens.inkSecondary),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildAreaSelectionHint() {
     final tokens = _tokens;
     return Positioned(
@@ -4813,6 +5163,7 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _shapeEditDebounceTimer?.cancel();
+    _scrubDebounce?.cancel();
     for (final img in _decodedUiImages.values) {
       img.dispose();
     }

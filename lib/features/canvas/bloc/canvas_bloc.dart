@@ -12,6 +12,7 @@ import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../domain/models/board.dart';
 import '../../../domain/models/history/board_activity_block.dart';
 import '../../../domain/models/history/board_operation.dart';
+import '../../../domain/models/history/history_scrub.dart';
 import '../../../domain/models/history/revert_plan.dart';
 import '../../../domain/models/history/undo_request.dart';
 import '../../../domain/repositories/history/board_history_repository.dart';
@@ -49,6 +50,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final VoiceService? _voiceService;
   final BoardHistoryService? _historyService;
   final BoardHistoryRepository? _historyRepository;
+
+  /// Temporary CRDT doc backing the active history scrub preview — never the
+  /// live adapter. Rebuilt from the base state whenever the slider moves back
+  /// (CRDT deltas are not invertible).
+  CanvasDocAdapter? _historyScrubAdapter;
+
   final Uuid _uuid = const Uuid();
   final math.Random _random = math.Random();
   static const Duration _previewPublishThrottle = Duration(milliseconds: 32);
@@ -231,6 +238,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasHistoryUserOpsRequested>(_onHistoryUserOpsRequested);
     on<CanvasHistoryUserOpsUpdated>(_onHistoryUserOpsUpdated);
     on<CanvasHistoryUserTimelineExited>(_onHistoryUserTimelineExited);
+    on<CanvasHistoryVersionScrubRequested>(_onHistoryVersionScrubRequested);
+    on<CanvasHistoryUserScrubRequested>(_onHistoryUserScrubRequested);
+    on<CanvasHistoryScrubMoved>(_onHistoryScrubMoved);
+    on<CanvasHistoryScrubLoadOlderRequested>(_onHistoryScrubLoadOlderRequested);
+    on<CanvasHistoryOpCompareRequested>(_onHistoryOpCompareRequested);
+    on<CanvasHistoryRevertOpsRequested>(_onHistoryRevertOpsRequested);
     on<CanvasHistoryPlanLoaded>(_onHistoryPlanLoaded);
     on<CanvasHistoryPlanFailed>(_onHistoryPlanFailed);
     on<CanvasHistoryPlanDismissed>(_onHistoryPlanDismissed);
@@ -241,6 +254,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
     on<CanvasUndoRequestsUpdated>(_onUndoRequestsUpdated);
     on<CanvasUndoConflictDismissed>(_onUndoConflictDismissed);
+    on<CanvasUndoRequestDraftStarted>(_onUndoRequestDraftStarted);
+    on<CanvasUndoRequestDraftElementToggled>(_onUndoRequestDraftElementToggled);
+    on<CanvasUndoRequestDraftAreaSet>(_onUndoRequestDraftAreaSet);
+    on<CanvasUndoRequestDraftCleared>(_onUndoRequestDraftCleared);
+    on<CanvasUndoRequestPreviewRequested>(_onUndoRequestPreviewRequested);
+    on<CanvasUndoRequestSubmitRequested>(_onUndoRequestSubmitRequested);
+    on<CanvasHistoryRevertOpsAfterRequested>(_onHistoryRevertOpsAfterRequested);
   }
 
   String get boardId => _boardId;
@@ -278,12 +298,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final wasOwner = _currentUserRole == Board.roleOwner;
     _currentUserRole = event.currentUserRole;
     _syncHistorySubscriptions();
-    // The role can resolve AFTER the owner already opened the history tray
+    // The role can resolve AFTER the owner already opened the history screen
     // (the first feed request early-returns for non-owners and would never
     // be retried). Retry now that we know the role.
-    if (!wasOwner &&
-        _currentUserRole == Board.roleOwner &&
-        state.activeTray == 'history') {
+    if (!wasOwner && _currentUserRole == Board.roleOwner) {
       _ensureHistoryFeedSubscription();
     }
     emit(state.copyWith(
@@ -2897,10 +2915,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   void _onToggleTray(CanvasToggleTray event, Emitter<CanvasState> emit) {
     final nextTray = state.activeTray == event.trayName ? null : event.trayName;
     emit(state.copyWith(activeTray: nextTray));
-    // The archived-blocks feed is what the history tray renders. Subscribe on
-    // EVERY open path — the ToolsTray History button and the tray toggle both
-    // funnel through here, so an owner opening history could previously see
-    // "No archived versions yet" forever when the feed was never subscribed.
+    // Kept for any legacy tray-toggle path: the archived-block feed is what
+    // the history screen renders, and opening it must subscribe even if the
+    // explicit history route request was missed.
     if (nextTray == 'history') {
       _ensureHistoryFeedSubscription();
     }
@@ -3097,7 +3114,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
   }
 
-  /// Owner-only: keeps the undo-request list live for the history tray.
+  /// Owner-only: keeps the undo-request list live for the history screen.
   void _syncHistorySubscriptions() {
     final repo = _historyRepository;
     if (repo == null || _boardId.isEmpty || isClosed) return;
@@ -3115,8 +3132,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   }
 
   /// Owner-only: subscribe to the archived-block feed. Idempotent so every
-  /// history-tray entry point (ToolsTray button, tray toggle, role resolving
-  /// late) can call it without stacking duplicate Firestore listeners.
+  /// history-screen entry point (ToolsTray button, role resolving late) can
+  /// call it without stacking duplicate Firestore listeners.
   void _ensureHistoryFeedSubscription() {
     final repo = _historyRepository;
     if (repo == null || _currentUserRole != Board.roleOwner) return;
@@ -3204,6 +3221,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) {
     final returnTray = state.historyPreviewReturnTray;
     final returnUserUid = state.historyPreviewReturnUserUid;
+    _historyScrubAdapter = null;
     emit(state.copyWith(
       isViewingHistory: false,
       historyPreviewVersion: null,
@@ -3215,6 +3233,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       historyPreviewFocusBounds: null,
       historyPreviewRequestId: null,
       historyPreviewShowsDesired: false,
+      historyScrub: null,
+      historyScrubIndex: 0,
+      historyPreviewCompare: false,
+      historyPreviewOpVersions: const [],
+      // Leaving the preview abandons an in-progress member request too.
+      undoRequestDraft: null,
       activeTray: returnTray,
       selectedUserUid: returnUserUid,
     ));
@@ -3245,11 +3269,67 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final returnUserUid = state.isViewingHistory
         ? state.historyPreviewReturnUserUid
         : state.selectedUserUid;
+    final area = request?.area;
+    final focusBounds = (area != null && area.isValid)
+        ? Rect.fromLTWH(area.left, area.top, area.width, area.height)
+        : null;
+    final List<String>? highlightIds =
+        (request != null && request.targetElementIds.isNotEmpty)
+            ? request.targetElementIds
+            : null;
     emit(state.copyWith(isHistoryLoading: true, error: null));
     try {
-      // Build the desired board directly from the plan instead of emitting
-      // activeRevertPlan, which would auto-open the review sheet on top of the
-      // evidence preview.
+      // New-style requests carry the member's chosen stop version: the
+      // evidence is a scrub over everything that happened to the scope
+      // since that requested state, starting ON the requested state.
+      final targetVersion = request?.targetVersion;
+      final scopeIds = request?.targetElementIds ?? const <String>[];
+      if (request != null && targetVersion != null && scopeIds.isNotEmpty) {
+        final timeline = await service.getUserTimeline(
+          _boardId,
+          request.requesterUid,
+          elementIds: scopeIds,
+          afterVersion: targetVersion,
+        );
+        if (isClosed) return;
+        if (timeline.ops.isNotEmpty && timeline.steps.isNotEmpty) {
+          // Virtual first stop: the requested state itself (the base, with
+          // an empty delta). The slider then walks the window between what
+          // the member asked for and the current board.
+          final requestedStop = BoardOperation(
+            version: targetVersion,
+            summary: 'Requested state (v$targetVersion)',
+          );
+          final scrub = HistoryScrub(
+            stops: [requestedStop, ...timeline.ops],
+            baseStateBytes: timeline.baseStateBytes,
+            stepDeltas: [
+              Uint8List(0),
+              ...timeline.steps.map((step) => step.deltaBytes),
+            ],
+            targetUid: request.requesterUid,
+            elementIds: scopeIds,
+            hasMore: timeline.hasMore,
+            nextBeforeVersion: timeline.nextBeforeVersion,
+          );
+          await _enterScrub(
+            scrub,
+            emit: emit,
+            returnTray: returnTray,
+            returnUserUid: returnUserUid,
+            title: 'Undo request from ${request.requesterName}',
+            startIndex: 0,
+            requestId: event.requestId,
+            focusBounds: focusBounds,
+            highlightElementIds: highlightIds ?? const <String>[],
+          );
+          return;
+        }
+      }
+      // Legacy requests (no targetVersion) or an empty window: build the
+      // desired board directly from the plan instead of emitting
+      // activeRevertPlan, which would auto-open the review sheet on top of
+      // the evidence preview.
       final plan = await service.planRevert(
         _boardId,
         mode: 'user',
@@ -3257,19 +3337,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       );
       if (isClosed) return;
       final desiredElements = _buildDesiredElements(plan.items);
-      final highlightIds =
-          (request != null && request.targetElementIds.isNotEmpty)
-              ? request.targetElementIds
-              : plan.items.map((i) => i.elementId).toList(growable: false);
-      final area = request?.area;
-      final focusBounds = (area != null && area.isValid)
-          ? Rect.fromLTWH(area.left, area.top, area.width, area.height)
-          : null;
       emit(state.copyWith(
         isViewingHistory: true,
         historyPreviewVersion: null,
         historyPreviewElements: desiredElements,
-        historyHighlightElementIds: highlightIds,
+        historyHighlightElementIds: highlightIds ??
+            plan.items.map((i) => i.elementId).toList(growable: false),
         historyPreviewTitle: request != null
             ? 'Undo request from ${request.requesterName}'
             : 'Undo request evidence',
@@ -3294,7 +3367,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasHistoryEvidenceViewToggled event,
     Emitter<CanvasState> emit,
   ) {
-    if (!state.isViewingHistory || state.historyPreviewRequestId == null) return;
+    // The past/current toggle is shared by undo-request evidence and the
+    // per-log compare screen (historyPreviewCompare).
+    if (!state.isViewingHistory) return;
+    if (state.historyPreviewRequestId == null &&
+        !state.historyPreviewCompare) {
+      return;
+    }
     emit(state.copyWith(historyPreviewShowsDesired: event.showDesired));
   }
 
@@ -3309,6 +3388,210 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       activeTray: null,
       selectedShapeId: null,
     ));
+  }
+
+  // ──────────────────────────────────────────────
+  // Member undo request (D5): desired-state flow
+  // ──────────────────────────────────────────────
+
+  void _onUndoRequestDraftStarted(
+    CanvasUndoRequestDraftStarted event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(
+      undoRequestDraft: UndoRequestDraft(
+        elementIds: List<String>.unmodifiable(event.preselectedIds),
+        area: event.area,
+      ),
+    ));
+  }
+
+  void _onUndoRequestDraftElementToggled(
+    CanvasUndoRequestDraftElementToggled event,
+    Emitter<CanvasState> emit,
+  ) {
+    final draft = state.undoRequestDraft;
+    if (draft == null) return;
+    emit(state.copyWith(
+      undoRequestDraft: draft.withToggledElement(event.elementId),
+    ));
+  }
+
+  void _onUndoRequestDraftAreaSet(
+    CanvasUndoRequestDraftAreaSet event,
+    Emitter<CanvasState> emit,
+  ) {
+    final draft = state.undoRequestDraft ?? const UndoRequestDraft();
+    emit(state.copyWith(
+      undoRequestDraft: draft.withArea(event.area, event.elementIds),
+    ));
+  }
+
+  void _onUndoRequestDraftCleared(
+    CanvasUndoRequestDraftCleared event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (state.undoRequestDraft == null) return;
+    emit(state.copyWith(undoRequestDraft: null));
+  }
+
+  /// Loads the member's OWN timeline scoped to the draft's elements and opens
+  /// the request scrub: stop 0 is the virtual "before these changes" state,
+  /// the slider then walks through what they did in the scope.
+  Future<void> _onUndoRequestPreviewRequested(
+    CanvasUndoRequestPreviewRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    final draft = state.undoRequestDraft;
+    if (service == null || draft == null) return;
+    final scopeIds = draft.elementIds;
+    if (scopeIds.isEmpty) {
+      emit(state.copyWith(error: 'Select at least one element first.'));
+      return;
+    }
+    final returnTray = state.activeTray;
+    final returnUserUid = state.selectedUserUid;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final timeline = await service.getUserTimeline(
+        _boardId,
+        state.currentUserId,
+        elementIds: scopeIds,
+      );
+      if (isClosed) return;
+      if (timeline.ops.isEmpty || timeline.steps.isEmpty) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          error: 'No changes of yours are recorded in that scope yet.',
+        ));
+        return;
+      }
+      // Virtual first stop: the state before the page's first scoped op.
+      // Picking it asks the owner to undo ALL the member's in-scope changes
+      // on the page; picking any later stop asks for that moment instead.
+      final beforeStop = BoardOperation(
+        version: timeline.baseVersion,
+        summary: 'Before these changes (v${timeline.baseVersion})',
+      );
+      final scrub = HistoryScrub(
+        stops: [beforeStop, ...timeline.ops],
+        baseStateBytes: timeline.baseStateBytes,
+        stepDeltas: [
+          Uint8List(0),
+          ...timeline.steps.map((step) => step.deltaBytes),
+        ],
+        targetUid: state.currentUserId,
+        elementIds: scopeIds,
+        hasMore: timeline.hasMore,
+        nextBeforeVersion: timeline.nextBeforeVersion,
+      );
+      final area = draft.area;
+      await _enterScrub(
+        scrub,
+        emit: emit,
+        returnTray: returnTray,
+        returnUserUid: returnUserUid,
+        title: 'Your undo request',
+        startIndex: 0,
+        focusBounds: (area != null && area.isValid)
+            ? Rect.fromLTWH(area.left, area.top, area.width, area.height)
+            : null,
+        highlightElementIds: scopeIds,
+      );
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  /// Submits the request with the member's chosen desired state: the version
+  /// of the stop they settled on (never the newest — that would be a no-op).
+  Future<void> _onUndoRequestSubmitRequested(
+    CanvasUndoRequestSubmitRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    final draft = state.undoRequestDraft;
+    final scrub = state.historyScrub;
+    if (service == null || draft == null) return;
+    final reason = event.reason.trim();
+    if (reason.isEmpty) {
+      emit(state.copyWith(error: 'A reason is required.'));
+      return;
+    }
+    if (scrub == null || draft.elementIds.isEmpty) {
+      emit(state.copyWith(error: 'Pick what the owner should restore first.'));
+      return;
+    }
+    final index = state.historyScrubIndex.clamp(0, scrub.lastIndex);
+    if (index >= scrub.lastIndex) {
+      emit(state.copyWith(
+        error:
+            'Move the slider back to the state you want the owner to restore.',
+      ));
+      return;
+    }
+    final targetVersion = scrub.stops[index].version;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      await service.submitUndoRequest(
+        boardId: _boardId,
+        elementIds: draft.elementIds,
+        reason: reason,
+        targetVersion: targetVersion,
+        area: draft.area,
+      );
+      if (isClosed) return;
+      // The request is with the owner now: leave the preview, drop the draft.
+      _historyScrubAdapter = null;
+      emit(state.copyWith(
+        isHistoryLoading: false,
+        isViewingHistory: false,
+        historyPreviewVersion: null,
+        historyPreviewElements: const [],
+        historyHighlightElementIds: const [],
+        historyPreviewTitle: null,
+        historyPreviewReturnTray: null,
+        historyPreviewReturnUserUid: null,
+        historyPreviewFocusBounds: null,
+        historyPreviewRequestId: null,
+        historyPreviewShowsDesired: false,
+        historyScrub: null,
+        historyScrubIndex: 0,
+        historyPreviewCompare: false,
+        historyPreviewOpVersions: const [],
+        activeTray: null,
+        undoRequestDraft: null,
+        infoMessage: 'Undo request sent to the board owner.',
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // Owner: restore to a point between a request's state and now
+  // ──────────────────────────────────────────────
+
+  /// Plans the revert of the requester's in-scope ops after [afterVersion].
+  /// The review sheet confirms per element, exactly like the other ops
+  /// reverts (D4 conflicts default to keep).
+  Future<void> _onHistoryRevertOpsAfterRequested(
+    CanvasHistoryRevertOpsAfterRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _planHistoryRevert(
+      mode: 'ops',
+      targetUid: event.targetUid,
+      afterVersion: event.afterVersion,
+      elementIds: event.elementIds,
+      requestId: event.requestId,
+      emit: emit,
+    );
   }
 
   /// The full board as it would look after applying [items]: live elements with
@@ -3337,6 +3620,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     DateTime? toTime,
     List<String>? elementIds,
     String? requestId,
+    List<int>? opVersions,
+    int? afterVersion,
   }) async {
     final service = _historyService;
     if (service == null) return;
@@ -3355,6 +3640,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         toTime: toTime,
         elementIds: elementIds,
         requestId: requestId,
+        opVersions: opVersions,
+        afterVersion: afterVersion,
       );
       if (isClosed) return;
       if (plan.items.isEmpty) {
@@ -3470,6 +3757,353 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     ));
   }
 
+  // ──────────────────────────────────────────────
+  // Scrub previews: version slider + per-user replay (§ version scrub)
+  // ──────────────────────────────────────────────
+
+  String _memberLabel(String uid) {
+    for (final member in state.boardMembers) {
+      if (member.uid == uid) return member.label;
+    }
+    return 'User';
+  }
+
+  /// Version scrub: fetch the block's ops + the board state just before the
+  /// block starts, then replay them on a temporary adapter. The preview opens
+  /// on the block's LAST state; the banner slider moves back op-by-op.
+  Future<void> _onHistoryVersionScrubRequested(
+    CanvasHistoryVersionScrubRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(error: 'Only the board owner can view board history.'));
+      return;
+    }
+    final block = event.block;
+    final returnTray = state.isViewingHistory
+        ? state.historyPreviewReturnTray
+        : state.activeTray;
+    final returnUserUid = state.isViewingHistory
+        ? state.historyPreviewReturnUserUid
+        : state.selectedUserUid;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final ops = (await service.getBlock(_boardId, block.blockId))
+          .where((op) =>
+              op.version >= block.fromVersion && op.version <= block.toVersion)
+          .toList()
+        ..sort((a, b) => a.version.compareTo(b.version));
+      if (ops.isEmpty) {
+        throw const HistoryServiceException(
+          'block_empty',
+          'This version has no logged operations to scrub.',
+        );
+      }
+      // Base = the board right before the block's first op. Each block op is
+      // itself the delta to the previous state, so the ops replay the block.
+      final base = await service.previewVersion(
+        _boardId,
+        math.max(0, block.fromVersion - 1),
+      );
+      final scrub = HistoryScrub(
+        stops: ops,
+        baseStateBytes: base.stateUpdateBytes,
+        stepDeltas: [for (final op in ops) base64Decode(op.payloadBase64)],
+      );
+      if (isClosed) return;
+      await _enterScrub(
+        scrub,
+        returnTray: returnTray,
+        returnUserUid: returnUserUid,
+        title: 'Scrubbing v${block.fromVersion}–v${block.toVersion}',
+        emit: emit,
+      );
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  /// User scrub: the user's logged ops replayed as true board states. Opens
+  /// on their latest change; the slider moves back through their work.
+  Future<void> _onHistoryUserScrubRequested(
+    CanvasHistoryUserScrubRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(error: 'Only the board owner can view board history.'));
+      return;
+    }
+    final returnTray = state.isViewingHistory
+        ? state.historyPreviewReturnTray
+        : state.activeTray;
+    final returnUserUid = state.isViewingHistory
+        ? state.historyPreviewReturnUserUid
+        : state.selectedUserUid;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final timeline = await service.getUserTimeline(_boardId, event.targetUid);
+      if (isClosed) return;
+      if (timeline.ops.isEmpty || timeline.steps.isEmpty) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          error: 'No replayable changes recorded for this user yet.',
+        ));
+        return;
+      }
+      final scrub = HistoryScrub(
+        stops: timeline.ops,
+        baseStateBytes: timeline.baseStateBytes,
+        stepDeltas: [for (final step in timeline.steps) step.deltaBytes],
+        targetUid: event.targetUid,
+        hasMore: timeline.hasMore,
+        nextBeforeVersion: timeline.nextBeforeVersion,
+      );
+      final name = _memberLabel(event.targetUid);
+      await _enterScrub(
+        scrub,
+        returnTray: returnTray,
+        returnUserUid: returnUserUid,
+        title: "Replaying $name's changes",
+        emit: emit,
+      );
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  /// Renders a scrub session on a fresh temporary adapter. [startIndex]
+  /// defaults to the LAST stop (the newest state in range — the slider then
+  /// moves back from there); request/evidence scrubs open at 0 (the base
+  /// state: "before your changes" / "the requested state").
+  Future<void> _enterScrub(
+    HistoryScrub scrub, {
+    required String? returnTray,
+    required String? returnUserUid,
+    required Emitter<CanvasState> emit,
+    String? title,
+    int? startIndex,
+    String? requestId,
+    Rect? focusBounds,
+    List<String> highlightElementIds = const [],
+  }) async {
+    final adapter = await CanvasDocAdapterFactory.create();
+    if (scrub.baseStateBytes.isNotEmpty) {
+      adapter.applyUpdate(scrub.baseStateBytes, origin: 'remote');
+    }
+    final index = (startIndex ?? scrub.lastIndex).clamp(0, scrub.lastIndex);
+    for (var i = 0; i <= index; i++) {
+      final delta = scrub.stepDeltas[i];
+      if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
+    }
+    _historyScrubAdapter = adapter;
+    final previewElements =
+        _rebuildElementsFromCrdtState(adapter.materializeElements());
+    if (isClosed) return;
+    emit(state.copyWith(
+      isViewingHistory: true,
+      isHistoryLoading: false,
+      historyScrub: scrub,
+      historyScrubIndex: index,
+      historyPreviewVersion: scrub.stops[index].version,
+      historyPreviewElements: previewElements,
+      // Highlights are set once here (never per step), so the focus key does
+      // not change and the viewport never refits mid-scrub.
+      historyHighlightElementIds: highlightElementIds,
+      historyPreviewTitle: title,
+      historyPreviewReturnTray: returnTray,
+      historyPreviewReturnUserUid: returnUserUid,
+      historyPreviewFocusBounds: focusBounds,
+      historyPreviewRequestId: requestId,
+      historyPreviewShowsDesired: false,
+      historyPreviewCompare: false,
+      historyPreviewOpVersions: const [],
+      activeRevertPlan: null,
+      activeTray: null,
+      selectedShapeId: null,
+    ));
+  }
+
+  /// Slider moved: forward steps apply the committed deltas in order; moving
+  /// back rebuilds from the base because CRDT deltas cannot be inverted.
+  Future<void> _onHistoryScrubMoved(
+    CanvasHistoryScrubMoved event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final scrub = state.historyScrub;
+    final adapter = _historyScrubAdapter;
+    if (scrub == null || adapter == null) return;
+    final index = event.index.clamp(0, scrub.lastIndex);
+    if (index == state.historyScrubIndex) return;
+    if (index > state.historyScrubIndex) {
+      for (var i = state.historyScrubIndex + 1; i <= index; i++) {
+        final delta = scrub.stepDeltas[i];
+        if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
+      }
+    } else {
+      final rebuilt = await CanvasDocAdapterFactory.create();
+      if (scrub.baseStateBytes.isNotEmpty) {
+        rebuilt.applyUpdate(scrub.baseStateBytes, origin: 'remote');
+      }
+      for (var i = 0; i <= index; i++) {
+        final delta = scrub.stepDeltas[i];
+        if (delta.isNotEmpty) rebuilt.applyUpdate(delta, origin: 'remote');
+      }
+      _historyScrubAdapter = rebuilt;
+    }
+    final active = _historyScrubAdapter;
+    if (active == null || isClosed) return;
+    final previewElements =
+        _rebuildElementsFromCrdtState(active.materializeElements());
+    emit(state.copyWith(
+      historyScrubIndex: index,
+      historyPreviewElements: previewElements,
+      // historyPreviewVersion stays at the anchor so the viewport never
+      // refits mid-scrub; the banner reads the stop from historyScrub.
+    ));
+  }
+
+  /// Prepend the user's older ops to the active scrub. The adapter already
+  /// holds the board at the previously selected stop — the same op, now at a
+  /// shifted index — so no replay is needed, only the merged session.
+  Future<void> _onHistoryScrubLoadOlderRequested(
+    CanvasHistoryScrubLoadOlderRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    final scrub = state.historyScrub;
+    if (service == null || scrub == null || scrub.targetUid == null) return;
+    if (!scrub.hasMore || scrub.nextBeforeVersion == null) return;
+    if (state.isHistoryLoading) return;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final timeline = await service.getUserTimeline(
+        _boardId,
+        scrub.targetUid!,
+        beforeVersion: scrub.nextBeforeVersion,
+        // Request scrubs stay scoped to the picked elements; an evidence
+        // scrub is additionally anchored at the requested state, so its
+        // virtual stop 0 stays the window's floor.
+        elementIds: scrub.elementIds.isEmpty ? null : scrub.elementIds,
+        afterVersion: state.historyPreviewRequestId != null
+            ? scrub.stops.first.version
+            : null,
+      );
+      if (isClosed) return;
+      if (timeline.ops.isEmpty || timeline.steps.isEmpty) {
+        emit(state.copyWith(isHistoryLoading: false));
+        return;
+      }
+      final merged = HistoryScrub(
+        stops: [...timeline.ops, ...scrub.stops],
+        baseStateBytes: timeline.baseStateBytes,
+        stepDeltas: [
+          ...timeline.steps.map((step) => step.deltaBytes),
+          ...scrub.stepDeltas,
+        ],
+        targetUid: scrub.targetUid,
+        elementIds: scrub.elementIds,
+        hasMore: timeline.hasMore,
+        nextBeforeVersion: timeline.nextBeforeVersion,
+      );
+      emit(state.copyWith(
+        isHistoryLoading: false,
+        historyScrub: merged,
+        historyScrubIndex:
+            (state.historyScrubIndex + timeline.ops.length)
+                .clamp(0, merged.lastIndex),
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  /// Log compare: the board as it was when the tapped op was made (highlighted),
+  /// toggled against the live board from the banner. First view = the past.
+  Future<void> _onHistoryOpCompareRequested(
+    CanvasHistoryOpCompareRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(error: 'Only the board owner can view board history.'));
+      return;
+    }
+    final op = event.operation;
+    final highlight = <String>{
+      for (final change in op.changes)
+        if (change.elementId.isNotEmpty) change.elementId,
+      if (op.elementId != null && op.elementId!.isNotEmpty) op.elementId!,
+    }.toList(growable: false);
+    final returnTray = state.isViewingHistory
+        ? state.historyPreviewReturnTray
+        : state.activeTray;
+    final returnUserUid = state.isViewingHistory
+        ? state.historyPreviewReturnUserUid
+        : state.selectedUserUid;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final preview = await service.previewVersion(_boardId, op.version);
+      final temp = await CanvasDocAdapterFactory.create();
+      if (preview.stateUpdateBytes.isNotEmpty) {
+        temp.applyUpdate(preview.stateUpdateBytes, origin: 'remote');
+      }
+      final previewElements =
+          _rebuildElementsFromCrdtState(temp.materializeElements());
+      _historyScrubAdapter = null;
+      if (isClosed) return;
+      emit(state.copyWith(
+        isViewingHistory: true,
+        isHistoryLoading: false,
+        historyScrub: null,
+        historyScrubIndex: 0,
+        historyPreviewVersion: preview.version,
+        historyPreviewElements: previewElements,
+        historyHighlightElementIds: highlight,
+        historyPreviewTitle: op.headline,
+        historyPreviewReturnTray: returnTray,
+        historyPreviewReturnUserUid: returnUserUid,
+        historyPreviewFocusBounds: null,
+        historyPreviewRequestId: null,
+        // Start on the state when the change was made; the banner toggles to
+        // the live board.
+        historyPreviewShowsDesired: true,
+        historyPreviewCompare: true,
+        historyPreviewOpVersions: [op.version],
+        activeRevertPlan: null,
+        activeTray: null,
+        selectedShapeId: null,
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(isHistoryLoading: false, error: _historyMessage(e)));
+      }
+    }
+  }
+
+  /// Plan the undo of specific logged ops (per-op revert, a multi-selection,
+  /// or a scrub replay's tail). The review sheet confirms per element.
+  Future<void> _onHistoryRevertOpsRequested(
+    CanvasHistoryRevertOpsRequested event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _planHistoryRevert(
+      mode: 'ops',
+      opVersions: event.opVersions,
+      emit: emit,
+    );
+  }
+
   void _onHistoryPlanLoaded(
     CanvasHistoryPlanLoaded event,
     Emitter<CanvasState> emit,
@@ -3535,6 +4169,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       final wasPreviewing = state.isViewingHistory;
       final returnTray = state.historyPreviewReturnTray;
       final returnUserUid = state.historyPreviewReturnUserUid;
+      _historyScrubAdapter = null;
       emit(state.copyWith(
         isHistoryLoading: false,
         activeRevertPlan: null,
@@ -3549,6 +4184,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         historyPreviewFocusBounds: null,
         historyPreviewRequestId: null,
         historyPreviewShowsDesired: false,
+        historyScrub: null,
+        historyScrubIndex: 0,
+        historyPreviewCompare: false,
+        historyPreviewOpVersions: const [],
         activeTray: wasPreviewing ? returnTray : state.activeTray,
         selectedUserUid: wasPreviewing ? returnUserUid : state.selectedUserUid,
       ));

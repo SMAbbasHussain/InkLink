@@ -8,9 +8,10 @@ import 'package:inklink/domain/models/history/board_activity_block.dart';
 import 'package:inklink/domain/models/history/board_operation.dart';
 import 'package:inklink/domain/models/history/revert_plan.dart';
 import 'package:inklink/domain/models/history/undo_request.dart';
+import 'package:inklink/domain/models/history/user_timeline.dart';
 import 'package:inklink/domain/services/history/board_history_service.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
-import 'package:inklink/features/canvas/view/trays/history_tray.dart';
+import 'package:inklink/features/canvas/view/history_screen.dart';
 import 'package:inklink/ui/theme/ink_theme.dart';
 
 class _RecordingHistory implements BoardHistoryService {
@@ -29,6 +30,8 @@ class _RecordingHistory implements BoardHistoryService {
     DateTime? fromTime,
     DateTime? toTime,
     List<String>? elementIds,
+    List<int>? opVersions,
+    int? afterVersion,
     String? requestId,
   }) async {
     planCalls++;
@@ -61,6 +64,18 @@ class _RecordingHistory implements BoardHistoryService {
   }) => throw UnimplementedError();
 
   @override
+  Future<UserTimeline> getUserTimeline(
+    String boardId,
+    String targetUid, {
+    DateTime? fromTime,
+    DateTime? toTime,
+    int? beforeVersion,
+    List<String>? elementIds,
+    int? afterVersion,
+    int limit = 100,
+  }) => throw UnimplementedError();
+
+  @override
   Future<HistoryPreview> previewVersion(String boardId, int version) =>
       throw UnimplementedError();
 
@@ -81,6 +96,7 @@ class _RecordingHistory implements BoardHistoryService {
     required String boardId,
     required List<String> elementIds,
     required String reason,
+    required int targetVersion,
     UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,
@@ -164,11 +180,6 @@ void main() {
     createdAt: DateTime.now().subtract(const Duration(minutes: 3)),
   );
 
-  final state = CanvasState(
-    activityBlocks: blocks,
-    undoRequests: [request],
-  );
-
   setUp(() {
     history = _RecordingHistory();
     bloc = CanvasBloc(
@@ -181,29 +192,25 @@ void main() {
   tearDown(() => bloc.close());
 
   Future<void> pumpTray(WidgetTester tester) async {
-    // Tall viewport so every version row is built (the tray keeps a fixed
-    // height and the list only builds what fits).
     tester.view.physicalSize = const Size(700, 1600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() {
       tester.view.resetPhysicalSize();
       tester.view.resetDevicePixelRatio();
     });
+    bloc.add(
+      const CanvasBoardTitleUpdated('Board', currentUserRole: Board.roleOwner),
+    );
+    bloc.add(CanvasHistoryFeedUpdated(blocks));
+    bloc.add(CanvasUndoRequestsUpdated([request]));
     await tester.pumpWidget(
       MaterialApp(
         theme: InkTheme.light(),
-        home: Scaffold(
-          body: Stack(
-            children: [
-              HistoryTray(
-                isOpen: true,
-                boardId: 'board-1',
-                state: state,
-                bloc: bloc,
-                historyService: history,
-              ),
-            ],
-          ),
+        home: BoardHistoryScreen(
+          boardId: 'board-1',
+          boardTitle: 'Board',
+          bloc: bloc,
+          historyService: history,
         ),
       ),
     );
@@ -266,14 +273,48 @@ void main() {
     expect(find.text('v11–v20'), findsNothing);
   });
 
+  testWidgets('user filter narrows versions to one contributor', (
+    tester,
+  ) async {
+    await pumpTray(tester);
+
+    await tester.tap(find.text('All users'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alice').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('v1–v10'), findsOneWidget);
+    expect(find.text('v11–v20'), findsNothing);
+    expect(find.textContaining('Showing 1 version(s)'), findsOneWidget);
+  });
+
+  testWidgets('time filter excludes blocks outside the window', (tester) async {
+    await pumpTray(tester);
+
+    await tester.tap(find.text('Any time'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Today').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('v1–v10'), findsNothing);
+    expect(find.text('v11–v20'), findsNothing);
+    expect(
+      find.text('No archived versions match these filters.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('restoring a version asks for confirmation then plans it', (
     tester,
   ) async {
     await pumpTray(tester);
-    bloc.add(const CanvasBoardTitleUpdated(null, currentUserRole: Board.roleOwner));
+    bloc.add(
+      const CanvasBoardTitleUpdated(null, currentUserRole: Board.roleOwner),
+    );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(LucideIcons.ellipsisVertical).first);
+    // Versions are shown newest first, so the oldest block is last.
+    await tester.tap(find.byIcon(LucideIcons.ellipsisVertical).last);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Restore to this version…'));
     await tester.pumpAndSettle();
@@ -291,7 +332,9 @@ void main() {
     tester,
   ) async {
     await pumpTray(tester);
-    bloc.add(const CanvasBoardTitleUpdated(null, currentUserRole: Board.roleOwner));
+    bloc.add(
+      const CanvasBoardTitleUpdated(null, currentUserRole: Board.roleOwner),
+    );
     bloc.add(CanvasUndoRequestsUpdated([request]));
     await tester.pumpAndSettle();
 
@@ -319,7 +362,10 @@ void main() {
     expect(bloc.state.isViewingHistory, isTrue);
     expect(bloc.state.historyPreviewRequestId, 'req-1');
     expect(bloc.state.historyPreviewShowsDesired, isTrue);
-    expect(bloc.state.historyPreviewFocusBounds, const Rect.fromLTWH(10, 20, 100, 80));
+    expect(
+      bloc.state.historyPreviewFocusBounds,
+      const Rect.fromLTWH(10, 20, 100, 80),
+    );
     expect(bloc.state.historyHighlightElementIds, ['e-1', 'e-2']);
   });
 }

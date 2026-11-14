@@ -10,7 +10,13 @@ import '../../bloc/canvas_bloc.dart';
 
 /// One user's full action history across blocks (D15). Newest first, paged
 /// with `beforeVersion`; R2 access happens through the socket service.
-class UserHistoryTimeline extends StatelessWidget {
+///
+/// Tapping a row opens the past/current compare preview for that op; the
+/// trailing undo undoes that single op (the revert review sheet confirms).
+/// "Select" enters multi-select whose "Undo N selected" plans the revert of
+/// every chosen op at once. "Replay changes" scrubs this user's changes
+/// op-by-op on the canvas, starting at their latest change.
+class UserHistoryTimeline extends StatefulWidget {
   final CanvasState state;
   final CanvasBloc bloc;
   final String targetUid;
@@ -25,46 +31,55 @@ class UserHistoryTimeline extends StatelessWidget {
   });
 
   @override
+  State<UserHistoryTimeline> createState() => _UserHistoryTimelineState();
+}
+
+class _UserHistoryTimelineState extends State<UserHistoryTimeline> {
+  bool _selectMode = false;
+  final Set<int> _selectedVersions = <int>{};
+
+  CanvasState get state => widget.state;
+  CanvasBloc get bloc => widget.bloc;
+
+  bool get _selecting => _selectMode;
+  int get _selectedCount => _selectedVersions.length;
+
+  void _enterSelection() => setState(() => _selectMode = true);
+
+  void _exitSelection() =>
+      setState(() {
+        _selectMode = false;
+        _selectedVersions.clear();
+      });
+
+  void _toggleSelect(BoardOperation op) {
+    setState(() {
+      if (!_selectedVersions.add(op.version)) {
+        _selectedVersions.remove(op.version);
+      }
+    });
+  }
+
+  void _undoSelected() {
+    final versions = _selectedVersions.toList(growable: false)..sort();
+    if (versions.isEmpty) return;
+    bloc.add(CanvasHistoryRevertOpsRequested(versions));
+    _exitSelection();
+  }
+
+  void _undoOne(BoardOperation op) =>
+      bloc.add(CanvasHistoryRevertOpsRequested([op.version]));
+
+  void _openCompare(BoardOperation op) =>
+      bloc.add(CanvasHistoryOpCompareRequested(op));
+
+  @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            InkWell(
-              onTap: () =>
-                  bloc.add(const CanvasHistoryUserTimelineExited()),
-              borderRadius: BorderRadius.circular(InkRadii.chip),
-              child: Padding(
-                padding: const EdgeInsets.all(InkSpacing.s4),
-                child: Icon(
-                  LucideIcons.chevronLeft,
-                  size: 18,
-                  color: tokens.inkSecondary,
-                ),
-              ),
-            ),
-            const SizedBox(width: InkSpacing.s4),
-            Expanded(
-              child: Text(
-                displayName,
-                style: InkType.bodyStrong(tokens.ink),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            if (state.isHistoryLoading)
-              SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: tokens.accentText,
-                ),
-              ),
-          ],
-        ),
+        _buildHeader(tokens),
         const SizedBox(height: InkSpacing.s8),
         if (state.userOps.isEmpty && !state.isHistoryLoading)
           Padding(
@@ -79,10 +94,17 @@ class UserHistoryTimeline extends StatelessWidget {
             child: ListView.separated(
               shrinkWrap: true,
               itemCount: state.userOps.length,
-              separatorBuilder: (_, _) => const SizedBox(height: InkSpacing.s4),
+              separatorBuilder: (_, _) =>
+                  const SizedBox(height: InkSpacing.s4),
               itemBuilder: (context, index) => _OperationRow(
                 operation: state.userOps[index],
-                bloc: bloc,
+                selecting: _selecting,
+                selected: _selectedVersions.contains(
+                  state.userOps[index].version,
+                ),
+                onOpen: _openCompare,
+                onUndo: _undoOne,
+                onToggleSelect: _toggleSelect,
               ),
             ),
           ),
@@ -93,10 +115,32 @@ class UserHistoryTimeline extends StatelessWidget {
             compact: true,
             onPressed: () => bloc.add(
               CanvasHistoryUserOpsRequested(
-                targetUid,
+                widget.targetUid,
                 beforeVersion: state.userOpsNextBeforeVersion,
               ),
             ),
+          ),
+        ],
+        if (_selecting) ...[
+          const SizedBox(height: InkSpacing.s8),
+          Row(
+            children: [
+              Expanded(
+                child: InkButton.secondary(
+                  label: 'Cancel',
+                  compact: true,
+                  onPressed: _exitSelection,
+                ),
+              ),
+              const SizedBox(width: InkSpacing.s8),
+              Expanded(
+                child: InkButton.danger(
+                  label: 'Undo $_selectedCount selected',
+                  compact: true,
+                  onPressed: _selectedCount == 0 ? null : _undoSelected,
+                ),
+              ),
+            ],
           ),
         ],
         const SizedBox(height: InkSpacing.s8),
@@ -104,8 +148,74 @@ class UserHistoryTimeline extends StatelessWidget {
           label: "Revert this user's work",
           compact: true,
           onPressed: () =>
-              bloc.add(CanvasHistoryRevertUserRequested(targetUid)),
+              bloc.add(CanvasHistoryRevertUserRequested(widget.targetUid)),
         ),
+      ],
+    );
+  }
+
+  Widget _buildHeader(InkTokens tokens) {
+    return Row(
+      children: [
+        InkWell(
+          onTap: () => bloc.add(const CanvasHistoryUserTimelineExited()),
+          borderRadius: BorderRadius.circular(InkRadii.chip),
+          child: Padding(
+            padding: const EdgeInsets.all(InkSpacing.s4),
+            child: Icon(
+              LucideIcons.chevronLeft,
+              size: 18,
+              color: tokens.inkSecondary,
+            ),
+          ),
+        ),
+        const SizedBox(width: InkSpacing.s4),
+        Expanded(
+          child: Text(
+            widget.displayName,
+            style: InkType.bodyStrong(tokens.ink),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (state.isHistoryLoading)
+          Padding(
+            padding: const EdgeInsets.only(right: InkSpacing.s8),
+            child: SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: tokens.accentText,
+              ),
+            ),
+          ),
+        if (_selecting)
+          InkButton.secondary(
+            label: 'Cancel',
+            compact: true,
+            expand: false,
+            onPressed: _exitSelection,
+          )
+        else ...[
+          InkButton.secondary(
+            label: 'Select',
+            compact: true,
+            expand: false,
+            onPressed: state.userOps.isEmpty ? null : _enterSelection,
+          ),
+          const SizedBox(width: InkSpacing.s8),
+          InkButton.secondary(
+            label: 'Replay changes',
+            icon: const Icon(LucideIcons.play),
+            compact: true,
+            expand: false,
+            onPressed: state.userOps.isEmpty
+                ? null
+                : () =>
+                      bloc.add(CanvasHistoryUserScrubRequested(widget.targetUid)),
+          ),
+        ],
       ],
     );
   }
@@ -113,9 +223,20 @@ class UserHistoryTimeline extends StatelessWidget {
 
 class _OperationRow extends StatelessWidget {
   final BoardOperation operation;
-  final CanvasBloc bloc;
+  final bool selecting;
+  final bool selected;
+  final ValueChanged<BoardOperation> onOpen;
+  final ValueChanged<BoardOperation> onUndo;
+  final ValueChanged<BoardOperation> onToggleSelect;
 
-  const _OperationRow({required this.operation, required this.bloc});
+  const _OperationRow({
+    required this.operation,
+    required this.selecting,
+    required this.selected,
+    required this.onOpen,
+    required this.onUndo,
+    required this.onToggleSelect,
+  });
 
   IconData get _icon {
     switch (operation.action) {
@@ -132,21 +253,10 @@ class _OperationRow extends StatelessWidget {
     }
   }
 
-  /// Plain-English headline. Prefers the server summary, then the per-change
-  /// details, then a generic action label — never a raw element id.
+  /// Plain-English headline (server summary first), with the same generic
+  /// fallbacks the log previously used — never a raw element id.
   String get _headline {
-    final summary = operation.summary;
-    if (summary != null && summary.trim().isNotEmpty) return summary;
-    final details = operation.changes
-        .map((c) => c.detail)
-        .whereType<String>()
-        .where((d) => d.trim().isNotEmpty)
-        .toList(growable: false);
-    if (details.length == 1) return details.first;
-    if (details.length > 1) {
-      return '${details.first}  (+${details.length - 1} more)';
-    }
-    return _fallbackLabel;
+    return operation.headline ?? _fallbackLabel;
   }
 
   String get _fallbackLabel {
@@ -179,29 +289,11 @@ class _OperationRow extends StatelessWidget {
     return 'v${operation.version}$time';
   }
 
-  void _openPreview() {
-    final ids = operation.changes
-        .map((c) => c.elementId)
-        .where((id) => id.isNotEmpty)
-        .toList(growable: false);
-    final elementId = operation.elementId;
-    final highlight = ids.isNotEmpty
-        ? ids
-        : (elementId != null && elementId.isNotEmpty
-            ? [elementId]
-            : const <String>[]);
-    bloc.add(CanvasHistoryPreviewRequested(
-      operation.version,
-      highlightElementIds: highlight,
-      title: _headline,
-    ));
-  }
-
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
     return InkWell(
-      onTap: _openPreview,
+      onTap: () => selecting ? onToggleSelect(operation) : onOpen(operation),
       borderRadius: BorderRadius.circular(InkRadii.chip),
       child: Container(
         padding: const EdgeInsets.symmetric(
@@ -209,11 +301,19 @@ class _OperationRow extends StatelessWidget {
           vertical: InkSpacing.s8,
         ),
         decoration: BoxDecoration(
-          color: tokens.field,
+          color: selected ? tokens.accentSoft : tokens.field,
           borderRadius: BorderRadius.circular(InkRadii.chip),
         ),
         child: Row(
           children: [
+            if (selecting) ...[
+              Icon(
+                selected ? LucideIcons.checkCircle2 : LucideIcons.circle,
+                size: 16,
+                color: selected ? tokens.accentText : tokens.inkMuted,
+              ),
+              const SizedBox(width: InkSpacing.s8),
+            ],
             Icon(_icon, size: 14, color: tokens.inkSecondary),
             const SizedBox(width: InkSpacing.s8),
             Expanded(
@@ -235,7 +335,20 @@ class _OperationRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: InkSpacing.s4),
-            Icon(LucideIcons.eye, size: 14, color: tokens.inkMuted),
+            selecting
+                ? const SizedBox.shrink()
+                : InkWell(
+                    onTap: () => onUndo(operation),
+                    borderRadius: BorderRadius.circular(InkRadii.chip),
+                    child: Padding(
+                      padding: const EdgeInsets.all(InkSpacing.s4),
+                      child: Icon(
+                        LucideIcons.undo2,
+                        size: 15,
+                        color: tokens.inkMuted,
+                      ),
+                    ),
+                  ),
           ],
         ),
       ),

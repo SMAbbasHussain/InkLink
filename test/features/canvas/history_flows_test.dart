@@ -6,6 +6,7 @@ import 'package:inklink/domain/models/board.dart';
 import 'package:inklink/domain/models/history/board_operation.dart';
 import 'package:inklink/domain/models/history/revert_plan.dart';
 import 'package:inklink/domain/models/history/undo_request.dart';
+import 'package:inklink/domain/models/history/user_timeline.dart';
 import 'package:inklink/domain/services/history/board_history_service.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
 import 'package:inklink/features/canvas/view/trays/canvas_shape_type.dart';
@@ -52,6 +53,18 @@ class _FakeHistoryService implements BoardHistoryService {
   }
 
   @override
+  Future<UserTimeline> getUserTimeline(
+    String boardId,
+    String targetUid, {
+    DateTime? fromTime,
+    DateTime? toTime,
+    int? beforeVersion,
+    List<String>? elementIds,
+    int? afterVersion,
+    int limit = 100,
+  }) => throw UnimplementedError();
+
+  @override
   Future<RevertPlan> planRevert(
     String boardId, {
     required String mode,
@@ -60,6 +73,8 @@ class _FakeHistoryService implements BoardHistoryService {
     DateTime? fromTime,
     DateTime? toTime,
     List<String>? elementIds,
+    List<int>? opVersions,
+    int? afterVersion,
     String? requestId,
   }) async {
     planCalls++;
@@ -120,6 +135,7 @@ class _FakeHistoryService implements BoardHistoryService {
     required String boardId,
     required List<String> elementIds,
     required String reason,
+    required int targetVersion,
     UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,

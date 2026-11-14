@@ -762,6 +762,116 @@ class CanvasHistoryUserTimelineExited extends CanvasEvent {
   const CanvasHistoryUserTimelineExited();
 }
 
+/// Owner opens a version's scrub preview: it starts on the block's last state
+/// and the banner slider moves back/forward op-by-op (§ version scrub).
+class CanvasHistoryVersionScrubRequested extends CanvasEvent {
+  final BoardActivityBlock block;
+  const CanvasHistoryVersionScrubRequested(this.block);
+}
+
+/// Owner replays one user's logged changes on the canvas. The slider starts
+/// at that user's latest change and moves back (§ user scrub).
+class CanvasHistoryUserScrubRequested extends CanvasEvent {
+  final String targetUid;
+  const CanvasHistoryUserScrubRequested(this.targetUid);
+}
+
+/// The scrub slider moved: apply/undo the committed updates in the preview
+/// accordingly, then settle and revert if wanted.
+class CanvasHistoryScrubMoved extends CanvasEvent {
+  final int index;
+  const CanvasHistoryScrubMoved(this.index);
+}
+
+/// Prepend the replayed user's older ops to the active scrub session.
+class CanvasHistoryScrubLoadOlderRequested extends CanvasEvent {
+  const CanvasHistoryScrubLoadOlderRequested();
+}
+
+/// ── Member undo request (D5): desired-state flow ────────────────────────────
+
+/// Member starts (or reopens) an undo request: the scope draft is created and
+/// the scope sheet opens. [preselectedIds] pre-ticks the scope (e.g. the
+/// undo-conflict elements or an area just resolved on the canvas); [area]
+/// carries the drawn area when the scope was resolved from one. Both REPLACE
+/// any existing draft so stale picks never linger.
+class CanvasUndoRequestDraftStarted extends CanvasEvent {
+  final List<String> preselectedIds;
+  final UndoRequestArea? area;
+  const CanvasUndoRequestDraftStarted({
+    this.preselectedIds = const [],
+    this.area,
+  });
+}
+
+/// Member toggled one element in their undo-request scope: a sheet checkbox
+/// or a double-tap on the live canvas.
+class CanvasUndoRequestDraftElementToggled extends CanvasEvent {
+  final String elementId;
+  const CanvasUndoRequestDraftElementToggled(this.elementId);
+}
+
+/// Member finished an area selection: the area is stored and the scope resets
+/// to the elements overlapping it.
+class CanvasUndoRequestDraftAreaSet extends CanvasEvent {
+  final UndoRequestArea area;
+  final List<String> elementIds;
+  const CanvasUndoRequestDraftAreaSet(this.area, this.elementIds);
+}
+
+/// Member abandoned their in-progress undo request.
+class CanvasUndoRequestDraftCleared extends CanvasEvent {
+  const CanvasUndoRequestDraftCleared();
+}
+
+/// Member wants to see their own scoped changes: loads their timeline
+/// restricted to the draft's elements and opens the request scrub slider
+/// (start = "before these changes").
+class CanvasUndoRequestPreviewRequested extends CanvasEvent {
+  const CanvasUndoRequestPreviewRequested();
+}
+
+/// Member submits the request. The desired state is the currently selected
+/// stop of their request scrub (never the newest stop — that would be a
+/// no-op), stored as the request's targetVersion.
+class CanvasUndoRequestSubmitRequested extends CanvasEvent {
+  final String reason;
+  const CanvasUndoRequestSubmitRequested(this.reason);
+}
+
+/// ── Owner: restore to a point between a request's state and now ────────────
+
+/// Owner settled on a stop between an undo request's requested state and the
+/// current state: undo the requester's in-scope ops after [afterVersion]. The
+/// review sheet confirms per element. [requestId] binds the applied plan to
+/// the request so applying it resolves the request as approved.
+class CanvasHistoryRevertOpsAfterRequested extends CanvasEvent {
+  final String targetUid;
+  final int afterVersion;
+  final List<String> elementIds;
+  final String? requestId;
+  const CanvasHistoryRevertOpsAfterRequested({
+    required this.targetUid,
+    required this.afterVersion,
+    required this.elementIds,
+    this.requestId,
+  });
+}
+
+/// Owner taps a log row: preview the board as it was when the op was made,
+/// with a Past/Current toggle against the live board (§ log compare).
+class CanvasHistoryOpCompareRequested extends CanvasEvent {
+  final BoardOperation operation;
+  const CanvasHistoryOpCompareRequested(this.operation);
+}
+
+/// Owner wants to undo specific logged ops — a single op, a multi-selection
+/// from a user's timeline, or the tail of a scrub replay.
+class CanvasHistoryRevertOpsRequested extends CanvasEvent {
+  final List<int> opVersions;
+  const CanvasHistoryRevertOpsRequested(this.opVersions);
+}
+
 /// A server-built revert plan is ready for review.
 class CanvasHistoryPlanLoaded extends CanvasEvent {
   final RevertPlan plan;

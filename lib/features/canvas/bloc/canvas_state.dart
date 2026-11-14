@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../domain/models/board.dart';
 import '../../../domain/models/history/board_activity_block.dart';
 import '../../../domain/models/history/board_operation.dart';
+import '../../../domain/models/history/history_scrub.dart';
 import '../../../domain/models/history/revert_plan.dart';
 import '../../../domain/models/history/undo_request.dart';
 import '../models/board_chat_message.dart';
@@ -74,10 +75,31 @@ class CanvasState {
   final RevertPlan? activeRevertPlan;
   final bool isHistoryLoading;
 
+  /// Active scrub session (version scrub or one user's replay). Non-null
+  /// while the preview banner shows the time slider.
+  final HistoryScrub? historyScrub;
+
+  /// Current stop of [historyScrub]: 0 = oldest stop, stops.length − 1 = the
+  /// newest state the scrub opened on.
+  final int historyScrubIndex;
+
+  /// The previewed op supports the Past/Current compare toggle even though no
+  /// undo request is attached (per-log compare screen).
+  final bool historyPreviewCompare;
+
+  /// Versions of the logged ops the preview banner's "Revert this change"
+  /// action targets (compare mode).
+  final List<int> historyPreviewOpVersions;
+
   /// Non-null while an undo/redo was blocked because a collaborator changed
   /// the element(s) the top stack entry would revert (§7.2). The screen shows
   /// the conflict dialog from this; dismissed via [CanvasUndoConflictDismissed].
   final CanvasUndoConflict? undoConflict;
+
+  /// Member's in-progress undo request (D5): the element scope they picked.
+  /// While set, double-tapping canvas elements toggles them in the scope and
+  /// the banner's scrub actions swap for "Send request".
+  final UndoRequestDraft? undoRequestDraft;
   final String? selectedUserUid;
   final List<BoardOperation> userOps;
   final bool hasMoreUserOps;
@@ -136,12 +158,17 @@ class CanvasState {
     this.historyPreviewFocusBounds,
     this.historyPreviewRequestId,
     this.historyPreviewShowsDesired = false,
+    this.historyScrub,
+    this.historyScrubIndex = 0,
+    this.historyPreviewCompare = false,
+    this.historyPreviewOpVersions = const [],
     this.isSelectingUndoRequestArea = false,
     this.activityBlocks = const [],
     this.undoRequests = const [],
     this.activeRevertPlan,
     this.isHistoryLoading = false,
     this.undoConflict,
+    this.undoRequestDraft,
     this.selectedUserUid,
     this.userOps = const [],
     this.hasMoreUserOps = false,
@@ -203,12 +230,17 @@ class CanvasState {
     Object? historyPreviewFocusBounds = _unset,
     Object? historyPreviewRequestId = _unset,
     bool? historyPreviewShowsDesired,
+    Object? historyScrub = _unset,
+    int? historyScrubIndex,
+    bool? historyPreviewCompare,
+    List<int>? historyPreviewOpVersions,
     bool? isSelectingUndoRequestArea,
     List<BoardActivityBlock>? activityBlocks,
     List<UndoRequest>? undoRequests,
     Object? activeRevertPlan = _unset,
     bool? isHistoryLoading,
     Object? undoConflict = _unset,
+    Object? undoRequestDraft = _unset,
     Object? selectedUserUid = _unset,
     List<BoardOperation>? userOps,
     bool? hasMoreUserOps,
@@ -309,6 +341,13 @@ class CanvasState {
           : historyPreviewRequestId as String?,
       historyPreviewShowsDesired:
           historyPreviewShowsDesired ?? this.historyPreviewShowsDesired,
+      historyScrub:
+          historyScrub == _unset ? this.historyScrub : historyScrub as HistoryScrub?,
+      historyScrubIndex: historyScrubIndex ?? this.historyScrubIndex,
+      historyPreviewCompare:
+          historyPreviewCompare ?? this.historyPreviewCompare,
+      historyPreviewOpVersions:
+          historyPreviewOpVersions ?? this.historyPreviewOpVersions,
       isSelectingUndoRequestArea:
           isSelectingUndoRequestArea ?? this.isSelectingUndoRequestArea,
       activityBlocks: activityBlocks ?? this.activityBlocks,
@@ -320,6 +359,9 @@ class CanvasState {
       undoConflict: undoConflict == _unset
           ? this.undoConflict
           : undoConflict as CanvasUndoConflict?,
+      undoRequestDraft: undoRequestDraft == _unset
+          ? this.undoRequestDraft
+          : undoRequestDraft as UndoRequestDraft?,
       selectedUserUid: selectedUserUid == _unset
           ? this.selectedUserUid
           : selectedUserUid as String?,
@@ -398,12 +440,17 @@ class CanvasState {
           historyPreviewFocusBounds == other.historyPreviewFocusBounds &&
           historyPreviewRequestId == other.historyPreviewRequestId &&
           historyPreviewShowsDesired == other.historyPreviewShowsDesired &&
+          identical(historyScrub, other.historyScrub) &&
+          historyScrubIndex == other.historyScrubIndex &&
+          historyPreviewCompare == other.historyPreviewCompare &&
+          _listEquals(historyPreviewOpVersions, other.historyPreviewOpVersions) &&
           isSelectingUndoRequestArea == other.isSelectingUndoRequestArea &&
           activityBlocks == other.activityBlocks &&
           undoRequests == other.undoRequests &&
           activeRevertPlan == other.activeRevertPlan &&
           isHistoryLoading == other.isHistoryLoading &&
           undoConflict == other.undoConflict &&
+          undoRequestDraft == other.undoRequestDraft &&
           selectedUserUid == other.selectedUserUid &&
           userOps == other.userOps &&
           hasMoreUserOps == other.hasMoreUserOps &&
@@ -463,12 +510,17 @@ class CanvasState {
       historyPreviewFocusBounds.hashCode ^
       historyPreviewRequestId.hashCode ^
       historyPreviewShowsDesired.hashCode ^
+      (historyScrub?.hashCode ?? 0) ^
+      historyScrubIndex.hashCode ^
+      historyPreviewCompare.hashCode ^
+      Object.hashAll(historyPreviewOpVersions) ^
       isSelectingUndoRequestArea.hashCode ^
       activityBlocks.hashCode ^
       undoRequests.hashCode ^
       activeRevertPlan.hashCode ^
       isHistoryLoading.hashCode ^
       undoConflict.hashCode ^
+      undoRequestDraft.hashCode ^
       selectedUserUid.hashCode ^
       userOps.hashCode ^
       hasMoreUserOps.hashCode ^
@@ -516,7 +568,48 @@ class CanvasUndoConflict {
   int get hashCode => Object.hashAll(elementIds);
 }
 
-bool _listEquals(List<String> a, List<String> b) {
+/// A member's in-progress undo request (D5): the element scope they are
+/// picking — an area resolved to its overlapping elements and/or double-tapped
+/// elements — before the desired state is chosen on the scrub slider. While a
+/// draft exists, double-tapping canvas elements toggles them in [elementIds].
+class UndoRequestDraft {
+  final List<String> elementIds;
+  final UndoRequestArea? area;
+
+  const UndoRequestDraft({
+    this.elementIds = const [],
+    this.area,
+  });
+
+  /// Draft with [elementId] added, or removed when already in the scope.
+  UndoRequestDraft withToggledElement(String elementId) {
+    final next = List<String>.of(elementIds);
+    if (!next.remove(elementId)) next.add(elementId);
+    return UndoRequestDraft(elementIds: next, area: area);
+  }
+
+  /// Draft with the member's drawn [area] and the scope the screen resolved
+  /// for it (the area's overlapping elements plus any explicitly double-tapped
+  /// extras outside it). Replaces any previous area and the whole scope.
+  UndoRequestDraft withArea(UndoRequestArea area, List<String> elementIds) =>
+      UndoRequestDraft(
+        elementIds: List<String>.unmodifiable(elementIds),
+        area: area,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UndoRequestDraft &&
+          runtimeType == other.runtimeType &&
+          _listEquals(elementIds, other.elementIds) &&
+          area == other.area;
+
+  @override
+  int get hashCode => Object.hash(area, Object.hashAll(elementIds));
+}
+
+bool _listEquals<T>(List<T> a, List<T> b) {
   if (a.length != b.length) return false;
   for (var i = 0; i < a.length; i++) {
     if (a[i] != b[i]) return false;
