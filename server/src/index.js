@@ -1032,9 +1032,7 @@ async function appendAndBroadcast(boardId, {
     },
   });
 
-  if (version % ARCHIVE_BLOCK_OPS === 0) {
-    triggerSnapshot(boardId).catch(() => { });
-  }
+  maybeTriggerArchive(boardId, version);
   return version;
 }
 
@@ -1077,11 +1075,14 @@ async function seedRedisFromFirestore(boardId) {
       const p = redis.pipeline();
       if (data.lastAppliedVersion) {
         p.set(versionKey, data.lastAppliedVersion.toString(), 'EX', 604800);
+        p.set(`board:lastSnapshotVersion:${boardId}`, data.lastAppliedVersion.toString(), 'EX', 604800);
         console.log(`[seed] Board ${boardId}: version seeded to ${data.lastAppliedVersion} from Firestore`);
       }
       if (data.lastAppliedStreamId) {
         p.set(`board:lastSnapshotCursor:${boardId}`, data.lastAppliedStreamId, 'EX', 604800);
-        p.set(`board:lastSnapshotVersion:${boardId}`, (data.lastAppliedVersion || 0).toString(), 'EX', 604800);
+        if (!data.lastAppliedVersion) {
+          p.set(`board:lastSnapshotVersion:${boardId}`, '0', 'EX', 604800);
+        }
       }
       await p.exec();
     } else {
@@ -1102,7 +1103,20 @@ async function seedRedisFromFirestore(boardId) {
 // awaitable and supports `force`.
 // ============================================================
 const snapshotInFlight = new Map(); // boardId -> Promise<void>
-const ARCHIVE_BLOCK_OPS = 500;
+const ARCHIVE_BLOCK_OPS = 100;
+
+async function maybeTriggerArchive(boardId, version) {
+  if (!redisAvailable || version === null || version === undefined || version <= 0) return;
+  try {
+    const lastVerStr = await redis.get(`board:lastSnapshotVersion:${boardId}`);
+    const lastSnapshotVersion = parseInt(lastVerStr || '0', 10) || 0;
+    if (version - lastSnapshotVersion >= ARCHIVE_BLOCK_OPS) {
+      await triggerSnapshot(boardId);
+    }
+  } catch (e) {
+    console.warn(`[snapshot] trigger failed for ${boardId}: ${e.message}`);
+  }
+}
 
 async function triggerSnapshot(boardId, { force = false } = {}) {
   if (snapshotInFlight.has(boardId)) {
@@ -1381,19 +1395,153 @@ async function runSnapshot(boardId) {
   console.log(`[archive] Board ${boardId}: v${lastSnapshotVersion} → v${toVersion} (${rawOps.length} ops, ${elementCount} elements, ${blockId})`);
 }
 
+async function buildLiveTailBlock(boardId) {
+  if (!redisAvailable) return { block: null, ops: [] };
+  await seedRedisFromFirestore(boardId);
+
+  const streamKey = `board_updates:${boardId}`;
+  const versionKey = `board:${boardId}:version`;
+  const snapshotCursorKey = `board:lastSnapshotCursor:${boardId}`;
+  const snapshotVersionKey = `board:lastSnapshotVersion:${boardId}`;
+
+  const [targetVerStr, lastVerStr, lastCursorStr] = await redis.mget(
+    versionKey,
+    snapshotVersionKey,
+    snapshotCursorKey,
+  );
+  const currentVersion = parseInt(targetVerStr || '0', 10) || 0;
+  const lastSnapshotVersion = parseInt(lastVerStr || '0', 10) || 0;
+  if (currentVersion <= lastSnapshotVersion) {
+    return { block: null, ops: [] };
+  }
+
+  const lastCursor = lastCursorStr || '0-0';
+  const rawEntries = await redis.xrange(streamKey, lastCursor, '+');
+  const entries = (rawEntries || [])
+    .map(([id, fields]) => {
+      const entry = parseStreamEntry(fields);
+      entry._streamId = id;
+      return entry;
+    })
+    .filter(e => e.version > lastSnapshotVersion && e.version <= currentVersion)
+    .sort((a, b) => a.version - b.version);
+
+  if (entries.length === 0) {
+    return { block: null, ops: [] };
+  }
+
+  const localProfiles = new Map();
+  const authorUids = [...new Set(entries.map(e => e.sourceClientId).filter(Boolean))];
+  await Promise.all(authorUids.map(async (authorUid) => {
+    try {
+      localProfiles.set(authorUid, await getProfile(authorUid));
+    } catch (_) {
+      localProfiles.set(authorUid, { displayName: 'InkLink User', photoURL: null });
+    }
+  }));
+
+  const rawOps = entries.map((entry) => {
+    const authorUid = entry.sourceClientId || '';
+    const profile = localProfiles.get(authorUid)
+      || { displayName: entry.userDisplayName || 'InkLink User', photoURL: null };
+    return {
+      version: entry.version,
+      updateId: entry.updateId,
+      userId: authorUid,
+      userDisplayName: profile.displayName,
+      userPhotoUrl: profile.photoURL || null,
+      elementId: entry.elementId || null,
+      action: entry.action || 'upsert',
+      payloadBase64: entry.payloadBase64,
+      timestamp: entry.timestamp,
+      ...(entry.restoredFromVersion
+        ? { restoredFromVersion: parseInt(entry.restoredFromVersion, 10) }
+        : {}),
+    };
+  });
+
+  const describedOps = await describeOps(boardId, rawOps, redis);
+
+  const summary = {};
+  for (const op of describedOps) {
+    const authorKey = op.userId || 'unknown';
+    const s = summary[authorKey] || {
+      name: op.userDisplayName || 'InkLink User',
+      photoUrl: op.userPhotoUrl || null,
+      ops: 0,
+      adds: 0,
+      updates: 0,
+      deletes: 0,
+    };
+    s.ops++;
+    for (const change of (op.changes || [])) {
+      if (change.kind === 'add') s.adds++;
+      else if (change.kind === 'delete') s.deletes++;
+      else s.updates++;
+    }
+    summary[authorKey] = s;
+  }
+
+  let contributorUids = Object.keys(summary);
+  let summaryTruncated = false;
+  if (contributorUids.length > 200) {
+    contributorUids = contributorUids
+      .sort((a, b) => summary[b].ops - summary[a].ops)
+      .slice(0, 200);
+    const trimmed = {};
+    for (const authorKey of contributorUids) trimmed[authorKey] = summary[authorKey];
+    contributorUids.sort();
+    summaryTruncated = true;
+  }
+
+  const restores = describedOps
+    .filter(op => op.action === 'restore' && op.restoredFromVersion != null)
+    .slice(0, 20)
+    .map(op => ({
+      byUid: op.userId,
+      restoredFromVersion: op.restoredFromVersion,
+      atVersion: op.version,
+    }));
+
+  const fromVersion = describedOps[0].version;
+  const toVersion = describedOps[describedOps.length - 1].version;
+
+  const block = {
+    boardId,
+    blockId: 'live_tail',
+    fromVersion,
+    toVersion,
+    operationCount: describedOps.length,
+    firstOpAt: describedOps[0].timestamp || null,
+    lastOpAt: describedOps[describedOps.length - 1].timestamp || null,
+    contributorUids,
+    summary,
+    ...(summaryTruncated ? { summaryTruncated: true } : {}),
+    ...(restores.length ? { restores } : {}),
+    r2BlockKey: '',
+    milestoneVersion: null,
+  };
+
+  return { block, ops: describedOps };
+}
+
 // ============================================================
-// CLEANUP WORKER (Phase 3) — snapshot stale boards, then trim
+// INACTIVITY SAFETY-NET WORKER (Every 3 hours)
+// Flushes boards inactive for > 6 hours that have unarchived ops (< 100 ops).
 // ============================================================
+const INACTIVE_FLUSH_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
+const INACTIVE_BOARD_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours
+
 setInterval(async () => {
   if (!redisAvailable) return;
 
-  const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+  const inactiveCutoff = Date.now() - INACTIVE_BOARD_THRESHOLD_MS;
   const stream = redis.scanStream({ match: 'board:lastActivity:*', count: 100 });
 
   stream.on('error', (err) => {
     // Without an error listener, an unhandled 'error' event on the stream
     // throws and kills the process.
-    console.warn(`[cleanup] Scan stream error: ${err.message}`);
+    console.warn(`[inactivity-flush] Scan stream error: ${err.message}`);
   });
 
   stream.on('data', async (keys) => {
@@ -1403,49 +1551,28 @@ setInterval(async () => {
       for (let i = 0; i < keys.length; i++) {
         const key = keys[i];
         const boardId = key.replace('board:lastActivity:', '');
-        const lastActivity = parseInt(activities[i] || '0', 10);
-        if (lastActivity === 0 || lastActivity > threeDaysAgo) continue;
-        console.log(`[cleanup] Board ${boardId} inactive > 3 days — taking snapshot`);
-        await triggerSnapshot(boardId);
-      }
-    } catch (e) {
-      console.warn(`[cleanup] Failed for keys batch: ${e.message}`);
-    }
-  });
-}, 60 * 60 * 1000);
+        const lastActivity = parseInt(activities[i] || '0', 10) || 0;
+        if (lastActivity === 0 || lastActivity > inactiveCutoff) continue;
 
-// Snapshot worker loop — archives pending stream updates every 5 minutes.
-// Without this, blocks only close on `% 500 === 0` appends, before a
-// clear/restore, or after 3 days of inactivity, so a crash could lose up to
-// ~500 acknowledged updates for later joiners.
-setInterval(async () => {
-  if (!redisAvailable) return;
-  const stream = redis.scanStream({ match: 'board:lastActivity:*', count: 100 });
-
-  stream.on('error', (err) => {
-    console.warn(`[snapshot-loop] Scan stream error: ${err.message}`);
-  });
-
-  stream.on('data', async (keys) => {
-    if (!keys || keys.length === 0) return;
-    for (const key of keys) {
-      const boardId = key.replace('board:lastActivity:', '');
-      try {
         const [verStr, snapVerStr] = await redis.mget(
           `board:${boardId}:version`,
           `board:lastSnapshotVersion:${boardId}`,
         );
         const version = parseInt(verStr || '0', 10) || 0;
         const snapshotVersion = parseInt(snapVerStr || '0', 10) || 0;
-        if (version > snapshotVersion) {
+        const pendingOps = version - snapshotVersion;
+        if (pendingOps > 0) {
+          console.log(
+            `[inactivity-flush] Board ${boardId} inactive > 6h with ${pendingOps} unarchived op(s) (v${snapshotVersion} → v${version}) — taking snapshot`
+          );
           await triggerSnapshot(boardId);
         }
-      } catch (e) {
-        console.warn(`[snapshot-loop] Failed for board ${boardId}: ${e.message}`);
       }
+    } catch (e) {
+      console.warn(`[inactivity-flush] Failed for keys batch: ${e.message}`);
     }
   });
-}, 5 * 60 * 1000);
+}, INACTIVE_FLUSH_INTERVAL_MS);
 
 // ============================================================
 // SOCKET.IO AUTH MIDDLEWARE
@@ -1680,10 +1807,8 @@ io.on('connection', (socket) => {
       // -------------------------------------------------------
       // Trigger an archive every ARCHIVE_BLOCK_OPS updates (fire-and-forget)
       // -------------------------------------------------------
-      if (redisAvailable && version !== null && version % ARCHIVE_BLOCK_OPS === 0) {
-        triggerSnapshot(boardId).catch(e =>
-          console.warn(`[snapshot] trigger failed: ${e.message}`)
-        );
+      if (redisAvailable && version !== null) {
+        maybeTriggerArchive(boardId, version);
       }
 
       if (typeof ack === 'function') {
@@ -1715,6 +1840,18 @@ io.on('connection', (socket) => {
     }
     if (!db || !(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
     try {
+      if (blockId === 'live_tail') {
+        if (!redisAvailable) return historyError(ack, 'persistence_unavailable');
+        const { block, ops } = await buildLiveTailBlock(boardId);
+        if (typeof ack === 'function') {
+          ack({
+            status: 'success',
+            block: block || { blockId: 'live_tail', fromVersion: 0, toVersion: 0 },
+            ops,
+          });
+        }
+        return;
+      }
       const doc = await db.collection('boards').doc(boardId)
         .collection('activity_index').doc(blockId).get();
       if (!doc.exists) return historyError(ack, 'not_found');
@@ -1724,6 +1861,20 @@ io.on('connection', (socket) => {
       if (typeof ack === 'function') ack({ status: 'success', block, ops: described });
     } catch (e) {
       console.warn(`[history_get_block] ${e.message}`);
+      historyError(ack, 'archive_unavailable');
+    }
+  });
+
+  socket.on('history_get_live_tail', async ({ boardId } = {}, ack) => {
+    if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
+    if (!isValidBoardId(boardId)) return historyError(ack, 'invalid_payload');
+    if (!redisAvailable || !db) return historyError(ack, 'persistence_unavailable');
+    if (!(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
+    try {
+      const { block, ops } = await buildLiveTailBlock(boardId);
+      if (typeof ack === 'function') ack({ status: 'success', block, ops });
+    } catch (e) {
+      console.warn(`[history_get_live_tail] ${e.message}`);
       historyError(ack, 'archive_unavailable');
     }
   });

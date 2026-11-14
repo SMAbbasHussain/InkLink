@@ -50,6 +50,9 @@ class _RecordingHistory implements BoardHistoryService {
   }
 
   @override
+  Future<BoardActivityBlock?> getLiveTail(String boardId) async => null;
+
+  @override
   Future<List<BoardOperation>> getBlock(String boardId, String blockId) =>
       throw UnimplementedError();
 

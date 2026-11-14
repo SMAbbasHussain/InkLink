@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/core/crdt/canvas_crdt_adapter.dart';
 import 'package:inklink/core/database/collections/local_crdt_update.dart';
 import 'package:inklink/domain/models/board.dart';
+import 'package:inklink/domain/models/history/board_activity_block.dart';
 import 'package:inklink/domain/models/history/board_operation.dart';
 import 'package:inklink/domain/models/history/revert_plan.dart';
 import 'package:inklink/domain/models/history/undo_request.dart';
@@ -96,6 +97,9 @@ class _FakeHistoryService implements BoardHistoryService {
     undoOwnCalls++;
     return undoOwnResult;
   }
+
+  @override
+  Future<BoardActivityBlock?> getLiveTail(String boardId) async => null;
 
   @override
   Future<List<BoardOperation>> getBlock(String boardId, String blockId) =>

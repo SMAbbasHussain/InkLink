@@ -664,6 +664,12 @@ class CanvasHistoryFeedUpdated extends CanvasEvent {
   const CanvasHistoryFeedUpdated(this.blocks);
 }
 
+/// Internal: the unarchived Redis tail block was fetched or updated.
+class CanvasHistoryLiveTailUpdated extends CanvasEvent {
+  final BoardActivityBlock? block;
+  const CanvasHistoryLiveTailUpdated(this.block);
+}
+
 /// Preview a past version read-only. [highlightElementIds] marks the elements
 /// the owner is inspecting; [focusBounds] (world space) overrides the camera
 /// focus when set (e.g. a request's selected area).

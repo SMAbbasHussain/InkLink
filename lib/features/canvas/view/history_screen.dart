@@ -332,8 +332,12 @@ class _BoardHistoryScreenState extends State<BoardHistoryScreen> {
               actions: [
                 IconButton(
                   tooltip: 'Refresh history',
-                  onPressed: () =>
-                      widget.bloc.add(const CanvasHistoryFeedRequested()),
+                  onPressed: () {
+                    widget.bloc.add(const CanvasHistoryFeedRequested());
+                    if (state.selectedUserUid != null) {
+                      _openUserTimeline(state.selectedUserUid!);
+                    }
+                  },
                   icon: Icon(
                     LucideIcons.refreshCw,
                     size: 18,
@@ -704,8 +708,8 @@ class _BoardHistoryScreenState extends State<BoardHistoryScreen> {
 
   String _emptyVersionsMessage(CanvasState state) {
     if (state.activityBlocks.isEmpty) {
-      return 'History appears after the first block is archived '
-          '(500 ops or a 5-minute flush).';
+      return 'No board activity recorded yet. Edits appear here live and are '
+          'archived into versions every 100 ops.';
     }
     if (_hasActiveFilters) {
       return 'No archived versions match these filters.';
@@ -865,6 +869,14 @@ class _BlockRow extends StatelessWidget {
                 '${totals.deletes} removed',
                 style: InkType.caption(tokens.inkMuted),
               ),
+              if (block.blockId == 'live_tail') ...[
+                const SizedBox(height: InkSpacing.s4),
+                _Tag(
+                  icon: LucideIcons.radio,
+                  label: 'In progress (${block.operationCount}/100 ops)',
+                  color: tokens.accentText,
+                ),
+              ],
               if (restore != null) ...[
                 const SizedBox(height: InkSpacing.s4),
                 _Tag(

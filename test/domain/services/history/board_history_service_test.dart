@@ -84,6 +84,8 @@ void main() {
   late _FakeSocket socket;
   late BoardHistoryServiceImpl service;
   late List<String> askedBlocks;
+  Map<String, dynamic>? liveTailResponse;
+  int liveTailOpsCount = 1;
 
   BoardHistoryServiceImpl build() {
     auth = _FakeAuthService();
@@ -96,15 +98,18 @@ void main() {
           return {
             'status': 'success',
             'block': {'blockId': blockId},
-            'ops': [
-              {
-                'version': 1,
-                'elementId': 'e',
+            'ops': List.generate(
+              blockId == 'live_tail' ? liveTailOpsCount : 1,
+              (i) => {
+                'version': i + 1,
+                'elementId': 'e-$i',
                 'action': 'upsert',
                 'payloadBase64': '',
               },
-            ],
+            ),
           };
+        case 'history_get_live_tail':
+          return liveTailResponse ?? {'status': 'success', 'block': null, 'ops': []};
         case 'history_get_user_ops':
           return {
             'status': 'success',
@@ -201,9 +206,49 @@ void main() {
       await service.getBlock('b', 'block_01');
       expect(askedBlocks.length, 22, reason: 'least recent entry evicted');
     });
+
+    test('bypasses cache for live_tail so scrubbing sees new edits', () async {
+      liveTailOpsCount = 1;
+      final first = await service.getBlock('b', 'live_tail');
+      expect(first.length, 1);
+      expect(askedBlocks.length, 1);
+
+      liveTailOpsCount = 2;
+      final second = await service.getBlock('b', 'live_tail');
+      expect(second.length, 2);
+      expect(askedBlocks.length, 2, reason: 'live_tail must never serve stale cache');
+    });
   });
 
   group('reads', () {
+    test('getLiveTail parses active block or returns null when empty', () async {
+      liveTailResponse = {'status': 'success', 'block': null, 'ops': []};
+      expect(await service.getLiveTail('b'), isNull);
+
+      liveTailResponse = {
+        'status': 'success',
+        'block': {
+          'blockId': 'live_tail',
+          'fromVersion': 101,
+          'toVersion': 105,
+          'operationCount': 5,
+          'contributorUids': ['alice'],
+          'summary': {
+            'alice': {'name': 'Alice', 'ops': 5, 'adds': 2, 'updates': 3, 'deletes': 0},
+          },
+        },
+        'ops': [
+          {'version': 101, 'action': 'upsert', 'payloadBase64': ''},
+        ],
+      };
+      final block = await service.getLiveTail('b');
+      expect(block, isNotNull);
+      expect(block!.blockId, 'live_tail');
+      expect(block.fromVersion, 101);
+      expect(block.toVersion, 105);
+      expect(block.operationCount, 5);
+      expect(block.summary['alice']?.adds, 2);
+    });
     test('getUserOps passes paging and parses the page', () async {
       final page = await service.getUserOps(
         'b',

@@ -10,6 +10,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/cloud_functions_service.dart';
 import '../../../core/utils/network_config.dart';
+import '../../models/history/board_activity_block.dart';
 import '../../models/history/board_operation.dart';
 import '../../models/history/revert_plan.dart';
 import '../../models/history/undo_request.dart';
@@ -299,14 +300,49 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
   // ──────────────────────────────────────────────
 
   @override
+  Future<BoardActivityBlock?> getLiveTail(String boardId) async {
+    final response = await _request('history_get_live_tail', {
+      'boardId': boardId,
+    });
+    final rawBlock = response['block'];
+    if (rawBlock is! Map) {
+      _blockCache.remove('$boardId/live_tail');
+      return null;
+    }
+    final block = BoardActivityBlock.fromMap(
+      Map<String, dynamic>.from(rawBlock),
+    );
+    if (block.operationCount <= 0 || block.toVersion <= 0) {
+      _blockCache.remove('$boardId/live_tail');
+      return null;
+    }
+    final rawOps = response['ops'];
+    if (rawOps is List) {
+      final ops = <BoardOperation>[];
+      for (final entry in rawOps) {
+        if (entry is Map) {
+          ops.add(BoardOperation.fromMap(Map<String, dynamic>.from(entry)));
+        }
+      }
+      _blockCache['$boardId/live_tail'] = ops;
+    }
+    return block;
+  }
+
+  @override
   Future<List<BoardOperation>> getBlock(String boardId, String blockId) async {
     // Block ids are only version ranges (`block_000001_000500`), so they repeat
     // across boards — always scope the cache key by board.
+    // The unarchived Redis live tail (`live_tail`) mutates as new operations
+    // arrive, so always fetch fresh ops instead of returning a cached copy.
+    final isLiveTail = blockId == 'live_tail';
     final cacheKey = '$boardId/$blockId';
-    final cached = _blockCache.remove(cacheKey);
-    if (cached != null) {
-      _blockCache[cacheKey] = cached; // mark most-recently used
-      return cached;
+    if (!isLiveTail) {
+      final cached = _blockCache.remove(cacheKey);
+      if (cached != null) {
+        _blockCache[cacheKey] = cached; // mark most-recently used
+        return cached;
+      }
     }
 
     final response = await _request('history_get_block', {
@@ -324,9 +360,11 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
       }
     }
 
-    _blockCache[cacheKey] = ops;
-    while (_blockCache.length > _blockCacheCapacity) {
-      _blockCache.remove(_blockCache.keys.first);
+    if (!isLiveTail) {
+      _blockCache[cacheKey] = ops;
+      while (_blockCache.length > _blockCacheCapacity) {
+        _blockCache.remove(_blockCache.keys.first);
+      }
     }
     return ops;
   }

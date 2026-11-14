@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/core/crdt/canvas_crdt_adapter.dart';
 import 'package:inklink/domain/models/board.dart';
+import 'package:inklink/domain/models/history/board_activity_block.dart';
 import 'package:inklink/domain/models/history/board_operation.dart';
 import 'package:inklink/domain/models/history/revert_plan.dart';
 import 'package:inklink/domain/models/history/undo_request.dart';
@@ -27,6 +28,7 @@ class _FakeHistoryService implements BoardHistoryService {
   List<String>? lastUndoUpdateIds;
 
   HistoryPreview? preview;
+  BoardActivityBlock? liveTail;
   RevertPlan plan = const RevertPlan(
     planId: 'plan_1',
     mode: 'restore',
@@ -115,6 +117,9 @@ class _FakeHistoryService implements BoardHistoryService {
     lastResolvedStatus = status;
     lastResolvedAppliedVersion = appliedVersion;
   }
+
+  @override
+  Future<BoardActivityBlock?> getLiveTail(String boardId) async => liveTail;
 
   @override
   Future<List<BoardOperation>> getBlock(String boardId, String blockId) =>
@@ -416,6 +421,65 @@ void main() {
 
       expect(history.applyCalls, 0);
       expect(bloc.state.error, isNotNull);
+
+      await bloc.close();
+    });
+  });
+
+  group('live tail activity feed sync', () {
+    test('prepends live tail block above archived blocks and deduplicates once archived', () async {
+      final bloc = buildBloc();
+      _setRole(bloc, Board.roleOwner);
+      await _settle();
+
+      const archived1 = BoardActivityBlock(
+        blockId: 'block_000001_000100',
+        fromVersion: 1,
+        toVersion: 100,
+        operationCount: 100,
+      );
+      const tail = BoardActivityBlock(
+        blockId: 'live_tail',
+        fromVersion: 101,
+        toVersion: 112,
+        operationCount: 12,
+      );
+      history.liveTail = tail;
+
+      bloc.add(const CanvasHistoryFeedUpdated([archived1]));
+      await _settle(80);
+
+      expect(bloc.state.activityBlocks.map((b) => b.blockId).toList(), [
+        'live_tail',
+        'block_000001_000100',
+      ]);
+
+      // Simulate snapshot sealing v101..v200 and clearing the live tail in Redis.
+      const archived2 = BoardActivityBlock(
+        blockId: 'block_000101_000200',
+        fromVersion: 101,
+        toVersion: 200,
+        operationCount: 100,
+      );
+      history.liveTail = null;
+      bloc.add(const CanvasHistoryFeedUpdated([archived2, archived1]));
+      await _settle(80);
+
+      expect(bloc.state.activityBlocks.map((b) => b.blockId).toList(), [
+        'block_000101_000200',
+        'block_000001_000100',
+      ]);
+
+      // Also verify even before getLiveTail returns null, a live_tail whose
+      // toVersion <= highestArchived is deduplicated immediately.
+      history.liveTail = tail; // stale tail v112 <= archived2.toVersion (200)
+      bloc.add(const CanvasHistoryFeedRequested());
+      await _settle(80);
+
+      expect(bloc.state.activityBlocks.map((b) => b.blockId).toList(), [
+        'block_000101_000200',
+        'block_000001_000100',
+      ]);
 
       await bloc.close();
     });

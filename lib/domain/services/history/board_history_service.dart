@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../../models/history/board_activity_block.dart';
 import '../../models/history/board_operation.dart';
 import '../../models/history/revert_plan.dart';
 import '../../models/history/undo_request.dart';
@@ -81,6 +82,11 @@ class UserOpsPage {
 }
 
 abstract class BoardHistoryService {
+  /// Unarchived operations in Redis synthesized as a live in-progress version
+  /// block (`blockId == 'live_tail'`). Returns `null` when there are no
+  /// unarchived operations beyond the latest archived snapshot.
+  Future<BoardActivityBlock?> getLiveTail(String boardId);
+
   /// R2 block ops via the socket (bounded client-side LRU cache).
   Future<List<BoardOperation>> getBlock(String boardId, String blockId);
 

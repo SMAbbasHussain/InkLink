@@ -260,6 +260,7 @@ function analyzeOpsHistory(touches, selectedVersions) {
 async function collectUserOps(boardId, targetUid, opts = {}, redis) {
   const db = admin.firestore();
   const ops = [];
+  const seenVersions = new Set();
 
   try {
     const idx = await db.collection('boards').doc(boardId)
@@ -282,6 +283,7 @@ async function collectUserOps(boardId, targetUid, opts = {}, redis) {
         if (opts.fromVersion != null && op.version < opts.fromVersion) continue;
         if (opts.toVersion != null && op.version > opts.toVersion) continue;
         if (!opMatches(op, opts)) continue;
+        seenVersions.add(op.version);
         ops.push(op);
       }
     }
@@ -293,6 +295,7 @@ async function collectUserOps(boardId, targetUid, opts = {}, redis) {
       for (const [, fields] of (raw || [])) {
         const e = parseStreamFields(fields);
         if (e.sourceClientId !== targetUid) continue;
+        if (seenVersions.has(e.version)) continue;
         const op = {
           version: e.version,
           updateId: e.updateId,
@@ -305,6 +308,7 @@ async function collectUserOps(boardId, targetUid, opts = {}, redis) {
         if (opts.fromVersion != null && op.version < opts.fromVersion) continue;
         if (opts.toVersion != null && op.version > opts.toVersion) continue;
         if (!opMatches(op, opts)) continue;
+        seenVersions.add(op.version);
         ops.push(op);
       }
     } catch (_) { /* stream unavailable */ }

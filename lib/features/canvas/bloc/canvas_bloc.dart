@@ -71,6 +71,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   StreamSubscription<bool>? _voiceMuteStatusSub;
   StreamSubscription<List<BoardActivityBlock>>? _historyFeedSub;
   StreamSubscription<List<UndoRequest>>? _undoRequestsSub;
+  List<BoardActivityBlock> _archivedBlocks = const [];
+  BoardActivityBlock? _liveTailBlock;
+  Timer? _liveTailDebounceTimer;
   CanvasDocAdapter? _crdtAdapter;
   List<CanvasElement>? _cachedCrdtElements;
   Future<void>? _crdtInitFuture;
@@ -224,6 +227,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasVoiceSpeakingChanged>(_onCanvasVoiceSpeakingChanged);
     on<CanvasHistoryFeedRequested>(_onHistoryFeedRequested);
     on<CanvasHistoryFeedUpdated>(_onHistoryFeedUpdated);
+    on<CanvasHistoryLiveTailUpdated>(_onHistoryLiveTailUpdated);
     on<CanvasHistoryPreviewRequested>(_onHistoryPreviewRequested);
     on<CanvasHistoryPreviewExited>(_onHistoryPreviewExited);
     on<CanvasHistoryRequestEvidenceRequested>(
@@ -303,6 +307,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     // be retried). Retry now that we know the role.
     if (!wasOwner && _currentUserRole == Board.roleOwner) {
       _ensureHistoryFeedSubscription();
+      unawaited(_refreshLiveTail());
     }
     emit(state.copyWith(
       boardTitle: event.title,
@@ -330,6 +335,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _hasSeenBoardMetadata = false;
     _boardUnavailableTimer?.cancel();
     _boardUnavailableTimer = null;
+    _liveTailDebounceTimer?.cancel();
+    _liveTailDebounceTimer = null;
     emit(state.copyWith(isLoading: true, error: null));
     try {
       if (isClosed) return;
@@ -589,6 +596,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       }
     }
     _refreshFromCrdtAdapter(emit);
+    if (regularUpdates.isNotEmpty || snapshotUpdate.isNotEmpty) {
+      _scheduleLiveTailRefresh();
+    }
   }
 
   Future<void> _onApplyRemotePreview(
@@ -757,6 +767,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       elementId: elementId,
       action: action,
     );
+    _scheduleLiveTailRefresh();
     return updateId;
   }
 
@@ -3146,6 +3157,51 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
   }
 
+  List<BoardActivityBlock> _composeActivityBlocks() {
+    final highestArchived = _archivedBlocks.isEmpty
+        ? 0
+        : _archivedBlocks.map((b) => b.toVersion).reduce(math.max);
+    final tail = _liveTailBlock;
+    if (tail == null ||
+        tail.operationCount <= 0 ||
+        tail.toVersion <= highestArchived) {
+      return _archivedBlocks;
+    }
+    return [tail, ..._archivedBlocks];
+  }
+
+  void _scheduleLiveTailRefresh() {
+    if (isClosed ||
+        _currentUserRole != Board.roleOwner ||
+        _historyService == null ||
+        _boardId.isEmpty) {
+      return;
+    }
+    _liveTailDebounceTimer?.cancel();
+    _liveTailDebounceTimer = Timer(const Duration(milliseconds: 250), () {
+      _liveTailDebounceTimer = null;
+      unawaited(_refreshLiveTail());
+    });
+  }
+
+  Future<void> _refreshLiveTail() async {
+    final service = _historyService;
+    if (isClosed ||
+        _currentUserRole != Board.roleOwner ||
+        service == null ||
+        _boardId.isEmpty) {
+      return;
+    }
+    try {
+      final block = await service.getLiveTail(_boardId);
+      if (!isClosed) {
+        add(CanvasHistoryLiveTailUpdated(block));
+      }
+    } catch (_) {
+      // Best-effort live tail sync; archived blocks from Firestore remain shown.
+    }
+  }
+
   void _onHistoryFeedRequested(
     CanvasHistoryFeedRequested event,
     Emitter<CanvasState> emit,
@@ -3153,6 +3209,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (_currentUserRole != Board.roleOwner) return;
     _syncHistorySubscriptions();
     _ensureHistoryFeedSubscription();
+    unawaited(_refreshLiveTail());
   }
 
   void _onHistoryFeedUpdated(
@@ -3160,7 +3217,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     if (_currentUserRole != Board.roleOwner) return;
-    emit(state.copyWith(activityBlocks: event.blocks));
+    _archivedBlocks = event.blocks;
+    emit(state.copyWith(activityBlocks: _composeActivityBlocks()));
+    unawaited(_refreshLiveTail());
+  }
+
+  void _onHistoryLiveTailUpdated(
+    CanvasHistoryLiveTailUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (_currentUserRole != Board.roleOwner) return;
+    _liveTailBlock = event.block;
+    emit(state.copyWith(activityBlocks: _composeActivityBlocks()));
   }
 
   Future<void> _onHistoryPreviewRequested(
@@ -4162,6 +4230,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       // entries it replaced so Ctrl+Z cannot re-apply them.
       _crdtAdapter?.pruneReverted(result.reverted.toSet());
       _dropCommitRecords(result.reverted);
+      _scheduleLiveTailRefresh();
       if (isClosed) return;
       final message = result.skipped.isEmpty
           ? 'Reverted ${result.reverted.length} change(s).'
@@ -4240,6 +4309,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       // same edits a second time (D14 semantics, applied to our own ops).
       _crdtAdapter?.pruneReverted(result.reverted.toSet());
       _dropCommitRecords(result.reverted);
+      _scheduleLiveTailRefresh();
       final message = result.skipped.isEmpty
           ? 'Undid ${result.reverted.length} recent edit(s).'
           : 'Undid ${result.reverted.length}; ${result.skipped.length} could not be undone because others modified them.';
@@ -4611,6 +4681,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   Future<void> close() async {
     _boardUnavailableTimer?.cancel();
     _boardUnavailableTimer = null;
+    _liveTailDebounceTimer?.cancel();
+    _liveTailDebounceTimer = null;
     for (final preview in _pendingPreviewPublishes.values) {
       preview.timer?.cancel();
     }
