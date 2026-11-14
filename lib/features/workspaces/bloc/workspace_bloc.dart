@@ -910,7 +910,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     if (service == null) return;
 
     try {
-      final boardId = await service.createBoardInWorkspace(
+      await service.createBoardInWorkspace(
         workspaceId: event.workspaceId,
         title: event.title,
         description: event.description,
@@ -918,9 +918,12 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       );
       final current = state;
       if (current is WorkspaceLoaded) {
+        final boardTitle = event.title.trim().isEmpty
+            ? 'Untitled Board'
+            : event.title.trim();
         emit(
           current.copyWith(
-            actionInfo: 'Board created in workspace: $boardId',
+            actionInfo: 'Board created in workspace: $boardTitle',
             actionError: null,
           ),
         );
