@@ -9,6 +9,10 @@ const ROLE_EDITOR = 'editor';
 const MAX_ELEMENTS = 200;
 const MAX_REASON_LENGTH = 1000;
 const MAX_AREA_COORDINATE = 1000000;
+// The member's chosen stop version from their own replay slider (D5): the
+// request asks the owner to restore the scope to this version, not to delete
+// every edit the member made.
+const MAX_TARGET_VERSION = 1e12;
 
 function parseOptionalArea(value) {
   if (value === undefined || value === null) return null;
@@ -50,6 +54,7 @@ module.exports = async (request) => {
     area,
     timeRangeStart,
     timeRangeEnd,
+    targetVersion,
   } = request.data || {};
 
   try {
@@ -83,6 +88,15 @@ module.exports = async (request) => {
     const selectedArea = parseOptionalArea(area);
     const rangeStart = parseOptionalDate(timeRangeStart, 'timeRangeStart');
     const rangeEnd = parseOptionalDate(timeRangeEnd, 'timeRangeEnd');
+    const chosenVersion = Number(targetVersion);
+    if (!Number.isInteger(chosenVersion)
+      || chosenVersion < 0
+      || chosenVersion > MAX_TARGET_VERSION) {
+      throw new HttpsError(
+        'invalid-argument',
+        'targetVersion must be a non-negative integer version.',
+      );
+    }
 
     const firestore = admin.firestore();
     const cleanBoardId = boardId.trim();
@@ -151,6 +165,7 @@ module.exports = async (request) => {
       requesterName,
       requesterPhotoUrl,
       targetElementIds: elementIds,
+      targetVersion: chosenVersion,
       area: selectedArea,
       timeRangeStart: rangeStart
         ? admin.firestore.Timestamp.fromDate(rangeStart)
@@ -173,7 +188,7 @@ module.exports = async (request) => {
           recipientUid: ownerId,
           type: 'undo_request',
           title: 'Undo request',
-          body: `${requesterName} wants you to undo their edits on "${boardTitle}".`,
+          body: `${requesterName} wants part of "${boardTitle}" restored to an earlier state.`,
           action: 'view_board',
           targetId: cleanBoardId,
           senderUid: uid,
@@ -186,6 +201,7 @@ module.exports = async (request) => {
             requesterUid: uid,
             requesterName,
             elementCount: elementIds.length,
+            targetVersion: chosenVersion,
             reason: reason.trim(),
           },
         });
