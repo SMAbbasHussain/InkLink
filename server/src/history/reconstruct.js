@@ -143,4 +143,60 @@ async function reconstruct(boardId, targetVersion, redis) {
   return { doc, elementMap, version };
 }
 
-module.exports = { reconstruct, parseStreamFields };
+// Every op with fromVersion <= version <= toVersion, ascending, from archived
+// blocks + the un-archived stream tail. The timeline builder replays a range
+// once and captures board states at chosen stops, so it needs the raw op list
+// (not just a single reconstructed snapshot). Blocks that fail to load are
+// skipped, mirroring reconstruct's tolerance; a version seen in both a block
+// and the stream is applied once (first record wins).
+async function loadOpsInRange(boardId, fromVersion, toVersion, redis) {
+  const db = admin.firestore();
+  const byVersion = new Map();
+
+  let blocks = [];
+  try {
+    const idx = await db.collection('boards').doc(boardId)
+      .collection('activity_index').orderBy('fromVersion').get();
+    blocks = idx.docs.map(d => d.data()).filter(Boolean);
+  } catch (_) {
+    blocks = [];
+  }
+  for (const b of blocks) {
+    if (!b.r2BlockKey) continue;
+    if (b.toVersion < fromVersion || b.fromVersion > toVersion) continue;
+    let blockOps = [];
+    try {
+      blockOps = await r2.getGzipJson(b.r2BlockKey);
+    } catch (_) {
+      continue;
+    }
+    for (const op of (blockOps || [])) {
+      if (!op || op.version < fromVersion || op.version > toVersion) continue;
+      if (!byVersion.has(op.version)) byVersion.set(op.version, op);
+    }
+  }
+
+  if (redis) {
+    try {
+      const raw = await redis.xrange(`board_updates:${boardId}`, '-', '+');
+      for (const [, fields] of (raw || [])) {
+        const e = parseStreamFields(fields);
+        if (e.version < fromVersion || e.version > toVersion) continue;
+        if (byVersion.has(e.version)) continue;
+        byVersion.set(e.version, {
+          version: e.version,
+          updateId: e.updateId,
+          userId: e.sourceClientId,
+          elementId: e.elementId || null,
+          action: e.action || null,
+          payloadBase64: e.payloadBase64,
+          timestamp: e.timestamp,
+        });
+      }
+    } catch (_) { /* stream unavailable */ }
+  }
+
+  return [...byVersion.values()].sort((a, b) => a.version - b.version);
+}
+
+module.exports = { reconstruct, loadOpsInRange, parseStreamFields };

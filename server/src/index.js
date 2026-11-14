@@ -10,6 +10,7 @@ const historyR2 = require('./history/r2');
 const { getProfile } = require('./history/profiles');
 const { reconstruct } = require('./history/reconstruct');
 const { buildPlan, applyPlan, collectUserOps, describeOps, UNDO_WINDOW_MS } = require('./history/revert');
+const { buildUserTimeline } = require('./history/timeline');
 const { describeChange, summarizeOperation } = require('./history/describe');
 // Official Agora token generator for Node. NOTE: the npm package is
 // "agora-token" (verified against registry.npmjs.org in Oct 2026 —
@@ -1586,9 +1587,9 @@ io.on('connection', (socket) => {
     try {
       // -------------------------------------------------------
       // PHASE 1: Atomic append to Redis STREAM via Lua script
-      // Single-user boards are persisted the same way (skip only the
-      // broadcast below) so the snapshot worker durably stores them —
-      // acking "success" without persisting would lose all solo work.
+      // Single-user and shared boards are persisted the same way so the
+      // snapshot worker durably stores them — acking "success" without
+      // persisting would lose work.
       // -------------------------------------------------------
       let version = null;
       let isDuplicate = false;
@@ -1655,25 +1656,26 @@ io.on('connection', (socket) => {
 
       // -------------------------------------------------------
       // Broadcast to room (with version for client cursor tracking).
-      // Single-user boards skip the broadcast — no peers to relay to —
-      // but the update is already durably appended to the stream above.
+      // Always relay, even when the sender believes this is a single-user
+      // board. Membership can change while a board is open, and a stale
+      // client-side `_singleUser` hint must never turn a live edit into a
+      // silent no-op for the other participants. A truly single-user board
+      // has no other sockets in the room, so this is a no-op in that case.
       // -------------------------------------------------------
-      if (!isSingleUser) {
-        // Server-stamped author (D9) + authoritative action for the live feed.
-        // affectedElementIds lets members prune their local undo stack (D14).
-        const broadcastPayload = {
-          boardId,
-          update: {
-            ...update,
-            version,
-            sourceClientId: uid,
-            action: actionHint,
-            affectedElementIds: actionHint === 'clear' ? clearedElementIds : [],
-          },
-        };
-        socket.to(`board_room:${boardId}`).emit('crdt_update', broadcastPayload);
-        console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId} version=${version}`);
-      }
+      // Server-stamped author (D9) + authoritative action for the live feed.
+      // affectedElementIds lets members prune their local undo stack (D14).
+      const broadcastPayload = {
+        boardId,
+        update: {
+          ...update,
+          version,
+          sourceClientId: uid,
+          action: actionHint,
+          affectedElementIds: actionHint === 'clear' ? clearedElementIds : [],
+        },
+      };
+      socket.to(`board_room:${boardId}`).emit('crdt_update', broadcastPayload);
+      console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId} version=${version}`);
 
       // -------------------------------------------------------
       // Trigger an archive every ARCHIVE_BLOCK_OPS updates (fire-and-forget)
@@ -1754,6 +1756,67 @@ io.on('connection', (socket) => {
     }
   });
 
+  // One user's ops + the board-state delta at each of them, so the owner can
+  // replay that user's work on the canvas (scrub) without further round-trips.
+  // A member may request their OWN timeline — the undo-request slider (D5) —
+  // but never another member's. Read-only; never appends.
+  socket.on('history_preview_user_timeline', async (payload = {}, ack) => {
+    if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
+    const {
+      boardId,
+      targetUid,
+      fromTime,
+      toTime,
+      beforeVersion,
+      limit,
+      elementIds,
+      afterVersion,
+    } = payload;
+    if (!isValidBoardId(boardId) || typeof targetUid !== 'string' || !targetUid) {
+      return historyError(ack, 'invalid_payload');
+    }
+    if (!redisAvailable || !db) return historyError(ack, 'persistence_unavailable');
+    const isSelf = targetUid === uid;
+    if (isSelf) {
+      // Members scope their own replay for the undo request they are about
+      // to send; ordinary edit access is enough.
+      const canEdit = await canUserAccessBoard(boardId, uid, true);
+      if (!canEdit) return historyError(ack, 'forbidden');
+    } else if (!(await isBoardOwner(boardId, uid))) {
+      return historyError(ack, 'forbidden');
+    }
+    // Optional element scope (the member's picked area / double-tapped
+    // elements). Unknown or malformed ids are dropped; an empty scope means
+    // "no filter" rather than "no ops".
+    let scopeIds;
+    if (elementIds != null) {
+      if (!Array.isArray(elementIds)) return historyError(ack, 'invalid_payload');
+      scopeIds = elementIds
+        .filter(id => typeof id === 'string' && id)
+        .slice(0, 200);
+      if (!scopeIds.length) scopeIds = undefined;
+    }
+    try {
+      const timeline = await buildUserTimeline(
+        boardId,
+        targetUid,
+        {
+          fromTime,
+          toTime,
+          beforeVersion: beforeVersion == null ? null : Number(beforeVersion),
+          limit: Number(limit),
+          elementIds: scopeIds,
+          afterVersion: afterVersion == null ? null : Number(afterVersion),
+        },
+        redis,
+      );
+      if (typeof ack === 'function') ack({ status: 'success', ...timeline });
+    } catch (e) {
+      console.warn(`[history_preview_user_timeline] ${e.message}`);
+      historyError(ack, 'archive_unavailable');
+    }
+  });
+
   socket.on('history_preview_version', async ({ boardId, version } = {}, ack) => {
     if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
     const targetVersion = Number(version);
@@ -1804,6 +1867,39 @@ io.on('connection', (socket) => {
         const targetVersion = Number(payload.targetVersion);
         if (!Number.isFinite(targetVersion)) return historyError(ack, 'invalid_payload');
         opts = { mode: 'restore', targetVersion };
+      } else if (payload.mode === 'ops') {
+        // Undo specific logged ops (per-op revert, multi-select, or the tail
+        // of a user's replay after settling on the scrub slider) — or, without
+        // opVersions, everything a user did to a scope after a version (the
+        // owner's "restore partway between a request's state and now").
+        const opVersions = Array.isArray(payload.opVersions)
+          ? payload.opVersions.map(Number).filter(Number.isFinite)
+          : [];
+        const hasTargetUid = typeof payload.targetUid === 'string'
+          && payload.targetUid;
+        if (!opVersions.length && !hasTargetUid) {
+          return historyError(ack, 'invalid_payload');
+        }
+        const afterVersion = payload.afterVersion == null
+          ? undefined
+          : Number(payload.afterVersion);
+        if (hasTargetUid && !opVersions.length
+            && (afterVersion === undefined || !Number.isFinite(afterVersion))) {
+          return historyError(ack, 'invalid_payload');
+        }
+        opts = {
+          mode: 'ops',
+          ...(opVersions.length ? { opVersions } : {}),
+          // Lets replayTouches seed from the milestone below the earliest
+          // selected op instead of replaying the board's whole life. For the
+          // ops-scope form buildPlan collects the target's ops itself.
+          ...(opVersions.length ? { fromVersion: Math.min(...opVersions) } : {}),
+          targetUid: hasTargetUid ? payload.targetUid : undefined,
+          afterVersion,
+          elementIds: Array.isArray(payload.elementIds)
+            ? payload.elementIds
+            : undefined,
+        };
       } else if (payload.mode === 'user') {
         if (typeof payload.targetUid !== 'string' || !payload.targetUid) {
           return historyError(ack, 'invalid_payload');

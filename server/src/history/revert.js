@@ -81,15 +81,28 @@ async function replayTouches(boardId, redis, opts = {}) {
   } catch (_) { /* no index — rely on the stream */ }
 
   let base = null;
-  if (opts.fromTime) {
-    const from = Date.parse(opts.fromTime);
-    if (Number.isFinite(from)) {
+  {
+    // Window start: an absolute version and/or a timestamp. Blocks whose ops
+    // all predate the window are skippable: conflict detection only needs
+    // touches from the target's first in-window op onwards, plus the board
+    // state right before it, which a milestone below the first relevant block
+    // supplies. Without a window the whole retained history must be replayed.
+    const from = opts.fromTime ? Date.parse(opts.fromTime) : NaN;
+    const hasTime = Number.isFinite(from);
+    const fromVersion = opts.fromVersion == null
+      ? null
+      : (Number.isFinite(Number(opts.fromVersion)) ? Number(opts.fromVersion) : null);
+    if (hasTime || fromVersion != null) {
       // First block that may contain an in-window op (an unparseable
       // lastOpAt is treated as relevant — never skip what we cannot date).
       let firstRelevant = null;
       for (const b of blocks) {
         const lastAt = Date.parse(b.lastOpAt || '');
-        if (!Number.isFinite(lastAt) || lastAt >= from) {
+        const timeOk = !hasTime || !Number.isFinite(lastAt) || lastAt >= from;
+        const versionOk =
+          fromVersion == null ||
+          (parseInt(b.toVersion, 10) || 0) >= fromVersion;
+        if (timeOk && versionOk) {
           firstRelevant = b;
           break;
         }
@@ -196,6 +209,42 @@ function analyzeElementHistory(touches, targetUid, opts) {
     if (!mine.length) continue;
     const first = mine[0];
     const conflict = list.some(t => t.version > first.version && t.uid !== targetUid);
+    analysis[elementId] = {
+      before: first.before,
+      firstTouchVersion: first.version,
+      conflict,
+      lastEditorUid: list[list.length - 1].uid,
+    };
+  }
+  return analysis;
+}
+
+// Mode 'ops': undo a specific set of logged ops identified by their stream
+// versions (per-op revert, multi-select, or the tail of a user's replay).
+// Each touched element targets its value right before the EARLIEST selected op
+// that touched it, so a selection collapses to one LWW set/delete per element
+// (D10). Later edits by a DIFFERENT user that are not themselves selected are
+// conflicts — the owner reviews them per element and they default to keep
+// (D4). Later edits by the same user are subsumed, exactly like user mode.
+function analyzeOpsHistory(touches, selectedVersions) {
+  const analysis = {};
+  const selected = Array.isArray(selectedVersions) && selectedVersions.length
+    ? new Set(selectedVersions.map(Number))
+    : null;
+  if (!selected || !selected.size) return analysis;
+
+  for (const [elementId, list] of touches.entries()) {
+    let first = null;
+    for (const t of list) {
+      if (selected.has(t.version)) {
+        first = t;
+        break;
+      }
+    }
+    if (!first) continue;
+    const conflict = list.some(
+      t => t.version > first.version && t.uid !== first.uid && !selected.has(t.version),
+    );
     analysis[elementId] = {
       before: first.before,
       firstTouchVersion: first.version,
@@ -359,6 +408,10 @@ async function describeOps(boardId, ops, redis) {
 }
 
 // mode: 'restore' (targetVersion) | 'user' (targetUid + optional window/elementIds)
+//    | 'ops' (opVersions — undo specific logged ops, or targetUid +
+//      afterVersion + elementIds — undo that user's in-scope ops after a
+//      version, the owner's "restore partway between a request's requested
+//      state and the current state")
 async function buildPlan(boardId, opts, redis, actingUid) {
   const { elementMap: current, version: baseVersion } = await reconstruct(boardId, null, redis);
 
@@ -370,6 +423,50 @@ async function buildPlan(boardId, opts, redis, actingUid) {
     const r = await reconstruct(boardId, opts.targetVersion, redis);
     target = r.elementMap;
     scope = unionKeys(current, target);
+  } else if (opts.mode === 'ops') {
+    // Selected ops: either an explicit list of stream versions, or (ops-scope
+    // mode) everything the target user did to the scope elements after
+    // afterVersion — collected here so the client only names the window.
+    let selectedVersions = Array.isArray(opts.opVersions)
+      ? opts.opVersions.map(Number).filter(Number.isFinite)
+      : [];
+    if (!selectedVersions.length && opts.targetUid) {
+      const after = opts.afterVersion == null
+        ? null
+        : (Number.isFinite(Number(opts.afterVersion))
+            ? Math.trunc(Number(opts.afterVersion))
+            : null);
+      if (after == null) {
+        throw new Error('ops plan needs opVersions or afterVersion');
+      }
+      const userOps = await collectUserOps(
+        boardId,
+        opts.targetUid,
+        {
+          fromVersion: after + 1,
+          ...(Array.isArray(opts.elementIds) && opts.elementIds.length
+            ? { elementIds: opts.elementIds }
+            : {}),
+        },
+        redis,
+      );
+      selectedVersions = userOps.map(op => op.version);
+    }
+    // The replay only needs the board from just before the earliest selected
+    // op: a milestone below it seeds the base state (fromVersion semantics).
+    const touches = await replayTouches(boardId, redis, {
+      ...opts,
+      ...(selectedVersions.length
+        ? { fromVersion: Math.min(...selectedVersions) }
+        : {}),
+    });
+    analysis = analyzeOpsHistory(touches, selectedVersions);
+    target = { ...current };
+    scope = Object.keys(analysis);
+    for (const [elementId, a] of Object.entries(analysis)) {
+      if (a.before === undefined) delete target[elementId];
+      else target[elementId] = a.before;
+    }
   } else {
     const touches = await replayTouches(boardId, redis, opts);
     analysis = analyzeElementHistory(touches, opts.targetUid, opts);
@@ -388,7 +485,9 @@ async function buildPlan(boardId, opts, redis, actingUid) {
     const inCur = elementId in current;
     const inTgt = elementId in target;
     const kind = !inTgt ? 'delete' : (!inCur ? 'add' : 'update');
-    const conflict = opts.mode === 'user' ? !!(analysis && analysis[elementId]?.conflict) : false;
+    const conflicted =
+      (opts.mode === 'user' || opts.mode === 'ops') &&
+      !!(analysis && analysis[elementId]?.conflict);
     const same = JSON.stringify(current[elementId] ?? null) === JSON.stringify(target[elementId] ?? null);
     // `before` is the live board, `after` is what applying the revert produces,
     // so this reads as the change the owner is about to approve.
@@ -396,7 +495,7 @@ async function buildPlan(boardId, opts, redis, actingUid) {
     return {
       elementId,
       kind,
-      conflict,
+      conflict: conflicted,
       noop: same,
       before: current[elementId] ?? null,
       after: target[elementId] ?? null,
@@ -457,6 +556,7 @@ module.exports = {
   collectUserOps,
   describeOps,
   analyzeElementHistory,
+  analyzeOpsHistory,
   replayTouches,
   UNDO_WINDOW_MS,
 };
