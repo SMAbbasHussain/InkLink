@@ -1834,6 +1834,7 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
           final isViewerWarning = message.toLowerCase().contains(
             'you are a viewer',
           );
+          final isArchivedWarning = message.toLowerCase().contains('archived');
 
           if (isViewerWarning) {
             AppSnackBar.show(
@@ -1862,6 +1863,32 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                   textColor: _tokens.accent,
                   onPressed: () => _showRequestEditDialog(context),
                 ),
+                duration: AppSnackBar.defaultDuration,
+              ),
+              duration: AppSnackBar.defaultDuration,
+            );
+          } else if (isArchivedWarning) {
+            AppSnackBar.show(
+              context,
+              SnackBar(
+                content: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      LucideIcons.archive,
+                      size: 16,
+                      color: _tokens.pending,
+                    ),
+                    const SizedBox(width: InkSpacing.s8),
+                    Flexible(
+                      child: Text(
+                        message,
+                        style: TextStyle(color: _tokens.ink),
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: _tokens.paper,
                 duration: AppSnackBar.defaultDuration,
               ),
               duration: AppSnackBar.defaultDuration,
@@ -2535,6 +2562,9 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                             ),
                           if (!state.isViewingHistory)
                             _buildTopPills(state, title),
+
+                          if (!state.isViewingHistory && state.isArchived)
+                            _buildArchivedBanner(state),
 
                           if (!state.isViewingHistory)
                             _buildToolModeIndicator(state),
@@ -4299,6 +4329,53 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
     );
   }
 
+  Widget _buildArchivedBanner(CanvasState state) {
+    final tokens = _tokens;
+    final topInset = MediaQuery.of(context).padding.top + 8;
+    final isOwner = state.currentUserRole == Board.roleOwner;
+
+    return Positioned(
+      top: topInset + 56,
+      left: 12,
+      right: 12,
+      child: GlassPanel(
+        radius: InkRadii.glassBar,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        child: Row(
+          children: [
+            Icon(LucideIcons.archive, size: 16, color: tokens.pending),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                isOwner
+                    ? 'This board is archived. Unarchive it from Settings to edit.'
+                    : 'This board was archived by the owner (Read-only).',
+                style: InkType.caption(tokens.ink),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (isOwner)
+              InkButton.secondary(
+                label: 'Settings',
+                compact: true,
+                expand: false,
+                onPressed: () => _openSettings(state.boardTitle ?? 'Board'),
+              )
+            else
+              InkButton.secondary(
+                label: 'Exit',
+                compact: true,
+                expand: false,
+                onPressed: _exitCanvas,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildTopPills(CanvasState state, String title) {
     final tokens = _tokens;
     final topInset = MediaQuery.of(context).padding.top + 8;
@@ -4360,6 +4437,29 @@ class _CanvasScreenState extends State<CanvasScreen> with WidgetsBindingObserver
                                 style: InkType.title(tokens.ink),
                               ),
                             ),
+                            if (state.isArchived) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: tokens.pending.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(
+                                    color: tokens.pending.withValues(alpha: 0.4),
+                                  ),
+                                ),
+                                child: Text(
+                                  'Archived',
+                                  style: InkType.caption(tokens.pending).copyWith(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
                             if (pendingRequestsCount > 0) ...[
                               const SizedBox(width: 6),
                               Container(

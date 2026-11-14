@@ -118,6 +118,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   String _boardId;
   String _currentUserRole = Board.roleViewer;
   DateTime? _lastViewerWarningAt;
+  DateTime? _lastArchivedWarningAt;
 
   final BoardExportService _boardExportService;
 
@@ -300,6 +301,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     final wasOwner = _currentUserRole == Board.roleOwner;
+    final wasArchived = state.isArchived;
     _currentUserRole = event.currentUserRole;
     _syncHistorySubscriptions();
     // The role can resolve AFTER the owner already opened the history screen
@@ -309,9 +311,22 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       _ensureHistoryFeedSubscription();
       unawaited(_refreshLiveTail());
     }
+
+    String? transitionInfo;
+    if (!wasArchived && event.isArchived) {
+      transitionInfo = _currentUserRole == Board.roleOwner
+          ? 'This board is archived. Unarchive it from Settings to edit.'
+          : 'This board was archived by the owner. Edits are disabled.';
+    } else if (wasArchived && !event.isArchived) {
+      transitionInfo = 'Board has been unarchived. Editing is enabled.';
+    }
+
     emit(state.copyWith(
       boardTitle: event.title,
       currentUserRole: event.currentUserRole,
+      isArchived: event.isArchived,
+      currentStroke: event.isArchived ? const [] : null,
+      infoMessage: transitionInfo,
     ));
   }
 
@@ -455,6 +470,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           add(CanvasBoardTitleUpdated(
             board.title,
             currentUserRole: board.currentUserRole,
+            isArchived: board.isArchived,
           ));
         }
       },
@@ -4359,6 +4375,24 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       emit(state.copyWith(
         error: 'You are viewing history. Exit preview to edit the board.',
       ));
+      return false;
+    }
+    if (state.isArchived) {
+      if (clearStroke && state.currentStroke.isNotEmpty) {
+        emit(state.copyWith(currentStroke: const []));
+      }
+      final now = DateTime.now();
+      final shouldShowWarning = _lastArchivedWarningAt == null ||
+          now.difference(_lastArchivedWarningAt!).inMilliseconds > 1200;
+      if (shouldShowWarning) {
+        _lastArchivedWarningAt = now;
+        emit(state.copyWith(error: null));
+        emit(state.copyWith(
+          error: _currentUserRole == Board.roleOwner
+              ? 'This board is archived. Unarchive it from Settings to edit.'
+              : 'This board was archived by the owner. Edits are disabled.',
+        ));
+      }
       return false;
     }
     if (_currentUserRole != Board.roleViewer) return true;

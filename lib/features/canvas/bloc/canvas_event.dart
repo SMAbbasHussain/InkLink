@@ -23,8 +23,13 @@ class CanvasInitializeCrdt extends CanvasEvent {
 class CanvasBoardTitleUpdated extends CanvasEvent {
   final String? title;
   final String currentUserRole;
+  final bool isArchived;
 
-  const CanvasBoardTitleUpdated(this.title, {this.currentUserRole = 'viewer'});
+  const CanvasBoardTitleUpdated(
+    this.title, {
+    this.currentUserRole = 'viewer',
+    this.isArchived = false,
+  });
 }
 
 /// Board metadata is no longer available (deleted or access lost).

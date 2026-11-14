@@ -29,6 +29,7 @@ class CanvasState {
   final String? error;
   final String? infoMessage;
   final String currentUserRole;
+  final bool isArchived;
   final String currentUserId;
   final List<BoardMember> boardMembers;
   final String memberSearchQuery;
@@ -120,6 +121,7 @@ class CanvasState {
     this.error,
     this.infoMessage,
     this.currentUserRole = 'viewer',
+    this.isArchived = false,
     this.currentUserId = '',
     this.boardMembers = const [],
     this.memberSearchQuery = '',
@@ -192,6 +194,7 @@ class CanvasState {
     Object? error = _unset,
     Object? infoMessage = _unset,
     String? currentUserRole,
+    bool? isArchived,
     String? currentUserId,
     List<BoardMember>? boardMembers,
     String? memberSearchQuery,
@@ -267,6 +270,7 @@ class CanvasState {
       infoMessage:
           infoMessage == _unset ? this.infoMessage : infoMessage as String?,
       currentUserRole: currentUserRole ?? this.currentUserRole,
+      isArchived: isArchived ?? this.isArchived,
       currentUserId: currentUserId ?? this.currentUserId,
       boardMembers: boardMembers ?? this.boardMembers,
       memberSearchQuery: memberSearchQuery ?? this.memberSearchQuery,
@@ -402,6 +406,7 @@ class CanvasState {
           error == other.error &&
           infoMessage == other.infoMessage &&
           currentUserRole == other.currentUserRole &&
+          isArchived == other.isArchived &&
           currentUserId == other.currentUserId &&
           boardMembers == other.boardMembers &&
           memberSearchQuery == other.memberSearchQuery &&
@@ -472,6 +477,7 @@ class CanvasState {
       error.hashCode ^
       infoMessage.hashCode ^
       currentUserRole.hashCode ^
+      isArchived.hashCode ^
       currentUserId.hashCode ^
       boardMembers.hashCode ^
       memberSearchQuery.hashCode ^

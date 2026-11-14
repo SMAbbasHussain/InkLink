@@ -1018,6 +1018,56 @@ void main() {
       expect(bloc.state.error, isNull);
       await bloc.close();
     });
+
+    test('CanvasBoardTitleUpdated with isArchived locks board and cancels stroke', () async {
+      final bloc = CanvasBloc(boardId: 'test-board-123');
+      bloc.add(const CanvasBoardTitleUpdated(
+        'My Board',
+        currentUserRole: Board.roleEditor,
+        isArchived: false,
+      ));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.isArchived, isFalse);
+
+      // Start a stroke while active
+      bloc.add(const CanvasStartStroke(Offset(10, 10)));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.currentStroke, hasLength(1));
+
+      // Owner archives the board
+      bloc.add(const CanvasBoardTitleUpdated(
+        'My Board',
+        currentUserRole: Board.roleEditor,
+        isArchived: true,
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bloc.state.isArchived, isTrue);
+      expect(bloc.state.currentStroke, isEmpty);
+      expect(bloc.state.infoMessage, contains('archived'));
+
+      // Attempting to draw while archived is blocked
+      bloc.add(const CanvasStartStroke(Offset(20, 20)));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.currentStroke, isEmpty);
+      expect(bloc.state.error, contains('archived'));
+
+      // Unarchiving restores editing
+      bloc.add(const CanvasBoardTitleUpdated(
+        'My Board',
+        currentUserRole: Board.roleEditor,
+        isArchived: false,
+      ));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.isArchived, isFalse);
+      expect(bloc.state.infoMessage, contains('unarchived'));
+
+      bloc.add(const CanvasStartStroke(Offset(30, 30)));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.currentStroke, hasLength(1));
+
+      await bloc.close();
+    });
   });
 }
 
