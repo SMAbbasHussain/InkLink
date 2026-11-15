@@ -33,6 +33,51 @@ void main() {
         expect(restoredStroke.points, original.points);
       });
 
+      test('toMap / fromMap round-trip with brushId, pressures, spacing, and textureSeed', () {
+        final original = StrokeElement(
+          id: 'stroke-advanced',
+          z: 2,
+          points: const [Offset(10, 20), Offset(30, 40)],
+          color: Colors.green,
+          strokeWidth: 5,
+          opacity: 0.9,
+          brushType: 'charcoal',
+          brushId: 'charcoal',
+          pressures: const [0.4, 0.9],
+          spacing: 0.35,
+          textureSeed: 777,
+        );
+
+        final map = original.toMap();
+        final restored = CanvasElement.fromMap(original.id, map) as StrokeElement;
+
+        expect(restored.id, original.id);
+        expect(restored.brushId, 'charcoal');
+        expect(restored.pressures, [0.4, 0.9]);
+        expect(restored.spacing, 0.35);
+        expect(restored.textureSeed, 777);
+      });
+
+      test('fromMap backward compatibility for legacy strokes without pressures or brushId', () {
+        final legacyMap = <String, dynamic>{
+          'type': 'stroke',
+          'points': [
+            {'x': 5.0, 'y': 10.0},
+            {'x': 15.0, 'y': 25.0},
+          ],
+          'color': Colors.black.value,
+          'strokeWidth': 4.0,
+          'brushType': 'marker',
+        };
+
+        final restored = CanvasElement.fromMap('legacy-1', legacyMap) as StrokeElement;
+        expect(restored.brushType, 'marker');
+        expect(restored.brushId, 'marker');
+        expect(restored.pressures, isEmpty);
+        expect(restored.spacing, 0.25);
+        expect(restored.textureSeed, 0);
+      });
+
       test('equality', () {
         final a = StrokeElement(
           id: 's1', z: 1, points: [Offset.zero],
@@ -100,6 +145,86 @@ void main() {
 
         expect(a, equals(b));
         expect(a, isNot(equals(c)));
+      });
+
+      test('legacy shape payload defaults the F-10 fields', () {
+        final legacy = CanvasElement.fromMap('old-shape', {
+          'type': 'shape',
+          'shapeType': 'rectangle',
+          'cx': 10.0,
+          'cy': 20.0,
+          'size': 50.0,
+          'color': Colors.black.value,
+          'strokeWidth': 2.0,
+        }) as ShapeElement;
+
+        expect(legacy.width, 0);
+        expect(legacy.height, 0);
+        expect(legacy.strokeOpacity, 1.0);
+        expect(legacy.dashPattern, isNull);
+        expect(legacy.label, '');
+        expect(legacy.labelColor, isNull);
+        expect(legacy.labelFontSize, 14);
+        expect(legacy.labelFontWeight, 600);
+        expect(legacy.labelTextAlign, 'center');
+        expect(legacy.startArrowhead, isFalse);
+        expect(legacy.endArrowhead, isFalse);
+      });
+
+      test('legacy arrow keeps its end arrowhead', () {
+        final legacy = CanvasElement.fromMap('old-arrow', {
+          'type': 'shape',
+          'shapeType': 'arrow',
+          'cx': 0.0,
+          'cy': 0.0,
+          'size': 50.0,
+          'color': Colors.black.value,
+          'strokeWidth': 2.0,
+        }) as ShapeElement;
+
+        expect(legacy.endArrowhead, isTrue);
+        expect(legacy.startArrowhead, isFalse);
+      });
+
+      test('round-trips width/height, label, stroke opacity, dash, arrowheads',
+          () {
+        const original = ShapeElement(
+          id: 'shape-f10',
+          z: 1,
+          shapeType: CanvasShapeType.rectangle,
+          center: Offset(100, 100),
+          size: 200,
+          width: 200,
+          height: 80,
+          color: Color(0xFF2196F3),
+          strokeWidth: 3,
+          strokeOpacity: 0.5,
+          dashPattern: [12, 8],
+          isFilled: true,
+          label: 'Hello',
+          labelColor: Color(0xFFF44336),
+          labelFontSize: 20,
+          labelFontWeight: 700,
+          labelTextAlign: 'left',
+          startArrowhead: true,
+          endArrowhead: true,
+        );
+
+        final restored =
+            CanvasElement.fromMap(original.id, original.toMap()) as ShapeElement;
+
+        expect(restored, original);
+        expect(restored.width, 200);
+        expect(restored.height, 80);
+        expect(restored.strokeOpacity, 0.5);
+        expect(restored.dashPattern, [12, 8]);
+        expect(restored.label, 'Hello');
+        expect(restored.labelColor, const Color(0xFFF44336));
+        expect(restored.labelFontSize, 20);
+        expect(restored.labelFontWeight, 700);
+        expect(restored.labelTextAlign, 'left');
+        expect(restored.startArrowhead, isTrue);
+        expect(restored.endArrowhead, isTrue);
       });
     });
 
@@ -281,6 +406,88 @@ void main() {
         expect(a.hashCode, equals(b.hashCode));
         expect(a, isNot(equals(c)));
       });
+
+      test('legacy connector payload defaults the F-11 fields', () {
+        final restored = CanvasElement.fromMap('conn-legacy', const {
+          'type': 'connector',
+          'z': 0,
+          'sx': 0.0,
+          'sy': 0.0,
+          'ex': 100.0,
+          'ey': 0.0,
+        }) as ConnectorElement;
+
+        expect(restored.startArrowhead, isFalse);
+        expect(restored.endArrowhead, isTrue);
+        expect(restored.hasArrowhead, isTrue);
+        expect(restored.cornerRadius, 0);
+        expect(restored.dashPattern, isNull);
+        expect(restored.label, '');
+        expect(restored.labelColor, isNull);
+        expect(restored.labelFontSize, 14);
+      });
+
+      test('legacy hasArrowhead maps to endArrowhead on read', () {
+        final off = CanvasElement.fromMap('conn-off', const {
+          'type': 'connector',
+          'z': 0,
+          'sx': 0.0,
+          'sy': 0.0,
+          'ex': 10.0,
+          'ey': 0.0,
+          'hasArrowhead': false,
+        }) as ConnectorElement;
+        expect(off.endArrowhead, isFalse);
+        expect(off.hasArrowhead, isFalse);
+
+        // The explicit endArrowhead key wins over the legacy flag.
+        final overridden = CanvasElement.fromMap('conn-over', const {
+          'type': 'connector',
+          'z': 0,
+          'sx': 0.0,
+          'sy': 0.0,
+          'ex': 10.0,
+          'ey': 0.0,
+          'hasArrowhead': true,
+          'endArrowhead': false,
+        }) as ConnectorElement;
+        expect(overridden.endArrowhead, isFalse);
+      });
+
+      test('round-trips label, arrowheads, dash and corner radius', () {
+        final original = ConnectorElement(
+          id: 'conn-rich',
+          z: 2,
+          startPoint: const Offset(0, 0),
+          endPoint: const Offset(120, 80),
+          lineStyle: 'orthogonal',
+          color: const Color(0xFF2563EB),
+          strokeWidth: 4,
+          hasArrowhead: true,
+          startArrowhead: true,
+          cornerRadius: 12,
+          dashPattern: const [12, 8],
+          label: 'depends on',
+          labelColor: const Color(0xFFF44336),
+          labelFontSize: 18,
+        );
+
+        final map = original.toMap();
+        // Both the legacy and the new end-arrow keys are written for compat.
+        expect(map['hasArrowhead'], isTrue);
+        expect(map['endArrowhead'], isTrue);
+        final restored =
+            CanvasElement.fromMap(original.id, map) as ConnectorElement;
+
+        expect(restored, original);
+        expect(restored.startArrowhead, isTrue);
+        expect(restored.endArrowhead, isTrue);
+        expect(restored.cornerRadius, 12);
+        expect(restored.dashPattern, const [12, 8]);
+        expect(restored.label, 'depends on');
+        expect(restored.labelColor, const Color(0xFFF44336));
+        expect(restored.labelFontSize, 18);
+      });
     });
 
     group('sealed class exhaustiveness', () {
@@ -304,6 +511,7 @@ void main() {
           ImageElement _ => 'image',
           StickyNoteElement _ => 'sticky_note',
           ConnectorElement _ => 'connector',
+          LayerElement _ => 'layer',
         });
 
         expect(types, containsAll(['stroke', 'shape', 'text', 'image', 'sticky_note', 'connector']));
@@ -343,6 +551,43 @@ void main() {
 
         elements.sort((a, b) => a.z.compareTo(b.z));
         expect(elements.map((e) => e.id), equals(['d', 'b', 'c', 'a']));
+      });
+    });
+
+    group('image transform metadata', () {
+      test('round-trips rotation and flip through the payload', () {
+        const image = ImageElement(
+          id: 'img',
+          z: 2,
+          center: Offset(10, 20),
+          width: 40,
+          height: 30,
+          imageBase64: '',
+          rotation: 0.75,
+          flipped: true,
+        );
+
+        final restored = CanvasElement.fromMap('img', image.toMap());
+
+        expect(restored, image);
+        final typed = restored as ImageElement;
+        expect(typed.rotation, 0.75);
+        expect(typed.flipped, isTrue);
+      });
+
+      test('legacy image payloads default to upright and unflipped', () {
+        final element = CanvasElement.fromMap('old', {
+          'type': 'image',
+          'z': 0,
+          'cx': 0.0,
+          'cy': 0.0,
+          'width': 10.0,
+          'height': 10.0,
+          'imageBase64': '',
+        }) as ImageElement;
+
+        expect(element.rotation, 0);
+        expect(element.flipped, isFalse);
       });
     });
   });

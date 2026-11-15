@@ -15,6 +15,15 @@ abstract class CanvasDocAdapter {
   });
   Uint8List deleteElement(String elementId, {String origin = 'local'});
   Uint8List clearElements({String origin = 'local'});
+
+  /// Applies many element writes in a single transaction so the undo manager
+  /// records them as one step. A null payload deletes the element.
+  Uint8List applyBatch(
+    List<({String id, Map<String, dynamic>? payload})> changes, {
+    String origin = 'local',
+  });
+  bool get canUndo;
+  bool get canRedo;
   Uint8List? undoLast({String origin = 'local'});
   Uint8List? redoLast({String origin = 'local'});
   Map<String, Map<String, dynamic>> materializeElements();
@@ -93,6 +102,27 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
   }
 
   @override
+  Uint8List applyBatch(
+    List<({String id, Map<String, dynamic>? payload})> changes, {
+    String origin = 'local',
+  }) {
+    if (changes.isEmpty) return Uint8List(0);
+
+    final beforeVector = encodeStateVector();
+    transact<void>(_doc, (_) {
+      for (final change in changes) {
+        final payload = change.payload;
+        if (payload == null) {
+          _elements.delete(change.id);
+        } else {
+          _elements.set(change.id, _cloneValue(payload));
+        }
+      }
+    }, origin);
+    return encodeStateUpdate(vector: beforeVector);
+  }
+
+  @override
   Uint8List clearElements({String origin = 'local'}) {
     if (_elements.size == 0) {
       return Uint8List(0);
@@ -104,6 +134,12 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
     }, origin);
     return encodeStateUpdate(vector: beforeVector);
   }
+
+  @override
+  bool get canUndo => _undoManager.canUndo();
+
+  @override
+  bool get canRedo => _undoManager.canRedo();
 
   @override
   Uint8List? undoLast({String origin = 'local'}) {
