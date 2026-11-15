@@ -6,9 +6,13 @@ import 'package:inklink/ui/theme/ink_theme.dart';
 void main() {
   Widget buildTestWidget({
     required bool isOpen,
+    bool canEdit = true,
     VoidCallback? onClearAll,
     VoidCallback? onUndo,
     VoidCallback? onRedo,
+    VoidCallback? onAddStickyNote,
+    VoidCallback? onAddConnector,
+    VoidCallback? onExport,
   }) {
     return MaterialApp(
       theme: InkTheme.light(),
@@ -17,9 +21,13 @@ void main() {
           children: [
             ToolsTray(
               isOpen: isOpen,
+              canEdit: canEdit,
               onUndo: onUndo ?? () {},
               onRedo: onRedo ?? () {},
               onClearAll: onClearAll,
+              onAddStickyNote: onAddStickyNote,
+              onAddConnector: onAddConnector,
+              onExport: onExport,
             ),
           ],
         ),
@@ -60,6 +68,27 @@ void main() {
     expect(find.text('Clear All'), findsNothing);
     expect(find.text('Undo'), findsOneWidget);
     expect(find.text('Redo'), findsOneWidget);
+  });
+
+  testWidgets('ToolsTray hides edit actions when canEdit is false', (tester) async {
+    await tester.pumpWidget(
+      buildTestWidget(
+        isOpen: true,
+        canEdit: false,
+        onClearAll: () {},
+        onAddStickyNote: () {},
+        onAddConnector: () {},
+        onExport: () {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Undo'), findsNothing);
+    expect(find.text('Redo'), findsNothing);
+    expect(find.text('Sticky Note'), findsNothing);
+    expect(find.text('Connector / Link'), findsNothing);
+    expect(find.text('Clear All'), findsNothing);
+    expect(find.text('Export & Share'), findsOneWidget);
   });
 }
 

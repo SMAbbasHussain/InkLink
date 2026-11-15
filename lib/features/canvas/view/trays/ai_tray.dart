@@ -108,7 +108,7 @@ class AITray extends StatelessWidget {
                   ),
                   const SizedBox(height: InkSpacing.s8),
                   InkButton.secondary(
-                    label: 'Add Prompt As Text Note',
+                    label: 'Add Prompt As Text',
                     icon: const Icon(LucideIcons.fileText),
                     onPressed: onAddText,
                   ),

@@ -8,6 +8,7 @@ import '../widgets/sliding_tray.dart';
 
 class ToolsTray extends StatelessWidget {
   final bool isOpen;
+  final bool canEdit;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final VoidCallback? onClearAll;
@@ -19,6 +20,7 @@ class ToolsTray extends StatelessWidget {
   const ToolsTray({
     super.key,
     required this.isOpen,
+    this.canEdit = true,
     required this.onUndo,
     required this.onRedo,
     this.onClearAll,
@@ -31,11 +33,14 @@ class ToolsTray extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final trayHeight = !canEdit
+        ? (onExport != null ? 140.0 : 96.0)
+        : (onClearAll != null ? 440.0 : 380.0);
     return SlidingTray(
       isOpen: isOpen,
       direction: TrayDirection.left,
       title: 'Editing Tools',
-      height: onClearAll != null ? 440 : 380,
+      height: trayHeight,
       width: 230,
       bottomOffset: 60,
       onClose: onClose,
@@ -43,7 +48,7 @@ class ToolsTray extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
-            if (onAddStickyNote != null) ...[
+            if (canEdit && onAddStickyNote != null) ...[
               _ToolButton(
                 icon: LucideIcons.stickyNote,
                 label: 'Sticky Note',
@@ -52,7 +57,7 @@ class ToolsTray extends StatelessWidget {
               ),
               const SizedBox(height: 10),
             ],
-            if (onAddConnector != null) ...[
+            if (canEdit && onAddConnector != null) ...[
               _ToolButton(
                 icon: LucideIcons.spline,
                 label: 'Connector / Link',
@@ -61,20 +66,22 @@ class ToolsTray extends StatelessWidget {
               ),
               const SizedBox(height: 10),
             ],
-            _ToolButton(
-              icon: LucideIcons.undo2,
-              label: 'Undo',
-              color: tokens.ink,
-              onTap: onUndo,
-            ),
-            const SizedBox(height: 10),
-            _ToolButton(
-              icon: LucideIcons.redo2,
-              label: 'Redo',
-              color: tokens.ink,
-              onTap: onRedo,
-            ),
-            if (onClearAll != null) ...[
+            if (canEdit) ...[
+              _ToolButton(
+                icon: LucideIcons.undo2,
+                label: 'Undo',
+                color: tokens.ink,
+                onTap: onUndo,
+              ),
+              const SizedBox(height: 10),
+              _ToolButton(
+                icon: LucideIcons.redo2,
+                label: 'Redo',
+                color: tokens.ink,
+                onTap: onRedo,
+              ),
+            ],
+            if (canEdit && onClearAll != null) ...[
               const SizedBox(height: 10),
               _ToolButton(
                 icon: LucideIcons.trash2,
@@ -84,7 +91,7 @@ class ToolsTray extends StatelessWidget {
               ),
             ],
             if (onExport != null) ...[
-              const SizedBox(height: 10),
+              if (canEdit) const SizedBox(height: 10),
               _ToolButton(
                 icon: LucideIcons.share2,
                 label: 'Export & Share',
@@ -132,7 +139,14 @@ class _ToolButton extends StatelessWidget {
           children: [
             Icon(icon, size: 18, color: color),
             const SizedBox(width: 10),
-            Text(label, style: InkType.bodyStrong(color)),
+            Expanded(
+              child: Text(
+                label,
+                style: InkType.bodyStrong(color),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
           ],
         ),
       ),
