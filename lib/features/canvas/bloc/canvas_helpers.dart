@@ -97,9 +97,29 @@ bool _parseBool(dynamic value) {
 String _shapeFingerprint(String shapeId, Map<String, dynamic> data) {
   final cx = ((data['cx'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(3);
   final cy = ((data['cy'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(3);
-  final size = ((data['size'] as num?)?.toDouble() ?? 64.0).toStringAsFixed(
-    3,
-  );
+  // Compare the rendered box, not the raw width/height/size: a legacy
+  // `size`-only payload and its migrated explicit width/height render the
+  // same, so migrating on first edit is not itself a user-visible change.
+  final parsed = CanvasElement.fromMap(shapeId, data);
+  final double boxWidth;
+  final double boxHeight;
+  if (parsed is ShapeElement) {
+    final box = shapeElementRect(parsed);
+    boxWidth = box.width;
+    boxHeight = box.height;
+  } else {
+    boxWidth = (data['width'] as num?)?.toDouble() ?? 0.0;
+    boxHeight = (data['height'] as num?)?.toDouble() ?? 0.0;
+  }
+  final size = math.max(boxWidth, boxHeight).toStringAsFixed(3);
+  final width = boxWidth.toStringAsFixed(3);
+  final height = boxHeight.toStringAsFixed(3);
+  final strokeWidth = ((data['strokeWidth'] as num?)?.toDouble() ?? 0.0)
+      .toStringAsFixed(3);
+  final opacity = ((data['opacity'] as num?)?.toDouble() ?? 1.0)
+      .toStringAsFixed(3);
+  final strokeOpacity = ((data['strokeOpacity'] as num?)?.toDouble() ?? 1.0)
+      .toStringAsFixed(3);
   final rotation = _normalizeRotation(
     (data['rotation'] as num?)?.toDouble() ?? 0.0,
   ).toStringAsFixed(5);
@@ -107,46 +127,76 @@ String _shapeFingerprint(String shapeId, Map<String, dynamic> data) {
       .toStringAsFixed(3);
   final color = ((data['color'] as num?)?.toInt() ?? 0).toString();
   final filled = _parseBool(data['isFilled']).toString();
+  final hidden = _parseBool(data['hidden']).toString();
+  final locked = _parseBool(data['locked']).toString();
+  final flipped = _parseBool(data['flipped']).toString();
+  final text = (data['text'] as String?) ?? '';
   final z = ((data['z'] as num?)?.toInt() ?? 0).toString();
-  return '$shapeId|$cx|$cy|$size|$rotation|$borderRadius|$color|$filled|$z';
+  final dash = (data['dashPattern'] as List?)
+          ?.map((e) => ((e as num).toDouble()).toStringAsFixed(3))
+          .join(',') ??
+      '';
+  final label = (data['label'] as String?) ?? '';
+  final labelColor = ((data['labelColor'] as num?)?.toInt() ?? -1).toString();
+  final labelFontSize = ((data['labelFontSize'] as num?)?.toDouble() ?? 14.0)
+      .toStringAsFixed(3);
+  final labelFontWeight = ((data['labelFontWeight'] as num?)?.toInt() ?? 600)
+      .toString();
+  final labelTextAlign = (data['labelTextAlign'] as String?) ?? 'center';
+  final startArrowhead = _parseBool(data['startArrowhead']).toString();
+  final endArrowhead = _parseBool(data['endArrowhead']).toString();
+  return '$shapeId|$cx|$cy|$size|$width|$height|$strokeWidth|$opacity|$strokeOpacity|$rotation|$borderRadius|$color|$filled|$hidden|$locked|$flipped|$z|$text|$dash|$label|$labelColor|$labelFontSize|$labelFontWeight|$labelTextAlign|$startArrowhead|$endArrowhead';
 }
 
-/// Measures the on-canvas bounds of [text] using the exact style and layout
-/// constraints that CanvasPainter._paintText draws with (fontSize 16, w600,
-/// maxLines 2, ellipsis, maxWidth 220), so persisted bounds match the render.
+/// Applies pending shape edits from sliders/UI onto [data] with the same
+/// clamps the dedicated events use, so preview and commit cannot drift.
+void _applyPendingShapeEdits(
+  Map<String, dynamic> data,
+  Map<String, dynamic> pending,
+) {
+  for (final entry in pending.entries) {
+    final key = entry.key;
+    if (key == 'rotation') {
+      final rotation = _toDoubleValue(entry.value);
+      if (rotation != null) data[key] = _normalizeRotation(rotation);
+    } else if (key == 'size') {
+      final size = _toDoubleValue(entry.value);
+      if (size != null) data[key] = size.clamp(24.0, 320.0);
+    } else if (key == 'width' || key == 'height') {
+      final value = _toDoubleValue(entry.value);
+      if (value != null) data[key] = value.clamp(1.0, 4000.0);
+    } else if (key == 'borderRadius') {
+      final borderRadius = _toDoubleValue(entry.value);
+      if (borderRadius != null) {
+        final size = _toDoubleValue(data['size']) ?? 64.0;
+        final maxRadius = (size / 2).clamp(0.0, 180.0);
+        data[key] = borderRadius.clamp(0.0, maxRadius);
+      }
+    } else if (key == 'strokeWidth') {
+      final value = _toDoubleValue(entry.value);
+      if (value != null) data[key] = value.clamp(0.0, 64.0);
+    } else if (key == 'strokeOpacity' || key == 'opacity') {
+      final value = _toDoubleValue(entry.value);
+      if (value != null) data[key] = value.clamp(0.0, 1.0);
+    } else if (key == 'labelFontSize') {
+      final value = _toDoubleValue(entry.value);
+      if (value != null) data[key] = value.clamp(6.0, 96.0);
+    } else {
+      data[key] = entry.value;
+    }
+  }
+}
+
+/// Measures the on-canvas bounds of [text] using the same layout the painter
+/// and the text tool use, so persisted bounds match the render.
 Size measureTextElementBounds(String text) {
-  final textSpan = TextSpan(
-    text: text,
-    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-  );
-  final textPainter = TextPainter(
-    text: textSpan,
-    textDirection: TextDirection.ltr,
-    maxLines: 2,
-    ellipsis: '...',
-  )..layout(maxWidth: 220);
-  return Size(textPainter.width, textPainter.height);
+  final layout = CanvasTextLayout.layout(text: text);
+  return layout.size;
 }
 
-Rect? _elementBounds(CanvasElement element) {
-  return switch (element) {
-    ShapeElement e => Rect.fromCenter(
-        center: e.center, width: e.size, height: e.size,
-      ),
-    // Text is painted from its center point as the top-left origin, so the
-    // bounds rect starts there too.
-    TextElement e => Rect.fromLTWH(
-        e.center.dx,
-        e.center.dy,
-        e.width > 0 ? e.width : 180,
-        e.height > 0 ? e.height : 48,
-      ),
-    ImageElement e => Rect.fromCenter(
-        center: e.center, width: e.width, height: e.height,
-      ),
-    _ => null,
-  };
-}
+/// Eraser bounds delegate to the shared geometry so erasing, selection and
+/// painting agree about where an element is.
+Rect? _elementBounds(CanvasElement element) => elementBounds(element);
 
 double _distanceToSegment(Offset point, Offset start, Offset end) {
   final dx = end.dx - start.dx;

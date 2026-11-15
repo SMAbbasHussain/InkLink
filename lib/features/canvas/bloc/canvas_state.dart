@@ -4,6 +4,7 @@ import '../../../domain/models/board.dart';
 import '../models/board_chat_message.dart';
 import '../models/canvas_comment.dart';
 import '../models/canvas_element.dart';
+import '../models/canvas_selection_mode.dart';
 import '../models/canvas_tool_mode.dart';
 import '../models/voice_participant.dart';
 import '../view/trays/canvas_shape_type.dart';
@@ -23,11 +24,18 @@ class CanvasState {
   final bool isLoading;
   final String? error;
   final String? infoMessage;
+
+  /// Whether [infoMessage] describes an action that the snackbar can undo.
+  final bool infoMessageUndoable;
+
+  /// Whether [infoMessage] describes an undo that the snackbar can redo.
+  final bool infoMessageRedoable;
   final String currentUserRole;
   final String currentUserId;
   final List<BoardMember> boardMembers;
   final String memberSearchQuery;
   final String? selectedShapeId;
+  final Set<String> selectedIds;
   final bool selectedShapeIsFilled;
   final double selectedShapeRotation;
   final double selectedShapeBorderRadius;
@@ -36,6 +44,7 @@ class CanvasState {
   final double selectedStrokeOpacity;
   final String selectedStrokeBrushType;
   final CanvasToolMode currentToolMode;
+  final CanvasSelectionMode selectionMode;
   final CanvasShapeType? pendingShapeType;
   final bool isDrawingShape;
   final Offset? shapeDrawStart;
@@ -53,10 +62,27 @@ class CanvasState {
   final String? activeCommentId;
   final bool isPlacingComment;
 
+  /// Whether the in-app element clipboard holds anything to paste.
+  final bool hasClipboard;
+
+  /// Layer that receives newly drawn elements; null means the default group.
+  final String? activeLayerId;
+
+  /// Parallel pressures captured for [currentStroke]. Empty means all 1.0.
+  final List<double> currentStrokePressures;
+
+  /// Whether stylus pressure affects stroke width / opacity.
+  final bool stylusPressureEnabled;
+
+  final double stabilizerStrength;
+
   const CanvasState({
     this.boardTitle,
     this.elements = const [],
     this.currentStroke = const [],
+    this.currentStrokePressures = const [],
+    this.stylusPressureEnabled = true,
+    this.stabilizerStrength = 0,
     this.selectedColor = Colors.black,
     this.strokeWidth = 5,
     this.brushOpacity = 1.0,
@@ -67,11 +93,14 @@ class CanvasState {
     this.isLoading = false,
     this.error,
     this.infoMessage,
+    this.infoMessageUndoable = false,
+    this.infoMessageRedoable = false,
     this.currentUserRole = 'viewer',
     this.currentUserId = '',
     this.boardMembers = const [],
     this.memberSearchQuery = '',
     this.selectedShapeId,
+    this.selectedIds = const <String>{},
     this.selectedShapeIsFilled = false,
     this.selectedShapeRotation = 0,
     this.selectedShapeBorderRadius = 0,
@@ -80,6 +109,7 @@ class CanvasState {
     this.selectedStrokeOpacity = 1.0,
     this.selectedStrokeBrushType = 'solid',
     this.currentToolMode = CanvasToolMode.doodle,
+    this.selectionMode = CanvasSelectionMode.marquee,
     this.pendingShapeType,
     this.isDrawingShape = false,
     this.shapeDrawStart,
@@ -96,6 +126,8 @@ class CanvasState {
     this.isCommentsTrayOpen = false,
     this.activeCommentId,
     this.isPlacingComment = false,
+    this.hasClipboard = false,
+    this.activeLayerId,
   });
 
   static const Object _unset = Object();
@@ -104,6 +136,9 @@ class CanvasState {
     Object? boardTitle = _unset,
     List<CanvasElement>? elements,
     List<Offset>? currentStroke,
+    List<double>? currentStrokePressures,
+    bool? stylusPressureEnabled,
+    double? stabilizerStrength,
     Color? selectedColor,
     double? strokeWidth,
     double? brushOpacity,
@@ -114,11 +149,14 @@ class CanvasState {
     bool? isLoading,
     Object? error = _unset,
     Object? infoMessage = _unset,
+    bool? infoMessageUndoable,
+    bool? infoMessageRedoable,
     String? currentUserRole,
     String? currentUserId,
     List<BoardMember>? boardMembers,
     String? memberSearchQuery,
     Object? selectedShapeId = _unset,
+    Set<String>? selectedIds,
     bool? selectedShapeIsFilled,
     double? selectedShapeRotation,
     double? selectedShapeBorderRadius,
@@ -127,6 +165,7 @@ class CanvasState {
     double? selectedStrokeOpacity,
     String? selectedStrokeBrushType,
     CanvasToolMode? currentToolMode,
+    CanvasSelectionMode? selectionMode,
     Object? pendingShapeType = _unset,
     bool? isDrawingShape,
     Object? shapeDrawStart = _unset,
@@ -143,6 +182,8 @@ class CanvasState {
     bool? isCommentsTrayOpen,
     Object? activeCommentId = _unset,
     bool? isPlacingComment,
+    bool? hasClipboard,
+    Object? activeLayerId = _unset,
   }) {
     return CanvasState(
       boardTitle: boardTitle == _unset
@@ -150,6 +191,11 @@ class CanvasState {
           : boardTitle as String?,
       elements: elements ?? this.elements,
       currentStroke: currentStroke ?? this.currentStroke,
+      currentStrokePressures:
+          currentStrokePressures ?? this.currentStrokePressures,
+      stylusPressureEnabled:
+          stylusPressureEnabled ?? this.stylusPressureEnabled,
+      stabilizerStrength: stabilizerStrength ?? this.stabilizerStrength,
       selectedColor: selectedColor ?? this.selectedColor,
       strokeWidth: strokeWidth ?? this.strokeWidth,
       brushOpacity: brushOpacity ?? this.brushOpacity,
@@ -162,8 +208,11 @@ class CanvasState {
       showTrayTips: showTrayTips ?? this.showTrayTips,
       isLoading: isLoading ?? this.isLoading,
       error: error == _unset ? this.error : error as String?,
-      infoMessage:
-          infoMessage == _unset ? this.infoMessage : infoMessage as String?,
+      infoMessage: infoMessage == _unset
+          ? this.infoMessage
+          : infoMessage as String?,
+      infoMessageUndoable: infoMessageUndoable ?? this.infoMessageUndoable,
+      infoMessageRedoable: infoMessageRedoable ?? this.infoMessageRedoable,
       currentUserRole: currentUserRole ?? this.currentUserRole,
       currentUserId: currentUserId ?? this.currentUserId,
       boardMembers: boardMembers ?? this.boardMembers,
@@ -171,21 +220,21 @@ class CanvasState {
       selectedShapeId: selectedShapeId == _unset
           ? this.selectedShapeId
           : selectedShapeId as String?,
+      selectedIds: selectedIds ?? this.selectedIds,
       selectedShapeIsFilled:
           selectedShapeIsFilled ?? this.selectedShapeIsFilled,
       selectedShapeRotation:
           selectedShapeRotation ?? this.selectedShapeRotation,
       selectedShapeBorderRadius:
           selectedShapeBorderRadius ?? this.selectedShapeBorderRadius,
-      selectedStrokeColor:
-          selectedStrokeColor ?? this.selectedStrokeColor,
-      selectedStrokeWidth:
-          selectedStrokeWidth ?? this.selectedStrokeWidth,
+      selectedStrokeColor: selectedStrokeColor ?? this.selectedStrokeColor,
+      selectedStrokeWidth: selectedStrokeWidth ?? this.selectedStrokeWidth,
       selectedStrokeOpacity:
           selectedStrokeOpacity ?? this.selectedStrokeOpacity,
       selectedStrokeBrushType:
           selectedStrokeBrushType ?? this.selectedStrokeBrushType,
       currentToolMode: currentToolMode ?? this.currentToolMode,
+      selectionMode: selectionMode ?? this.selectionMode,
       pendingShapeType: pendingShapeType == _unset
           ? this.pendingShapeType
           : pendingShapeType as CanvasShapeType?,
@@ -214,7 +263,23 @@ class CanvasState {
           ? this.activeCommentId
           : activeCommentId as String?,
       isPlacingComment: isPlacingComment ?? this.isPlacingComment,
+      hasClipboard: hasClipboard ?? this.hasClipboard,
+      activeLayerId: activeLayerId == _unset
+          ? this.activeLayerId
+          : activeLayerId as String?,
     );
+  }
+
+  /// Whether this session may edit the board.
+  ///
+  /// This is UI gating only; every mutation handler still calls
+  /// `_ensureCanEdit` so a stale screen cannot bypass the permission check.
+  bool get canEdit => currentUserRole != Board.roleViewer;
+
+  static bool _setEquals(Set<String> a, Set<String> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    return a.containsAll(b);
   }
 
   List<BoardMember> get filteredBoardMembers {
@@ -235,6 +300,9 @@ class CanvasState {
           boardTitle == other.boardTitle &&
           elements == other.elements &&
           currentStroke == other.currentStroke &&
+          currentStrokePressures == other.currentStrokePressures &&
+          stylusPressureEnabled == other.stylusPressureEnabled &&
+          stabilizerStrength == other.stabilizerStrength &&
           selectedColor == other.selectedColor &&
           strokeWidth == other.strokeWidth &&
           brushOpacity == other.brushOpacity &&
@@ -245,11 +313,14 @@ class CanvasState {
           isLoading == other.isLoading &&
           error == other.error &&
           infoMessage == other.infoMessage &&
+          infoMessageUndoable == other.infoMessageUndoable &&
+          infoMessageRedoable == other.infoMessageRedoable &&
           currentUserRole == other.currentUserRole &&
           currentUserId == other.currentUserId &&
           boardMembers == other.boardMembers &&
           memberSearchQuery == other.memberSearchQuery &&
           selectedShapeId == other.selectedShapeId &&
+          _setEquals(selectedIds, other.selectedIds) &&
           selectedShapeIsFilled == other.selectedShapeIsFilled &&
           selectedShapeBorderRadius == other.selectedShapeBorderRadius &&
           selectedShapeRotation == other.selectedShapeRotation &&
@@ -258,6 +329,7 @@ class CanvasState {
           selectedStrokeOpacity == other.selectedStrokeOpacity &&
           selectedStrokeBrushType == other.selectedStrokeBrushType &&
           currentToolMode == other.currentToolMode &&
+          selectionMode == other.selectionMode &&
           pendingShapeType == other.pendingShapeType &&
           isDrawingShape == other.isDrawingShape &&
           shapeDrawStart == other.shapeDrawStart &&
@@ -273,13 +345,18 @@ class CanvasState {
           isChatDrawerOpen == other.isChatDrawerOpen &&
           isCommentsTrayOpen == other.isCommentsTrayOpen &&
           activeCommentId == other.activeCommentId &&
-          isPlacingComment == other.isPlacingComment;
+          isPlacingComment == other.isPlacingComment &&
+          hasClipboard == other.hasClipboard &&
+          activeLayerId == other.activeLayerId;
 
   @override
   int get hashCode =>
       boardTitle.hashCode ^
       elements.hashCode ^
       currentStroke.hashCode ^
+      currentStrokePressures.hashCode ^
+      stylusPressureEnabled.hashCode ^
+      stabilizerStrength.hashCode ^
       selectedColor.hashCode ^
       strokeWidth.hashCode ^
       brushOpacity.hashCode ^
@@ -290,11 +367,14 @@ class CanvasState {
       isLoading.hashCode ^
       error.hashCode ^
       infoMessage.hashCode ^
+      infoMessageUndoable.hashCode ^
+      infoMessageRedoable.hashCode ^
       currentUserRole.hashCode ^
       currentUserId.hashCode ^
       boardMembers.hashCode ^
       memberSearchQuery.hashCode ^
       selectedShapeId.hashCode ^
+      Object.hashAllUnordered(selectedIds).hashCode ^
       selectedShapeIsFilled.hashCode ^
       selectedShapeBorderRadius.hashCode ^
       selectedShapeRotation.hashCode ^
@@ -303,6 +383,7 @@ class CanvasState {
       selectedStrokeOpacity.hashCode ^
       selectedStrokeBrushType.hashCode ^
       currentToolMode.hashCode ^
+      selectionMode.hashCode ^
       pendingShapeType.hashCode ^
       isDrawingShape.hashCode ^
       shapeDrawStart.hashCode ^
@@ -318,7 +399,9 @@ class CanvasState {
       isChatDrawerOpen.hashCode ^
       isCommentsTrayOpen.hashCode ^
       activeCommentId.hashCode ^
-      isPlacingComment.hashCode;
+      isPlacingComment.hashCode ^
+      hasClipboard.hashCode ^
+      activeLayerId.hashCode;
 }
 
 class CanvasInitial extends CanvasState {

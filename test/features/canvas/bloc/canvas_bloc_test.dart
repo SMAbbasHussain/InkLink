@@ -58,6 +58,39 @@ void main() {
     );
 
     blocTest<CanvasBloc, CanvasState>(
+      'marker preset applies its width and opacity defaults',
+      build: CanvasBloc.new,
+      act: (b) => b.add(const CanvasUpdateBrushType('marker')),
+      verify: (b) {
+        expect(b.state.brushType, 'marker');
+        expect(b.state.strokeWidth, 14);
+        expect(b.state.brushOpacity, 0.9);
+      },
+    );
+
+    blocTest<CanvasBloc, CanvasState>(
+      'CanvasApplyBrushPreset atomically sets type, width and opacity',
+      build: CanvasBloc.new,
+      act: (b) => b.add(const CanvasApplyBrushPreset('watercolor')),
+      verify: (b) {
+        expect(b.state.brushType, 'watercolor');
+        expect(b.state.strokeWidth, 8);
+        expect(b.state.brushOpacity, 0.9);
+      },
+    );
+
+    blocTest<CanvasBloc, CanvasState>(
+      'CanvasApplyBrushPreset falls back to the pen for unknown ids',
+      build: CanvasBloc.new,
+      act: (b) => b.add(const CanvasApplyBrushPreset('unknown')),
+      verify: (b) {
+        expect(b.state.brushType, 'solid');
+        expect(b.state.strokeWidth, 5);
+        expect(b.state.brushOpacity, 1);
+      },
+    );
+
+    blocTest<CanvasBloc, CanvasState>(
       'CanvasUpdateEraserScope updates eraserEraseEverything',
       build: CanvasBloc.new,
       act: (b) => b.add(const CanvasUpdateEraserScope(true)),
@@ -704,6 +737,115 @@ void main() {
       expect(conn.endPoint, const Offset(110, 40));
       await bloc.close();
     });
+
+    Future<(CanvasBloc, String)> connectorBloc() async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddConnector(
+        startPoint: Offset(0, 0),
+        endPoint: Offset(200, 100),
+      ));
+      await Future<void>.delayed(Duration.zero);
+      return (bloc, bloc.state.elements.first.id);
+    }
+
+    test('CanvasUpdateConnector applies F-11 style, arrowheads and label',
+        () async {
+      final (bloc, id) = await connectorBloc();
+      bloc.add(CanvasUpdateConnector(
+        elementId: id,
+        lineStyle: 'orthogonal',
+        color: const Color(0xFF2563EB),
+        strokeWidth: 500,
+        startArrowhead: true,
+        endArrowhead: false,
+        dashPattern: const [8, 0.1],
+        cornerRadius: 12,
+        label: 'depends on',
+        labelColor: const Color(0xFFF44336),
+        labelFontSize: 1,
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      final conn = bloc.state.elements.first as ConnectorElement;
+      expect(conn.lineStyle, 'orthogonal');
+      expect(conn.color, const Color(0xFF2563EB));
+      expect(conn.strokeWidth, 32);
+      expect(conn.startArrowhead, isTrue);
+      expect(conn.endArrowhead, isFalse);
+      expect(conn.dashPattern, [8, 0.5]);
+      expect(conn.cornerRadius, 12);
+      expect(conn.label, 'depends on');
+      expect(conn.labelColor, const Color(0xFFF44336));
+      expect(conn.labelFontSize, 6);
+      expect(bloc.state.infoMessageUndoable, isTrue);
+      await bloc.close();
+    });
+
+    test('CanvasUpdateConnector clears dash and label colour, rejects '
+        'unknown line styles', () async {
+      final (bloc, id) = await connectorBloc();
+      bloc.add(CanvasUpdateConnector(
+        elementId: id,
+        dashPattern: const [6, 4],
+        labelColor: const Color(0xFFF44336),
+      ));
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(CanvasUpdateConnector(
+        elementId: id,
+        lineStyle: 'zigzag',
+        dashPattern: const [],
+        clearLabelColor: true,
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      final conn = bloc.state.elements.first as ConnectorElement;
+      expect(conn.lineStyle, 'straight');
+      expect(conn.dashPattern, isNull);
+      expect(conn.labelColor, isNull);
+      await bloc.close();
+    });
+
+    test('rewiring a styled connector keeps its F-11 fields', () async {
+      final (bloc, id) = await connectorBloc();
+      bloc.add(CanvasUpdateConnector(
+        elementId: id,
+        label: 'flow',
+        startArrowhead: true,
+        dashPattern: const [4, 4],
+        cornerRadius: 9,
+      ));
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(CanvasRewireConnector(
+        connectorId: id,
+        isStart: false,
+        point: const Offset(300, 40),
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      final conn = bloc.state.elements.first as ConnectorElement;
+      expect(conn.endPoint, const Offset(300, 40));
+      expect(conn.label, 'flow');
+      expect(conn.startArrowhead, isTrue);
+      expect(conn.dashPattern, [4, 4]);
+      expect(conn.cornerRadius, 9);
+      await bloc.close();
+    });
+
+    test('viewers cannot restyle a connector', () async {
+      final (bloc, id) = await connectorBloc();
+      final before = bloc.state.elements.first;
+      bloc.add(
+        const CanvasBoardTitleUpdated(null, currentUserRole: Board.roleViewer),
+      );
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(CanvasUpdateConnector(elementId: id, label: 'nope'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bloc.state.elements.first, before);
+      await bloc.close();
+    });
   });
 
   group('CanvasBloc — image elements & smooth preview dragging', () {
@@ -849,7 +991,7 @@ void main() {
       await bloc.close();
     });
 
-    test('moving a shape over an existing image promotes its z-index above the image', () async {
+    test('moving a shape keeps its z-index instead of jumping to the front', () async {
       final bloc = CanvasBloc();
       _grantEditor(bloc);
       await Future<void>.delayed(Duration.zero);
@@ -884,9 +1026,15 @@ void main() {
       final movedShape = bloc.state.elements.firstWhere((e) => e.id == initialShape.id);
       final currentImage = bloc.state.elements.firstWhere((e) => e.id == image.id);
 
-      // Moved shape now has higher z than image so it is rendered and dragged over the image
-      expect(movedShape.z, greaterThan(currentImage.z));
-      expect(bloc.state.elements.indexOf(movedShape), greaterThan(bloc.state.elements.indexOf(currentImage)));
+      // Stacking order is explicit: moving an element must not silently bring
+      // it to the front (z-order actions handle that).
+      expect(movedShape.z, initialShape.z);
+      expect(currentImage.z, image.z);
+      expect(
+        bloc.state.elements.indexOf(movedShape),
+        lessThan(bloc.state.elements.indexOf(currentImage)),
+      );
+      expect((movedShape as ShapeElement).center, const Offset(100, 100));
       await bloc.close();
     });
   });
