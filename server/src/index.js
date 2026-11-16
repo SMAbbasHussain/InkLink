@@ -1727,6 +1727,15 @@ io.on('connection', (socket) => {
         return;
       }
 
+      const channelName = `board_${boardId}`;
+      const appId = process.env.AGORA_APP_ID;
+      const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+      if (!appId || !appCertificate) {
+        console.warn(`[voice] Agora RTC not configured (AGORA_APP_ID/AGORA_APP_CERTIFICATE); rejecting join from ${uid}`);
+        if (typeof callback === 'function') callback({ status: 'error', message: 'agora certificate not configured' });
+        return;
+      }
+
       const participant = {
         uid,
         displayName: displayName || 'Anonymous',
@@ -1744,20 +1753,13 @@ io.on('connection', (socket) => {
 
       socket.join(`board_voice:${boardId}`);
       socket.data.currentVoiceBoardId = boardId;
+      if (!socket.data.voicePresenceBoards) socket.data.voicePresenceBoards = new Set();
+      socket.data.voicePresenceBoards.add(boardId);
 
-      // Voice events target the voice room — voice sockets only ever join
-      // `board_voice:` (they never call watch_board), so emitting to
-      // `board_room:` would leave participants blind to each other.
+      // Voice events target the voice room. Every board viewer subscribes to
+      // this room as an observer, so a newly started call is visible even to
+      // people who have not joined it yet.
       io.to(`board_voice:${boardId}`).emit('voice_participant_joined', participant);
-
-      const channelName = `board_${boardId}`;
-      const appId = process.env.AGORA_APP_ID;
-      const appCertificate = process.env.AGORA_APP_CERTIFICATE;
-      if (!appId || !appCertificate) {
-        console.warn(`[voice] Agora RTC not configured (AGORA_APP_ID/AGORA_APP_CERTIFICATE); rejecting join from ${uid}`);
-        if (typeof callback === 'function') callback({ status: 'error', message: 'agora certificate not configured' });
-        return;
-      }
 
       const { token } = buildAgoraRtcToken(appId, appCertificate, channelName);
 
@@ -1785,7 +1787,8 @@ io.on('connection', (socket) => {
           const voiceKey = `voice:board:${boardId}:participants`;
           await redis.hdel(voiceKey, uid);
         }
-        socket.leave(`board_voice:${boardId}`);
+        const observing = socket.data.voicePresenceBoards && socket.data.voicePresenceBoards.has(boardId);
+        if (!observing) socket.leave(`board_voice:${boardId}`);
         socket.data.currentVoiceBoardId = null;
         io.to(`board_voice:${boardId}`).emit('voice_participant_left', { uid, boardId });
         console.log(`[voice] User ${uid} left voice channel board_${boardId}`);
@@ -1820,6 +1823,50 @@ io.on('connection', (socket) => {
         isMuted: !!isMuted,
       });
     } catch (_) { }
+  });
+
+  socket.on('subscribe_voice_presence', async ({ boardId }, callback) => {
+    try {
+      if (!isValidBoardId(boardId)) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
+        return;
+      }
+      const hasAccess = await canUserAccessBoard(boardId, uid, false);
+      if (!hasAccess) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'forbidden' });
+        return;
+      }
+      socket.join(`board_voice:${boardId}`);
+      if (!socket.data.voicePresenceBoards) socket.data.voicePresenceBoards = new Set();
+      socket.data.voicePresenceBoards.add(boardId);
+
+      let participants = [];
+      if (redisAvailable) {
+        const rawMap = await redis.hgetall(`voice:board:${boardId}:participants`);
+        participants = Object.values(rawMap || {}).map(v => JSON.parse(v));
+      }
+      if (typeof callback === 'function') callback({ status: 'success', participants });
+    } catch (err) {
+      if (typeof callback === 'function') callback({ status: 'error', message: err.message });
+    }
+  });
+
+  socket.on('unsubscribe_voice_presence', async ({ boardId }, callback) => {
+    try {
+      if (!isValidBoardId(boardId)) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
+        return;
+      }
+      if (socket.data.voicePresenceBoards) {
+        socket.data.voicePresenceBoards.delete(boardId);
+      }
+      if (socket.data.currentVoiceBoardId !== boardId) {
+        socket.leave(`board_voice:${boardId}`);
+      }
+      if (typeof callback === 'function') callback({ status: 'success' });
+    } catch (err) {
+      if (typeof callback === 'function') callback({ status: 'error', message: err.message });
+    }
   });
 
   socket.on('get_voice_participants', async ({ boardId }, callback) => {
