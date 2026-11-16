@@ -1726,7 +1726,8 @@ class _CanvasScreenState extends State<CanvasScreen>
                 ),
                 const SizedBox(height: 12),
                 SwitchListTile.adaptive(
-                  activeColor: _tokens.accent,
+                  activeColor: Colors.white,
+                  activeTrackColor: _tokens.accent,
                   title: const Text('Arrowhead End'),
                   value: hasArrowhead,
                   contentPadding: EdgeInsets.zero,
@@ -3907,9 +3908,6 @@ class _CanvasScreenState extends State<CanvasScreen>
 
                           if (!state.isViewingHistory && state.isArchived)
                             _buildArchivedBanner(state),
-
-                          if (!state.isViewingHistory && !editingElement)
-                            _buildToolModeIndicator(state),
 
                           if (state.isSelectingUndoRequestArea)
                             _buildAreaSelectionHint(),
@@ -6787,7 +6785,8 @@ class _CanvasScreenState extends State<CanvasScreen>
     final controls = <Widget>[
       if (domainShape != null) ...[
         SwitchListTile.adaptive(
-          activeColor: _tokens.accent,
+          activeColor: Colors.white,
+          activeTrackColor: _tokens.accent,
           dense: true,
           contentPadding: EdgeInsets.zero,
           value: domainShape.effectiveFillMode != 'none',
@@ -6995,7 +6994,8 @@ class _CanvasScreenState extends State<CanvasScreen>
         ),
         if (domainShape.isLinear) ...[
           SwitchListTile.adaptive(
-            activeColor: _tokens.accent,
+            activeColor: Colors.white,
+            activeTrackColor: _tokens.accent,
             dense: true,
             contentPadding: EdgeInsets.zero,
             value: domainShape.startArrowhead,
@@ -7008,7 +7008,8 @@ class _CanvasScreenState extends State<CanvasScreen>
             ),
           ),
           SwitchListTile.adaptive(
-            activeColor: _tokens.accent,
+            activeColor: Colors.white,
+            activeTrackColor: _tokens.accent,
             dense: true,
             contentPadding: EdgeInsets.zero,
             value: domainShape.endArrowhead,
@@ -7507,7 +7508,8 @@ class _CanvasScreenState extends State<CanvasScreen>
         ],
       ),
       SwitchListTile.adaptive(
-        activeColor: _tokens.accent,
+        activeColor: Colors.white,
+        activeTrackColor: _tokens.accent,
         dense: true,
         contentPadding: EdgeInsets.zero,
         value: c.startArrowhead,
@@ -7516,7 +7518,8 @@ class _CanvasScreenState extends State<CanvasScreen>
             update(CanvasUpdateConnector(elementId: c.id, startArrowhead: v)),
       ),
       SwitchListTile.adaptive(
-        activeColor: _tokens.accent,
+        activeColor: Colors.white,
+        activeTrackColor: _tokens.accent,
         dense: true,
         contentPadding: EdgeInsets.zero,
         value: c.endArrowhead,
@@ -7953,7 +7956,8 @@ class _CanvasScreenState extends State<CanvasScreen>
         commit: (v) => CanvasUpdateImageStyle(elementId: img.id, saturation: v),
       ),
       SwitchListTile.adaptive(
-        activeColor: _tokens.accent,
+        activeColor: Colors.white,
+        activeTrackColor: _tokens.accent,
         dense: true,
         contentPadding: EdgeInsets.zero,
         value: img.isReference,
@@ -9592,89 +9596,6 @@ class _CanvasScreenState extends State<CanvasScreen>
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildToolModeIndicator(CanvasState state) {
-    // The brush, highlighter and eraser trays already name the active tool.
-    // A second "Tap to exit" pill duplicates that and covers the tray.
-    if (_isBrushTool(state.currentToolMode)) {
-      return const SizedBox.shrink();
-    }
-
-    final (IconData icon, String label) = _isArrowMode(state)
-        ? (
-            LucideIcons.arrowRight,
-            _arrowConnectStartElementId != null
-                ? 'Arrow: Tap 2nd shape to point to'
-                : 'Arrow: Tap 2 shapes to connect, or drag',
-          )
-        : switch (state.currentToolMode) {
-            CanvasToolMode.select => (LucideIcons.mousePointer2, 'Select'),
-            CanvasToolMode.hand => (LucideIcons.hand, 'Hand: drag to pan'),
-            CanvasToolMode.shape => (
-              LucideIcons.shapes,
-              state.pendingShapeType != null
-                  ? 'Shape: ${state.pendingShapeType!.name}'
-                  : 'Shape',
-            ),
-            CanvasToolMode.eraser => (LucideIcons.eraser, 'Eraser'),
-            CanvasToolMode.text => (LucideIcons.type, 'Text'),
-            CanvasToolMode.arrow => (LucideIcons.arrowRight, 'Arrow'),
-            CanvasToolMode.image => (LucideIcons.image, 'Image'),
-            CanvasToolMode.highlight => (LucideIcons.highlighter, 'Highlight'),
-            CanvasToolMode.fill => (
-              LucideIcons.paintBucket,
-              'Fill: tap a shape',
-            ),
-            CanvasToolMode.doodle => (LucideIcons.penLine, 'Doodle'),
-          };
-
-    return Positioned(
-      left: 48,
-      bottom: 48,
-      child: GestureDetector(
-        onTap: () {
-          setState(() {
-            _arrowConnectStartElementId = null;
-          });
-          _canvasBloc.add(const CanvasSetToolMode(CanvasToolMode.doodle));
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: const Color(0xD91F2229),
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x22000000),
-                blurRadius: 4,
-                offset: Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 14, color: Colors.white70),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(width: 6),
-              const Text(
-                'Tap to exit',
-                style: TextStyle(color: Colors.white38, fontSize: 10),
-              ),
-            ],
-          ),
         ),
       ),
     );

@@ -436,7 +436,8 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                     ],
                     const SizedBox(height: InkSpacing.s16),
                     SwitchListTile.adaptive(
-                      activeColor: tokens.accent,
+                      activeColor: Colors.white,
+                      activeTrackColor: tokens.accent,
                       contentPadding: EdgeInsets.zero,
                       title: Text(
                         'Allow members to copy this board',

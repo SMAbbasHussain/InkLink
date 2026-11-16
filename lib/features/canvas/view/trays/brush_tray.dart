@@ -373,7 +373,8 @@ class _BrushTrayState extends State<BrushTray> {
                 ),
               ),
               Switch.adaptive(
-                activeColor: tokens.accent,
+                activeColor: Colors.white,
+                activeTrackColor: tokens.accent,
                 value: widget.fingerDrawingEnabled,
                 onChanged: widget.onFingerDrawingChanged == null
                     ? null
@@ -413,7 +414,8 @@ class _BrushTrayState extends State<BrushTray> {
               ),
               Switch.adaptive(
                 key: const ValueKey('stylusPressureSwitch'),
-                activeColor: tokens.accent,
+                activeColor: Colors.white,
+                activeTrackColor: tokens.accent,
                 value: widget.stylusPressureEnabled,
                 onChanged: widget.onStylusPressureChanged == null
                     ? null
@@ -454,7 +456,8 @@ class _BrushTrayState extends State<BrushTray> {
                 ),
               ),
               Switch.adaptive(
-                activeColor: tokens.accent,
+                activeColor: Colors.white,
+                activeTrackColor: tokens.accent,
                 value: widget.quickShapeEnabled,
                 onChanged: widget.onQuickShapeChanged == null
                     ? null
@@ -697,7 +700,8 @@ class _BrushTrayState extends State<BrushTray> {
               ),
               Switch.adaptive(
                 key: const ValueKey('brush-smooth-after'),
-                activeColor: tokens.accent,
+                activeColor: Colors.white,
+                activeTrackColor: tokens.accent,
                 value:
                     widget.smoothDoodlesEnabled &&
                     widget.stabilizerStrength == 0,
