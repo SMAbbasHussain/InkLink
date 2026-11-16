@@ -99,6 +99,52 @@ class CanvasAddImageElement extends CanvasEvent {
   });
 }
 
+/// Add an AI image to the canvas. The full image is stored by URL; the small
+/// thumbnail goes into the element's inline image field.
+class CanvasAddAiImageElement extends CanvasEvent {
+  final String imageUrl;
+  final String thumbnailBase64;
+  final Offset center;
+  final double width;
+  final double height;
+  final String? aiPrompt;
+  final String? generationId;
+
+  const CanvasAddAiImageElement({
+    required this.imageUrl,
+    required this.thumbnailBase64,
+    required this.center,
+    required this.width,
+    required this.height,
+    this.aiPrompt,
+    this.generationId,
+  });
+}
+
+/// Replace the picture of an existing image element (AI edit, repaint or
+/// regenerate) in ONE CRDT update, so a single undo restores the old version.
+class CanvasReplaceImageSource extends CanvasEvent {
+  final String elementId;
+  final String imageUrl;
+  final String thumbnailBase64;
+
+  /// Pixel size of the new image, used to keep its aspect ratio.
+  final int sourceWidth;
+  final int sourceHeight;
+  final String? aiPrompt;
+  final String? generationId;
+
+  const CanvasReplaceImageSource({
+    required this.elementId,
+    required this.imageUrl,
+    required this.thumbnailBase64,
+    required this.sourceWidth,
+    required this.sourceHeight,
+    this.aiPrompt,
+    this.generationId,
+  });
+}
+
 /// Add sticky note to canvas
 class CanvasAddStickyNote extends CanvasEvent {
   final Offset center;
