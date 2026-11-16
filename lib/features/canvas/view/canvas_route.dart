@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/services/auth_service.dart';
+import '../../../domain/services/ai/ai_image_service.dart';
 import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/board_chat_service.dart';
 import '../../../domain/services/canvas/board_comments_service.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
 import '../../../domain/services/settings/settings_service.dart';
 import '../../../domain/services/voice/voice_service.dart';
+import '../bloc/ai_image_bloc.dart';
 import '../bloc/canvas_bloc.dart';
 import 'canvas_screen.dart';
 
@@ -60,18 +62,27 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
       future: _settingsFuture,
       builder: (context, snapshot) {
         final data = snapshot.data;
-        return BlocProvider(
-          create: (_) => CanvasBloc(
-            canvasService: context.read<CanvasService>(),
-            boardService: context.read<BoardService>(),
-            boardExportService: context.read<BoardExportService>(),
-            boardCommentsService: context.read<BoardCommentsService>(),
-            boardChatService: context.read<BoardChatService>(),
-            voiceService: context.read<VoiceService>(),
-            currentUserId:
-                context.read<AuthService>().getCurrentUserId() ?? '',
-            boardId: widget.boardId,
-          )..add(CanvasInitializeCrdt(widget.boardId)),
+        return MultiBlocProvider(
+          providers: [
+            BlocProvider(
+              create: (_) => CanvasBloc(
+                canvasService: context.read<CanvasService>(),
+                boardService: context.read<BoardService>(),
+                boardExportService: context.read<BoardExportService>(),
+                boardCommentsService: context.read<BoardCommentsService>(),
+                boardChatService: context.read<BoardChatService>(),
+                voiceService: context.read<VoiceService>(),
+                currentUserId:
+                    context.read<AuthService>().getCurrentUserId() ?? '',
+                boardId: widget.boardId,
+              )..add(CanvasInitializeCrdt(widget.boardId)),
+            ),
+            BlocProvider(
+              create: (_) => AiImageBloc(
+                aiImageService: context.read<AiImageService>(),
+              ),
+            ),
+          ],
           child: CanvasScreen(
             boardId: widget.boardId,
             showTrayTipsOnEntry: widget.showTrayTipsOnEntry,
