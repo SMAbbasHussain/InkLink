@@ -22,8 +22,86 @@ import '../../workspaces/view/workspace_detail_route.dart';
 import '../../workspaces/view/workspaces_screen.dart';
 import '../bloc/notifications_bloc.dart';
 
-class NotificationsScreen extends StatelessWidget {
+enum _NotificationFilter {
+  all('All'),
+  requests('Requests'),
+  boards('Boards'),
+  workspace('Workspace'),
+  friends('Friends');
+
+  const _NotificationFilter(this.label);
+
+  final String label;
+}
+
+class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
+
+  @override
+  State<NotificationsScreen> createState() => _NotificationsScreenState();
+}
+
+class _NotificationsScreenState extends State<NotificationsScreen> {
+  _NotificationFilter _filter = _NotificationFilter.all;
+  String? _pendingWorkspaceInviteId;
+
+  void _decideWorkspaceInvite(
+    BuildContext context, {
+    required String inviteId,
+    required String notificationId,
+    required String status,
+  }) {
+    if (inviteId.isEmpty || _pendingWorkspaceInviteId != null) return;
+    final notificationsBloc = context.read<NotificationsBloc>();
+    final workspaceBloc = context.read<WorkspaceBloc>();
+    if (notificationId.isNotEmpty) {
+      notificationsBloc.markNotificationRead(notificationId);
+    }
+    setState(() {
+      _pendingWorkspaceInviteId = inviteId;
+    });
+
+    void complete(bool success, String? error) {
+      if (!mounted) return;
+      setState(() {
+        _pendingWorkspaceInviteId = null;
+      });
+      if (!success) {
+        AppSnackBar.showError(
+          context,
+          error ?? 'Could not update the workspace invite.',
+        );
+        return;
+      }
+      // Resolve the inbox only after the workspace action has succeeded. On a
+      // failure the notification stays pending and both buttons remain.
+      notificationsBloc.add(
+        NotificationWorkspaceInviteResolved(inviteId: inviteId, status: status),
+      );
+      AppSnackBar.showSuccess(
+        context,
+        status == 'accepted' ? 'Invite accepted.' : 'Invite declined.',
+      );
+    }
+
+    workspaceBloc.add(
+      status == 'accepted'
+          ? AcceptWorkspaceInviteRequested(inviteId, onCompleted: complete)
+          : RejectWorkspaceInviteRequested(inviteId, onCompleted: complete),
+    );
+  }
+
+  bool _matchesFilter(Map<String, dynamic> item) {
+    final type = item['type']?.toString() ?? '';
+    return switch (_filter) {
+      _NotificationFilter.all => true,
+      _NotificationFilter.requests => type.contains('request'),
+      _NotificationFilter.boards =>
+        type.startsWith('board_') && !type.contains('request'),
+      _NotificationFilter.workspace => type.startsWith('workspace_'),
+      _NotificationFilter.friends => type.startsWith('friend_'),
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -95,6 +173,7 @@ class NotificationsScreen extends StatelessWidget {
           final unreadCount = state.notifications
               .where((item) => item['isRead'] != true)
               .length;
+          final filtered = state.notifications.where(_matchesFilter).toList();
 
           return Scaffold(
             backgroundColor: tokens.paper,
@@ -117,592 +196,716 @@ class NotificationsScreen extends StatelessWidget {
                 const SizedBox(width: InkSpacing.s8),
               ],
             ),
-            body: state.notifications.isEmpty
-                ? const EmptyState(
-                    icon: LucideIcons.bell,
-                    text: 'No notifications yet.',
-                  )
-                : ListView.separated(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: InkSpacing.s16,
-                      vertical: InkSpacing.s12,
-                    ),
-                    itemCount: state.notifications.length,
-                    separatorBuilder: (_, _) =>
-                        const SizedBox(height: InkSpacing.s12 - 2),
-                    itemBuilder: (context, index) {
-                      final item = state.notifications[index];
-                      final senderName =
-                          item['senderName']?.toString() ?? 'InkLink';
-                      final senderPic = item['senderPic']?.toString();
-                      final title = item['title']?.toString() ?? 'Notification';
-                      final body = item['body']?.toString() ?? '';
-                      final type = item['type']?.toString() ?? 'general';
-                      final notificationId = item['id']?.toString() ?? '';
-                      final status = item['status']?.toString() ?? 'info';
-                      final unread = item['isRead'] != true;
-                      final isActionablePending =
-                          (type == 'board_invite' ||
-                              type == 'friend_request' ||
-                              type == 'workspace_invite' ||
-                              type == 'board_access_request' ||
-                              type == 'board_edit_request') &&
-                          status == 'pending';
-
-                      final timestamp = _readTimestamp(item);
-                      final timeLabel = _formatTimeLabel(timestamp);
-
-                      return InkWell(
-                        borderRadius: BorderRadius.circular(6),
-                        onTap: () {
-                          if (notificationId.isNotEmpty) {
-                            context
-                                .read<NotificationsBloc>()
-                                .markNotificationRead(notificationId);
-                          }
-
-                          if (type == 'board_edit_request' ||
-                              (type == 'board_access_request' &&
-                                  item['extraData']?['requestType'] ==
-                                      'edit')) {
-                            final boardId =
-                                item['extraData']?['boardId']?.toString() ??
+            body: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildFilterBar(tokens),
+                Expanded(
+                  child: state.notifications.isEmpty
+                      ? const EmptyState(
+                          icon: LucideIcons.bell,
+                          text: 'No notifications yet.',
+                        )
+                      : filtered.isEmpty
+                      ? EmptyState(
+                          icon: LucideIcons.bell,
+                          text:
+                              'No ${_filter.label.toLowerCase()} notifications.',
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: InkSpacing.s16,
+                            vertical: InkSpacing.s12,
+                          ),
+                          itemCount: filtered.length,
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(height: InkSpacing.s12 - 2),
+                          itemBuilder: (context, index) {
+                            final item = filtered[index];
+                            final senderName =
+                                item['senderName']?.toString() ?? 'InkLink';
+                            final senderPic = item['senderPic']?.toString();
+                            final title =
+                                item['title']?.toString() ?? 'Notification';
+                            final body = item['body']?.toString() ?? '';
+                            final type = item['type']?.toString() ?? 'general';
+                            final notificationId = item['id']?.toString() ?? '';
+                            final status = item['status']?.toString() ?? 'info';
+                            final unread = item['isRead'] != true;
+                            final isActionablePending =
+                                (type == 'board_invite' ||
+                                    type == 'friend_request' ||
+                                    type == 'workspace_invite' ||
+                                    type == 'board_access_request' ||
+                                    type == 'board_edit_request') &&
+                                status == 'pending';
+                            final workspaceInviteId =
+                                item['extraData']?['inviteId']?.toString() ??
                                 item['targetId']?.toString() ??
+                                item['id']?.toString() ??
                                 '';
-                            final boardTitle =
-                                item['extraData']?['boardTitle']?.toString() ??
-                                'Board';
-                            if (boardId.isNotEmpty) {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => BoardEditRequestsScreen(
-                                    boardId: boardId,
-                                    boardTitle: boardTitle,
-                                  ),
+                            final workspaceInvitePending =
+                                type == 'workspace_invite' &&
+                                _pendingWorkspaceInviteId == workspaceInviteId;
+
+                            final timestamp = _readTimestamp(item);
+                            final timeLabel = _formatTimeLabel(timestamp);
+
+                            return InkWell(
+                              borderRadius: BorderRadius.circular(6),
+                              onTap: () {
+                                if (notificationId.isNotEmpty) {
+                                  context
+                                      .read<NotificationsBloc>()
+                                      .markNotificationRead(notificationId);
+                                }
+
+                                if (type == 'board_edit_request' ||
+                                    (type == 'board_access_request' &&
+                                        item['extraData']?['requestType'] ==
+                                            'edit')) {
+                                  final boardId =
+                                      item['extraData']?['boardId']
+                                          ?.toString() ??
+                                      item['targetId']?.toString() ??
+                                      '';
+                                  final boardTitle =
+                                      item['extraData']?['boardTitle']
+                                          ?.toString() ??
+                                      'Board';
+                                  if (boardId.isNotEmpty) {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => BoardEditRequestsScreen(
+                                          boardId: boardId,
+                                          boardTitle: boardTitle,
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                }
+
+                                if (type == 'board_access_request' ||
+                                    type == 'board_access_accepted' ||
+                                    type == 'board_edit_accepted') {
+                                  final boardId =
+                                      item['extraData']?['boardId']
+                                          ?.toString() ??
+                                      item['targetId']?.toString() ??
+                                      '';
+                                  if (boardId.isNotEmpty) {
+                                    Navigator.push(
+                                      context,
+                                      buildCanvasRoute(
+                                        context,
+                                        boardId: boardId,
+                                        showTrayTipsOnEntry: true,
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                }
+
+                                if (type == 'board_invite' ||
+                                    type == 'board_invite_accepted') {
+                                  final boardId =
+                                      item['extraData']?['boardId']
+                                          ?.toString() ??
+                                      item['targetId']?.toString() ??
+                                      '';
+
+                                  final isAcceptedInvite =
+                                      status == 'accepted' ||
+                                      type == 'board_invite_accepted';
+
+                                  if (isAcceptedInvite && boardId.isNotEmpty) {
+                                    Navigator.push(
+                                      context,
+                                      buildCanvasRoute(
+                                        context,
+                                        boardId: boardId,
+                                        showTrayTipsOnEntry: true,
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => BlocProvider.value(
+                                        value: context
+                                            .read<BoardInvitationsBloc>(),
+                                        child: const BoardInvitesScreen(),
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                if (type == 'friend_request_accepted') {
+                                  final profileUserId =
+                                      item['fromUid']?.toString() ??
+                                      item['extraData']?['fromUid']
+                                          ?.toString() ??
+                                      item['extraData']?['targetUid']
+                                          ?.toString() ??
+                                      '';
+
+                                  if (profileUserId.isNotEmpty) {
+                                    Navigator.push(
+                                      context,
+                                      buildProfileRoute(
+                                        context,
+                                        userId: profileUserId,
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                }
+
+                                if (type == 'friend_request') {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const FriendRequestsScreen(),
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                if (type == 'workspace_invite' ||
+                                    type == 'workspace_invite_accepted') {
+                                  final workspaceId =
+                                      item['extraData']?['workspaceId']
+                                          ?.toString() ??
+                                      item['targetId']?.toString() ??
+                                      '';
+
+                                  final isAcceptedInvite =
+                                      status == 'accepted' ||
+                                      type == 'workspace_invite_accepted';
+
+                                  if (isAcceptedInvite &&
+                                      workspaceId.isNotEmpty) {
+                                    Navigator.push(
+                                      context,
+                                      buildWorkspaceDetailRoute(
+                                        context,
+                                        workspaceId,
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  Navigator.push(
+                                    context,
+                                    buildWorkspaceInvitesRoute(context),
+                                  );
+                                  return;
+                                }
+                              },
+                              child: PaperCard(
+                                padding: const EdgeInsets.all(
+                                  InkSpacing.s16 - 2,
                                 ),
-                              );
-                              return;
-                            }
-                          }
-
-                          if (type == 'board_access_request' ||
-                              type == 'board_access_accepted' ||
-                              type == 'board_edit_accepted') {
-                            final boardId =
-                                item['extraData']?['boardId']?.toString() ??
-                                item['targetId']?.toString() ??
-                                '';
-                            if (boardId.isNotEmpty) {
-                              Navigator.push(
-                                context,
-                                buildCanvasRoute(
-                                  context,
-                                  boardId: boardId,
-                                  showTrayTipsOnEntry: true,
-                                ),
-                              );
-                              return;
-                            }
-                          }
-
-                          if (type == 'board_invite' ||
-                              type == 'board_invite_accepted') {
-                            final boardId =
-                                item['extraData']?['boardId']?.toString() ??
-                                item['targetId']?.toString() ??
-                                '';
-
-                            final isAcceptedInvite =
-                                status == 'accepted' ||
-                                type == 'board_invite_accepted';
-
-                            if (isAcceptedInvite && boardId.isNotEmpty) {
-                              Navigator.push(
-                                context,
-                                buildCanvasRoute(
-                                  context,
-                                  boardId: boardId,
-                                  showTrayTipsOnEntry: true,
-                                ),
-                              );
-                              return;
-                            }
-
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => BlocProvider.value(
-                                  value: context.read<BoardInvitationsBloc>(),
-                                  child: const BoardInvitesScreen(),
-                                ),
-                              ),
-                            );
-                            return;
-                          }
-
-                          if (type == 'friend_request_accepted') {
-                            final profileUserId =
-                                item['fromUid']?.toString() ??
-                                item['extraData']?['fromUid']?.toString() ??
-                                item['extraData']?['targetUid']?.toString() ??
-                                '';
-
-                            if (profileUserId.isNotEmpty) {
-                              Navigator.push(
-                                context,
-                                buildProfileRoute(
-                                  context,
-                                  userId: profileUserId,
-                                ),
-                              );
-                              return;
-                            }
-                          }
-
-                          if (type == 'friend_request') {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const FriendRequestsScreen(),
-                              ),
-                            );
-                            return;
-                          }
-
-                          if (type == 'workspace_invite' ||
-                              type == 'workspace_invite_accepted') {
-                            final workspaceId =
-                                item['extraData']?['workspaceId']?.toString() ??
-                                item['targetId']?.toString() ??
-                                '';
-
-                            final isAcceptedInvite =
-                                status == 'accepted' ||
-                                type == 'workspace_invite_accepted';
-
-                            if (isAcceptedInvite && workspaceId.isNotEmpty) {
-                              Navigator.push(
-                                context,
-                                buildWorkspaceDetailRoute(context, workspaceId),
-                              );
-                              return;
-                            }
-
-                            Navigator.push(
-                              context,
-                              buildWorkspaceInvitesRoute(context),
-                            );
-                            return;
-                          }
-                        },
-                        child: PaperCard(
-                          padding: const EdgeInsets.all(InkSpacing.s16 - 2),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (unread) ...[
-                                Container(
-                                  width: 6,
-                                  height: 6,
-                                  margin: const EdgeInsets.only(
-                                    top: 6,
-                                    right: InkSpacing.s8,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: tokens.accent,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                              ] else
-                                const SizedBox(width: 6 + InkSpacing.s8),
-                              Expanded(
-                                child: Column(
+                                child: Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Row(
-                                      children: [
-                                        InkAvatar(
-                                          imageUrl: senderPic,
-                                          initials: inkInitialsFor(senderName),
-                                          id:
-                                              item['fromUid']?.toString() ??
-                                              senderName,
-                                          size: 40,
+                                    if (unread) ...[
+                                      Container(
+                                        width: 6,
+                                        height: 6,
+                                        margin: const EdgeInsets.only(
+                                          top: 6,
+                                          right: InkSpacing.s8,
                                         ),
-                                        const SizedBox(width: InkSpacing.s12),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
+                                        decoration: BoxDecoration(
+                                          color: tokens.accent,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ] else
+                                      const SizedBox(width: 6 + InkSpacing.s8),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
                                             children: [
-                                              Text(
-                                                senderName,
-                                                style: InkType.bodyStrong(
-                                                  tokens.ink,
+                                              InkAvatar(
+                                                imageUrl: senderPic,
+                                                initials: inkInitialsFor(
+                                                  senderName,
+                                                ),
+                                                id:
+                                                    item['fromUid']
+                                                        ?.toString() ??
+                                                    senderName,
+                                                size: 40,
+                                              ),
+                                              const SizedBox(
+                                                width: InkSpacing.s12,
+                                              ),
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      senderName,
+                                                      style: InkType.bodyStrong(
+                                                        tokens.ink,
+                                                      ),
+                                                    ),
+                                                    Text(
+                                                      timeLabel,
+                                                      style: InkType.caption(
+                                                        tokens.inkMuted,
+                                                      ),
+                                                    ),
+                                                  ],
                                                 ),
                                               ),
-                                              Text(
-                                                timeLabel,
-                                                style: InkType.caption(
-                                                  tokens.inkMuted,
+                                              Container(
+                                                width: 30,
+                                                height: 30,
+                                                decoration: BoxDecoration(
+                                                  color:
+                                                      (unread
+                                                              ? tokens.pending
+                                                              : tokens.accent)
+                                                          .withValues(
+                                                            alpha: 0.12,
+                                                          ),
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: Icon(
+                                                  unread
+                                                      ? LucideIcons.mailWarning
+                                                      : _iconForType(type),
+                                                  size: 16,
+                                                  color: unread
+                                                      ? tokens.pending
+                                                      : tokens.accent,
                                                 ),
                                               ),
                                             ],
                                           ),
-                                        ),
-                                        Container(
-                                          width: 30,
-                                          height: 30,
-                                          decoration: BoxDecoration(
-                                            color:
-                                                (unread
-                                                        ? tokens.pending
-                                                        : tokens.accent)
-                                                    .withValues(alpha: 0.12),
-                                            shape: BoxShape.circle,
+                                          const SizedBox(
+                                            height: InkSpacing.s12,
                                           ),
-                                          child: Icon(
-                                            unread
-                                                ? LucideIcons.mailWarning
-                                                : _iconForType(type),
-                                            size: 16,
-                                            color: unread
-                                                ? tokens.pending
-                                                : tokens.accent,
+                                          Text(
+                                            title,
+                                            style: InkType.bodyStrong(
+                                              tokens.ink,
+                                            ),
                                           ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: InkSpacing.s12),
-                                    Text(
-                                      title,
-                                      style: InkType.bodyStrong(tokens.ink),
-                                    ),
-                                    const SizedBox(height: InkSpacing.s4),
-                                    Text(
-                                      body,
-                                      style: InkType.body(
-                                        tokens.inkSecondary,
-                                      ).copyWith(height: 1.35),
-                                    ),
-                                    const SizedBox(height: InkSpacing.s12),
-                                    Row(
-                                      children: [
-                                        _statusPill(tokens, status),
-                                        const Spacer(),
-                                        if (isActionablePending &&
-                                            type == 'board_invite') ...[
-                                          _actionButton(
-                                            icon: LucideIcons.check,
-                                            color: tokens.success,
-                                            onTap: () {
-                                              final inviteId =
-                                                  item['extraData']?['inviteId']
-                                                      ?.toString() ??
-                                                  item['targetId']
-                                                      ?.toString() ??
-                                                  item['id']?.toString() ??
-                                                  '';
-                                              final boardId =
-                                                  item['extraData']?['boardId']
-                                                      ?.toString() ??
-                                                  item['targetId']
-                                                      ?.toString() ??
-                                                  '';
-                                              if (inviteId.isEmpty ||
-                                                  boardId.isEmpty) {
-                                                return;
-                                              }
-                                              context
-                                                  .read<NotificationsBloc>()
-                                                  .markNotificationRead(
-                                                    notificationId,
-                                                  );
-                                              context
-                                                  .read<BoardInvitationsBloc>()
-                                                  .add(
-                                                    BoardInvitationAcceptRequested(
-                                                      inviteId,
-                                                      boardId: boardId,
+                                          const SizedBox(height: InkSpacing.s4),
+                                          Text(
+                                            body,
+                                            style: InkType.body(
+                                              tokens.inkSecondary,
+                                            ).copyWith(height: 1.35),
+                                          ),
+                                          const SizedBox(
+                                            height: InkSpacing.s12,
+                                          ),
+                                          Row(
+                                            children: [
+                                              _statusPill(tokens, status),
+                                              const Spacer(),
+                                              if (isActionablePending &&
+                                                  type == 'board_invite') ...[
+                                                _actionButton(
+                                                  icon: LucideIcons.check,
+                                                  color: tokens.success,
+                                                  onTap: () {
+                                                    final inviteId =
+                                                        item['extraData']?['inviteId']
+                                                            ?.toString() ??
+                                                        item['targetId']
+                                                            ?.toString() ??
+                                                        item['id']
+                                                            ?.toString() ??
+                                                        '';
+                                                    final boardId =
+                                                        item['extraData']?['boardId']
+                                                            ?.toString() ??
+                                                        item['targetId']
+                                                            ?.toString() ??
+                                                        '';
+                                                    if (inviteId.isEmpty ||
+                                                        boardId.isEmpty) {
+                                                      return;
+                                                    }
+                                                    context
+                                                        .read<
+                                                          NotificationsBloc
+                                                        >()
+                                                        .markNotificationRead(
+                                                          notificationId,
+                                                        );
+                                                    context
+                                                        .read<
+                                                          BoardInvitationsBloc
+                                                        >()
+                                                        .add(
+                                                          BoardInvitationAcceptRequested(
+                                                            inviteId,
+                                                            boardId: boardId,
+                                                          ),
+                                                        );
+                                                  },
+                                                ),
+                                                const SizedBox(
+                                                  width: InkSpacing.s8,
+                                                ),
+                                                _actionButton(
+                                                  icon: LucideIcons.x,
+                                                  color: tokens.danger,
+                                                  onTap: () {
+                                                    final inviteId =
+                                                        item['extraData']?['inviteId']
+                                                            ?.toString() ??
+                                                        item['targetId']
+                                                            ?.toString() ??
+                                                        item['id']
+                                                            ?.toString() ??
+                                                        '';
+                                                    if (inviteId.isEmpty) {
+                                                      return;
+                                                    }
+                                                    context
+                                                        .read<
+                                                          NotificationsBloc
+                                                        >()
+                                                        .markNotificationRead(
+                                                          notificationId,
+                                                        );
+                                                    context
+                                                        .read<
+                                                          BoardInvitationsBloc
+                                                        >()
+                                                        .add(
+                                                          BoardInvitationDeclineRequested(
+                                                            inviteId,
+                                                          ),
+                                                        );
+                                                  },
+                                                ),
+                                              ] else if (isActionablePending &&
+                                                  type == 'friend_request') ...[
+                                                _actionButton(
+                                                  icon: LucideIcons.check,
+                                                  color: tokens.success,
+                                                  onTap: () {
+                                                    final requestId =
+                                                        item['extraData']?['requestId']
+                                                            ?.toString() ??
+                                                        item['targetId']
+                                                            ?.toString() ??
+                                                        item['id']
+                                                            ?.toString() ??
+                                                        '';
+                                                    final senderUid =
+                                                        item['fromUid']
+                                                            ?.toString() ??
+                                                        '';
+                                                    if (requestId.isEmpty) {
+                                                      return;
+                                                    }
+                                                    context
+                                                        .read<
+                                                          NotificationsBloc
+                                                        >()
+                                                        .markNotificationRead(
+                                                          notificationId,
+                                                        );
+                                                    context.read<FriendsBloc>().add(
+                                                      AcceptFriendRequestRequested(
+                                                        requestId,
+                                                        senderUid,
+                                                      ),
+                                                    );
+                                                    AppSnackBar.showSuccess(
+                                                      context,
+                                                      'Friend request accepted!',
+                                                    );
+                                                  },
+                                                ),
+                                                const SizedBox(
+                                                  width: InkSpacing.s8,
+                                                ),
+                                                _actionButton(
+                                                  icon: LucideIcons.x,
+                                                  color: tokens.danger,
+                                                  onTap: () {
+                                                    final requestId =
+                                                        item['extraData']?['requestId']
+                                                            ?.toString() ??
+                                                        item['targetId']
+                                                            ?.toString() ??
+                                                        item['id']
+                                                            ?.toString() ??
+                                                        '';
+                                                    if (requestId.isEmpty) {
+                                                      return;
+                                                    }
+                                                    context
+                                                        .read<
+                                                          NotificationsBloc
+                                                        >()
+                                                        .markNotificationRead(
+                                                          notificationId,
+                                                        );
+                                                    context.read<FriendsBloc>().add(
+                                                      DeclineFriendRequestRequested(
+                                                        requestId,
+                                                      ),
+                                                    );
+                                                    AppSnackBar.showMessage(
+                                                      context,
+                                                      'Friend request declined.',
+                                                    );
+                                                  },
+                                                ),
+                                              ] else if (isActionablePending &&
+                                                  type ==
+                                                      'workspace_invite') ...[
+                                                if (workspaceInvitePending)
+                                                  Padding(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 10,
+                                                        ),
+                                                    child: SizedBox(
+                                                      width: 18,
+                                                      height: 18,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                            color:
+                                                                tokens.accent,
+                                                          ),
                                                     ),
-                                                  );
-                                            },
-                                          ),
-                                          const SizedBox(width: InkSpacing.s8),
-                                          _actionButton(
-                                            icon: LucideIcons.x,
-                                            color: tokens.danger,
-                                            onTap: () {
-                                              final inviteId =
-                                                  item['extraData']?['inviteId']
-                                                      ?.toString() ??
-                                                  item['targetId']
-                                                      ?.toString() ??
-                                                  item['id']?.toString() ??
-                                                  '';
-                                              if (inviteId.isEmpty) {
-                                                return;
-                                              }
-                                              context
-                                                  .read<NotificationsBloc>()
-                                                  .markNotificationRead(
-                                                    notificationId,
-                                                  );
-                                              context
-                                                  .read<BoardInvitationsBloc>()
-                                                  .add(
-                                                    BoardInvitationDeclineRequested(
-                                                      inviteId,
-                                                    ),
-                                                  );
-                                            },
-                                          ),
-                                        ] else if (isActionablePending &&
-                                            type == 'friend_request') ...[
-                                          _actionButton(
-                                            icon: LucideIcons.check,
-                                            color: tokens.success,
-                                            onTap: () {
-                                              final requestId =
-                                                  item['extraData']?['requestId']
-                                                      ?.toString() ??
-                                                  item['targetId']
-                                                      ?.toString() ??
-                                                  item['id']?.toString() ??
-                                                  '';
-                                              final senderUid =
-                                                  item['fromUid']?.toString() ??
-                                                  '';
-                                              if (requestId.isEmpty) {
-                                                return;
-                                              }
-                                              context
-                                                  .read<NotificationsBloc>()
-                                                  .markNotificationRead(
-                                                    notificationId,
-                                                  );
-                                              context.read<FriendsBloc>().add(
-                                                AcceptFriendRequestRequested(
-                                                  requestId,
-                                                  senderUid,
-                                                ),
-                                              );
-                                              AppSnackBar.showSuccess(
-                                                context,
-                                                'Friend request accepted!',
-                                              );
-                                            },
-                                          ),
-                                          const SizedBox(width: InkSpacing.s8),
-                                          _actionButton(
-                                            icon: LucideIcons.x,
-                                            color: tokens.danger,
-                                            onTap: () {
-                                              final requestId =
-                                                  item['extraData']?['requestId']
-                                                      ?.toString() ??
-                                                  item['targetId']
-                                                      ?.toString() ??
-                                                  item['id']?.toString() ??
-                                                  '';
-                                              if (requestId.isEmpty) {
-                                                return;
-                                              }
-                                              context
-                                                  .read<NotificationsBloc>()
-                                                  .markNotificationRead(
-                                                    notificationId,
-                                                  );
-                                              context.read<FriendsBloc>().add(
-                                                DeclineFriendRequestRequested(
-                                                  requestId,
-                                                ),
-                                              );
-                                              AppSnackBar.showMessage(
-                                                context,
-                                                'Friend request declined.',
-                                              );
-                                            },
-                                          ),
-                                        ] else if (isActionablePending &&
-                                            type == 'workspace_invite') ...[
-                                          _actionButton(
-                                            icon: LucideIcons.check,
-                                            color: tokens.success,
-                                            onTap: () {
-                                              final inviteId =
-                                                  item['extraData']?['inviteId']
-                                                      ?.toString() ??
-                                                  item['targetId']
-                                                      ?.toString() ??
-                                                  item['id']?.toString() ??
-                                                  '';
-                                              if (inviteId.isEmpty) {
-                                                return;
-                                              }
-                                              context
-                                                  .read<NotificationsBloc>()
-                                                  .markNotificationRead(
-                                                    notificationId,
-                                                  );
-                                              context.read<WorkspaceBloc>().add(
-                                                AcceptWorkspaceInviteRequested(
-                                                  inviteId,
-                                                ),
-                                              );
-                                            },
-                                          ),
-                                          const SizedBox(width: InkSpacing.s8),
-                                          _actionButton(
-                                            icon: LucideIcons.x,
-                                            color: tokens.danger,
-                                            onTap: () {
-                                              final inviteId =
-                                                  item['extraData']?['inviteId']
-                                                      ?.toString() ??
-                                                  item['targetId']
-                                                      ?.toString() ??
-                                                  item['id']?.toString() ??
-                                                  '';
-                                              if (inviteId.isEmpty) {
-                                                return;
-                                              }
-                                              context
-                                                  .read<NotificationsBloc>()
-                                                  .markNotificationRead(
-                                                    notificationId,
-                                                  );
-                                              context.read<WorkspaceBloc>().add(
-                                                RejectWorkspaceInviteRequested(
-                                                  inviteId,
-                                                ),
-                                              );
-                                            },
-                                          ),
-                                        ] else if (isActionablePending &&
-                                            (type == 'board_access_request' ||
-                                                type ==
-                                                    'board_edit_request')) ...[
-                                          _actionButton(
-                                            icon: LucideIcons.check,
-                                            color: tokens.success,
-                                            onTap: () {
-                                              final boardId =
-                                                  item['extraData']?['boardId']
-                                                      ?.toString() ??
-                                                  item['targetId']
-                                                      ?.toString() ??
-                                                  '';
-                                              final requesterUid =
-                                                  item['extraData']?['requesterUid']
-                                                      ?.toString() ??
-                                                  item['fromUid']?.toString() ??
-                                                  '';
-                                              final requestType =
-                                                  item['extraData']?['requestType']
-                                                      ?.toString() ??
-                                                  (type == 'board_edit_request'
-                                                      ? 'edit'
-                                                      : 'join');
-                                              if (boardId.isEmpty ||
-                                                  requesterUid.isEmpty) {
-                                                return;
-                                              }
-                                              context
-                                                  .read<NotificationsBloc>()
-                                                  .markNotificationRead(
-                                                    notificationId,
-                                                  );
-                                              context.read<NotificationsBloc>().add(
-                                                NotificationRespondToAccessRequest(
-                                                  notificationId:
-                                                      notificationId,
-                                                  boardId: boardId,
-                                                  requesterUid: requesterUid,
-                                                  action: 'accept',
-                                                  requestType: requestType,
-                                                ),
-                                              );
-                                              ScaffoldMessenger.of(
-                                                context,
-                                              ).showSnackBar(
-                                                SnackBar(
-                                                  content: Text(
-                                                    requestType == 'edit'
-                                                        ? 'Edit access approved for $senderName.'
-                                                        : 'Join request approved for $senderName.',
+                                                  )
+                                                else ...[
+                                                  _actionButton(
+                                                    icon: LucideIcons.check,
+                                                    color: tokens.success,
+                                                    onTap: () =>
+                                                        _decideWorkspaceInvite(
+                                                          context,
+                                                          inviteId:
+                                                              workspaceInviteId,
+                                                          notificationId:
+                                                              notificationId,
+                                                          status: 'accepted',
+                                                        ),
                                                   ),
-                                                ),
-                                              );
-                                            },
-                                          ),
-                                          const SizedBox(width: InkSpacing.s8),
-                                          _actionButton(
-                                            icon: LucideIcons.x,
-                                            color: tokens.danger,
-                                            onTap: () {
-                                              final boardId =
-                                                  item['extraData']?['boardId']
-                                                      ?.toString() ??
-                                                  item['targetId']
-                                                      ?.toString() ??
-                                                  '';
-                                              final requesterUid =
-                                                  item['extraData']?['requesterUid']
-                                                      ?.toString() ??
-                                                  item['fromUid']?.toString() ??
-                                                  '';
-                                              final requestType =
-                                                  item['extraData']?['requestType']
-                                                      ?.toString() ??
-                                                  (type == 'board_edit_request'
-                                                      ? 'edit'
-                                                      : 'join');
-                                              if (boardId.isEmpty ||
-                                                  requesterUid.isEmpty) {
-                                                return;
-                                              }
-                                              context
-                                                  .read<NotificationsBloc>()
-                                                  .markNotificationRead(
-                                                    notificationId,
-                                                  );
-                                              context.read<NotificationsBloc>().add(
-                                                NotificationRespondToAccessRequest(
-                                                  notificationId:
-                                                      notificationId,
-                                                  boardId: boardId,
-                                                  requesterUid: requesterUid,
-                                                  action: 'decline',
-                                                  requestType: requestType,
-                                                ),
-                                              );
-                                              ScaffoldMessenger.of(
-                                                context,
-                                              ).showSnackBar(
-                                                const SnackBar(
-                                                  content: Text(
-                                                    'Request declined.',
+                                                  const SizedBox(
+                                                    width: InkSpacing.s8,
                                                   ),
+                                                  _actionButton(
+                                                    icon: LucideIcons.x,
+                                                    color: tokens.danger,
+                                                    onTap: () =>
+                                                        _decideWorkspaceInvite(
+                                                          context,
+                                                          inviteId:
+                                                              workspaceInviteId,
+                                                          notificationId:
+                                                              notificationId,
+                                                          status: 'declined',
+                                                        ),
+                                                  ),
+                                                ],
+                                              ] else if (isActionablePending &&
+                                                  (type ==
+                                                          'board_access_request' ||
+                                                      type ==
+                                                          'board_edit_request')) ...[
+                                                _actionButton(
+                                                  icon: LucideIcons.check,
+                                                  color: tokens.success,
+                                                  onTap: () {
+                                                    final boardId =
+                                                        item['extraData']?['boardId']
+                                                            ?.toString() ??
+                                                        item['targetId']
+                                                            ?.toString() ??
+                                                        '';
+                                                    final requesterUid =
+                                                        item['extraData']?['requesterUid']
+                                                            ?.toString() ??
+                                                        item['fromUid']
+                                                            ?.toString() ??
+                                                        '';
+                                                    final requestType =
+                                                        item['extraData']?['requestType']
+                                                            ?.toString() ??
+                                                        (type ==
+                                                                'board_edit_request'
+                                                            ? 'edit'
+                                                            : 'join');
+                                                    if (boardId.isEmpty ||
+                                                        requesterUid.isEmpty) {
+                                                      return;
+                                                    }
+                                                    context
+                                                        .read<
+                                                          NotificationsBloc
+                                                        >()
+                                                        .markNotificationRead(
+                                                          notificationId,
+                                                        );
+                                                    context
+                                                        .read<
+                                                          NotificationsBloc
+                                                        >()
+                                                        .add(
+                                                          NotificationRespondToAccessRequest(
+                                                            notificationId:
+                                                                notificationId,
+                                                            boardId: boardId,
+                                                            requesterUid:
+                                                                requesterUid,
+                                                            action: 'accept',
+                                                            requestType:
+                                                                requestType,
+                                                          ),
+                                                        );
+                                                    ScaffoldMessenger.of(
+                                                      context,
+                                                    ).showSnackBar(
+                                                      SnackBar(
+                                                        content: Text(
+                                                          requestType == 'edit'
+                                                              ? 'Edit access approved for $senderName.'
+                                                              : 'Join request approved for $senderName.',
+                                                        ),
+                                                      ),
+                                                    );
+                                                  },
                                                 ),
-                                              );
-                                            },
+                                                const SizedBox(
+                                                  width: InkSpacing.s8,
+                                                ),
+                                                _actionButton(
+                                                  icon: LucideIcons.x,
+                                                  color: tokens.danger,
+                                                  onTap: () {
+                                                    final boardId =
+                                                        item['extraData']?['boardId']
+                                                            ?.toString() ??
+                                                        item['targetId']
+                                                            ?.toString() ??
+                                                        '';
+                                                    final requesterUid =
+                                                        item['extraData']?['requesterUid']
+                                                            ?.toString() ??
+                                                        item['fromUid']
+                                                            ?.toString() ??
+                                                        '';
+                                                    final requestType =
+                                                        item['extraData']?['requestType']
+                                                            ?.toString() ??
+                                                        (type ==
+                                                                'board_edit_request'
+                                                            ? 'edit'
+                                                            : 'join');
+                                                    if (boardId.isEmpty ||
+                                                        requesterUid.isEmpty) {
+                                                      return;
+                                                    }
+                                                    context
+                                                        .read<
+                                                          NotificationsBloc
+                                                        >()
+                                                        .markNotificationRead(
+                                                          notificationId,
+                                                        );
+                                                    context
+                                                        .read<
+                                                          NotificationsBloc
+                                                        >()
+                                                        .add(
+                                                          NotificationRespondToAccessRequest(
+                                                            notificationId:
+                                                                notificationId,
+                                                            boardId: boardId,
+                                                            requesterUid:
+                                                                requesterUid,
+                                                            action: 'decline',
+                                                            requestType:
+                                                                requestType,
+                                                          ),
+                                                        );
+                                                    ScaffoldMessenger.of(
+                                                      context,
+                                                    ).showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text(
+                                                          'Request declined.',
+                                                        ),
+                                                      ),
+                                                    );
+                                                  },
+                                                ),
+                                              ],
+                                            ],
                                           ),
                                         ],
-                                      ],
+                                      ),
                                     ),
                                   ],
                                 ),
                               ),
-                            ],
-                          ),
+                            );
+                          },
                         ),
-                      );
-                    },
-                  ),
+                ),
+              ],
+            ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildFilterBar(InkTokens tokens) {
+    return SizedBox(
+      height: 48,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s16),
+        children: [
+          for (final filter in _NotificationFilter.values)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ChoiceChip(
+                label: Text(filter.label),
+                selected: _filter == filter,
+                onSelected: (_) => setState(() => _filter = filter),
+                showCheckmark: false,
+                labelStyle: InkType.caption(
+                  _filter == filter ? tokens.accentText : tokens.inkSecondary,
+                ).copyWith(fontWeight: FontWeight.w600),
+                selectedColor: tokens.accent.withValues(alpha: 0.14),
+                backgroundColor: tokens.field,
+                side: BorderSide(
+                  color: _filter == filter
+                      ? tokens.accent.withValues(alpha: 0.35)
+                      : Colors.transparent,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

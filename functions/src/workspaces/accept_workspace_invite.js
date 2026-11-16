@@ -3,6 +3,7 @@ const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
 const { addBoardMember } = require('../utils/redis');
+const { updateUserNotificationStatus } = require('../utils/notification_sender');
 
 module.exports = async (request) => {
   const uid = request.auth?.uid;
@@ -212,6 +213,22 @@ module.exports = async (request) => {
         await addBoardMember(boardId, uid);
       }
     }
+
+    // The invite document is deleted above, so the inbox notification is the
+    // only remaining record. Resolve it here or it stays "pending" and a
+    // second accept from Notifications fails against the deleted invite.
+    await updateUserNotificationStatus({
+      recipientUid: uid,
+      type: 'workspace_invite',
+      targetId: inviteId.trim(),
+      status: 'accepted',
+    }).catch((notificationError) => {
+      logger.warn('acceptWorkspaceInvite notification sync failed', {
+        inviteId: inviteId.trim(),
+        uid,
+        errorMessage: notificationError.message,
+      });
+    });
 
     return result;
   } catch (error) {
