@@ -570,6 +570,18 @@ class AgoraChatServiceImpl implements ChatService {
     return a.isNotEmpty && a == b;
   }
 
+  /// Case-only UID match, used for messages that were addressed with Agora's
+  /// lowercased username instead of the exact Firebase UID. Firebase UIDs are
+  /// alphanumeric, so two distinct UIDs can only collide here when they differ
+  /// purely by letter case; separators (`/`, `.`, ...) must not match.
+  bool _isCaseInsensitiveSameUid(String a, String b) {
+    return a.isNotEmpty &&
+        b.isNotEmpty &&
+        a != b &&
+        a.toLowerCase() == b.toLowerCase() &&
+        _sanitizeAgoraUid(a) == _sanitizeAgoraUid(b);
+  }
+
   String _activeLocalUid() {
     return _authService.getCurrentUserId() ?? _currentUserId ?? '';
   }
@@ -1583,12 +1595,19 @@ class AgoraChatServiceImpl implements ChatService {
                 triggerNotification: false,
                 countUnread: false,
                 isGroup: isGroup,
-              );
+              ) ??
+                  resolvedPeerId;
             }
             if (isGroup) {
               _backfilledThreadsForUser.add(conv.id);
+              _backfilledThreadsForUser.add(conv.id.toLowerCase());
             } else if (resolvedPeerId != null && resolvedPeerId.isNotEmpty) {
               _backfilledThreadsForUser.add(resolvedPeerId);
+              // Agora addresses the DM by its sanitized username; the visible
+              // thread is keyed by the Firebase UID. Mark both so the app does
+              // not re-fetch the whole history on every open.
+              _backfilledThreadsForUser.add(conv.id);
+              _backfilledThreadsForUser.add(conv.id.toLowerCase());
             }
           }
         } catch (e) {
@@ -2185,8 +2204,14 @@ class AgoraChatServiceImpl implements ChatService {
           // If an explicit `targetUid` attribute is present on an incoming DM
           // and points to a DIFFERENT Firebase UID (e.g. a colliding Agora
           // username intended for another Firebase user), reject it!
+          //
+          // Case-only differences are accepted: older builds synced empty DMs
+          // under Agora's lowercased username, so senders could address the
+          // message to `<uid-lowercased>` instead of the exact Firebase UID.
+          // Rejecting those dropped the entire history on one side.
           if (attrTargetUid.isNotEmpty &&
-              !_isSameFirebaseUid(attrTargetUid, targetAccountUid)) {
+              !_isSameFirebaseUid(attrTargetUid, targetAccountUid) &&
+              !_isCaseInsensitiveSameUid(attrTargetUid, targetAccountUid)) {
             return null;
           }
           conversationId = senderId;
@@ -2270,6 +2295,24 @@ class AgoraChatServiceImpl implements ChatService {
         isGroup: isGroup,
         countUnread: countUnread && !active,
       );
+
+      // A DM first seen as an empty Agora conversation is keyed by its
+      // sanitized Agora username. Once a real message arrives with a resolved
+      // Firebase UID, drop that empty duplicate so the user does not end up
+      // with one populated chat and one empty "ghost" chat.
+      if (!isGroup &&
+          !isFromSelf &&
+          attrSenderUid.isNotEmpty &&
+          (msg.from ?? '').isNotEmpty &&
+          msg.from != senderId) {
+        unawaited(
+          _removeEmptyGhostDm(
+            currentUid: targetAccountUid,
+            ghostId: msg.from!,
+            realPeerId: senderId,
+          ),
+        );
+      }
 
       if (triggerNotification && senderId.isNotEmpty && !active) {
         if (!isFromSelf &&
@@ -2387,11 +2430,59 @@ class AgoraChatServiceImpl implements ChatService {
 
   void _notifyThreadUpdated(String conversationId) async {
     final controller = _messagesControllers[conversationId];
-    if (controller != null && !controller.isClosed) {
-      final messages = await getMessages(conversationId);
-      if (!controller.isClosed) {
-        controller.add(messages);
-      }
+    if (controller == null || controller.isClosed) return;
+    final currentUid = _authenticatedUserId ?? _currentUserId;
+    if (currentUid == null || currentUid.isEmpty) return;
+    try {
+      // Read straight from the repository. Calling `getMessages` here could
+      // start a server backfill, which persists messages that call this method
+      // again while the in-flight backfill future is still pending — a
+      // self-referential await that left the visible thread empty.
+      final messages = await _chatRepository.getMessagesForThread(
+        currentUid: currentUid,
+        conversationId: conversationId,
+      );
+      if (!controller.isClosed) controller.add(messages);
+    } catch (e) {
+      developer.log(
+        'Failed to refresh thread $conversationId: $e',
+        name: 'AgoraChatService',
+      );
+    }
+  }
+
+  final Set<String> _cleanedGhostDms = <String>{};
+
+  Future<void> _removeEmptyGhostDm({
+    required String currentUid,
+    required String ghostId,
+    required String realPeerId,
+  }) async {
+    if (ghostId.isEmpty || realPeerId.isEmpty || ghostId == realPeerId) return;
+    if (_sanitizeAgoraUid(ghostId) != _sanitizeAgoraUid(realPeerId)) return;
+    if (!_cleanedGhostDms.add('$currentUid::$ghostId')) return;
+
+    try {
+      final ghost = await _chatRepository.getConversation(
+        currentUid: currentUid,
+        conversationId: ghostId,
+      );
+      if (ghost == null || ghost.isGroup) return;
+      final messages = await _chatRepository.getMessagesForThread(
+        currentUid: currentUid,
+        conversationId: ghostId,
+      );
+      if (messages.isNotEmpty) return;
+      await _chatRepository.deleteConversation(
+        currentUid: currentUid,
+        conversationId: ghostId,
+      );
+      await _syncConversationsFromLocal();
+    } catch (e) {
+      developer.log(
+        'Ghost DM cleanup failed for $ghostId: $e',
+        name: 'AgoraChatService',
+      );
     }
   }
 

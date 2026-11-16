@@ -20,6 +20,10 @@ import 'package:inklink/domain/repositories/board/board_repository.dart';
 import 'package:inklink/domain/repositories/board/board_repository_impl.dart';
 import 'package:inklink/domain/repositories/canvas/canvas_sync_repository.dart';
 import 'package:inklink/domain/repositories/canvas/canvas_sync_repository_impl.dart';
+import 'package:inklink/domain/repositories/history/board_history_repository.dart';
+import 'package:inklink/domain/repositories/history/board_history_repository_impl.dart';
+import 'package:inklink/domain/services/history/board_history_service.dart';
+import 'package:inklink/domain/services/history/board_history_service_impl.dart';
 import 'package:inklink/domain/repositories/invitation/invitation_repository.dart';
 import 'package:inklink/domain/repositories/invitation/invitation_repository_impl.dart';
 import 'package:inklink/domain/repositories/notification/notification_repository.dart';
@@ -180,6 +184,12 @@ Future<void> _startApp() async {
             localDatabaseService: context.read<LocalDatabaseService>(),
           ),
         ),
+        RepositoryProvider<BoardHistoryRepository>(
+          create: (context) => BoardHistoryRepositoryImpl(
+            firestoreService: context.read<FirestoreService>(),
+            authService: context.read<AuthService>(),
+          ),
+        ),
         RepositoryProvider<SettingsRepository>(
           create: (context) => SettingsRepositoryImpl(
             localDatabaseService: context.read<LocalDatabaseService>(),
@@ -285,6 +295,14 @@ Future<void> _startApp() async {
           create: (context) => BoardChatServiceImpl(
             authService: context.read<AuthService>(),
           ),
+        ),
+        RepositoryProvider<BoardHistoryService>(
+          create: (context) => BoardHistoryServiceImpl(
+            authService: context.read<AuthService>(),
+            cloudFunctionsService: context.read<CloudFunctionsService>(),
+            historyRepository: context.read<BoardHistoryRepository>(),
+          ),
+          dispose: (service) => service.dispose(),
         ),
         RepositoryProvider<VoiceService>(
           create: (context) => VoiceServiceImpl(

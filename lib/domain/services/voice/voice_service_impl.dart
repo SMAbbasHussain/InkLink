@@ -324,7 +324,24 @@ class VoiceServiceImpl implements VoiceService {
             final token = res['token']?.toString() ?? '';
             final currentUid = _authService.getCurrentUserId() ?? '';
 
-            // Consume server credentials to start RTC media session
+            if (appId.isEmpty || token.isEmpty) {
+              _isInCall = false;
+              _isInCallController.add(false);
+              _activeBoardId = null;
+              _socket?.emit('leave_voice_call', {'boardId': boardId});
+              completer.completeError(
+                StateError(
+                  'Voice calling is not configured on the server. '
+                  'Ask the board owner to set AGORA_APP_ID and '
+                  'AGORA_APP_CERTIFICATE.',
+                ),
+              );
+              return;
+            }
+
+            // Consume server credentials to start RTC media session. Failing
+            // here means the user would be in a call with no audio, so surface
+            // it instead of silently flipping the in-call state.
             try {
               await _rtcMediaClient.joinSession(
                 appId: appId,
@@ -338,6 +355,18 @@ class VoiceServiceImpl implements VoiceService {
               } catch (_) {}
             } catch (mediaErr) {
               developer.log('RTC media session start error: $mediaErr', name: 'VoiceService');
+              _isInCall = false;
+              _isInCallController.add(false);
+              _activeBoardId = null;
+              _participants.clear();
+              _socket?.emit('leave_voice_call', {'boardId': boardId});
+              completer.completeError(
+                StateError(
+                  'Could not start audio for the voice call. '
+                  'Check the microphone permission and try again.',
+                ),
+              );
+              return;
             }
 
             _isInCall = true;

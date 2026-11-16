@@ -329,6 +329,17 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       if (current is DashboardLoaded) {
         emit(current.copyWith(joinedBoardId: event.boardId, actionError: null));
       }
+    } on BoardJoinApprovalRequiredException catch (e) {
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(
+          current.copyWith(
+            actionInfo: e.toString(),
+            joinedBoardId: null,
+            actionError: null,
+          ),
+        );
+      }
     } catch (e) {
       final current = state;
       if (current is DashboardLoaded) {

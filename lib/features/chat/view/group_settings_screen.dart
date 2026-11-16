@@ -10,6 +10,7 @@ import '../bloc/group_settings_event.dart';
 import '../bloc/group_settings_state.dart';
 import '../theme/chat_theme.dart';
 import '../../../../core/utils/app_snackbar.dart';
+import 'widgets/group_avatar_picker.dart';
 
 class GroupSettingsScreen extends StatelessWidget {
   final String groupId;
@@ -34,6 +35,9 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
   Widget build(BuildContext context) {
     final colors = ChatTheme.colorsOf(context);
     final authState = context.watch<AuthBloc>().state;
+    // Read once at the top of the build. Calling `context.select` from a
+    // ListView item builder throws because the sliver rebuilds lazily.
+    final currentUid = authState is Authenticated ? authState.uid : '';
     return BlocConsumer<GroupSettingsBloc, GroupSettingsState>(
       listener: (context, state) {
         if (state is GroupSettingsOperationSuccess) {
@@ -106,7 +110,7 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          if (isAdmin)
+                          if (isAdmin || isOwner)
                             IconButton(
                               icon: Icon(Icons.edit, color: colors.accent, size: 18),
                               onPressed: () => _showEditGroupDialog(context, group),
@@ -156,11 +160,13 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
                 const SizedBox(height: ChatTheme.space8),
 
                 // Members List
-                Container(
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                // Material (not a decorated Container) so ListTile's ink and
+                // background paint correctly and Flutter's ListTile assertion
+                // does not fire inside group details.
+                Material(
+                  color: colors.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
                   child: ListView.separated(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
@@ -170,9 +176,6 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
                       final memberId = group.memberIds[index];
                       final isMemberOwner = group.isUserOwner(memberId);
                       final isMemberAdmin = group.isUserAdmin(memberId);
-                      final currentUid = context.select<AuthBloc, String>(
-                        (b) => b.state is Authenticated ? (b.state as Authenticated).uid : '',
-                      );
                       final isSelf = memberId == currentUid;
                       final profile = state.memberProfiles[memberId];
                       final safeFallback = memberId.length > 5 ? memberId.substring(0, 5) : memberId;
@@ -292,11 +295,10 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
                 const SizedBox(height: ChatTheme.space32),
 
                 // Danger Zone: Leave / Delete Group
-                Container(
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                Material(
+                  color: colors.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
                   child: Column(
                     children: [
                       ListTile(
@@ -365,54 +367,144 @@ class _GroupSettingsViewState extends State<_GroupSettingsView> {
     final colors = ChatTheme.colorsOf(context);
     final nameCtrl = TextEditingController(text: group.name);
     final descCtrl = TextEditingController(text: group.description ?? '');
+    var avatarUrl = group.avatarUrl;
+    var isUploadingAvatar = false;
 
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text('Edit Group Info', style: TextStyle(color: colors.textPrimary)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameCtrl,
-              style: TextStyle(color: colors.textPrimary),
-              decoration: InputDecoration(
-                labelText: 'Group Name',
-                labelStyle: TextStyle(color: colors.textSecondary),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: descCtrl,
-              style: TextStyle(color: colors.textPrimary),
-              decoration: InputDecoration(
-                labelText: 'Description',
-                labelStyle: TextStyle(color: colors.textSecondary),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogCtx),
-            child: Text('Cancel', style: TextStyle(color: colors.textSecondary)),
+      isScrollControlled: true,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheetState) => Padding(
+          padding: EdgeInsets.only(
+            left: ChatTheme.space16,
+            right: ChatTheme.space16,
+            top: ChatTheme.space16,
+            bottom: MediaQuery.viewInsetsOf(sheetCtx).bottom +
+                ChatTheme.space16,
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: colors.accent),
-            onPressed: () {
-              context.read<GroupSettingsBloc>().add(
-                UpdateGroupDetailsRequested(
-                  groupId: group.id,
-                  name: nameCtrl.text.trim(),
-                  description: descCtrl.text.trim(),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Edit Group Info',
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
                 ),
-              );
-              Navigator.pop(dialogCtx);
-            },
-            child: const Text('Save', style: TextStyle(color: Colors.white)),
+              ),
+              const SizedBox(height: ChatTheme.space16),
+              GestureDetector(
+                onTap: isUploadingAvatar
+                    ? null
+                    : () async {
+                        setSheetState(() => isUploadingAvatar = true);
+                        final url = await pickAndUploadGroupAvatar(sheetCtx);
+                        if (!sheetCtx.mounted) return;
+                        setSheetState(() {
+                          isUploadingAvatar = false;
+                          if (url != null) avatarUrl = url;
+                        });
+                      },
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CircleAvatar(
+                      radius: 40,
+                      backgroundColor: colors.accent,
+                      backgroundImage: avatarUrl != null && avatarUrl!.isNotEmpty
+                          ? NetworkImage(avatarUrl!)
+                          : null,
+                      child: avatarUrl == null || avatarUrl!.isEmpty
+                          ? const Icon(Icons.groups, size: 40, color: Colors.white)
+                          : null,
+                    ),
+                    if (isUploadingAvatar)
+                      const CircularProgressIndicator()
+                    else
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          width: 26,
+                          height: 26,
+                          decoration: BoxDecoration(
+                            color: colors.accent,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: colors.surface, width: 2),
+                          ),
+                          child: const Icon(
+                            Icons.photo_camera,
+                            size: 13,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: ChatTheme.space8),
+              Text(
+                'Tap to change the group photo',
+                style: TextStyle(color: colors.textSecondary, fontSize: 11),
+              ),
+              const SizedBox(height: ChatTheme.space16),
+              TextField(
+                controller: nameCtrl,
+                style: TextStyle(color: colors.textPrimary),
+                decoration: InputDecoration(
+                  labelText: 'Group Name',
+                  labelStyle: TextStyle(color: colors.textSecondary),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: descCtrl,
+                maxLines: 3,
+                style: TextStyle(color: colors.textPrimary),
+                decoration: InputDecoration(
+                  labelText: 'Description',
+                  labelStyle: TextStyle(color: colors.textSecondary),
+                ),
+              ),
+              const SizedBox(height: ChatTheme.space16),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: colors.accent),
+                  onPressed: () {
+                    final name = nameCtrl.text.trim();
+                    if (name.isEmpty) {
+                      AppSnackBar.showMessage(
+                        sheetCtx,
+                        'Please enter a group name',
+                      );
+                      return;
+                    }
+                    context.read<GroupSettingsBloc>().add(
+                      UpdateGroupDetailsRequested(
+                        groupId: group.id,
+                        name: name,
+                        description: descCtrl.text.trim(),
+                        iconUrl: avatarUrl,
+                      ),
+                    );
+                    Navigator.pop(sheetCtx);
+                  },
+                  child: const Text(
+                    'Save Changes',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

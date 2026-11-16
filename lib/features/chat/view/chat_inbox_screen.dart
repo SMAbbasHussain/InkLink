@@ -18,7 +18,7 @@ import '../bloc/chat_inbox_bloc.dart';
 import '../bloc/chat_inbox_event.dart';
 import '../bloc/chat_inbox_state.dart';
 import '../theme/chat_theme.dart';
-import 'widgets/create_group_sheet.dart';
+import 'create_group_screen.dart';
 
 class ChatInboxScreen extends StatelessWidget {
   const ChatInboxScreen({super.key});
@@ -217,11 +217,8 @@ class _ChatInboxViewState extends State<_ChatInboxView> {
   }
 
   void _showCreateGroupSheet() async {
-    final createdGroup = await showModalBottomSheet<ChatConversationModel>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const CreateGroupSheet(),
+    final createdGroup = await Navigator.of(context).push<ChatConversationModel>(
+      buildCreateGroupRoute(context),
     );
 
     if (createdGroup != null && mounted) {
