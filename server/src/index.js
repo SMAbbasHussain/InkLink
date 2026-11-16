@@ -75,6 +75,11 @@ app.get('/health', (req, res) => {
 // live board traffic; these endpoints exist so the client can mint/renew
 // tokens for the Agora-Chat SDK and for RTC voice joins.
 
+function sanitizeErrorMessage(err) {
+  const msg = (err && typeof err === 'object' && err.message) ? err.message : String(err || 'unknown error');
+  return msg.replace(/(:\/\/)([^:@\s]+):([^@\s]+)@/g, '$1$2:***@');
+}
+
 app.post('/api/agora/chat/token', async (req, res) => {
   try {
     const decoded = await authenticateFirebaseRequest(req);
@@ -138,7 +143,7 @@ app.post('/api/agora/chat/token', async (req, res) => {
 
     return res.status(200).json(payload);
   } catch (err) {
-    console.error('[agora/chat/token] Error:', err);
+    console.error('[agora/chat/token] Error:', sanitizeErrorMessage(err));
     return res.status(502).json({ error: 'agora chat token request failed' });
   }
 });
@@ -179,7 +184,7 @@ app.post('/api/agora/rtc/token', async (req, res) => {
     console.log(`[agora-rtc] minted RTC token for ${decoded.uid} channel ${channelName} (valid 1h)`);
     return res.status(200).json({ appId, token, channelName, privilegeExpiredTs });
   } catch (err) {
-    console.error('[agora/rtc/token] Error:', err);
+    console.error('[agora/rtc/token] Error:', sanitizeErrorMessage(err));
     return res.status(500).json({ error: 'agora rtc token request failed' });
   }
 });
@@ -666,8 +671,7 @@ async function getAgoraChatAppToken() {
   );
 
   if (!response.ok) {
-    const detail = (await response.text().catch(() => '')).slice(0, 300);
-    console.warn(`[agora-chat] App token request failed: HTTP ${response.status} ${detail}`);
+    console.warn(`[agora-chat] App token request failed: HTTP ${response.status}`);
     throw new Error(`agora chat app token request failed (${response.status})`);
   }
 
@@ -727,13 +731,13 @@ async function ensureAgoraChatUser(username, appToken) {
 
   if (response.status === 401 || response.status === 403) {
     // Auth failures are NOT swallowed — the app token itself is bad/expired.
-    console.warn(`[agora-chat] User registration rejected: HTTP ${response.status} ${detail}`);
+    console.warn(`[agora-chat] User registration rejected: HTTP ${response.status}`);
     throw new Error(`agora chat user registration rejected (${response.status})`);
   }
 
   // Pessimistic-but-idempotent: other failures (transient 5xx etc.) are
   // swallowed with a log — token minting below surfaces real problems anyway.
-  console.warn(`[agora-chat] User registration failed (HTTP ${response.status}): ${detail}`);
+  console.warn(`[agora-chat] User registration failed: HTTP ${response.status}`);
   return false;
 }
 
@@ -763,8 +767,7 @@ async function createAgoraChatUserToken(username, expirySeconds) {
   );
 
   if (!response.ok) {
-    const detail = (await response.text().catch(() => '')).slice(0, 300);
-    console.warn(`[agora-chat] User token request failed for ${username}: HTTP ${response.status} ${detail}`);
+    console.warn(`[agora-chat] User token request failed for ${username}: HTTP ${response.status}`);
     throw new Error(`agora chat user token request failed (${response.status})`);
   }
 
@@ -1815,7 +1818,7 @@ io.on('connection', (socket) => {
         ack({ status: 'success', updateId: update.updateId, boardId, version: version || 0 });
       }
     } catch (error) {
-      console.error('Failed processing crdt_update:', error);
+      console.error('Failed processing crdt_update:', sanitizeErrorMessage(error));
       if (typeof ack === 'function') {
         try {
           ack({ status: 'error', message: error.message });
@@ -2521,7 +2524,7 @@ io.on('connection', (socket) => {
         callback({ status: 'fallback_required', boardId });
       }
     } catch (error) {
-      console.error('Error in sync_offline:', error);
+      console.error('Error in sync_offline:', sanitizeErrorMessage(error));
       if (typeof callback === 'function') {
         callback({ status: 'error', error: error.message });
       }
@@ -2579,7 +2582,7 @@ io.on('connection', (socket) => {
 
       if (typeof ack === 'function') ack({ status: 'success', message: chatMessage });
     } catch (err) {
-      console.error('[board_chat_message] Error:', err);
+      console.error('[board_chat_message] Error:', sanitizeErrorMessage(err));
       if (typeof ack === 'function') ack({ status: 'error', message: err.message });
     }
   });
@@ -2612,7 +2615,7 @@ io.on('connection', (socket) => {
 
       if (typeof callback === 'function') callback({ status: 'success', messages: [] });
     } catch (err) {
-      console.error('[get_board_chat_history] Error:', err);
+      console.error('[get_board_chat_history] Error:', sanitizeErrorMessage(err));
       if (typeof callback === 'function') callback({ status: 'error', message: err.message });
     }
   });
@@ -2686,7 +2689,7 @@ io.on('connection', (socket) => {
         });
       }
     } catch (err) {
-      console.error('[join_voice_call] Error:', err);
+      console.error('[join_voice_call] Error:', sanitizeErrorMessage(err));
       if (typeof callback === 'function') callback({ status: 'error', message: err.message });
     }
   });
@@ -2707,7 +2710,7 @@ io.on('connection', (socket) => {
       }
       if (typeof callback === 'function') callback({ status: 'success' });
     } catch (err) {
-      console.error('[leave_voice_call] Error:', err);
+      console.error('[leave_voice_call] Error:', sanitizeErrorMessage(err));
       if (typeof callback === 'function') callback({ status: 'error', message: err.message });
     }
   });
@@ -2880,7 +2883,7 @@ server.listen(PORT, () => {
     console.log('  AGORA_CHAT_* (org/app/client id/secret): all absent');
   }
   console.log(`  → Agora Chat tokens: ${isAgoraChatConfigured()
-    ? `ready (appKey ${chatCfg.orgName}#${chatCfg.appName}, base ${chatCfg.restBase})`
+    ? `ready (base ${chatCfg.restBase})`
     : 'disabled (clients will run chat in local-first mode)'}`);
 });
 

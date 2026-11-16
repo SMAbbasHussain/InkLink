@@ -90,17 +90,15 @@ class FirebaseAuthRepository implements AuthRepository {
       developer.log(
         'Google sign-in exception: ${e.code}',
         name: 'Auth',
-        error: e,
       );
       throw 'Google sign-in could not be completed. Please try again.';
     } on FirebaseAuthException catch (e) {
-      developer.log('Google sign-in failed: ${e.code}', name: 'Auth', error: e);
+      developer.log('Google sign-in failed: ${e.code}', name: 'Auth');
       throw _mapFirebaseAuthError(e);
     } on PlatformException catch (e) {
       developer.log(
         'Google sign-in platform error: ${e.code}',
         name: 'Auth',
-        error: e,
       );
       throw 'Google sign-in could not be completed. Please verify your connection or try signing in with email.';
     }
@@ -313,7 +311,7 @@ class FirebaseAuthRepository implements AuthRepository {
       }
       throw 'Google re-authentication failed (${e.code}).';
     } on FirebaseAuthException catch (e) {
-      developer.log('Re-authentication failed: ${e.code}', name: 'AuthRepository', error: e);
+      developer.log('Re-authentication failed: ${e.code}', name: 'AuthRepository');
       if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
         throw 'Incorrect password. Please verify and try again.';
       }

@@ -152,9 +152,9 @@ class VoiceServiceImpl implements VoiceService {
       _scheduleReconnect();
     });
 
-    socket.on('connect_error', (data) {
+    socket.on('connect_error', (_) {
       developer.log(
-        'Voice socket connect_error: $data; scheduling reconnect with fresh token',
+        'Voice socket connect_error; scheduling reconnect with fresh token',
         name: 'VoiceService',
       );
       _scheduleReconnect();

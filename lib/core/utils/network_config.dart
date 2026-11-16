@@ -34,8 +34,9 @@ String resolveWebSocketUrl([String? configuredUrl]) {
         host.startsWith('10.');
 
     if (!isSecure || isLocalHost) {
+      final safeEndpoint = uri != null ? '${uri.scheme}://${uri.host}' : 'invalid endpoint';
       developer.log(
-        'Insecure, non-HTTPS, or emulator WEBSOCKET_URL "$rawUrl" rejected in release mode. '
+        'Insecure, non-HTTPS, or emulator WEBSOCKET_URL ($safeEndpoint) rejected in release mode. '
         'Falling back to secure endpoint: $defaultReleaseUrl.',
         name: 'NetworkConfig',
       );
