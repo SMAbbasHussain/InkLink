@@ -17,6 +17,11 @@ abstract class CanvasService {
   Stream<List<LocalCrdtUpdate>> listenToCrdtUpdates(String boardId);
   Stream<List<LocalCrdtUpdate>> listenToCanvasPreviews(String boardId);
   Future<void> stopCrdtRemoteSync(String boardId);
+
+  /// Re-send local updates that are still marked unsynced. Returns true when
+  /// every pending update was acknowledged.
+  Future<bool> retryPendingSync(String boardId);
+
   Future<void> pushCrdtUpdate({
     required String boardId,
     required String updateId,
@@ -111,6 +116,13 @@ class CanvasServiceImpl implements CanvasService {
     }
 
     return _syncRepository.watchRemoteCanvasPreviews(boardId);
+  }
+
+  @override
+  Future<bool> retryPendingSync(String boardId) async {
+    final userId = _syncRepository.currentUserId;
+    if (userId == null) return false;
+    return _syncRepository.batchSyncPendingUpdates(boardId, userId);
   }
 
   @override

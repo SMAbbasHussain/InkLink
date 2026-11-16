@@ -95,6 +95,47 @@ void main() {
       );
     });
 
+    test('hiding a layer hides its members, locking reports their ids', () {
+      final elements = <CanvasElement>[
+        _shape(id: 'visible', z: 0),
+        _shape(id: 'member', z: 0),
+        const LayerElement(
+          id: 'layer',
+          z: 0,
+          name: 'Layer',
+          hidden: true,
+          locked: true,
+          elementIds: ['member'],
+        ),
+      ];
+
+      final order = canvasPaintOrder(elements);
+
+      expect(order.elements.map((element) => element.id), ['visible']);
+      expect(orderedElementsForPaint(elements).map((e) => e.id), ['visible']);
+      expect(order.lockedElementIds, {'member'});
+    });
+
+    test('layer blend and opacity resolve into member paint effects', () {
+      final elements = <CanvasElement>[
+        _shape(id: 'member', z: 0),
+        const LayerElement(
+          id: 'layer',
+          z: 0,
+          name: 'Layer',
+          opacity: 0.5,
+          blendMode: 'multiply',
+          elementIds: ['member'],
+        ),
+      ];
+
+      final effects = layerPaintEffects(elements);
+
+      expect(effects['member']?.blendMode, 'multiply');
+      expect(effects['member']?.opacity, 0.5);
+      expect(canvasBlendModeForName('screen'), BlendMode.screen);
+    });
+
     test('topmost lookup follows bands, not global z', () {
       final elements = <CanvasElement>[
         _shape(id: 'default-top-z', z: 999, color: Colors.red),

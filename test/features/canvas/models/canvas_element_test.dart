@@ -17,6 +17,7 @@ void main() {
           strokeWidth: 3,
           opacity: 0.8,
           brushType: 'watercolor',
+          fillColor: Colors.amber,
         );
 
         final map = original.toMap();
@@ -31,64 +32,110 @@ void main() {
         expect(restoredStroke.opacity, original.opacity);
         expect(restoredStroke.brushType, original.brushType);
         expect(restoredStroke.points, original.points);
+        expect(restoredStroke.fillColor?.value, Colors.amber.value);
       });
 
-      test('toMap / fromMap round-trip with brushId, pressures, spacing, and textureSeed', () {
+      test(
+        'toMap / fromMap round-trip with brushId, pressures, spacing, and textureSeed',
+        () {
+          final original = StrokeElement(
+            id: 'stroke-advanced',
+            z: 2,
+            points: const [Offset(10, 20), Offset(30, 40)],
+            color: Colors.green,
+            strokeWidth: 5,
+            opacity: 0.9,
+            brushType: 'charcoal',
+            brushId: 'charcoal',
+            pressures: const [0.4, 0.9],
+            spacing: 0.35,
+            textureSeed: 777,
+          );
+
+          final map = original.toMap();
+          final restored =
+              CanvasElement.fromMap(original.id, map) as StrokeElement;
+
+          expect(restored.id, original.id);
+          expect(restored.brushId, 'charcoal');
+          expect(restored.pressures, [0.4, 0.9]);
+          expect(restored.spacing, 0.35);
+          expect(restored.textureSeed, 777);
+        },
+      );
+
+      test(
+        'fromMap backward compatibility for legacy strokes without pressures or brushId',
+        () {
+          final legacyMap = <String, dynamic>{
+            'type': 'stroke',
+            'points': [
+              {'x': 5.0, 'y': 10.0},
+              {'x': 15.0, 'y': 25.0},
+            ],
+            'color': Colors.black.value,
+            'strokeWidth': 4.0,
+            'brushType': 'marker',
+          };
+
+          final restored =
+              CanvasElement.fromMap('legacy-1', legacyMap) as StrokeElement;
+          expect(restored.brushType, 'marker');
+          expect(restored.brushId, 'marker');
+          expect(restored.pressures, isEmpty);
+          expect(restored.spacing, 0.25);
+          expect(restored.textureSeed, 0);
+        },
+      );
+
+      test('copyWith preserves brush metadata and fill when moving points', () {
         final original = StrokeElement(
-          id: 'stroke-advanced',
-          z: 2,
-          points: const [Offset(10, 20), Offset(30, 40)],
-          color: Colors.green,
-          strokeWidth: 5,
-          opacity: 0.9,
-          brushType: 'charcoal',
-          brushId: 'charcoal',
-          pressures: const [0.4, 0.9],
-          spacing: 0.35,
-          textureSeed: 777,
+          id: 'stroke-move',
+          z: 4,
+          points: const [Offset(0, 0), Offset(10, 10)],
+          color: Colors.black,
+          strokeWidth: 8,
+          opacity: 0.7,
+          brushType: 'pencil',
+          brushId: 'pencil',
+          pressures: const [0.3, 0.8],
+          tilts: const [0.1, 0.2],
+          spacing: 0.4,
+          textureSeed: 99,
+          fillColor: Colors.red,
         );
 
-        final map = original.toMap();
-        final restored = CanvasElement.fromMap(original.id, map) as StrokeElement;
+        final moved = original.copyWith(
+          points: const [Offset(20, 20), Offset(30, 30)],
+        );
 
-        expect(restored.id, original.id);
-        expect(restored.brushId, 'charcoal');
-        expect(restored.pressures, [0.4, 0.9]);
-        expect(restored.spacing, 0.35);
-        expect(restored.textureSeed, 777);
-      });
-
-      test('fromMap backward compatibility for legacy strokes without pressures or brushId', () {
-        final legacyMap = <String, dynamic>{
-          'type': 'stroke',
-          'points': [
-            {'x': 5.0, 'y': 10.0},
-            {'x': 15.0, 'y': 25.0},
-          ],
-          'color': Colors.black.value,
-          'strokeWidth': 4.0,
-          'brushType': 'marker',
-        };
-
-        final restored = CanvasElement.fromMap('legacy-1', legacyMap) as StrokeElement;
-        expect(restored.brushType, 'marker');
-        expect(restored.brushId, 'marker');
-        expect(restored.pressures, isEmpty);
-        expect(restored.spacing, 0.25);
-        expect(restored.textureSeed, 0);
+        expect(moved.points, const [Offset(20, 20), Offset(30, 30)]);
+        expect(moved.brushId, 'pencil');
+        expect(moved.pressures, [0.3, 0.8]);
+        expect(moved.tilts, [0.1, 0.2]);
+        expect(moved.spacing, 0.4);
+        expect(moved.textureSeed, 99);
+        expect(moved.fillColor?.value, Colors.red.value);
+        expect(moved.copyWith(clearFillColor: true).fillColor, isNull);
       });
 
       test('equality', () {
         final a = StrokeElement(
-          id: 's1', z: 1, points: [Offset.zero],
+          id: 's1',
+          z: 1,
+          points: [Offset.zero],
           color: Colors.black,
         );
         final b = StrokeElement(
-          id: 's1', z: 1, points: [Offset.zero],
+          id: 's1',
+          z: 1,
+          points: [Offset.zero],
           color: Colors.black,
         );
         final c = StrokeElement(
-          id: 's2', z: 1, points: [Offset.zero],
+          id: 's2',
+          z: 1,
+          points: [Offset.zero],
           color: Colors.black,
         );
 
@@ -131,16 +178,28 @@ void main() {
 
       test('equality', () {
         final a = ShapeElement(
-          id: 'sh1', z: 1, shapeType: CanvasShapeType.square,
-          center: Offset.zero, size: 50, color: Colors.red,
+          id: 'sh1',
+          z: 1,
+          shapeType: CanvasShapeType.square,
+          center: Offset.zero,
+          size: 50,
+          color: Colors.red,
         );
         final b = ShapeElement(
-          id: 'sh1', z: 1, shapeType: CanvasShapeType.square,
-          center: Offset.zero, size: 50, color: Colors.red,
+          id: 'sh1',
+          z: 1,
+          shapeType: CanvasShapeType.square,
+          center: Offset.zero,
+          size: 50,
+          color: Colors.red,
         );
         final c = ShapeElement(
-          id: 'sh1', z: 1, shapeType: CanvasShapeType.circle,
-          center: Offset.zero, size: 50, color: Colors.red,
+          id: 'sh1',
+          z: 1,
+          shapeType: CanvasShapeType.circle,
+          center: Offset.zero,
+          size: 50,
+          color: Colors.red,
         );
 
         expect(a, equals(b));
@@ -148,15 +207,17 @@ void main() {
       });
 
       test('legacy shape payload defaults the F-10 fields', () {
-        final legacy = CanvasElement.fromMap('old-shape', {
-          'type': 'shape',
-          'shapeType': 'rectangle',
-          'cx': 10.0,
-          'cy': 20.0,
-          'size': 50.0,
-          'color': Colors.black.value,
-          'strokeWidth': 2.0,
-        }) as ShapeElement;
+        final legacy =
+            CanvasElement.fromMap('old-shape', {
+                  'type': 'shape',
+                  'shapeType': 'rectangle',
+                  'cx': 10.0,
+                  'cy': 20.0,
+                  'size': 50.0,
+                  'color': Colors.black.value,
+                  'strokeWidth': 2.0,
+                })
+                as ShapeElement;
 
         expect(legacy.width, 0);
         expect(legacy.height, 0);
@@ -172,60 +233,65 @@ void main() {
       });
 
       test('legacy arrow keeps its end arrowhead', () {
-        final legacy = CanvasElement.fromMap('old-arrow', {
-          'type': 'shape',
-          'shapeType': 'arrow',
-          'cx': 0.0,
-          'cy': 0.0,
-          'size': 50.0,
-          'color': Colors.black.value,
-          'strokeWidth': 2.0,
-        }) as ShapeElement;
+        final legacy =
+            CanvasElement.fromMap('old-arrow', {
+                  'type': 'shape',
+                  'shapeType': 'arrow',
+                  'cx': 0.0,
+                  'cy': 0.0,
+                  'size': 50.0,
+                  'color': Colors.black.value,
+                  'strokeWidth': 2.0,
+                })
+                as ShapeElement;
 
         expect(legacy.endArrowhead, isTrue);
         expect(legacy.startArrowhead, isFalse);
       });
 
-      test('round-trips width/height, label, stroke opacity, dash, arrowheads',
-          () {
-        const original = ShapeElement(
-          id: 'shape-f10',
-          z: 1,
-          shapeType: CanvasShapeType.rectangle,
-          center: Offset(100, 100),
-          size: 200,
-          width: 200,
-          height: 80,
-          color: Color(0xFF2196F3),
-          strokeWidth: 3,
-          strokeOpacity: 0.5,
-          dashPattern: [12, 8],
-          isFilled: true,
-          label: 'Hello',
-          labelColor: Color(0xFFF44336),
-          labelFontSize: 20,
-          labelFontWeight: 700,
-          labelTextAlign: 'left',
-          startArrowhead: true,
-          endArrowhead: true,
-        );
+      test(
+        'round-trips width/height, label, stroke opacity, dash, arrowheads',
+        () {
+          const original = ShapeElement(
+            id: 'shape-f10',
+            z: 1,
+            shapeType: CanvasShapeType.rectangle,
+            center: Offset(100, 100),
+            size: 200,
+            width: 200,
+            height: 80,
+            color: Color(0xFF2196F3),
+            strokeWidth: 3,
+            strokeOpacity: 0.5,
+            dashPattern: [12, 8],
+            isFilled: true,
+            label: 'Hello',
+            labelColor: Color(0xFFF44336),
+            labelFontSize: 20,
+            labelFontWeight: 700,
+            labelTextAlign: 'left',
+            startArrowhead: true,
+            endArrowhead: true,
+          );
 
-        final restored =
-            CanvasElement.fromMap(original.id, original.toMap()) as ShapeElement;
+          final restored =
+              CanvasElement.fromMap(original.id, original.toMap())
+                  as ShapeElement;
 
-        expect(restored, original);
-        expect(restored.width, 200);
-        expect(restored.height, 80);
-        expect(restored.strokeOpacity, 0.5);
-        expect(restored.dashPattern, [12, 8]);
-        expect(restored.label, 'Hello');
-        expect(restored.labelColor, const Color(0xFFF44336));
-        expect(restored.labelFontSize, 20);
-        expect(restored.labelFontWeight, 700);
-        expect(restored.labelTextAlign, 'left');
-        expect(restored.startArrowhead, isTrue);
-        expect(restored.endArrowhead, isTrue);
-      });
+          expect(restored, original);
+          expect(restored.width, 200);
+          expect(restored.height, 80);
+          expect(restored.strokeOpacity, 0.5);
+          expect(restored.dashPattern, [12, 8]);
+          expect(restored.label, 'Hello');
+          expect(restored.labelColor, const Color(0xFFF44336));
+          expect(restored.labelFontSize, 20);
+          expect(restored.labelFontWeight, 700);
+          expect(restored.labelTextAlign, 'left');
+          expect(restored.startArrowhead, isTrue);
+          expect(restored.endArrowhead, isTrue);
+        },
+      );
     });
 
     group('TextElement', () {
@@ -320,6 +386,29 @@ void main() {
         expect(note.rotation, original.rotation);
       });
 
+      test('fromMap accepts numbers deserialized as doubles', () {
+        final restored =
+            CanvasElement.fromMap('note-json', <String, dynamic>{
+                  'type': 'sticky_note',
+                  'z': 5.0,
+                  'cx': 150.0,
+                  'cy': 250.0,
+                  'width': 180.0,
+                  'height': 180.0,
+                  'text': 'From JSON',
+                  'color': 0xFFFFF9A6.toDouble(),
+                  'fontWeight': 500.0,
+                  'textColor': 0xFF1E293B.toDouble(),
+                })
+                as StickyNoteElement;
+
+        expect(restored.z, 5);
+        expect(restored.color.value, 0xFFFFF9A6);
+        expect(restored.textColor.value, 0xFF1E293B);
+        expect(restored.fontWeight, 500);
+        expect(restored.center, const Offset(150, 250));
+      });
+
       test('equality and hashCode', () {
         final a = StickyNoteElement(
           id: 'note-1',
@@ -408,14 +497,16 @@ void main() {
       });
 
       test('legacy connector payload defaults the F-11 fields', () {
-        final restored = CanvasElement.fromMap('conn-legacy', const {
-          'type': 'connector',
-          'z': 0,
-          'sx': 0.0,
-          'sy': 0.0,
-          'ex': 100.0,
-          'ey': 0.0,
-        }) as ConnectorElement;
+        final restored =
+            CanvasElement.fromMap('conn-legacy', const {
+                  'type': 'connector',
+                  'z': 0,
+                  'sx': 0.0,
+                  'sy': 0.0,
+                  'ex': 100.0,
+                  'ey': 0.0,
+                })
+                as ConnectorElement;
 
         expect(restored.startArrowhead, isFalse);
         expect(restored.endArrowhead, isTrue);
@@ -428,29 +519,33 @@ void main() {
       });
 
       test('legacy hasArrowhead maps to endArrowhead on read', () {
-        final off = CanvasElement.fromMap('conn-off', const {
-          'type': 'connector',
-          'z': 0,
-          'sx': 0.0,
-          'sy': 0.0,
-          'ex': 10.0,
-          'ey': 0.0,
-          'hasArrowhead': false,
-        }) as ConnectorElement;
+        final off =
+            CanvasElement.fromMap('conn-off', const {
+                  'type': 'connector',
+                  'z': 0,
+                  'sx': 0.0,
+                  'sy': 0.0,
+                  'ex': 10.0,
+                  'ey': 0.0,
+                  'hasArrowhead': false,
+                })
+                as ConnectorElement;
         expect(off.endArrowhead, isFalse);
         expect(off.hasArrowhead, isFalse);
 
         // The explicit endArrowhead key wins over the legacy flag.
-        final overridden = CanvasElement.fromMap('conn-over', const {
-          'type': 'connector',
-          'z': 0,
-          'sx': 0.0,
-          'sy': 0.0,
-          'ex': 10.0,
-          'ey': 0.0,
-          'hasArrowhead': true,
-          'endArrowhead': false,
-        }) as ConnectorElement;
+        final overridden =
+            CanvasElement.fromMap('conn-over', const {
+                  'type': 'connector',
+                  'z': 0,
+                  'sx': 0.0,
+                  'sy': 0.0,
+                  'ex': 10.0,
+                  'ey': 0.0,
+                  'hasArrowhead': true,
+                  'endArrowhead': false,
+                })
+                as ConnectorElement;
         expect(overridden.endArrowhead, isFalse);
       });
 
@@ -495,38 +590,93 @@ void main() {
         final elements = <CanvasElement>[
           StrokeElement(id: 's', z: 0, points: [], color: Colors.black),
           ShapeElement(
-            id: 'sh', z: 0, shapeType: CanvasShapeType.square,
-            center: Offset.zero, size: 10, color: Colors.black,
+            id: 'sh',
+            z: 0,
+            shapeType: CanvasShapeType.square,
+            center: Offset.zero,
+            size: 10,
+            color: Colors.black,
           ),
-          TextElement(id: 't', z: 0, text: '', center: Offset.zero, color: Colors.black),
+          TextElement(
+            id: 't',
+            z: 0,
+            text: '',
+            center: Offset.zero,
+            color: Colors.black,
+          ),
           ImageElement(id: 'i', z: 0, center: Offset.zero, imageBase64: ''),
           StickyNoteElement(id: 'sn', z: 0, center: Offset.zero),
-          ConnectorElement(id: 'cn', z: 0, startPoint: Offset.zero, endPoint: const Offset(10, 10)),
+          FrameElement(id: 'fr', z: 0, center: Offset.zero),
+          ConnectorElement(
+            id: 'cn',
+            z: 0,
+            startPoint: Offset.zero,
+            endPoint: const Offset(10, 10),
+          ),
         ];
 
-        final types = elements.map((e) => switch (e) {
-          StrokeElement _ => 'stroke',
-          ShapeElement _ => 'shape',
-          TextElement _ => 'text',
-          ImageElement _ => 'image',
-          StickyNoteElement _ => 'sticky_note',
-          ConnectorElement _ => 'connector',
-          LayerElement _ => 'layer',
-        });
+        final types = elements.map(
+          (e) => switch (e) {
+            StrokeElement _ => 'stroke',
+            ShapeElement _ => 'shape',
+            TextElement _ => 'text',
+            ImageElement _ => 'image',
+            StickyNoteElement _ => 'sticky_note',
+            FrameElement _ => 'frame',
+            ConnectorElement _ => 'connector',
+            LayerElement _ => 'layer',
+          },
+        );
 
-        expect(types, containsAll(['stroke', 'shape', 'text', 'image', 'sticky_note', 'connector']));
+        expect(
+          types,
+          containsAll([
+            'stroke',
+            'shape',
+            'text',
+            'image',
+            'sticky_note',
+            'frame',
+            'connector',
+          ]),
+        );
       });
 
       test('is checks work correctly', () {
-        final stroke = StrokeElement(id: 's', z: 0, points: [], color: Colors.black);
-        final shape = ShapeElement(
-          id: 'sh', z: 0, shapeType: CanvasShapeType.square,
-          center: Offset.zero, size: 10, color: Colors.black,
+        final stroke = StrokeElement(
+          id: 's',
+          z: 0,
+          points: [],
+          color: Colors.black,
         );
-        final text = TextElement(id: 't', z: 0, text: '', center: Offset.zero, color: Colors.black);
-        final image = ImageElement(id: 'i', z: 0, center: Offset.zero, imageBase64: '');
+        final shape = ShapeElement(
+          id: 'sh',
+          z: 0,
+          shapeType: CanvasShapeType.square,
+          center: Offset.zero,
+          size: 10,
+          color: Colors.black,
+        );
+        final text = TextElement(
+          id: 't',
+          z: 0,
+          text: '',
+          center: Offset.zero,
+          color: Colors.black,
+        );
+        final image = ImageElement(
+          id: 'i',
+          z: 0,
+          center: Offset.zero,
+          imageBase64: '',
+        );
         final sticky = StickyNoteElement(id: 'sn', z: 0, center: Offset.zero);
-        final connector = ConnectorElement(id: 'cn', z: 0, startPoint: Offset.zero, endPoint: const Offset(10, 10));
+        final connector = ConnectorElement(
+          id: 'cn',
+          z: 0,
+          startPoint: Offset.zero,
+          endPoint: const Offset(10, 10),
+        );
 
         expect(stroke is StrokeElement, isTrue);
         expect(stroke is CanvasElement, isTrue);
@@ -542,10 +692,20 @@ void main() {
         final elements = <CanvasElement>[
           StrokeElement(id: 'a', z: 3, points: [], color: Colors.black),
           ShapeElement(
-            id: 'b', z: 1, shapeType: CanvasShapeType.square,
-            center: Offset.zero, size: 10, color: Colors.black,
+            id: 'b',
+            z: 1,
+            shapeType: CanvasShapeType.square,
+            center: Offset.zero,
+            size: 10,
+            color: Colors.black,
           ),
-          TextElement(id: 'c', z: 2, text: '', center: Offset.zero, color: Colors.black),
+          TextElement(
+            id: 'c',
+            z: 2,
+            text: '',
+            center: Offset.zero,
+            color: Colors.black,
+          ),
           ImageElement(id: 'd', z: 0, center: Offset.zero, imageBase64: ''),
         ];
 
@@ -576,15 +736,17 @@ void main() {
       });
 
       test('legacy image payloads default to upright and unflipped', () {
-        final element = CanvasElement.fromMap('old', {
-          'type': 'image',
-          'z': 0,
-          'cx': 0.0,
-          'cy': 0.0,
-          'width': 10.0,
-          'height': 10.0,
-          'imageBase64': '',
-        }) as ImageElement;
+        final element =
+            CanvasElement.fromMap('old', {
+                  'type': 'image',
+                  'z': 0,
+                  'cx': 0.0,
+                  'cy': 0.0,
+                  'width': 10.0,
+                  'height': 10.0,
+                  'imageBase64': '',
+                })
+                as ImageElement;
 
         expect(element.rotation, 0);
         expect(element.flipped, isFalse);

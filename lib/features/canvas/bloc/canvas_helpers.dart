@@ -132,7 +132,8 @@ String _shapeFingerprint(String shapeId, Map<String, dynamic> data) {
   final flipped = _parseBool(data['flipped']).toString();
   final text = (data['text'] as String?) ?? '';
   final z = ((data['z'] as num?)?.toInt() ?? 0).toString();
-  final dash = (data['dashPattern'] as List?)
+  final dash =
+      (data['dashPattern'] as List?)
           ?.map((e) => ((e as num).toDouble()).toStringAsFixed(3))
           .join(',') ??
       '';
@@ -232,7 +233,12 @@ Rect? _erasePathBounds(List<Offset> erasePath, double radius) {
   if (!minX.isFinite || !minY.isFinite || !maxX.isFinite || !maxY.isFinite) {
     return null;
   }
-  return Rect.fromLTRB(minX - radius, minY - radius, maxX + radius, maxY + radius);
+  return Rect.fromLTRB(
+    minX - radius,
+    minY - radius,
+    maxX + radius,
+    maxY + radius,
+  );
 }
 
 Rect _strokeBounds(List<Offset> points, double pad) {

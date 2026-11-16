@@ -35,7 +35,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('brush-preset-pencil')));
+    final preset = find.byKey(const ValueKey('brush-preset-pencil'));
+    await tester.ensureVisible(preset);
+    await tester.pumpAndSettle();
+    await tester.tap(preset);
     await tester.pumpAndSettle();
 
     expect(selected, 'pencil');
@@ -99,7 +102,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final pressureSwitch = find.byType(Switch).first;
+    final pressureSwitch = find.byKey(const ValueKey('stylusPressureSwitch'));
     await tester.tap(pressureSwitch);
     await tester.pumpAndSettle();
 

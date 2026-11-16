@@ -46,6 +46,44 @@ void main() {
       expect(selected.last, CanvasToolMode.select);
     });
 
+    testWidgets('frame tool is one tap for editors and hidden for viewers',
+        (tester) async {
+      var frames = 0;
+      await tester.pumpWidget(
+        _wrap(
+          CanvasToolbar(
+            activeTool: CanvasToolMode.select,
+            canEdit: true,
+            onToolSelected: (_) {},
+            onStickyNote: () {},
+            onFrame: () => frames++,
+            onImage: () {},
+            onMore: () {},
+          ),
+        ),
+      );
+      await tester.tap(find.text('Frame'));
+      await tester.pump();
+      expect(frames, 1);
+
+      await tester.pumpWidget(
+        _wrap(
+          CanvasToolbar(
+            activeTool: CanvasToolMode.select,
+            canEdit: false,
+            onToolSelected: (_) {},
+            onStickyNote: () {},
+            onFrame: () => frames++,
+            onImage: () {},
+            onMore: () {},
+          ),
+        ),
+      );
+      await tester.tap(find.text('Frame'));
+      await tester.pump();
+      expect(frames, 1, reason: 'viewers cannot add frames');
+    });
+
     testWidgets('viewer sees edit tools disabled', (tester) async {
       var taps = 0;
       await tester.pumpWidget(
@@ -70,6 +108,42 @@ void main() {
       await tester.tap(find.text('Select'));
       await tester.pump();
       expect(taps, 1);
+    });
+
+    testWidgets('hand tool is one tap for editors and viewers', (tester) async {
+      final selected = <CanvasToolMode>[];
+      await tester.pumpWidget(
+        _wrap(
+          CanvasToolbar(
+            activeTool: CanvasToolMode.select,
+            canEdit: true,
+            onToolSelected: selected.add,
+            onStickyNote: () {},
+            onImage: () {},
+            onMore: () {},
+          ),
+        ),
+      );
+      await tester.tap(find.text('Hand'));
+      await tester.pump();
+      expect(selected.last, CanvasToolMode.hand);
+
+      await tester.pumpWidget(
+        _wrap(
+          CanvasToolbar(
+            activeTool: CanvasToolMode.select,
+            canEdit: false,
+            onToolSelected: selected.add,
+            onStickyNote: () {},
+            onImage: () {},
+            onMore: () {},
+          ),
+        ),
+      );
+      await tester.tap(find.text('Hand'));
+      await tester.pump();
+      expect(selected.last, CanvasToolMode.hand,
+          reason: 'viewers can still pan');
     });
   });
 }

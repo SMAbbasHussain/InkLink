@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../domain/models/board.dart';
+import '../../../domain/models/canvas/canvas_board_settings.dart';
 import '../models/board_chat_message.dart';
 import '../models/canvas_comment.dart';
 import '../models/canvas_element.dart';
@@ -8,6 +9,9 @@ import '../models/canvas_selection_mode.dart';
 import '../models/canvas_tool_mode.dart';
 import '../models/voice_participant.dart';
 import '../view/trays/canvas_shape_type.dart';
+
+/// Whether local board changes have reached the collaboration service.
+enum CanvasSyncStatus { idle, syncing, saved, offline }
 
 /// State for CanvasBloc
 class CanvasState {
@@ -68,21 +72,44 @@ class CanvasState {
   /// Layer that receives newly drawn elements; null means the default group.
   final String? activeLayerId;
 
+  /// Collaborative background/page look, persisted as a CRDT payload.
+  final CanvasBoardSettings boardSettings;
+
   /// Parallel pressures captured for [currentStroke]. Empty means all 1.0.
   final List<double> currentStrokePressures;
+
+  /// Parallel stylus tilt captured for [currentStroke]. Empty means upright.
+  final List<double> currentStrokeTilts;
 
   /// Whether stylus pressure affects stroke width / opacity.
   final bool stylusPressureEnabled;
 
+  /// Whether holding at the end of a stroke snaps it to a clean shape.
+  final bool quickShapeEnabled;
+
+  /// When false, one-finger drags pan instead of drawing with a brush.
+  /// Stylus input always draws.
+  final bool fingerDrawingEnabled;
+
   final double stabilizerStrength;
+
+  /// Sync state surfaced in the board header. [syncMessage] explains the
+  /// offline/recovery case; it is null while everything is healthy.
+  final CanvasSyncStatus syncStatus;
+  final String? syncMessage;
 
   const CanvasState({
     this.boardTitle,
     this.elements = const [],
     this.currentStroke = const [],
     this.currentStrokePressures = const [],
+    this.currentStrokeTilts = const [],
     this.stylusPressureEnabled = true,
+    this.quickShapeEnabled = true,
+    this.fingerDrawingEnabled = true,
     this.stabilizerStrength = 0,
+    this.syncStatus = CanvasSyncStatus.idle,
+    this.syncMessage,
     this.selectedColor = Colors.black,
     this.strokeWidth = 5,
     this.brushOpacity = 1.0,
@@ -128,6 +155,7 @@ class CanvasState {
     this.isPlacingComment = false,
     this.hasClipboard = false,
     this.activeLayerId,
+    this.boardSettings = const CanvasBoardSettings(),
   });
 
   static const Object _unset = Object();
@@ -137,8 +165,13 @@ class CanvasState {
     List<CanvasElement>? elements,
     List<Offset>? currentStroke,
     List<double>? currentStrokePressures,
+    List<double>? currentStrokeTilts,
     bool? stylusPressureEnabled,
+    bool? quickShapeEnabled,
+    bool? fingerDrawingEnabled,
     double? stabilizerStrength,
+    CanvasSyncStatus? syncStatus,
+    Object? syncMessage = _unset,
     Color? selectedColor,
     double? strokeWidth,
     double? brushOpacity,
@@ -184,6 +217,7 @@ class CanvasState {
     bool? isPlacingComment,
     bool? hasClipboard,
     Object? activeLayerId = _unset,
+    CanvasBoardSettings? boardSettings,
   }) {
     return CanvasState(
       boardTitle: boardTitle == _unset
@@ -193,9 +227,16 @@ class CanvasState {
       currentStroke: currentStroke ?? this.currentStroke,
       currentStrokePressures:
           currentStrokePressures ?? this.currentStrokePressures,
+      currentStrokeTilts: currentStrokeTilts ?? this.currentStrokeTilts,
       stylusPressureEnabled:
           stylusPressureEnabled ?? this.stylusPressureEnabled,
+      quickShapeEnabled: quickShapeEnabled ?? this.quickShapeEnabled,
+      fingerDrawingEnabled: fingerDrawingEnabled ?? this.fingerDrawingEnabled,
       stabilizerStrength: stabilizerStrength ?? this.stabilizerStrength,
+      syncStatus: syncStatus ?? this.syncStatus,
+      syncMessage: syncMessage == _unset
+          ? this.syncMessage
+          : syncMessage as String?,
       selectedColor: selectedColor ?? this.selectedColor,
       strokeWidth: strokeWidth ?? this.strokeWidth,
       brushOpacity: brushOpacity ?? this.brushOpacity,
@@ -267,6 +308,7 @@ class CanvasState {
       activeLayerId: activeLayerId == _unset
           ? this.activeLayerId
           : activeLayerId as String?,
+      boardSettings: boardSettings ?? this.boardSettings,
     );
   }
 
@@ -301,8 +343,13 @@ class CanvasState {
           elements == other.elements &&
           currentStroke == other.currentStroke &&
           currentStrokePressures == other.currentStrokePressures &&
+          currentStrokeTilts == other.currentStrokeTilts &&
           stylusPressureEnabled == other.stylusPressureEnabled &&
+          quickShapeEnabled == other.quickShapeEnabled &&
+          fingerDrawingEnabled == other.fingerDrawingEnabled &&
           stabilizerStrength == other.stabilizerStrength &&
+          syncStatus == other.syncStatus &&
+          syncMessage == other.syncMessage &&
           selectedColor == other.selectedColor &&
           strokeWidth == other.strokeWidth &&
           brushOpacity == other.brushOpacity &&
@@ -347,7 +394,8 @@ class CanvasState {
           activeCommentId == other.activeCommentId &&
           isPlacingComment == other.isPlacingComment &&
           hasClipboard == other.hasClipboard &&
-          activeLayerId == other.activeLayerId;
+          activeLayerId == other.activeLayerId &&
+          boardSettings == other.boardSettings;
 
   @override
   int get hashCode =>
@@ -355,8 +403,13 @@ class CanvasState {
       elements.hashCode ^
       currentStroke.hashCode ^
       currentStrokePressures.hashCode ^
+      currentStrokeTilts.hashCode ^
       stylusPressureEnabled.hashCode ^
+      quickShapeEnabled.hashCode ^
+      fingerDrawingEnabled.hashCode ^
       stabilizerStrength.hashCode ^
+      syncStatus.hashCode ^
+      syncMessage.hashCode ^
       selectedColor.hashCode ^
       strokeWidth.hashCode ^
       brushOpacity.hashCode ^
@@ -401,7 +454,8 @@ class CanvasState {
       activeCommentId.hashCode ^
       isPlacingComment.hashCode ^
       hasClipboard.hashCode ^
-      activeLayerId.hashCode;
+      activeLayerId.hashCode ^
+      boardSettings.hashCode;
 }
 
 class CanvasInitial extends CanvasState {

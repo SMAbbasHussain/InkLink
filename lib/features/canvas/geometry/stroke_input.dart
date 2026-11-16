@@ -21,6 +21,19 @@ double normalizePointerPressure({
   return ((pressure - pressureMin) / range).clamp(minStylusPressure, 1.0);
 }
 
+/// Normalizes stylus tilt to 0–π/2 radians. Mouse/touch report 0.
+double normalizePointerTilt({
+  required PointerDeviceKind kind,
+  required double tilt,
+}) {
+  if (kind != PointerDeviceKind.stylus &&
+      kind != PointerDeviceKind.invertedStylus) {
+    return 0;
+  }
+  if (!tilt.isFinite) return 0;
+  return tilt.clamp(0.0, math.pi / 2);
+}
+
 class StrokeStabilizer {
   StrokeStabilizer({
     required double strength,

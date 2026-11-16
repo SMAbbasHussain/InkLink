@@ -22,6 +22,8 @@ class BrushTray extends StatefulWidget {
   final bool eraserEraseEverything;
   final bool smoothDoodlesEnabled;
   final bool stylusPressureEnabled;
+  final bool fingerDrawingEnabled;
+  final bool quickShapeEnabled;
   final double stabilizerStrength;
   final ValueChanged<double>? onStabilizerChanged;
   final ValueChanged<double> onStrokeWidthChanged;
@@ -32,6 +34,8 @@ class BrushTray extends StatefulWidget {
   final ValueChanged<bool> onEraserEraseEverythingChanged;
   final ValueChanged<bool>? onSmoothDoodlesChanged;
   final ValueChanged<bool>? onStylusPressureChanged;
+  final ValueChanged<bool>? onFingerDrawingChanged;
+  final ValueChanged<bool>? onQuickShapeChanged;
   final List<Color> recentColors;
   final bool eyedropperActive;
   final VoidCallback? onOpenColorPicker;
@@ -48,6 +52,8 @@ class BrushTray extends StatefulWidget {
     required this.eraserEraseEverything,
     this.smoothDoodlesEnabled = false,
     this.stylusPressureEnabled = true,
+    this.fingerDrawingEnabled = true,
+    this.quickShapeEnabled = true,
     this.stabilizerStrength = 0,
     this.onStabilizerChanged,
     required this.onStrokeWidthChanged,
@@ -58,6 +64,8 @@ class BrushTray extends StatefulWidget {
     required this.onEraserEraseEverythingChanged,
     this.onSmoothDoodlesChanged,
     this.onStylusPressureChanged,
+    this.onFingerDrawingChanged,
+    this.onQuickShapeChanged,
     this.recentColors = const [],
     this.eyedropperActive = false,
     this.onOpenColorPicker,
@@ -215,8 +223,12 @@ class _BrushTrayState extends State<BrushTray> {
               ],
               _buildOpacityControl(tokens),
               const SizedBox(height: InkSpacing.s16),
+              _buildFingerDrawingToggle(tokens),
+              const SizedBox(height: InkSpacing.s16),
               if (widget.brushType != 'eraser') ...[
                 _buildStylusPressureToggle(tokens),
+                const SizedBox(height: InkSpacing.s16),
+                _buildQuickShapeToggle(tokens),
                 const SizedBox(height: InkSpacing.s16),
               ],
               _buildBrushPresetPicker(tokens),
@@ -336,6 +348,47 @@ class _BrushTrayState extends State<BrushTray> {
     );
   }
 
+  Widget _buildFingerDrawingToggle(InkTokens tokens) {
+    return Row(
+      children: [
+        Icon(LucideIcons.hand, size: 18, color: tokens.inkMuted),
+        const SizedBox(width: InkSpacing.s12),
+        Expanded(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Finger drawing',
+                      style: InkType.label(tokens.inkSecondary),
+                    ),
+                    Text(
+                      'Off: one finger pans, pen still draws',
+                      style: InkType.caption(tokens.inkMuted),
+                    ),
+                  ],
+                ),
+              ),
+              Switch.adaptive(
+                activeColor: tokens.accent,
+                value: widget.fingerDrawingEnabled,
+                onChanged: widget.onFingerDrawingChanged == null
+                    ? null
+                    : (v) {
+                        HapticFeedback.lightImpact();
+                        widget.onFingerDrawingChanged!(v);
+                      },
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildStylusPressureToggle(InkTokens tokens) {
     return Row(
       children: [
@@ -359,6 +412,7 @@ class _BrushTrayState extends State<BrushTray> {
                 ],
               ),
               Switch.adaptive(
+                key: const ValueKey('stylusPressureSwitch'),
                 activeColor: tokens.accent,
                 value: widget.stylusPressureEnabled,
                 onChanged: widget.onStylusPressureChanged == null
@@ -366,6 +420,47 @@ class _BrushTrayState extends State<BrushTray> {
                     : (v) {
                         HapticFeedback.lightImpact();
                         widget.onStylusPressureChanged!(v);
+                      },
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildQuickShapeToggle(InkTokens tokens) {
+    return Row(
+      children: [
+        Icon(LucideIcons.shapes, size: 18, color: tokens.inkMuted),
+        const SizedBox(width: InkSpacing.s12),
+        Expanded(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'QuickShape',
+                      style: InkType.label(tokens.inkSecondary),
+                    ),
+                    Text(
+                      'Hold at the end to snap a rough shape',
+                      style: InkType.caption(tokens.inkMuted),
+                    ),
+                  ],
+                ),
+              ),
+              Switch.adaptive(
+                activeColor: tokens.accent,
+                value: widget.quickShapeEnabled,
+                onChanged: widget.onQuickShapeChanged == null
+                    ? null
+                    : (value) {
+                        HapticFeedback.lightImpact();
+                        widget.onQuickShapeChanged!(value);
                       },
               ),
             ],
@@ -532,7 +627,10 @@ class _BrushTrayState extends State<BrushTray> {
           child: SwitchListTile.adaptive(
             contentPadding: EdgeInsets.zero,
             dense: true,
-            activeColor: tokens.accent,
+            // A white thumb keeps the switch readable against the blue
+            // active track instead of turning into one solid blue pill.
+            activeColor: Colors.white,
+            activeTrackColor: tokens.accent,
             value: widget.eraserEraseEverything,
             onChanged: (v) {
               HapticFeedback.lightImpact();

@@ -1,6 +1,6 @@
 part of 'canvas_screen.dart';
 
-enum _ElementKind { stroke, shape, text, image, stickyNote, connector }
+enum _ElementKind { stroke, shape, text, image, stickyNote, connector, frame }
 
 class _CanvasElement {
   final String id;
@@ -13,6 +13,7 @@ class _CanvasElement {
   final String brushType;
   final String brushId;
   final List<double> pressures;
+  final List<double> tilts;
   final double spacing;
   final int textureSeed;
   final CanvasShapeType? shapeType;
@@ -45,6 +46,13 @@ class _CanvasElement {
   final Rect? layerBounds;
 
   Rect? get bounds {
+    if (kind == _ElementKind.frame) {
+      return Rect.fromCenter(
+        center: center,
+        width: width,
+        height: height,
+      ).inflate(2);
+    }
     if (kind == _ElementKind.image || kind == _ElementKind.stickyNote) {
       return rotatedRectBounds(
         Rect.fromCenter(center: center, width: width, height: height),
@@ -90,6 +98,7 @@ class _CanvasElement {
     this.brushType = 'solid',
     this.brushId = '',
     this.pressures = const [],
+    this.tilts = const [],
     this.spacing = 0.25,
     this.textureSeed = 0,
     this.shapeType,
@@ -130,6 +139,7 @@ class _CanvasElement {
     required String brushType,
     String? brushId,
     List<double> pressures = const [],
+    List<double> tilts = const [],
     double spacing = 0.25,
     int textureSeed = 0,
     Map<String, dynamic> data = const {},
@@ -145,6 +155,7 @@ class _CanvasElement {
       brushType: brushType,
       brushId: (brushId != null && brushId.isNotEmpty) ? brushId : brushType,
       pressures: pressures,
+      tilts: tilts,
       spacing: spacing,
       textureSeed: textureSeed,
       data: data,
@@ -261,6 +272,32 @@ class _CanvasElement {
       text: text,
       color: color,
       rotation: rotation,
+      data: data,
+    );
+  }
+
+  factory _CanvasElement.frame({
+    required String id,
+    int z = 0,
+    required Offset center,
+    required double width,
+    required double height,
+    required String title,
+    required Color color,
+    double cornerRadius = 12,
+    Map<String, dynamic> data = const {},
+  }) {
+    return _CanvasElement._(
+      id: id,
+      z: z,
+      kind: _ElementKind.frame,
+      center: center,
+      size: math.max(width, height),
+      width: width,
+      height: height,
+      text: title,
+      color: color,
+      strokeWidth: cornerRadius,
       data: data,
     );
   }
@@ -513,12 +550,18 @@ class _CanvasPainter extends CustomPainter {
   final String? arrowConnectStartElementId;
   final List<RemoteEraserCursor> remoteEraserCursors;
   final List<double> currentStrokePressures;
+  final List<double> currentStrokeTilts;
+  final CanvasBoardSettings boardSettings;
+
+  final Map<String, CanvasLayerPaintEffect> layerEffects;
 
   const _CanvasPainter({
     required this.elements,
+    this.layerEffects = const {},
     this.decodedImages = const {},
     required this.currentPoints,
     this.currentStrokePressures = const [],
+    this.currentStrokeTilts = const [],
     required this.currentColor,
     required this.currentStrokeWidth,
     this.currentBrushOpacity = 1,
@@ -534,10 +577,12 @@ class _CanvasPainter extends CustomPainter {
     required this.accentColor,
     this.arrowConnectStartElementId,
     this.remoteEraserCursors = const [],
+    this.boardSettings = const CanvasBoardSettings(),
   });
 
   @override
   void paint(Canvas canvas, Size size) {
+    _paintBoardBackground(canvas, size);
     canvas.save();
     canvas.translate(viewportOffset.dx, viewportOffset.dy);
     canvas.scale(viewportScale);
@@ -546,14 +591,24 @@ class _CanvasPainter extends CustomPainter {
       // Strokes already carry their alpha in the paint; every other kind is
       // composited through a layer so images and fills fade uniformly.
       final elementOpacity = element.opacity.clamp(0.0, 1.0);
+      final layerEffect = layerEffects[element.id];
+      final layerOpacity = layerEffect?.opacity ?? 1.0;
+      final blendMode = layerEffect == null
+          ? BlendMode.srcOver
+          : canvasBlendModeForName(layerEffect.blendMode);
+      final effectiveOpacity = (elementOpacity * layerOpacity).clamp(0.0, 1.0);
+      final bounds = element.layerBounds ?? element.bounds;
       final useLayer =
-          element.kind != _ElementKind.stroke &&
-          elementOpacity < 1 &&
-          element.layerBounds != null;
+          bounds != null &&
+          ((element.kind != _ElementKind.stroke && effectiveOpacity < 1) ||
+              (layerEffect != null &&
+                  (layerOpacity < 1 || blendMode != BlendMode.srcOver)));
       if (useLayer) {
         canvas.saveLayer(
-          element.layerBounds!.inflate(8),
-          Paint()..color = Colors.white.withValues(alpha: elementOpacity),
+          bounds.inflate(8),
+          Paint()
+            ..blendMode = blendMode
+            ..color = Colors.white.withValues(alpha: effectiveOpacity),
         );
       }
       switch (element.kind) {
@@ -570,8 +625,12 @@ class _CanvasPainter extends CustomPainter {
             brushType: element.brushType,
             brushId: element.brushId,
             pressures: element.pressures,
+            tilts: element.tilts,
             spacing: element.spacing,
             textureSeed: element.textureSeed,
+            fillColor: element.data['fillColor'] == null
+                ? null
+                : Color((element.data['fillColor'] as num).toInt()),
           );
           break;
         case _ElementKind.shape:
@@ -588,6 +647,9 @@ class _CanvasPainter extends CustomPainter {
           break;
         case _ElementKind.connector:
           _paintConnector(canvas, element);
+          break;
+        case _ElementKind.frame:
+          _paintFrame(canvas, element);
           break;
       }
       if (useLayer) canvas.restore();
@@ -636,6 +698,7 @@ class _CanvasPainter extends CustomPainter {
             brushType: currentBrushType,
             brushId: currentBrushType,
             pressures: currentStrokePressures,
+            tilts: currentStrokeTilts,
           );
         }
       } else if (showEraserPreview) {
@@ -663,13 +726,25 @@ class _CanvasPainter extends CustomPainter {
     required String brushType,
     String? brushId,
     List<double> pressures = const [],
+    List<double> tilts = const [],
     double? spacing,
     int textureSeed = 0,
+    Color? fillColor,
   }) {
+    if (fillColor != null && points.length >= 3) {
+      final fillOpacity = (opacity * fillColor.a).clamp(0.0, 1.0);
+      canvas.drawPath(
+        Path()..addPolygon(points, true),
+        Paint()
+          ..color = fillColor.withValues(alpha: fillOpacity)
+          ..style = PaintingStyle.fill,
+      );
+    }
     paintCanvasStroke(
       canvas: canvas,
       points: points,
       pressures: pressures,
+      tilts: tilts,
       color: color,
       strokeWidth: width,
       strokeOpacity: opacity,
@@ -712,6 +787,19 @@ class _CanvasPainter extends CustomPainter {
           ?.map((e) => (e as num).toDouble())
           .toList(),
       isFilled: element.isFilled,
+      fillMode:
+          (data['fillMode'] as String?) ??
+          (element.isFilled ? 'solid' : 'none'),
+      fillColor: data['fillColor'] == null
+          ? null
+          : Color((data['fillColor'] as num).toInt()),
+      gradientStart: data['gradientStart'] == null
+          ? null
+          : Color((data['gradientStart'] as num).toInt()),
+      gradientEnd: data['gradientEnd'] == null
+          ? null
+          : Color((data['gradientEnd'] as num).toInt()),
+      gradientAngle: (data['gradientAngle'] as num?)?.toDouble() ?? 0,
       rotation: element.rotation,
       borderRadius: (data['borderRadius'] as num?)?.toDouble() ?? 0.0,
       opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
@@ -784,6 +872,106 @@ class _CanvasPainter extends CustomPainter {
       },
     );
     _paintShape(canvas, previewElement);
+  }
+
+  /// Board paper, optional pattern and page bounds, all in screen space
+  /// behind the transformed element layer.
+  void _paintBoardBackground(Canvas canvas, Size size) {
+    final settings = boardSettings;
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = settings.backgroundColor,
+    );
+
+    final spacing = settings.patternSpacing * viewportScale;
+    if (settings.backgroundPattern != CanvasBackgroundPattern.none &&
+        spacing >= 4) {
+      final isDark = settings.backgroundColor.computeLuminance() < 0.4;
+      final color = (isDark ? Colors.white : Colors.black).withValues(
+        alpha: 0.1,
+      );
+      final paint = Paint()
+        ..color = color
+        ..strokeWidth = 1;
+      final startX = viewportOffset.dx % spacing;
+      final startY = viewportOffset.dy % spacing;
+      switch (settings.backgroundPattern) {
+        case CanvasBackgroundPattern.none:
+          break;
+        case CanvasBackgroundPattern.dots:
+          final dots = Paint()..color = color;
+          for (var x = startX; x <= size.width; x += spacing) {
+            for (var y = startY; y <= size.height; y += spacing) {
+              canvas.drawCircle(Offset(x, y), 1.3, dots);
+            }
+          }
+          break;
+        case CanvasBackgroundPattern.grid:
+          for (var x = startX; x <= size.width; x += spacing) {
+            canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+          }
+          for (var y = startY; y <= size.height; y += spacing) {
+            canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+          }
+          break;
+        case CanvasBackgroundPattern.lines:
+          for (var y = startY; y <= size.height; y += spacing) {
+            canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+          }
+          break;
+        case CanvasBackgroundPattern.isometric:
+          final step = spacing * 1.5;
+          for (var x = startX - size.height; x <= size.width; x += step) {
+            canvas.drawLine(
+              Offset(x, 0),
+              Offset(x + size.height, size.height),
+              paint,
+            );
+            canvas.drawLine(
+              Offset(x, size.height),
+              Offset(x + size.height, 0),
+              paint,
+            );
+          }
+          break;
+      }
+    }
+
+    if (!settings.pageBoundsEnabled) return;
+    canvas.save();
+    canvas.translate(viewportOffset.dx, viewportOffset.dy);
+    canvas.scale(viewportScale);
+    final page = Rect.fromCenter(
+      center: Offset.zero,
+      width: settings.pageWidth,
+      height: settings.pageHeight,
+    );
+    canvas.drawRect(page, Paint()..color = Colors.white.withValues(alpha: 0.5));
+    canvas.drawRect(
+      page,
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.18)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+    canvas.restore();
+  }
+
+  void _paintFrame(Canvas canvas, _CanvasElement element) {
+    // Shared with PNG/PDF export so the frame cannot drift between views.
+    paintFrameElement(
+      canvas,
+      FrameElement(
+        id: element.id,
+        z: element.z,
+        center: element.center,
+        width: element.width,
+        height: element.height,
+        title: element.text,
+        color: element.color,
+        cornerRadius: element.strokeWidth,
+      ),
+    );
   }
 
   void _paintText(Canvas canvas, _CanvasElement element) {
@@ -1004,6 +1192,10 @@ class _CanvasPainter extends CustomPainter {
         !_doubleListEquals(
           oldDelegate.currentStrokePressures,
           currentStrokePressures,
+        ) ||
+        !_doubleListEquals(
+          oldDelegate.currentStrokeTilts,
+          currentStrokeTilts,
         ) ||
         oldDelegate.currentColor != currentColor ||
         oldDelegate.currentStrokeWidth != currentStrokeWidth ||

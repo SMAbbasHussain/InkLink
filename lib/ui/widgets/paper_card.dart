@@ -40,7 +40,9 @@ class PaperCard extends StatelessWidget {
         borderRadius: radius,
         boxShadow: tokens.paperShadow,
       ),
-      child: child,
+      // A transparent Material keeps ListTile ink and backgrounds above the
+      // card decoration while preserving the paper shadow.
+      child: Material(type: MaterialType.transparency, child: child),
     );
 
     if (showTape) {

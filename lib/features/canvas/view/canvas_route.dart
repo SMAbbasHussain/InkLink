@@ -68,8 +68,7 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
             boardCommentsService: context.read<BoardCommentsService>(),
             boardChatService: context.read<BoardChatService>(),
             voiceService: context.read<VoiceService>(),
-            currentUserId:
-                context.read<AuthService>().getCurrentUserId() ?? '',
+            currentUserId: context.read<AuthService>().getCurrentUserId() ?? '',
             boardId: widget.boardId,
           )..add(CanvasInitializeCrdt(widget.boardId)),
           child: CanvasScreen(

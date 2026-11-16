@@ -546,6 +546,40 @@ void main() {
       );
     });
 
+    test('layer blend mode round-trips through its payload', () async {
+      final bloc = CanvasBloc();
+      addTearDown(bloc.close);
+      _grantEditor(bloc);
+      final layer = await _addLayer(bloc, 'Glow');
+
+      bloc.add(CanvasUpdateLayerBlendMode(layer.id, 'screen'));
+      final state = await _nextWhere(
+        bloc,
+        (s) => _layerById(s, layer.id).blendMode == 'screen',
+      );
+      final updated = _layerById(state, layer.id);
+      final parsed = CanvasElement.fromMap(updated.id, updated.toMap());
+
+      expect(updated.blendMode, 'screen');
+      expect((parsed as LayerElement).blendMode, 'screen');
+    });
+
+    test('a viewer cannot change a layer blend mode', () async {
+      final bloc = CanvasBloc();
+      addTearDown(bloc.close);
+      _grantEditor(bloc);
+      final layer = await _addLayer(bloc, 'Glow');
+      bloc.add(
+        const CanvasBoardTitleUpdated(null, currentUserRole: Board.roleViewer),
+      );
+      await _nextWhere(bloc, (s) => !s.canEdit);
+
+      bloc.add(CanvasUpdateLayerBlendMode(layer.id, 'darken'));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      expect(_layerById(bloc.state, layer.id).blendMode, 'normal');
+    });
+
     test('single-element delete and transform edits ignore locked elements',
         () async {
       final (bloc, shapes) = await _threeShapes();

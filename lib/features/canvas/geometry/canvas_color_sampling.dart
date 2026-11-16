@@ -13,9 +13,7 @@ import 'canvas_element_geometry.dart';
 Color? sampleCanvasColorAt(Iterable<CanvasElement> elements, Offset point) {
   // Walk the same layers-as-bands order the painter uses, topmost first, so
   // the sampled colour belongs to the element the user sees at that spot.
-  final ordered = orderedElementsForPaint(
-    elements.toList(growable: false),
-  );
+  final ordered = orderedElementsForPaint(elements.toList(growable: false));
   for (final element in ordered.reversed) {
     if (element.hidden) continue;
     if (!elementContains(element, point)) continue;
@@ -29,6 +27,8 @@ Color? sampleCanvasColorAt(Iterable<CanvasElement> elements, Offset point) {
       // Images are skipped: sampling one bitmap pixel is not what the
       // vector eyedropper reports for every other element type.
       ImageElement _ => null,
+      // Frames are background chrome; their tint is not an ink colour.
+      FrameElement _ => null,
       LayerElement _ => null,
     };
     if (color == null) continue;

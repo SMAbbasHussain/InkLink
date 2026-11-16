@@ -37,7 +37,9 @@ class BoardChatMessage {
       senderName: map['senderName'] as String? ?? 'Anonymous',
       senderPhotoUrl: map['senderPhotoUrl'] as String?,
       text: map['text'] as String? ?? '',
-      timestamp: (map['timestamp'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch,
+      timestamp:
+          (map['timestamp'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
     );
   }
 }

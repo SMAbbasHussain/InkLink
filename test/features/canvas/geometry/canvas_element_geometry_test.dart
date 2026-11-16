@@ -90,6 +90,74 @@ void main() {
     });
   });
 
+  group('freehand fill regions', () {
+    test('detects the inside of a closed hand-drawn outline', () {
+      const stroke = StrokeElement(
+        id: 'loop',
+        z: 0,
+        points: [
+          Offset(0, 0),
+          Offset(100, 0),
+          Offset(100, 100),
+          Offset(0, 100),
+          Offset(2, 2),
+        ],
+        color: Colors.black,
+        strokeWidth: 3,
+      );
+
+      expect(strokeContainsClosedRegion(stroke, const Offset(50, 50)), isTrue);
+      expect(
+        strokeContainsClosedRegion(stroke, const Offset(140, 50)),
+        isFalse,
+      );
+    });
+
+    test('closure tolerance can follow the viewport scale', () {
+      const stroke = StrokeElement(
+        id: 'nearly-closed',
+        z: 0,
+        points: [
+          Offset(0, 0),
+          Offset(100, 0),
+          Offset(100, 100),
+          Offset(0, 100),
+          Offset(0, 20),
+        ],
+        color: Colors.black,
+        strokeWidth: 1,
+      );
+
+      expect(strokeContainsClosedRegion(stroke, const Offset(50, 50)), isTrue);
+      expect(
+        strokeContainsClosedRegion(
+          stroke,
+          const Offset(50, 50),
+          closureTolerance: 4,
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not treat an open outline as a fillable region', () {
+      const stroke = StrokeElement(
+        id: 'open',
+        z: 0,
+        points: [
+          Offset(0, 0),
+          Offset(100, 0),
+          Offset(100, 100),
+          Offset(0, 100),
+        ],
+        color: Colors.black,
+        strokeWidth: 3,
+      );
+
+      expect(strokeClosedFillPath(stroke), isNull);
+      expect(strokeContainsClosedRegion(stroke, const Offset(50, 50)), isFalse);
+    });
+  });
+
   group('element bounds', () {
     test('shapes use their rendered aspect ratio and rotation', () {
       const element = ShapeElement(
@@ -216,26 +284,27 @@ void main() {
       }
     });
 
-    test('highlighter bounds and hit-testing honor resolved 2.5x brush width',
-        () {
-      const stroke = StrokeElement(
-        id: 'hi-1',
-        z: 0,
-        points: [Offset(0, 0), Offset(100, 0)],
-        color: Colors.yellow,
-        strokeWidth: 10,
-        brushType: 'highlighter',
-      );
-      final bounds = elementBounds(stroke)!;
-      // 10 * 2.5 = 25 width -> half-width = 12.5
-      expect(bounds.top, closeTo(-12.5, 1e-6));
-      expect(bounds.bottom, closeTo(12.5, 1e-6));
-      expect(elementContains(stroke, const Offset(50, 11)), isTrue);
-      expect(elementContains(stroke, const Offset(50, 20)), isFalse);
-    });
+    test(
+      'highlighter bounds and hit-testing honor resolved 2.5x brush width',
+      () {
+        const stroke = StrokeElement(
+          id: 'hi-1',
+          z: 0,
+          points: [Offset(0, 0), Offset(100, 0)],
+          color: Colors.yellow,
+          strokeWidth: 10,
+          brushType: 'highlighter',
+        );
+        final bounds = elementBounds(stroke)!;
+        // 10 * 2.5 = 25 width -> half-width = 12.5
+        expect(bounds.top, closeTo(-12.5, 1e-6));
+        expect(bounds.bottom, closeTo(12.5, 1e-6));
+        expect(elementContains(stroke, const Offset(50, 11)), isTrue);
+        expect(elementContains(stroke, const Offset(50, 20)), isFalse);
+      },
+    );
 
-    test('resolveConnectorAnchorPoint honors arrow proportions and rotation',
-        () {
+    test('resolveConnectorAnchorPoint honors arrow proportions and rotation', () {
       const arrow = ShapeElement(
         id: 'arrow-1',
         z: 0,
@@ -377,12 +446,14 @@ void main() {
       final dashed = dashPath(solid, const [10, 10]);
       expect(solid.computeMetrics().length, 1);
       expect(dashed.computeMetrics().length, greaterThan(1));
-      final solidLen = solid
-          .computeMetrics()
-          .fold<double>(0, (sum, m) => sum + m.length);
-      final dashedLen = dashed
-          .computeMetrics()
-          .fold<double>(0, (sum, m) => sum + m.length);
+      final solidLen = solid.computeMetrics().fold<double>(
+        0,
+        (sum, m) => sum + m.length,
+      );
+      final dashedLen = dashed.computeMetrics().fold<double>(
+        0,
+        (sum, m) => sum + m.length,
+      );
       expect(dashedLen, lessThan(solidLen));
     });
 
@@ -446,37 +517,39 @@ void main() {
       expect(_alpha(px, 150, 100), closeTo(128, 6));
     });
 
-    test('a centered label renders symmetrically about the shape centre',
-        () async {
-      const shape = ShapeElement(
-        id: 'r',
-        z: 0,
-        shapeType: CanvasShapeType.rectangle,
-        center: Offset(100, 100),
-        size: 100,
-        width: 200,
-        height: 80,
-        color: Color(0xFFFF0000),
-        isFilled: false,
-        strokeWidth: 0,
-        label: 'XXXX',
-        labelColor: Color(0xFF000000),
-        labelFontSize: 24,
-      );
-      final px = await _renderShape(shape);
-      var minX = 200, maxX = 0, opaque = 0;
-      for (var y = 0; y < 200; y++) {
-        for (var x = 0; x < 200; x++) {
-          if (_alpha(px, x, y) > 40) {
-            opaque++;
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
+    test(
+      'a centered label renders symmetrically about the shape centre',
+      () async {
+        const shape = ShapeElement(
+          id: 'r',
+          z: 0,
+          shapeType: CanvasShapeType.rectangle,
+          center: Offset(100, 100),
+          size: 100,
+          width: 200,
+          height: 80,
+          color: Color(0xFFFF0000),
+          isFilled: false,
+          strokeWidth: 0,
+          label: 'XXXX',
+          labelColor: Color(0xFF000000),
+          labelFontSize: 24,
+        );
+        final px = await _renderShape(shape);
+        var minX = 200, maxX = 0, opaque = 0;
+        for (var y = 0; y < 200; y++) {
+          for (var x = 0; x < 200; x++) {
+            if (_alpha(px, x, y) > 40) {
+              opaque++;
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+            }
           }
         }
-      }
-      expect(opaque, greaterThan(0));
-      expect((minX + maxX) / 2, closeTo(100, 3));
-    });
+        expect(opaque, greaterThan(0));
+        expect((minX + maxX) / 2, closeTo(100, 3));
+      },
+    );
   });
 
   group('F-11 connector rendering', () {
@@ -497,19 +570,17 @@ void main() {
       )[2];
       expect(elementContains(connector, onCurve), isTrue);
       expect(
-        elementContains(connector, connectorMidpoint(
-          connector.startPoint,
-          connector.endPoint,
-          'curved',
-        )),
+        elementContains(
+          connector,
+          connectorMidpoint(connector.startPoint, connector.endPoint, 'curved'),
+        ),
         isTrue,
       );
       // The straight chord a quarter of the way along is off the curve.
       expect(elementContains(connector, const Offset(50, 25)), isFalse);
     });
 
-    test('rounded orthogonal corners leave the sharp corner and keep ends',
-        () {
+    test('rounded orthogonal corners leave the sharp corner and keep ends', () {
       final sharp = connectorPolyline(
         const Offset(0, 0),
         const Offset(100, 80),
@@ -525,10 +596,7 @@ void main() {
       expect(sharp, contains(const Offset(50, 0)));
       expect(rounded.first, const Offset(0, 0));
       expect((rounded.last - const Offset(100, 80)).distance, lessThan(0.01));
-      expect(
-        distanceToPolyline(rounded, const Offset(50, 0)),
-        greaterThan(3),
-      );
+      expect(distanceToPolyline(rounded, const Offset(50, 0)), greaterThan(3));
       // The rounded corner is a quadratic peaking ~7.07px from the vertex.
       expect(distanceToPolyline(rounded, const Offset(45, 5)), lessThan(1));
     });

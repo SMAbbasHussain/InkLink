@@ -228,8 +228,7 @@ class _ColorPickerSheetState extends State<ColorPickerSheet> {
               ),
             ),
           SimpleDialogOption(
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(_newPaletteChoice),
+            onPressed: () => Navigator.of(dialogContext).pop(_newPaletteChoice),
             child: const Text('New palette…'),
           ),
         ],
@@ -530,8 +529,7 @@ class _ColorPickerSheetState extends State<ColorPickerSheet> {
                       key: ValueKey('palette-chip-$name'),
                       label: Text(name),
                       selected: name == active,
-                      onSelected: (_) =>
-                          setState(() => _activePalette = name),
+                      onSelected: (_) => setState(() => _activePalette = name),
                     ),
                   ),
               ],
@@ -553,12 +551,7 @@ class _ColorPickerSheetState extends State<ColorPickerSheet> {
                         runSpacing: 8,
                         children: [
                           for (var i = 0; i < activeColors.length; i++)
-                            _paletteSwatch(
-                              tokens,
-                              active!,
-                              activeColors[i],
-                              i,
-                            ),
+                            _paletteSwatch(tokens, active!, activeColors[i], i),
                         ],
                       ),
               ),
@@ -578,10 +571,7 @@ class _ColorPickerSheetState extends State<ColorPickerSheet> {
                 },
                 itemBuilder: (context) => const [
                   PopupMenuItem(value: 'rename', child: Text('Rename palette')),
-                  PopupMenuItem(
-                    value: 'delete',
-                    child: Text('Delete palette'),
-                  ),
+                  PopupMenuItem(value: 'delete', child: Text('Delete palette')),
                 ],
               ),
             ],
@@ -615,7 +605,9 @@ class _ColorPickerSheetState extends State<ColorPickerSheet> {
             child: Stack(
               children: [
                 Positioned.fill(
-                  child: CustomPaint(painter: _SaturationValuePainter(_hsv.hue)),
+                  child: CustomPaint(
+                    painter: _SaturationValuePainter(_hsv.hue),
+                  ),
                 ),
                 Positioned(
                   left: (_hsv.saturation * width - 8).clamp(0.0, width - 16),

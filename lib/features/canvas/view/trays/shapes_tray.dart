@@ -41,11 +41,27 @@ class ShapesTray extends StatelessWidget {
         label: 'Ellipse',
         type: CanvasShapeType.ellipse,
       ),
-      (icon: LucideIcons.triangle, label: 'Triangle', type: CanvasShapeType.triangle),
-      (icon: LucideIcons.diamond, label: 'Diamond', type: CanvasShapeType.diamond),
+      (
+        icon: LucideIcons.triangle,
+        label: 'Triangle',
+        type: CanvasShapeType.triangle,
+      ),
+      (
+        icon: LucideIcons.diamond,
+        label: 'Diamond',
+        type: CanvasShapeType.diamond,
+      ),
       (icon: LucideIcons.star, label: 'Star', type: CanvasShapeType.star),
-      (icon: LucideIcons.pentagon, label: 'Pentagon', type: CanvasShapeType.pentagon),
-      (icon: LucideIcons.hexagon, label: 'Hexagon', type: CanvasShapeType.hexagon),
+      (
+        icon: LucideIcons.pentagon,
+        label: 'Pentagon',
+        type: CanvasShapeType.pentagon,
+      ),
+      (
+        icon: LucideIcons.hexagon,
+        label: 'Hexagon',
+        type: CanvasShapeType.hexagon,
+      ),
       (icon: LucideIcons.minus, label: 'Line', type: CanvasShapeType.line),
       (
         // No dedicated "semicircle" glyph in Lucide; closest stand-in.
@@ -108,7 +124,9 @@ class ShapesTray extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     item.label,
-                    style: InkType.caption(selected ? tokens.accentText : tokens.inkMuted),
+                    style: InkType.caption(
+                      selected ? tokens.accentText : tokens.inkMuted,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
@@ -127,11 +145,7 @@ class SemicircleIcon extends StatelessWidget {
   final double size;
   final Color color;
 
-  const SemicircleIcon({
-    super.key,
-    this.size = 22,
-    required this.color,
-  });
+  const SemicircleIcon({super.key, this.size = 22, required this.color});
 
   @override
   Widget build(BuildContext context) {

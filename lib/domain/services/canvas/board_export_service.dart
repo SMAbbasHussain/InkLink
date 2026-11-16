@@ -24,10 +24,14 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
 import '../../models/canvas/canvas_element.dart';
+import '../../models/canvas/canvas_board_settings.dart';
+import '../../models/canvas/canvas_export_options.dart';
 import 'canvas_geometry.dart';
 import '../../models/canvas/canvas_shape_type.dart';
 
-enum BoardExportFormat { png, pdf, svg }
+import '../../models/canvas/board_export_format.dart';
+
+export '../../models/canvas/board_export_format.dart';
 
 /// What happened when the exported file was handed to the platform share
 /// sheet. "unavailable" means the sheet could not be opened at all, so callers
@@ -39,6 +43,15 @@ abstract class BoardExportService {
     required String boardTitle,
     required List<CanvasElement> elements,
     required BoardExportFormat format,
+    CanvasBoardSettings settings = const CanvasBoardSettings(),
+  });
+
+  Future<File> exportCanvas({
+    required String boardTitle,
+    required List<CanvasElement> elements,
+    required CanvasExportOptions options,
+    CanvasBoardSettings settings = const CanvasBoardSettings(),
+    Set<String> selectedIds = const {},
   });
 
   Future<BoardShareOutcome> shareBoardFile({
@@ -56,6 +69,7 @@ class BoardExportServiceImpl implements BoardExportService {
     required String boardTitle,
     required List<CanvasElement> elements,
     required BoardExportFormat format,
+    CanvasBoardSettings settings = const CanvasBoardSettings(),
   }) async {
     final sanitizedTitle = _sanitizeFileName(boardTitle);
     final timestamp = DateTime.now().millisecondsSinceEpoch;
@@ -68,7 +82,7 @@ class BoardExportServiceImpl implements BoardExportService {
 
     switch (format) {
       case BoardExportFormat.png:
-        final pngBytes = await renderToPng(elements);
+        final pngBytes = await renderToPng(elements, settings: settings);
         final file = File(
           '${exportDir.path}/${sanitizedTitle}_$uniqueSuffix.png',
         );
@@ -76,7 +90,11 @@ class BoardExportServiceImpl implements BoardExportService {
         return file;
 
       case BoardExportFormat.pdf:
-        final pdfBytes = await renderToPdf(boardTitle, elements);
+        final pdfBytes = await renderToPdf(
+          boardTitle,
+          elements,
+          settings: settings,
+        );
         final file = File(
           '${exportDir.path}/${sanitizedTitle}_$uniqueSuffix.pdf',
         );
@@ -84,13 +102,171 @@ class BoardExportServiceImpl implements BoardExportService {
         return file;
 
       case BoardExportFormat.svg:
-        final svgString = renderToSvg(boardTitle, elements);
+        final svgString = renderToSvg(boardTitle, elements, settings: settings);
         final file = File(
           '${exportDir.path}/${sanitizedTitle}_$uniqueSuffix.svg',
         );
         await file.writeAsString(svgString, flush: true);
         return file;
     }
+  }
+
+  @override
+  Future<File> exportCanvas({
+    required String boardTitle,
+    required List<CanvasElement> elements,
+    required CanvasExportOptions options,
+    CanvasBoardSettings settings = const CanvasBoardSettings(),
+    Set<String> selectedIds = const {},
+  }) async {
+    final plan = buildExportPlan(
+      elements: elements,
+      options: options,
+      selectedIds: selectedIds,
+    );
+    final sanitizedTitle = sanitizeExportFileName(boardTitle);
+    final rawSuffix = options.suffix?.trim();
+    final suffix = rawSuffix == null || rawSuffix.isEmpty
+        ? ''
+        : '_${sanitizeExportFileName(rawSuffix)}';
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final randomPart = math.Random()
+        .nextInt(1000000)
+        .toString()
+        .padLeft(6, '0');
+    final fileBase = '$sanitizedTitle${suffix}_${timestamp}_$randomPart';
+    final exportDir = await _resolveExportDirectory();
+
+    switch (options.format) {
+      case BoardExportFormat.png:
+        final pngBytes = await renderToPng(
+          plan.elements,
+          scale: plan.scale,
+          settings: settings,
+          exportBounds: plan.bounds,
+          transparentBackground: options.hasTransparentBackground,
+        );
+        final file = File('${exportDir.path}/$fileBase.png');
+        await file.writeAsBytes(pngBytes, flush: true);
+        return file;
+
+      case BoardExportFormat.pdf:
+        final pdfBytes = await renderToPdf(
+          boardTitle,
+          plan.elements,
+          settings: settings,
+          exportBounds: plan.bounds,
+          transparentBackground: options.hasTransparentBackground,
+          scale: plan.scale,
+        );
+        final file = File('${exportDir.path}/$fileBase.pdf');
+        await file.writeAsBytes(pdfBytes, flush: true);
+        return file;
+
+      case BoardExportFormat.svg:
+        final svgString = renderToSvg(
+          boardTitle,
+          plan.elements,
+          settings: settings,
+          exportBounds: plan.bounds,
+          transparentBackground: options.hasTransparentBackground,
+        );
+        final file = File('${exportDir.path}/$fileBase.svg');
+        await file.writeAsString(svgString, flush: true);
+        return file;
+    }
+  }
+
+  /// Resolves the crop box and element subset for [options].
+  ///
+  /// Selection exports include connectors whose two endpoints are selected;
+  /// frame exports include the frame and fully contained elements only.
+  CanvasExportPlan buildExportPlan({
+    required List<CanvasElement> elements,
+    required CanvasExportOptions options,
+    Set<String> selectedIds = const {},
+  }) {
+    // A hidden layer hides its members: use the shared paint order so export
+    // crop bounds cannot include art the canvas does not show.
+    final paintIds = canvasPaintOrder(
+      elements,
+    ).elements.map((element) => element.id).toSet();
+    bool paintable(CanvasElement element) =>
+        !element.hidden && paintIds.contains(element.id);
+
+    List<CanvasElement> chosen;
+    Rect bounds;
+    switch (options.scope) {
+      case CanvasExportScope.board:
+        chosen = elements.where(paintable).toList(growable: false);
+        if (chosen.isEmpty) {
+          throw const CanvasExportException(
+            'There is nothing to export yet. Add something first.',
+          );
+        }
+        bounds = computeElementsBounds(chosen);
+      case CanvasExportScope.selection:
+        final ids = selectedIds;
+        chosen = elements
+            .where(
+              (element) =>
+                  paintable(element) &&
+                  (ids.contains(element.id) ||
+                      (element is ConnectorElement &&
+                          ids.contains(element.startElementId) &&
+                          ids.contains(element.endElementId))),
+            )
+            .toList(growable: false);
+        if (chosen.isEmpty) {
+          throw const CanvasExportException(
+            'Select something to export first.',
+          );
+        }
+        bounds = computeElementsBounds(chosen);
+      case CanvasExportScope.frame:
+        final frameId =
+            options.frameId ??
+            (selectedIds.length == 1 ? selectedIds.first : null);
+        FrameElement? frame;
+        for (final element in elements.whereType<FrameElement>()) {
+          if (element.id == frameId && paintable(element)) {
+            frame = element;
+            break;
+          }
+        }
+        if (frame == null) {
+          throw const CanvasExportException('Choose a frame to export.');
+        }
+        final frameRect = Rect.fromCenter(
+          center: frame.center,
+          width: frame.width,
+          height: frame.height,
+        );
+        final loose = frameRect.inflate(0.5);
+        final contents = elements.where((element) {
+          if (!paintable(element) || element.id == frame!.id) return false;
+          final elementBounds = computeElementsBounds([element]);
+          return loose.contains(elementBounds.topLeft) &&
+              loose.contains(elementBounds.bottomRight);
+        });
+        chosen = [frame, ...contents];
+        bounds = frameRect;
+    }
+
+    final padded = bounds.inflate(CanvasExportOptions.boundsPadding);
+    if (padded.width < 1 || padded.height < 1) {
+      throw const CanvasExportException('The export area is too small.');
+    }
+    final scale = options.normalizedScale;
+    if (padded.width * scale > CanvasExportOptions.maxDimension ||
+        padded.height * scale > CanvasExportOptions.maxDimension) {
+      throw CanvasExportException(
+        'This export would be larger than '
+        '${CanvasExportOptions.maxDimension.round()} px. '
+        'Choose a smaller scale or scope.',
+      );
+    }
+    return CanvasExportPlan(elements: chosen, bounds: padded, scale: scale);
   }
 
   Future<Directory> _resolveExportDirectory() async {
@@ -226,19 +402,7 @@ class BoardExportServiceImpl implements BoardExportService {
     return 'application/octet-stream';
   }
 
-  String _sanitizeFileName(String title) {
-    var sanitized = title
-        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
-        .replaceAll(RegExp(r'\s+'), '_')
-        .trim();
-    if (sanitized.isEmpty) {
-      sanitized = 'board';
-    }
-    if (sanitized.length > 50) {
-      sanitized = sanitized.substring(0, 50);
-    }
-    return sanitized;
-  }
+  String _sanitizeFileName(String title) => sanitizeExportFileName(title);
 
   // ──────────────────────────────────────────────
   // PNG Render Pipeline
@@ -247,9 +411,12 @@ class BoardExportServiceImpl implements BoardExportService {
   Future<Uint8List> renderToPng(
     List<CanvasElement> elements, {
     double scale = 2.0,
+    CanvasBoardSettings settings = const CanvasBoardSettings(),
+    Rect? exportBounds,
+    bool transparentBackground = false,
   }) async {
     final elementMap = {for (final e in elements) e.id: e};
-    final bounds = computeElementsBounds(elements);
+    final bounds = exportBounds ?? computeElementsBounds(elements);
 
     // Pre-decode base64 images for raster rendering (Comment 10)
     final decodedImages = <String, ui.Image>{};
@@ -277,9 +444,11 @@ class BoardExportServiceImpl implements BoardExportService {
       final recorder = ui.PictureRecorder();
       final canvas = ui.Canvas(recorder);
 
-      // Enforce maximum dimension and pixel area to prevent OOM on large coordinate spans (Comment 11)
-      const double maxDimension = 4096.0;
-      const double maxArea = 4096.0 * 4096.0;
+      // Enforce the same 8192 px ceiling as the export planner to prevent OOM
+      // on large coordinate spans. `exportCanvas` rejects oversized plans; this
+      // clamp remains for direct render calls with huge content bounds.
+      const double maxDimension = CanvasExportOptions.maxDimension;
+      const double maxArea = maxDimension * maxDimension;
 
       double effectiveScale = scale;
       final rawW = bounds.width * effectiveScale;
@@ -301,22 +470,38 @@ class BoardExportServiceImpl implements BoardExportService {
       // Translate origin to top-left of elements bounding box
       canvas.translate(-bounds.left, -bounds.top);
 
-      // Background canvas rect
-      final bgPaint = ui.Paint()..color = const Color(0xFFFFFFFF);
-      canvas.drawRect(bounds, bgPaint);
+      // Background canvas rect uses the board's paper colour so exports match
+      // the canvas instead of always forcing white. Transparent exports keep
+      // alpha 0 outside the painted elements.
+      if (!transparentBackground) {
+        final bgPaint = ui.Paint()..color = settings.backgroundColor;
+        canvas.drawRect(bounds, bgPaint);
+      }
 
       final sorted = orderedElementsForPaint(elements);
+      final effects = layerPaintEffects(elements);
 
       for (final element in sorted) {
         if (element.hidden) continue;
         final opacity = element.opacity.clamp(0.0, 1.0);
+        final layerEffect = effects[element.id];
+        final layerOpacity = layerEffect?.opacity ?? 1.0;
+        final blendMode = layerEffect == null
+            ? ui.BlendMode.srcOver
+            : canvasBlendModeForName(layerEffect.blendMode);
+        final effectiveOpacity = (opacity * layerOpacity).clamp(0.0, 1.0);
         final bounds = elementBounds(element);
         final useLayer =
-            opacity < 1 && element is! StrokeElement && bounds != null;
+            bounds != null &&
+            ((opacity < 1 && element is! StrokeElement) ||
+                (layerEffect != null &&
+                    (layerOpacity < 1 || blendMode != ui.BlendMode.srcOver)));
         if (useLayer) {
           canvas.saveLayer(
             bounds.inflate(8),
-            ui.Paint()..color = Color.fromRGBO(255, 255, 255, opacity),
+            ui.Paint()
+              ..blendMode = blendMode
+              ..color = Color.fromRGBO(255, 255, 255, effectiveOpacity),
           );
         }
         _paintElement(canvas, element, elementMap, decodedImages);
@@ -371,6 +556,9 @@ class BoardExportServiceImpl implements BoardExportService {
       case ImageElement image:
         _paintImage(canvas, image, decodedImages[image.id]);
         break;
+      case FrameElement frame:
+        paintFrameElement(canvas, frame);
+        break;
       case LayerElement _:
         // Layers are organisational and never draw ink.
         break;
@@ -378,10 +566,21 @@ class BoardExportServiceImpl implements BoardExportService {
   }
 
   void _paintStroke(ui.Canvas canvas, StrokeElement stroke) {
+    final fillColor = stroke.fillColor;
+    if (fillColor != null && stroke.points.length >= 3) {
+      final fillOpacity = (stroke.opacity * fillColor.a).clamp(0.0, 1.0);
+      canvas.drawPath(
+        ui.Path()..addPolygon(stroke.points, true),
+        ui.Paint()
+          ..color = fillColor.withValues(alpha: fillOpacity)
+          ..style = ui.PaintingStyle.fill,
+      );
+    }
     paintCanvasStroke(
       canvas: canvas,
       points: stroke.points,
       pressures: stroke.pressures,
+      tilts: stroke.tilts,
       color: stroke.color,
       strokeWidth: stroke.strokeWidth,
       strokeOpacity: stroke.opacity,
@@ -499,8 +698,12 @@ class BoardExportServiceImpl implements BoardExportService {
 
   Future<Uint8List> renderToPdf(
     String boardTitle,
-    List<CanvasElement> elements,
-  ) async {
+    List<CanvasElement> elements, {
+    CanvasBoardSettings settings = const CanvasBoardSettings(),
+    Rect? exportBounds,
+    bool transparentBackground = false,
+    double scale = 2.0,
+  }) async {
     final pdf = pw.Document(
       title: boardTitle,
       author: 'InkLink',
@@ -508,7 +711,13 @@ class BoardExportServiceImpl implements BoardExportService {
     );
 
     // Rasterize canvas image to embed into PDF
-    final pngBytes = await renderToPng(elements, scale: 2.0);
+    final pngBytes = await renderToPng(
+      elements,
+      scale: scale,
+      settings: settings,
+      exportBounds: exportBounds,
+      transparentBackground: transparentBackground,
+    );
     final pdfImage = pw.MemoryImage(pngBytes);
 
     final creationDate = DateTime.now();
@@ -638,9 +847,15 @@ class BoardExportServiceImpl implements BoardExportService {
   // SVG Vector Pipeline
   // ──────────────────────────────────────────────
 
-  String renderToSvg(String boardTitle, List<CanvasElement> elements) {
+  String renderToSvg(
+    String boardTitle,
+    List<CanvasElement> elements, {
+    CanvasBoardSettings settings = const CanvasBoardSettings(),
+    Rect? exportBounds,
+    bool transparentBackground = false,
+  }) {
     final elementMap = {for (final e in elements) e.id: e};
-    final bounds = computeElementsBounds(elements);
+    final bounds = exportBounds ?? computeElementsBounds(elements);
     final width = bounds.width.ceil();
     final height = bounds.height.ceil();
     final offsetX = -bounds.left;
@@ -705,20 +920,37 @@ class BoardExportServiceImpl implements BoardExportService {
     }
     buffer.writeln('  </defs>');
 
-    buffer.writeln('  <!-- Background -->');
-    buffer.writeln('  <rect width="100%" height="100%" fill="#ffffff" />');
+    if (!transparentBackground) {
+      buffer.writeln('  <!-- Background -->');
+      buffer.writeln(
+        '  <rect width="100%" height="100%" fill="${_colorToHex(settings.backgroundColor)}" />',
+      );
+    }
     buffer.writeln('  <!-- Canvas Elements -->');
     buffer.writeln('  <g transform="translate($offsetX, $offsetY)">');
 
     final sorted = orderedElementsForPaint(elements);
+    final effects = layerPaintEffects(elements);
 
     for (final element in sorted) {
       if (element.hidden) continue;
       // Stroke serialization already writes its own opacity attribute.
       final opacity = element.opacity.clamp(0.0, 1.0);
-      final wrapLayer = opacity < 1 && element is! StrokeElement;
+      final effect = effects[element.id];
+      final blended = effect != null;
+      final groupOpacity = effect == null
+          ? opacity
+          : (element is StrokeElement
+                ? effect.opacity
+                : (opacity * effect.opacity).clamp(0.0, 1.0));
+      final wrapLayer = blended || (opacity < 1 && element is! StrokeElement);
       if (wrapLayer) {
-        buffer.writeln('  <g opacity="${opacity.toStringAsFixed(3)}">');
+        final blendStyle = blended && effect.blendMode != 'normal'
+            ? ' style="mix-blend-mode:${effect.blendMode}"'
+            : '';
+        buffer.writeln(
+          '  <g opacity="${groupOpacity.toStringAsFixed(3)}"$blendStyle>',
+        );
       }
       _serializeSvgElement(buffer, element, elementMap);
       if (wrapLayer) buffer.writeln('  </g>');
@@ -754,6 +986,9 @@ class BoardExportServiceImpl implements BoardExportService {
       case ImageElement image:
         _serializeSvgImage(buffer, image);
         break;
+      case FrameElement frame:
+        _serializeSvgFrame(buffer, frame);
+        break;
       case LayerElement _:
         break;
     }
@@ -777,6 +1012,21 @@ class BoardExportServiceImpl implements BoardExportService {
     final filter = style.texture == BrushTexture.wash
         ? ' filter="url(#$watercolorBlurFilterId)"'
         : '';
+
+    final fillColor = stroke.fillColor;
+    if (fillColor != null && stroke.points.length >= 3) {
+      final fillPath = StringBuffer();
+      fillPath.write('M ${stroke.points.first.dx} ${stroke.points.first.dy}');
+      for (var i = 1; i < stroke.points.length; i++) {
+        fillPath.write(' L ${stroke.points[i].dx} ${stroke.points[i].dy}');
+      }
+      fillPath.write(' Z');
+      final fillOpacity = (style.opacity * fillColor.a).clamp(0.0, 1.0);
+      buffer.writeln(
+        '    <path d="$fillPath" fill="${_colorToHex(fillColor)}" '
+        'fill-opacity="${fillOpacity.toStringAsFixed(3)}" />',
+      );
+    }
 
     if (stroke.points.length == 1) {
       final p = stroke.points.first;
@@ -821,6 +1071,18 @@ class BoardExportServiceImpl implements BoardExportService {
     );
   }
 
+  void _serializeSvgFrame(StringBuffer buffer, FrameElement frame) {
+    final rect = frameRect(frame);
+    final colorHex = _colorToHex(frame.color);
+    final radius = math.min(
+      frame.cornerRadius,
+      math.min(rect.width, rect.height) / 2,
+    );
+    buffer.writeln(
+      '    <rect x="${_svgNumber(rect.left)}" y="${_svgNumber(rect.top)}" width="${_svgNumber(rect.width)}" height="${_svgNumber(rect.height)}" rx="${_svgNumber(radius)}" fill="$colorHex" fill-opacity="0.04" stroke="$colorHex" stroke-opacity="0.55" stroke-width="1.5" />',
+    );
+  }
+
   void _serializeSvgShape(StringBuffer buffer, ShapeElement shape) {
     final colorHex = _colorToHex(shape.color);
     final rect = shapeElementRect(shape);
@@ -833,7 +1095,7 @@ class BoardExportServiceImpl implements BoardExportService {
     final rotAttr = shape.rotation != 0
         ? ' transform="rotate($deg $cx $cy)"'
         : '';
-    final fill = (shape.isFilled && !shape.isLinear) ? colorHex : 'none';
+    final fill = _svgShapeFill(buffer, shape);
     final strokeAttrs = _svgStrokeAttrs(shape, colorHex);
 
     if (shape.isLinear) {
@@ -914,6 +1176,37 @@ class BoardExportServiceImpl implements BoardExportService {
         break;
     }
     _serializeSvgShapeLabel(buffer, shape, cx, cy, rotAttr);
+  }
+
+  /// Emits any gradient definition and returns the SVG `fill` value.
+  String _svgShapeFill(StringBuffer buffer, ShapeElement shape) {
+    final mode = shape.effectiveFillMode;
+    if (mode == 'none' || shape.isLinear) return 'none';
+    if (mode == 'solid') return _colorToHex(shape.resolvedFillColor);
+    final safeId = shape.id.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    final id = 'shapeFill_$safeId';
+    final start = _colorToHex(shape.resolvedGradientStart);
+    final end = _colorToHex(shape.resolvedGradientEnd);
+    if (mode == 'radial') {
+      buffer.writeln(
+        '    <radialGradient id="$id" cx="50%" cy="50%" r="50%" gradientUnits="objectBoundingBox">'
+        '<stop offset="0%" stop-color="$start" />'
+        '<stop offset="100%" stop-color="$end" />'
+        '</radialGradient>',
+      );
+    } else {
+      final angle = shape.gradientAngle * math.pi / 180;
+      final dx = math.cos(angle) * 0.5;
+      final dy = math.sin(angle) * 0.5;
+      buffer.writeln(
+        '    <linearGradient id="$id" x1="${(0.5 - dx).toStringAsFixed(4)}" y1="${(0.5 - dy).toStringAsFixed(4)}" '
+        'x2="${(0.5 + dx).toStringAsFixed(4)}" y2="${(0.5 + dy).toStringAsFixed(4)}" gradientUnits="objectBoundingBox">'
+        '<stop offset="0%" stop-color="$start" />'
+        '<stop offset="100%" stop-color="$end" />'
+        '</linearGradient>',
+      );
+    }
+    return 'url(#$id)';
   }
 
   /// Stroke attributes shared by every shape primitive: independent of fill,
@@ -1324,6 +1617,23 @@ class BoardExportServiceImpl implements BoardExportService {
   // ──────────────────────────────────────────────
   // Bounding Box Calculation
   // ──────────────────────────────────────────────
+
+  /// File-safe base name: strips path separators/control punctuation, folds
+  /// whitespace to underscores and caps the length.
+  String sanitizeExportFileName(String title) {
+    var sanitized = title
+        .trim()
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_')
+        .trim();
+    if (sanitized.isEmpty) {
+      sanitized = 'board';
+    }
+    if (sanitized.length > 50) {
+      sanitized = sanitized.substring(0, 50);
+    }
+    return sanitized;
+  }
 
   Rect computeElementsBounds(List<CanvasElement> elements) {
     final visible = elements.where((e) => !e.hidden).toList(growable: false);

@@ -31,6 +31,7 @@ class LayersTray extends StatelessWidget {
   final ValueChanged<String?> onSetActiveLayer;
   final ValueChanged<String> onAddLayer;
   final void Function(String layerId, String name) onRenameLayer;
+  final void Function(String layerId, String blendMode)? onBlendModeChanged;
   final ValueChanged<String> onDeleteLayer;
   final VoidCallback? onClose;
 
@@ -52,6 +53,7 @@ class LayersTray extends StatelessWidget {
     required this.onSetActiveLayer,
     required this.onAddLayer,
     required this.onRenameLayer,
+    this.onBlendModeChanged,
     required this.onDeleteLayer,
     this.onClose,
   });
@@ -65,8 +67,7 @@ class LayersTray extends StatelessWidget {
         if (band.layer != null) band.layer!,
     ];
     final layerIndexById = <String, int>{
-      for (var i = 0; i < ascendingLayers.length; i++)
-        ascendingLayers[i].id: i,
+      for (var i = 0; i < ascendingLayers.length; i++) ascendingLayers[i].id: i,
     };
     // The tray lists topmost first; the paint order is bottom-first.
     final sections = <_Section>[
@@ -80,9 +81,8 @@ class LayersTray extends StatelessWidget {
     final defaultBand = order.bands.firstWhere((band) => band.layer == null);
     final orphans = defaultBand.elements.reversed.toList(growable: false);
 
-    final resolvedActiveId = ascendingLayers.any(
-      (layer) => layer.id == activeLayerId,
-    )
+    final resolvedActiveId =
+        ascendingLayers.any((layer) => layer.id == activeLayerId)
         ? activeLayerId
         : null;
     final activeName = resolvedActiveId == null
@@ -121,8 +121,7 @@ class LayersTray extends StatelessWidget {
         element: element,
         canEdit: canEdit,
         selected:
-            selectedIds.contains(element.id) ||
-            selectedShapeId == element.id,
+            selectedIds.contains(element.id) || selectedShapeId == element.id,
         onSelect: () => onSelect(element.id),
         onToggleVisibility: () =>
             onToggleVisibility(element.id, element.hidden),
@@ -165,8 +164,7 @@ class LayersTray extends StatelessWidget {
         itemCount: section.children.length,
         onReorder: (oldIndex, newIndex) =>
             reorderWithin(section.children, oldIndex, newIndex),
-        itemBuilder: (context, index) =>
-            rowFor(section.children[index], index),
+        itemBuilder: (context, index) => rowFor(section.children[index], index),
       );
     }
 
@@ -244,6 +242,7 @@ class LayersTray extends StatelessWidget {
                           section.layer.id,
                           _LayerHeader(
                             name: section.layer.name,
+                            blendMode: section.layer.blendMode,
                             count: section.children.length,
                             active: section.layer.id == resolvedActiveId,
                             canEdit: canEdit,
@@ -258,6 +257,12 @@ class LayersTray extends StatelessWidget {
                                   onRenameLayer(section.layer.id, name),
                             ),
                             onDelete: () => onDeleteLayer(section.layer.id),
+                            onBlendModeChanged: onBlendModeChanged == null
+                                ? null
+                                : (mode) => onBlendModeChanged!(
+                                    section.layer.id,
+                                    mode,
+                                  ),
                             onMoveUp: moveLayer(section.layer, 1),
                             onMoveDown: moveLayer(section.layer, -1),
                             child: sectionContent(section),
@@ -390,6 +395,7 @@ class _Section {
 
 class _LayerHeader extends StatelessWidget {
   final String name;
+  final String blendMode;
   final int count;
   final bool active;
   final bool canEdit;
@@ -398,10 +404,12 @@ class _LayerHeader extends StatelessWidget {
   final VoidCallback? onDelete;
   final VoidCallback? onMoveUp;
   final VoidCallback? onMoveDown;
+  final ValueChanged<String>? onBlendModeChanged;
   final Widget child;
 
   const _LayerHeader({
     required this.name,
+    this.blendMode = 'normal',
     required this.count,
     required this.active,
     required this.canEdit,
@@ -411,6 +419,7 @@ class _LayerHeader extends StatelessWidget {
     this.onDelete,
     this.onMoveUp,
     this.onMoveDown,
+    this.onBlendModeChanged,
   });
 
   @override
@@ -421,9 +430,7 @@ class _LayerHeader extends StatelessWidget {
       decoration: BoxDecoration(
         color: active ? tokens.accent.withValues(alpha: 0.08) : tokens.field,
         borderRadius: BorderRadius.circular(InkRadii.chip),
-        border: Border.all(
-          color: active ? tokens.accent : tokens.glassStroke,
-        ),
+        border: Border.all(color: active ? tokens.accent : tokens.glassStroke),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -505,6 +512,55 @@ class _LayerHeader extends StatelessWidget {
               ),
             ),
           ),
+          if (canEdit && onBlendModeChanged != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 6, 4),
+              child: Row(
+                children: [
+                  Text(
+                    'Blend',
+                    style: TextStyle(fontSize: 10, color: tokens.inkMuted),
+                  ),
+                  const Spacer(),
+                  DropdownButton<String>(
+                    value:
+                        const {
+                          'normal',
+                          'multiply',
+                          'screen',
+                          'overlay',
+                          'darken',
+                          'lighten',
+                        }.contains(blendMode)
+                        ? blendMode
+                        : 'normal',
+                    isDense: true,
+                    underline: const SizedBox.shrink(),
+                    style: TextStyle(fontSize: 11, color: tokens.inkSecondary),
+                    items: const [
+                      DropdownMenuItem(value: 'normal', child: Text('Normal')),
+                      DropdownMenuItem(
+                        value: 'multiply',
+                        child: Text('Multiply'),
+                      ),
+                      DropdownMenuItem(value: 'screen', child: Text('Screen')),
+                      DropdownMenuItem(
+                        value: 'overlay',
+                        child: Text('Overlay'),
+                      ),
+                      DropdownMenuItem(value: 'darken', child: Text('Darken')),
+                      DropdownMenuItem(
+                        value: 'lighten',
+                        child: Text('Lighten'),
+                      ),
+                    ],
+                    onChanged: (mode) {
+                      if (mode != null) onBlendModeChanged?.call(mode);
+                    },
+                  ),
+                ],
+              ),
+            ),
           child,
         ],
       ),
@@ -703,7 +759,6 @@ class _LayerRowState extends State<_LayerRow> {
       ),
     );
   }
-
 }
 
 IconData _iconForElement(CanvasElement element) {
@@ -713,6 +768,7 @@ IconData _iconForElement(CanvasElement element) {
     TextElement _ => LucideIcons.type,
     ImageElement _ => LucideIcons.image,
     StickyNoteElement _ => LucideIcons.stickyNote,
+    FrameElement _ => LucideIcons.frame,
     ConnectorElement _ => LucideIcons.spline,
     LayerElement _ => LucideIcons.folder,
   };
@@ -722,13 +778,14 @@ String _labelForElement(CanvasElement element) {
   final raw = switch (element) {
     StrokeElement _ => 'Stroke',
     ShapeElement e => e.shapeType.name,
-    TextElement e => e.text.trim().isEmpty
-        ? 'Text'
-        : e.text.trim().replaceAll('\n', ' '),
+    TextElement e =>
+      e.text.trim().isEmpty ? 'Text' : e.text.trim().replaceAll('\n', ' '),
     ImageElement _ => 'Image',
-    StickyNoteElement e => e.text.trim().isEmpty
-        ? 'Sticky note'
-        : e.text.trim().replaceAll('\n', ' '),
+    StickyNoteElement e =>
+      e.text.trim().isEmpty
+          ? 'Sticky note'
+          : e.text.trim().replaceAll('\n', ' '),
+    FrameElement e => e.title.trim().isEmpty ? 'Frame' : e.title.trim(),
     ConnectorElement _ => 'Connector',
     LayerElement e => e.name,
   };

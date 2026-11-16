@@ -52,28 +52,68 @@ class CanvasApplyRemotePreview extends CanvasEvent {
 class CanvasStartStroke extends CanvasEvent {
   final Offset point;
   final double pressure;
+  final double tilt;
 
-  const CanvasStartStroke(this.point, {this.pressure = 1.0});
+  const CanvasStartStroke(this.point, {this.pressure = 1.0, this.tilt = 0});
 }
 
 /// Append point to current stroke
 class CanvasAppendStroke extends CanvasEvent {
   final Offset point;
   final double pressure;
+  final double tilt;
 
-  const CanvasAppendStroke(this.point, {this.pressure = 1.0});
+  const CanvasAppendStroke(this.point, {this.pressure = 1.0, this.tilt = 0});
 }
 
 /// End and save the current stroke
 class CanvasEndStroke extends CanvasEvent {
   final List<Offset>? smoothedPoints;
   final List<double>? pressures;
+  final List<double>? tilts;
   final bool smoothAfterDrawing;
 
   const CanvasEndStroke({
     this.smoothedPoints,
     this.pressures,
+    this.tilts,
     this.smoothAfterDrawing = false,
+  });
+}
+
+/// Toggle hold-to-snap QuickShape.
+class CanvasSetQuickShapeEnabled extends CanvasEvent {
+  final bool enabled;
+
+  const CanvasSetQuickShapeEnabled(this.enabled);
+}
+
+/// Discard an in-progress stroke without committing it, used when palm or
+/// multi-pointer input takes over the gesture.
+class CanvasCancelStroke extends CanvasEvent {
+  const CanvasCancelStroke();
+}
+
+/// Whether a one-finger drag paints (true) or pans (false). Stylus input
+/// always paints.
+class CanvasSetFingerDrawing extends CanvasEvent {
+  final bool enabled;
+
+  const CanvasSetFingerDrawing(this.enabled);
+}
+
+/// Commit a held stroke as a clean shape, replacing the freehand commit.
+class CanvasCommitQuickShape extends CanvasEvent {
+  final QuickShapeMatch match;
+  final List<Offset> points;
+  final List<double> pressures;
+  final List<double> tilts;
+
+  const CanvasCommitQuickShape({
+    required this.match,
+    required this.points,
+    this.pressures = const [],
+    this.tilts = const [],
   });
 }
 
@@ -231,6 +271,60 @@ class CanvasConvertStickyNote extends CanvasEvent {
   const CanvasConvertStickyNote(this.elementId, {this.toShape = false});
   final String elementId;
   final bool toShape;
+}
+
+/// Insert a titled frame behind the board's existing content.
+class CanvasAddFrame extends CanvasEvent {
+  final Offset center;
+  final String title;
+  final Color color;
+  final double width;
+  final double height;
+
+  const CanvasAddFrame({
+    required this.center,
+    this.title = 'Frame',
+    this.color = const Color(0xFF64748B),
+    this.width = FrameElement.defaultWidth,
+    this.height = FrameElement.defaultHeight,
+  });
+}
+
+/// Replace the board background/page settings (one collaborative payload).
+class CanvasSetBoardSettings extends CanvasEvent {
+  final CanvasBoardSettings settings;
+
+  const CanvasSetBoardSettings(this.settings);
+}
+
+/// Bulk-create elements from a template or pasted layout.
+///
+/// Each payload may carry a template-local `id`; imported elements get fresh
+/// ids and connector endpoints are remapped to them in one undo step.
+class CanvasImportElements extends CanvasEvent {
+  final List<Map<String, dynamic>> payloads;
+  final Offset offset;
+
+  const CanvasImportElements(this.payloads, {this.offset = Offset.zero});
+}
+
+/// Update a frame's title, colour or box. Null fields are left unchanged.
+class CanvasUpdateFrame extends CanvasEvent {
+  final String elementId;
+  final String? title;
+  final Color? color;
+  final Offset? center;
+  final double? width;
+  final double? height;
+
+  const CanvasUpdateFrame({
+    required this.elementId,
+    this.title,
+    this.color,
+    this.center,
+    this.width,
+    this.height,
+  });
 }
 
 /// Add connector element to canvas
@@ -658,6 +752,15 @@ class CanvasMoveElementToLayer extends CanvasEvent {
   const CanvasMoveElementToLayer(this.elementId, this.layerId);
 }
 
+/// Change a layer's blend mode (`normal`, `multiply`, `screen`, `overlay`,
+/// `darken` or `lighten`).
+class CanvasUpdateLayerBlendMode extends CanvasEvent {
+  final String layerId;
+  final String blendMode;
+
+  const CanvasUpdateLayerBlendMode(this.layerId, this.blendMode);
+}
+
 /// Move a layer band to [newIndex] in bottom-to-top layer order.
 class CanvasReorderLayer extends CanvasEvent {
   final String layerId;
@@ -730,6 +833,61 @@ class CanvasUpdateSelectedStrokeOpacity extends CanvasEvent {
   const CanvasUpdateSelectedStrokeOpacity(this.opacity);
 }
 
+/// Fill the closed interior of a freehand stroke.
+class CanvasFillStroke extends CanvasEvent {
+  final String strokeId;
+  final Color color;
+
+  const CanvasFillStroke({required this.strokeId, required this.color});
+}
+
+/// Remove a freehand stroke's interior fill.
+class CanvasClearStrokeFill extends CanvasEvent {
+  final String strokeId;
+
+  const CanvasClearStrokeFill(this.strokeId);
+}
+
+/// Apply shared style values to every editable element in a multi-selection
+/// as one undoable CRDT batch. Null fields are left untouched.
+class CanvasUpdateSelectionStyle extends CanvasEvent {
+  final Set<String> ids;
+  final Color? color;
+  final double? opacity;
+  final bool? locked;
+  final bool? visible;
+
+  const CanvasUpdateSelectionStyle(
+    this.ids, {
+    this.color,
+    this.opacity,
+    this.locked,
+    this.visible,
+  });
+}
+
+/// Move every selected element into [layerId] (null for the Default band) as
+/// one undoable batch.
+class CanvasMoveSelectionToLayer extends CanvasEvent {
+  final Set<String> ids;
+  final String? layerId;
+
+  const CanvasMoveSelectionToLayer(this.ids, this.layerId);
+}
+
+/// Restore a local version checkpoint. Each entry is `{id, data}` where data is
+/// the serialized element payload. The whole restore is one undoable batch.
+class CanvasRestoreSnapshot extends CanvasEvent {
+  final List<Map<String, dynamic>> elements;
+
+  const CanvasRestoreSnapshot(this.elements);
+}
+
+/// Retry local CRDT updates that could not reach the collaboration service.
+class CanvasRetrySync extends CanvasEvent {
+  const CanvasRetrySync();
+}
+
 /// Update selected stroke brush type
 class CanvasUpdateSelectedStrokeBrushType extends CanvasEvent {
   final String brushType;
@@ -779,6 +937,25 @@ class CanvasToggleSelectedShapeFill extends CanvasEvent {
   final bool isFilled;
 
   const CanvasToggleSelectedShapeFill(this.isFilled);
+}
+
+/// Update a shape's independent fill (solid, linear, radial or none).
+class CanvasUpdateShapeFill extends CanvasEvent {
+  final String? shapeId;
+  final String? fillMode;
+  final Color? fillColor;
+  final Color? gradientStart;
+  final Color? gradientEnd;
+  final double? gradientAngle;
+
+  const CanvasUpdateShapeFill({
+    this.shapeId,
+    this.fillMode,
+    this.fillColor,
+    this.gradientStart,
+    this.gradientEnd,
+    this.gradientAngle,
+  });
 }
 
 /// Update selected shape color
@@ -941,6 +1118,7 @@ class CanvasUpdateBoardMemberRole extends CanvasEvent {
 /// Export canvas board in specified format (PNG, PDF, SVG) and optionally share
 class CanvasExportBoardRequested extends CanvasEvent {
   final BoardExportFormat format;
+  final CanvasExportOptions? options;
   final bool shareAfterExport;
 
   /// Global rect of the tap target, used to anchor the native share popover on
@@ -949,6 +1127,7 @@ class CanvasExportBoardRequested extends CanvasEvent {
 
   const CanvasExportBoardRequested({
     required this.format,
+    this.options,
     this.shareAfterExport = false,
     this.sharePositionOrigin,
   });

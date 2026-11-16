@@ -214,6 +214,32 @@ void main() {
     );
   });
 
+  group('BoardExportService freehand fill', () {
+    test('SVG paints the closed interior beneath the stroke', () {
+      const elements = <CanvasElement>[
+        StrokeElement(
+          id: 'filled-loop',
+          z: 0,
+          color: Colors.black,
+          strokeWidth: 3,
+          opacity: 0.5,
+          points: [
+            Offset(0, 0),
+            Offset(100, 0),
+            Offset(100, 100),
+            Offset(0, 100),
+            Offset(1, 1),
+          ],
+          fillColor: Color(0xFFFF0000),
+        ),
+      ];
+
+      final svg = exportService.renderToSvg('Fill', elements);
+
+      expect(svg, contains('Z" fill="#ff0000" fill-opacity="0.500"'));
+    });
+  });
+
   group('BoardExportService highlighter', () {
     test(
       'SVG renders highlighter strokes wide, translucent and multiplied',

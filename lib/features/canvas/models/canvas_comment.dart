@@ -126,7 +126,10 @@ class CanvasComment {
 
     final rawReplies = map['replies'] as List<dynamic>? ?? [];
     final replies = rawReplies
-        .map((r) => CanvasCommentReply.fromMap(Map<String, dynamic>.from(r as Map)))
+        .map(
+          (r) =>
+              CanvasCommentReply.fromMap(Map<String, dynamic>.from(r as Map)),
+        )
         .toList();
 
     final rawMentions = map['mentions'] as List<dynamic>? ?? [];

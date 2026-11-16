@@ -35,9 +35,7 @@ class _CommentsTrayState extends State<CommentsTray> {
   void _addBoardComment() {
     final text = _newCommentController.text.trim();
     if (text.isEmpty) return;
-    context.read<CanvasBloc>().add(
-          CanvasAddCommentRequested(text: text),
-        );
+    context.read<CanvasBloc>().add(CanvasAddCommentRequested(text: text));
     _newCommentController.clear();
   }
 
@@ -46,8 +44,8 @@ class _CommentsTrayState extends State<CommentsTray> {
     final text = controller?.text.trim() ?? '';
     if (text.isEmpty) return;
     context.read<CanvasBloc>().add(
-          CanvasAddCommentReplyRequested(commentId: commentId, text: text),
-        );
+      CanvasAddCommentReplyRequested(commentId: commentId, text: text),
+    );
     controller?.clear();
     setState(() {
       _expandedReplyCommentId = null;
@@ -72,10 +70,10 @@ class _CommentsTrayState extends State<CommentsTray> {
         final currentUserId = state.currentUserId.isNotEmpty
             ? state.currentUserId
             : (context.read<AuthService?>()?.getCurrentUserId() ??
-                state.boardMembers
-                    .where((m) => m.role == state.currentUserRole)
-                    .map((m) => m.uid)
-                    .firstOrNull);
+                  state.boardMembers
+                      .where((m) => m.role == state.currentUserRole)
+                      .map((m) => m.uid)
+                      .firstOrNull);
         final isOwner = state.currentUserRole == 'owner';
 
         final topInset = MediaQuery.of(context).padding.top + 64;
@@ -98,9 +96,7 @@ class _CommentsTrayState extends State<CommentsTray> {
                   ),
                   decoration: BoxDecoration(
                     border: Border(
-                      bottom: BorderSide(
-                        color: tokens.glassStroke,
-                      ),
+                      bottom: BorderSide(color: tokens.glassStroke),
                     ),
                   ),
                   child: Row(
@@ -111,10 +107,7 @@ class _CommentsTrayState extends State<CommentsTray> {
                         color: tokens.accent,
                       ),
                       const SizedBox(width: InkSpacing.s8),
-                      Text(
-                        'Comments',
-                        style: InkType.subhead(tokens.ink),
-                      ),
+                      Text('Comments', style: InkType.subhead(tokens.ink)),
                       const SizedBox(width: 6),
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -127,9 +120,9 @@ class _CommentsTrayState extends State<CommentsTray> {
                         ),
                         child: Text(
                           '${state.comments.length}',
-                          style: InkType.caption(tokens.accent).copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style: InkType.caption(
+                            tokens.accent,
+                          ).copyWith(fontWeight: FontWeight.bold),
                         ),
                       ),
                       const Spacer(),
@@ -148,17 +141,21 @@ class _CommentsTrayState extends State<CommentsTray> {
                             : 'Pin Comment on Canvas',
                         onPressed: () {
                           context.read<CanvasBloc>().add(
-                                const CanvasToggleCommentPlacementMode(),
-                              );
+                            const CanvasToggleCommentPlacementMode(),
+                          );
                         },
                       ),
                       IconButton(
-                        icon: Icon(LucideIcons.x, size: 18, color: tokens.inkMuted),
+                        icon: Icon(
+                          LucideIcons.x,
+                          size: 18,
+                          color: tokens.inkMuted,
+                        ),
                         tooltip: 'Close comments',
                         onPressed: () {
-                          context
-                              .read<CanvasBloc>()
-                              .add(const CanvasToggleCommentsTray());
+                          context.read<CanvasBloc>().add(
+                            const CanvasToggleCommentsTray(),
+                          );
                         },
                       ),
                     ],
@@ -181,20 +178,24 @@ class _CommentsTrayState extends State<CommentsTray> {
                         Expanded(
                           child: Text(
                             'Tap anywhere on canvas to drop pin',
-                            style: InkType.caption(tokens.pending).copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                            style: InkType.caption(
+                              tokens.pending,
+                            ).copyWith(fontWeight: FontWeight.bold),
                           ),
                         ),
                         GestureDetector(
                           onTap: () {
                             context.read<CanvasBloc>().add(
-                                  const CanvasToggleCommentPlacementMode(
-                                    enable: false,
-                                  ),
-                                );
+                              const CanvasToggleCommentPlacementMode(
+                                enable: false,
+                              ),
+                            );
                           },
-                          child: Icon(LucideIcons.x, size: 16, color: tokens.pending),
+                          child: Icon(
+                            LucideIcons.x,
+                            size: 16,
+                            color: tokens.pending,
+                          ),
                         ),
                       ],
                     ),
@@ -267,10 +268,8 @@ class _CommentsTrayState extends State<CommentsTray> {
                               onSendReply: () => _sendReply(comment.id),
                               onDelete: () {
                                 context.read<CanvasBloc>().add(
-                                      CanvasDeleteCommentRequested(
-                                        comment.id,
-                                      ),
-                                    );
+                                  CanvasDeleteCommentRequested(comment.id),
+                                );
                               },
                             );
                           },
@@ -281,11 +280,7 @@ class _CommentsTrayState extends State<CommentsTray> {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    border: Border(
-                      top: BorderSide(
-                        color: tokens.glassStroke,
-                      ),
-                    ),
+                    border: Border(top: BorderSide(color: tokens.glassStroke)),
                   ),
                   child: Row(
                     children: [
@@ -321,7 +316,11 @@ class _CommentsTrayState extends State<CommentsTray> {
                           onTap: _addBoardComment,
                           child: const Padding(
                             padding: EdgeInsets.all(10.0),
-                            child: Icon(LucideIcons.send, size: 16, color: Colors.white),
+                            child: Icon(
+                              LucideIcons.send,
+                              size: 16,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
@@ -379,10 +378,7 @@ class _CommentThreadCard extends StatelessWidget {
         spans.add(
           TextSpan(
             text: '$w ',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: tokens.accent,
-            ),
+            style: TextStyle(fontWeight: FontWeight.bold, color: tokens.accent),
           ),
         );
       } else {
@@ -391,10 +387,7 @@ class _CommentThreadCard extends StatelessWidget {
     }
 
     return RichText(
-      text: TextSpan(
-        children: spans,
-        style: InkType.body(tokens.ink),
-      ),
+      text: TextSpan(children: spans, style: InkType.body(tokens.ink)),
     );
   }
 
@@ -431,7 +424,9 @@ class _CommentThreadCard extends StatelessWidget {
                     ),
                     Text(
                       _formatTime(comment.createdAt),
-                      style: InkType.caption(tokens.inkMuted).copyWith(fontSize: 10),
+                      style: InkType.caption(
+                        tokens.inkMuted,
+                      ).copyWith(fontSize: 10),
                     ),
                   ],
                 ),
@@ -464,7 +459,11 @@ class _CommentThreadCard extends StatelessWidget {
                 ),
               if (canDelete)
                 IconButton(
-                  icon: Icon(LucideIcons.trash2, size: 16, color: tokens.danger.withValues(alpha: 0.8)),
+                  icon: Icon(
+                    LucideIcons.trash2,
+                    size: 16,
+                    color: tokens.danger.withValues(alpha: 0.8),
+                  ),
                   tooltip: 'Delete comment',
                   onPressed: onDelete,
                 ),
@@ -483,19 +482,15 @@ class _CommentThreadCard extends StatelessWidget {
                 onTap: onToggleReply,
                 child: Row(
                   children: [
-                    Icon(
-                      LucideIcons.reply,
-                      size: 14,
-                      color: tokens.accent,
-                    ),
+                    Icon(LucideIcons.reply, size: 14, color: tokens.accent),
                     const SizedBox(width: 4),
                     Text(
                       comment.replies.isNotEmpty
                           ? '${comment.replies.length} replies'
                           : 'Reply',
-                      style: InkType.caption(tokens.accent).copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: InkType.caption(
+                        tokens.accent,
+                      ).copyWith(fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
@@ -539,16 +534,16 @@ class _CommentThreadCard extends StatelessWidget {
                                   children: [
                                     Text(
                                       reply.authorName,
-                                      style: InkType.caption(tokens.ink).copyWith(
-                                        fontWeight: FontWeight.bold,
-                                      ),
+                                      style: InkType.caption(
+                                        tokens.ink,
+                                      ).copyWith(fontWeight: FontWeight.bold),
                                     ),
                                     const Spacer(),
                                     Text(
                                       _formatTime(reply.createdAt),
-                                      style: InkType.caption(tokens.inkMuted).copyWith(
-                                        fontSize: 9,
-                                      ),
+                                      style: InkType.caption(
+                                        tokens.inkMuted,
+                                      ).copyWith(fontSize: 9),
                                     ),
                                   ],
                                 ),
@@ -596,7 +591,11 @@ class _CommentThreadCard extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   IconButton(
-                    icon: Icon(LucideIcons.send, size: 16, color: tokens.accent),
+                    icon: Icon(
+                      LucideIcons.send,
+                      size: 16,
+                      color: tokens.accent,
+                    ),
                     onPressed: onSendReply,
                   ),
                 ],

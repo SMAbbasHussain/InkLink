@@ -14,6 +14,8 @@ class ToolsTray extends StatelessWidget {
   final VoidCallback? onClearAll;
   final VoidCallback? onAddStickyNote;
   final VoidCallback? onAddConnector;
+  final VoidCallback? onCanvasSettings;
+  final VoidCallback? onTemplates;
   final VoidCallback? onExport;
   final VoidCallback? onClose;
 
@@ -26,6 +28,8 @@ class ToolsTray extends StatelessWidget {
     this.onClearAll,
     this.onAddStickyNote,
     this.onAddConnector,
+    this.onCanvasSettings,
+    this.onTemplates,
     this.onExport,
     this.onClose,
   });
@@ -35,7 +39,7 @@ class ToolsTray extends StatelessWidget {
     final tokens = context.ink;
     final trayHeight = !canEdit
         ? (onExport != null ? 140.0 : 96.0)
-        : (onClearAll != null ? 440.0 : 380.0);
+        : (onClearAll != null ? 528.0 : 468.0);
     return SlidingTray(
       isOpen: isOpen,
       direction: TrayDirection.left,
@@ -63,6 +67,24 @@ class ToolsTray extends StatelessWidget {
                 label: 'Connector / Link',
                 color: tokens.success,
                 onTap: onAddConnector!,
+              ),
+              const SizedBox(height: 10),
+            ],
+            if (canEdit && onCanvasSettings != null) ...[
+              _ToolButton(
+                icon: LucideIcons.slidersHorizontal,
+                label: 'Canvas Settings',
+                color: tokens.inkSecondary,
+                onTap: onCanvasSettings!,
+              ),
+              const SizedBox(height: 10),
+            ],
+            if (canEdit && onTemplates != null) ...[
+              _ToolButton(
+                icon: LucideIcons.frame,
+                label: 'Templates',
+                color: tokens.accent,
+                onTap: onTemplates!,
               ),
               const SizedBox(height: 10),
             ],

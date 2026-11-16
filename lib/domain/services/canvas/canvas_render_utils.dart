@@ -47,11 +47,18 @@ class DeterministicBrushRandom {
   double range(double min, double max) => min + nextUnit() * (max - min);
 }
 
+/// Width multiplier for a tilted stylus. Flat strokes spread wider.
+double tiltWidthScale(double tilt) {
+  if (!tilt.isFinite || tilt <= 0) return 1.0;
+  return 1.0 + 0.65 * math.sin(tilt.clamp(0.0, math.pi / 2));
+}
+
 /// Resamples a polyline of stroke points at a step proportional to brush
-/// radius and spacing, interpolating pressure and applying start/end taper.
+/// radius and spacing, interpolating pressure, tilt and applying taper.
 List<ResampledStrokePoint> resampleStroke({
   required List<Offset> points,
   List<double>? pressures,
+  List<double>? tilts,
   required double baseWidth,
   required double baseOpacity,
   required CanvasBrushStyle style,
@@ -62,8 +69,10 @@ List<ResampledStrokePoint> resampleStroke({
     final pr = (pressures != null && pressures.isNotEmpty)
         ? pressures.first.clamp(0.05, 1.0)
         : 1.0;
+    final tilt = (tilts != null && tilts.isNotEmpty) ? tilts.first : 0.0;
     final r = (baseWidth / 2) *
-        (style.pressureAffectsSize ? (0.4 + 0.9 * pr) : 1.0);
+        (style.pressureAffectsSize ? (0.4 + 0.9 * pr) : 1.0) *
+        tiltWidthScale(tilt);
     return [
       ResampledStrokePoint(
         position: points.first,
@@ -100,11 +109,17 @@ List<ResampledStrokePoint> resampleStroke({
 
   // Normalize pressures parallel to points.
   final pointPressures = <double>[];
+  final pointTilts = <double>[];
   for (int i = 0; i < points.length; i++) {
     final p = (pressures != null && i < pressures.length)
         ? pressures[i].clamp(0.05, 1.0)
         : 1.0;
     pointPressures.add(p);
+    pointTilts.add(
+      (tilts != null && i < tilts.length)
+          ? tilts[i].clamp(0.0, math.pi / 2)
+          : 0.0,
+    );
   }
 
   final spacingFraction = spacingOverride ?? style.spacing;
@@ -138,6 +153,8 @@ List<ResampledStrokePoint> resampleStroke({
     final pr0 = pointPressures[currentSegment];
     final pr1 = pointPressures[currentSegment + 1];
     final pressure = (pr0 + (pr1 - pr0) * t).clamp(0.05, 1.0);
+    final tilt = pointTilts[currentSegment] +
+        (pointTilts[currentSegment + 1] - pointTilts[currentSegment]) * t;
 
     double taper = 1.0;
     if (style.taperStart > 0 && currentDist < totalLength * style.taperStart) {
@@ -153,7 +170,10 @@ List<ResampledStrokePoint> resampleStroke({
 
     final pressureRadius =
         style.pressureAffectsSize ? (0.4 + 0.9 * pressure) : 1.0;
-    final radius = math.max(0.5, baseRadius * taper * pressureRadius);
+    final radius = math.max(
+      0.5,
+      baseRadius * taper * pressureRadius * tiltWidthScale(tilt),
+    );
 
     final pressureOpacity =
         style.pressureAffectsOpacity ? (0.35 + 0.65 * pressure) : 1.0;
@@ -179,7 +199,10 @@ List<ResampledStrokePoint> resampleStroke({
         style.pressureAffectsSize ? (0.4 + 0.9 * pr) : 1.0;
     final radius = math.max(
       0.5,
-      baseRadius * (style.taperEnd > 0 ? 0.2 : 1.0) * pressureRadius,
+      baseRadius *
+          (style.taperEnd > 0 ? 0.2 : 1.0) *
+          pressureRadius *
+          tiltWidthScale(pointTilts.last),
     );
     final pressureOpacity =
         style.pressureAffectsOpacity ? (0.35 + 0.65 * pr) : 1.0;
@@ -203,6 +226,7 @@ void paintCanvasStroke({
   required ui.Canvas canvas,
   required List<Offset> points,
   List<double>? pressures,
+  List<double>? tilts,
   required Color color,
   required double strokeWidth,
   required double strokeOpacity,
@@ -226,10 +250,12 @@ void paintCanvasStroke({
   if (points.length == 1) {
     final pr =
         (pressures != null && pressures.isNotEmpty) ? pressures.first : 1.0;
+    final tilt = (tilts != null && tilts.isNotEmpty) ? tilts.first : 0.0;
     final r = math.max(
       0.5,
       (style.width / 2) *
-          (style.pressureAffectsSize ? (0.4 + 0.9 * pr) : 1.0),
+          (style.pressureAffectsSize ? (0.4 + 0.9 * pr) : 1.0) *
+          tiltWidthScale(tilt),
     );
     final p = ui.Paint()
       ..color = color.withValues(alpha: style.opacity)
@@ -281,6 +307,7 @@ void paintCanvasStroke({
       baseOpacity: strokeOpacity,
       style: style,
       spacingOverride: effectiveSpacing,
+      tilts: tilts,
     );
     final rng = DeterministicBrushRandom(textureSeed);
 
@@ -325,6 +352,7 @@ void paintCanvasStroke({
       baseOpacity: strokeOpacity,
       style: style,
       spacingOverride: effectiveSpacing,
+      tilts: tilts,
     );
     final rng = DeterministicBrushRandom(textureSeed);
 
@@ -370,6 +398,7 @@ void paintCanvasStroke({
       baseOpacity: strokeOpacity,
       style: style,
       spacingOverride: effectiveSpacing,
+      tilts: tilts,
     );
     _drawRibbonStamps(
       canvas,

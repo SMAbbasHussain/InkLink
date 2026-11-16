@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -12,10 +13,13 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/utils/app_snackbar.dart';
 
 import '../../../domain/models/board.dart';
+import '../../../domain/models/canvas/canvas_board_settings.dart';
+import '../../../domain/models/canvas/canvas_export_options.dart';
 import '../../../core/utils/app_error_formatter.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
 import '../../../ui/theme/ink_theme.dart';
@@ -35,9 +39,13 @@ import '../../../core/utils/canvas_color_preferences.dart';
 import '../geometry/canvas_color_sampling.dart';
 import '../geometry/canvas_element_geometry.dart';
 import '../geometry/canvas_selection_transform.dart';
+import '../geometry/canvas_viewport_math.dart';
+import '../geometry/quick_shape.dart';
 import '../geometry/stroke_input.dart';
+import '../models/board_template.dart';
 import '../models/brush_preset.dart';
 import '../models/canvas_tool_mode.dart';
+import '../services/board_history_service.dart';
 import 'media_editor_screen.dart';
 import 'trays/ai_tray.dart';
 import 'trays/brush_tray.dart';
@@ -49,13 +57,21 @@ import 'trays/tools_tray.dart';
 import 'chat/board_chat_drawer.dart';
 import 'trays/comments_tray.dart';
 import 'voice/voice_call_hud.dart';
+import 'widgets/canvas_history_sheet.dart';
+import 'widgets/canvas_minimap.dart';
+import 'widgets/canvas_search_sheet.dart';
+import 'widgets/canvas_selection_style_sheet.dart';
 import 'widgets/canvas_toolbar.dart';
 import 'widgets/color_picker_sheet.dart';
 import 'widgets/image_crop_dialog.dart';
 import 'widgets/sticky_note_editor_dialog.dart';
+import 'widgets/template_coachmark.dart';
+import 'widgets/template_gallery_sheet.dart';
 import 'widgets/tray_tips_overlay.dart';
 
 part 'canvas_painter.dart';
+
+enum _PinchIntent { undecided, zoom, pan }
 
 class CanvasScreen extends StatefulWidget {
   final String boardId;
@@ -109,6 +125,9 @@ class _CanvasScreenState extends State<CanvasScreen>
   bool _showEraserPreview = false;
   bool _isTransformingCanvas = false;
   bool _didAutoFrameContent = false;
+  bool _elementEditorDismissed = false;
+  String? _activeEditControl;
+  String? _editingBarSelectionId;
   Size _lastCanvasSize = Size.zero;
   Offset _shapeDragStartCenter = Offset.zero;
   Offset _shapeDragStartWorldPoint = Offset.zero;
@@ -119,6 +138,22 @@ class _CanvasScreenState extends State<CanvasScreen>
   double _gestureStartScale = 1.0;
   Offset _gestureStartOffset = Offset.zero;
   Offset _gestureStartFocal = Offset.zero;
+  int? _rawStrokePointerId;
+  PointerDeviceKind? _rawStrokeKind;
+  Offset? _rawStrokeLastWorld;
+  final Map<int, Offset> _activeCanvasPointers = <int, Offset>{};
+  final Map<int, PointerDeviceKind> _activePointerKinds =
+      <int, PointerDeviceKind>{};
+  final Set<int> _stylusPointers = <int>{};
+  _PinchIntent _pinchIntent = _PinchIntent.undecided;
+  static const String _fingerDrawingPreferenceKey =
+      'canvas.finger_drawing_enabled';
+  static const String _templateCoachmarkPreferenceKey =
+      'canvas.template_coachmark_seen';
+  late final BoardHistoryService _historyService;
+  bool _showTemplateCoachmark = false;
+  bool _historySavedThisSession = false;
+  bool _closedStrokeHintShown = false;
   final List<Uint8List> _recentImages = <Uint8List>[];
   Map<String, ui.Image> _decodedUiImages = <String, ui.Image>{};
   final Map<String, String> _decodedUiImageKeys = <String, String>{};
@@ -147,6 +182,9 @@ class _CanvasScreenState extends State<CanvasScreen>
   bool _selectionAdditive = false;
 
   double _latestPressure = 1.0;
+  double _latestTilt = 0;
+  DateTime _lastStrokeMoveAt = DateTime.now();
+  Set<String> _lockedLayerElementIds = const {};
 
   // Color tools: recent swatches, saved palettes and the one-shot canvas
   // eyedropper.
@@ -165,6 +203,16 @@ class _CanvasScreenState extends State<CanvasScreen>
   double _groupRotationPrevAngle = 0;
 
   static const double _viewportComparisonEpsilon = 0.01;
+  static const List<Color> _editorPalette = <Color>[
+    Color(0xFF111827),
+    Color(0xFF2563EB),
+    Color(0xFF16A34A),
+    Color(0xFFF59E0B),
+    Color(0xFFDC2626),
+    Color(0xFF7C3AED),
+    Color(0xFF0EA5E9),
+    Color(0xFF64748B),
+  ];
 
   InkTokens get _tokens => context.ink;
   bool _preventGestureBack = true;
@@ -177,8 +225,35 @@ class _CanvasScreenState extends State<CanvasScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _canvasBloc = context.read<CanvasBloc>();
+    _historyService = BoardHistoryService();
     _maybeShowTrayTipsOverlay();
     _loadColorPreferences();
+    _loadCanvasPreferences();
+  }
+
+  Future<void> _loadCanvasPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      final fingerDrawing = prefs.getBool(_fingerDrawingPreferenceKey) ?? true;
+      _canvasBloc.add(CanvasSetFingerDrawing(fingerDrawing));
+      final coachmarkSeen =
+          prefs.getBool(_templateCoachmarkPreferenceKey) ?? false;
+      if (!coachmarkSeen && mounted) {
+        setState(() => _showTemplateCoachmark = true);
+      }
+    } catch (_) {
+      // Preferences are optional; drawing still works with the defaults.
+    }
+  }
+
+  Future<void> _dismissTemplateCoachmark() async {
+    if (!mounted) return;
+    setState(() => _showTemplateCoachmark = false);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_templateCoachmarkPreferenceKey, true);
+    } catch (_) {}
   }
 
   Future<void> _loadColorPreferences() async {
@@ -321,18 +396,193 @@ class _CanvasScreenState extends State<CanvasScreen>
       pressureMin: event.pressureMin,
       pressureMax: event.pressureMax,
     );
+    _latestTilt = normalizePointerTilt(kind: event.kind, tilt: event.tilt);
+  }
+
+  bool _isBrushTool(CanvasToolMode tool) =>
+      tool == CanvasToolMode.doodle ||
+      tool == CanvasToolMode.highlight ||
+      tool == CanvasToolMode.eraser;
+
+  /// Brushes start on the raw pointer-down instead of waiting for the gesture
+  /// arena to win. That removes the slop delay that made strokes appear late
+  /// and also keeps a pen stroke from being stolen by an element underneath.
+  bool _isStylusKind(PointerDeviceKind kind) =>
+      kind == PointerDeviceKind.stylus ||
+      kind == PointerDeviceKind.invertedStylus;
+
+  void _handleCanvasPointerDown(PointerDownEvent event, CanvasState state) {
+    final kind = event.kind;
+    final stylus = _isStylusKind(kind);
+    if (stylus) {
+      _stylusPointers.add(event.pointer);
+      // A palm may land before the pen. Discard that accidental touch stroke
+      // and let the stylus take ownership of the canvas.
+      final rawKind = _rawStrokeKind;
+      if (_rawStrokePointerId != null &&
+          rawKind != null &&
+          !_isStylusKind(rawKind)) {
+        _cancelRawStroke();
+      }
+    }
+    // Palm rejection: once a stylus is in contact, touch pointers are ignored
+    // until it lifts.
+    if (kind == PointerDeviceKind.touch && _stylusPointers.isNotEmpty) {
+      return;
+    }
+    if (kind == PointerDeviceKind.touch &&
+        !state.fingerDrawingEnabled &&
+        _isBrushTool(state.currentToolMode)) {
+      _activeCanvasPointers[event.pointer] = event.localPosition;
+      _activePointerKinds[event.pointer] = kind;
+      return;
+    }
+    _activeCanvasPointers[event.pointer] = event.localPosition;
+    _activePointerKinds[event.pointer] = kind;
+    if (_textEditor != null || _isEyedropperActive || !state.canEdit) return;
+    if (kind == PointerDeviceKind.mouse &&
+        event.buttons & kPrimaryButton == 0) {
+      return;
+    }
+
+    if (_activeCanvasPointers.length > 1) {
+      if (_rawStrokePointerId != null) {
+        _cancelRawStroke();
+        _beginPointerTransform();
+      }
+      return;
+    }
+
+    if (!_isBrushTool(state.currentToolMode) || _isTransformingCanvas) return;
+    _rawStrokePointerId = event.pointer;
+    _rawStrokeKind = kind;
+    final world = _toWorld(event.localPosition);
+    _rawStrokeLastWorld = world;
+    _showEraserPreview = state.currentToolMode == CanvasToolMode.eraser;
+    _startStroke(world);
+  }
+
+  void _handleCanvasPointerMove(PointerMoveEvent event) {
+    if (!_activePointerKinds.containsKey(event.pointer)) return;
+    _activeCanvasPointers[event.pointer] = event.localPosition;
+    if (event.pointer != _rawStrokePointerId) return;
+    final world = _toWorld(event.localPosition);
+    final previous = _rawStrokeLastWorld;
+    if (previous != null && (world - previous).distance < 0.5) return;
+    _rawStrokeLastWorld = world;
+    _appendStroke(world);
+  }
+
+  void _handleCanvasPointerEnd(PointerEvent event) {
+    _activeCanvasPointers.remove(event.pointer);
+    _activePointerKinds.remove(event.pointer);
+    _stylusPointers.remove(event.pointer);
+    if (event.pointer == _rawStrokePointerId) _endRawStroke();
+    // ScaleGestureRecognizer normally ends the transform first. Clearing here
+    // as well prevents a missed onScaleEnd from leaving the canvas stuck in
+    // transform mode, which would ignore the next brush stroke.
+    if (_activeCanvasPointers.isEmpty && _isTransformingCanvas) {
+      setState(() {
+        _isTransformingCanvas = false;
+        _pinchIntent = _PinchIntent.undecided;
+      });
+    }
+  }
+
+  void _cancelRawStroke() {
+    if (_rawStrokePointerId == null) return;
+    _rawStrokePointerId = null;
+    _rawStrokeKind = null;
+    _rawStrokeLastWorld = null;
+    _showEraserPreview = false;
+    _canvasBloc.add(const CanvasCancelStroke());
+  }
+
+  void _endRawStroke() {
+    if (_rawStrokePointerId == null) return;
+    _rawStrokePointerId = null;
+    _rawStrokeKind = null;
+    _rawStrokeLastWorld = null;
+    _showEraserPreview = false;
+    _endStroke();
+  }
+
+  void _beginPointerTransform() {
+    if (_activeCanvasPointers.length < 2) return;
+    final points = _activeCanvasPointers.values.take(2).toList(growable: false);
+    setState(() {
+      _isTransformingCanvas = true;
+      _gestureStartScale = _viewportScale;
+      _gestureStartOffset = _viewportOffset;
+      _gestureStartFocal = (points[0] + points[1]) / 2;
+      _pinchIntent = _PinchIntent.undecided;
+    });
   }
 
   void _startStroke(Offset point) {
-    _canvasBloc.add(CanvasStartStroke(point, pressure: _latestPressure));
+    _lastStrokeMoveAt = DateTime.now();
+    _canvasBloc.add(
+      CanvasStartStroke(point, pressure: _latestPressure, tilt: _latestTilt),
+    );
   }
 
   void _appendStroke(Offset point) {
-    _canvasBloc.add(CanvasAppendStroke(point, pressure: _latestPressure));
+    _lastStrokeMoveAt = DateTime.now();
+    _canvasBloc.add(
+      CanvasAppendStroke(point, pressure: _latestPressure, tilt: _latestTilt),
+    );
   }
 
   void _endStroke() {
+    final state = _canvasBloc.state;
+    final heldLongEnough =
+        DateTime.now().difference(_lastStrokeMoveAt) >=
+        const Duration(milliseconds: 450);
+    if (state.quickShapeEnabled &&
+        state.currentToolMode == CanvasToolMode.doodle &&
+        state.currentStroke.length >= 12 &&
+        heldLongEnough) {
+      final match = recognizeQuickShape(state.currentStroke);
+      if (match != null) {
+        _canvasBloc.add(
+          CanvasCommitQuickShape(
+            match: match,
+            points: List<Offset>.of(state.currentStroke),
+            pressures: List<double>.of(state.currentStrokePressures),
+            tilts: List<double>.of(state.currentStrokeTilts),
+          ),
+        );
+        return;
+      }
+    }
+    final knownStrokeIds = state.elements
+        .whereType<StrokeElement>()
+        .map((stroke) => stroke.id)
+        .toSet();
     _canvasBloc.add(CanvasEndStroke(smoothAfterDrawing: _smoothDoodlesEnabled));
+    if (state.currentToolMode == CanvasToolMode.doodle) {
+      Future<void>.delayed(const Duration(milliseconds: 220), () {
+        if (!mounted || _closedStrokeHintShown) return;
+        final added = _canvasBloc.state.elements
+            .whereType<StrokeElement>()
+            .where(
+              (stroke) =>
+                  !knownStrokeIds.contains(stroke.id) &&
+                  stroke.fillColor == null &&
+                  strokeClosedFillPath(stroke) != null,
+            );
+        if (added.isEmpty) return;
+        _closedStrokeHintShown = true;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Closed shape — select it and tap Fill to colour the inside.',
+            ),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      });
+    }
   }
 
   Offset _getElementWorldCenter(CanvasElement element) {
@@ -342,6 +592,7 @@ class _CanvasScreenState extends State<CanvasScreen>
       TextElement e => e.center,
       ImageElement e => e.center,
       StickyNoteElement e => e.center,
+      FrameElement e => e.center,
       ConnectorElement e => Offset(
         (e.startPoint.dx + e.endPoint.dx) / 2,
         (e.startPoint.dy + e.endPoint.dy) / 2,
@@ -389,6 +640,8 @@ class _CanvasScreenState extends State<CanvasScreen>
       setState(() {
         _isShapeEditTrayExpanded = shapeId != null && expandEditor;
         _isStrokeEditExpanded = false;
+        _elementEditorDismissed = false;
+        _activeEditControl = null;
       });
     }
     _canvasBloc.add(CanvasSelectShape(shapeId));
@@ -443,21 +696,39 @@ class _CanvasScreenState extends State<CanvasScreen>
     _scheduleShapeEditCommit();
   }
 
-  void _deferredSetSelectedShapeFill(bool isFilled) {
-    setState(() {
-      _pendingShapeEdits['isFilled'] = isFilled;
-    });
-    _canvasBloc.add(
-      CanvasPreviewPendingShapeEdits(
-        shapeId: _canvasBloc.state.selectedShapeId ?? '',
-        pendingData: Map<String, dynamic>.from(_pendingShapeEdits),
-      ),
-    );
-    _scheduleShapeEditCommit();
-  }
-
   void _setSelectedShapeColor(Color color) {
     _canvasBloc.add(CanvasUpdateSelectedShapeColor(color));
+  }
+
+  Future<void> _pickShapeFillColor({
+    bool gradientEnd = false,
+    bool solidFill = false,
+  }) async {
+    final shape = _canvasBloc.state.elements
+        .whereType<ShapeElement>()
+        .where((s) => s.id == _canvasBloc.state.selectedShapeId)
+        .firstOrNull;
+    if (shape == null) return;
+    final initial = gradientEnd
+        ? shape.resolvedGradientEnd
+        : shape.resolvedFillColor;
+    final picked = await showCanvasColorPicker(
+      context,
+      initialColor: initial,
+      recentColors: _recentColors,
+      palettes: _palettes,
+      onPalettesChanged: _updatePalettes,
+    );
+    if (!mounted || picked == null) return;
+    final opaque = picked.withValues(alpha: 1);
+    _canvasBloc.add(
+      CanvasUpdateShapeFill(
+        fillMode: solidFill && !gradientEnd ? 'solid' : null,
+        fillColor: gradientEnd ? null : opaque,
+        gradientStart: gradientEnd ? null : opaque,
+        gradientEnd: gradientEnd ? opaque : null,
+      ),
+    );
   }
 
   void _rotateSelectedShape(double rotation) {
@@ -1336,7 +1607,512 @@ class _CanvasScreenState extends State<CanvasScreen>
     );
   }
 
+  void _handleViewportPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    if (_lastCanvasSize.isEmpty || _textEditor != null) return;
+    final keyboard = HardwareKeyboard.instance;
+    final wantsZoom = keyboard.isControlPressed || keyboard.isMetaPressed;
+    if (!wantsZoom) {
+      _applyViewportTransform(
+        scale: _viewportScale,
+        offset: canvasOffsetForPan(_viewportOffset, event.scrollDelta),
+      );
+      return;
+    }
+    final next = canvasZoomForScrollDelta(_viewportScale, event.scrollDelta.dy);
+    _zoomAt(event.localPosition, next);
+  }
+
+  void _zoomAt(Offset focalPoint, double targetScale) {
+    final next = clampCanvasZoom(targetScale);
+    if ((next - _viewportScale).abs() < 0.001) return;
+    final worldPoint = _toWorld(focalPoint);
+    _applyViewportTransform(
+      scale: next,
+      offset: canvasOffsetForZoom(
+        focalPoint: focalPoint,
+        worldPoint: worldPoint,
+        scale: next,
+      ),
+    );
+  }
+
+  void _zoomFromCenter(double factor) {
+    if (_lastCanvasSize.isEmpty) return;
+    _zoomAt(_lastCanvasSize.center(Offset.zero), _viewportScale * factor);
+  }
+
+  Widget _zoomButton(IconData icon, String tooltip, VoidCallback onTap) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(InkRadii.pill),
+        child: Padding(
+          padding: const EdgeInsets.all(InkSpacing.s8),
+          child: Icon(icon, size: 18, color: _tokens.inkSecondary),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMinimap(CanvasState state) {
+    return Positioned(
+      left: InkSpacing.s16,
+      bottom: 96,
+      child: GlassPanel(
+        radius: InkRadii.card,
+        padding: const EdgeInsets.all(InkSpacing.s4),
+        child: CanvasMinimap(
+          elements: state.elements,
+          viewportScale: _viewportScale,
+          viewportOffset: _viewportOffset,
+          viewportSize: _lastCanvasSize,
+          onJump: (world) => _applyViewportTransform(
+            scale: _viewportScale,
+            offset: _centerOffsetForScale(
+              _lastCanvasSize,
+              world,
+              _viewportScale,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildZoomControls(CanvasState state) {
+    return Positioned(
+      right: InkSpacing.s16,
+      bottom: 96,
+      child: GlassPanel(
+        radius: InkRadii.pill,
+        padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _zoomButton(
+              LucideIcons.minus,
+              'Zoom out',
+              () => _zoomFromCenter(1 / 1.25),
+            ),
+            InkWell(
+              onTap: _toggleResetView,
+              borderRadius: BorderRadius.circular(InkRadii.pill),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: InkSpacing.s8,
+                  vertical: InkSpacing.s12,
+                ),
+                child: Text(
+                  canvasZoomPercentLabel(_viewportScale),
+                  style: InkType.caption(_tokens.ink),
+                ),
+              ),
+            ),
+            _zoomButton(
+              LucideIcons.plus,
+              'Zoom in',
+              () => _zoomFromCenter(1.25),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showBoardSearchSheet(BuildContext context) {
+    final state = _canvasBloc.state;
+    final entries = <CanvasSearchEntry>[];
+    for (final element in state.elements) {
+      if (element.hidden) continue;
+      final bounds = elementBounds(element);
+      if (bounds == null) continue;
+      final center = bounds.center;
+      CanvasSearchEntry? entry;
+      switch (element) {
+        case TextElement e:
+          final text = e.text.trim();
+          if (text.isNotEmpty) {
+            entry = CanvasSearchEntry(
+              id: e.id,
+              label: text.replaceAll('\n', ' '),
+              detail: 'Text',
+              icon: LucideIcons.type,
+              center: center,
+            );
+          }
+        case StickyNoteElement e:
+          final text = e.text.trim();
+          if (text.isNotEmpty) {
+            entry = CanvasSearchEntry(
+              id: e.id,
+              label: text.replaceAll('\n', ' '),
+              detail: 'Sticky note',
+              icon: LucideIcons.stickyNote,
+              center: center,
+            );
+          }
+        case ShapeElement e:
+          final label = e.label.trim();
+          entry = CanvasSearchEntry(
+            id: e.id,
+            label: label.isEmpty ? '${e.shapeType.name} shape' : label,
+            detail: 'Shape',
+            icon: LucideIcons.shapes,
+            center: center,
+          );
+        case FrameElement e:
+          final title = e.title.trim();
+          entry = CanvasSearchEntry(
+            id: e.id,
+            label: title.isEmpty ? 'Frame' : title,
+            detail: 'Frame',
+            icon: LucideIcons.frame,
+            center: center,
+          );
+        case ConnectorElement e:
+          final label = e.label.trim();
+          if (label.isNotEmpty) {
+            entry = CanvasSearchEntry(
+              id: e.id,
+              label: label,
+              detail: 'Connector label',
+              icon: LucideIcons.workflow,
+              center: center,
+            );
+          }
+        case StrokeElement e:
+          entry = CanvasSearchEntry(
+            id: e.id,
+            label: e.fillColor == null ? 'Freehand stroke' : 'Filled doodle',
+            detail: 'Stroke · ${e.points.length} points',
+            icon: LucideIcons.penLine,
+            center: center,
+          );
+        case ImageElement _:
+          entry = CanvasSearchEntry(
+            id: element.id,
+            label: 'Image',
+            detail: 'Image on board',
+            icon: LucideIcons.image,
+            center: center,
+          );
+        case LayerElement _:
+          break;
+      }
+      if (entry != null) entries.add(entry);
+    }
+    for (final comment in state.comments) {
+      final text = comment.text.trim();
+      if (text.isEmpty) continue;
+      entries.add(
+        CanvasSearchEntry(
+          id: comment.id,
+          label: text.replaceAll('\n', ' '),
+          detail: 'Comment · ${comment.authorName}',
+          icon: LucideIcons.messageCircle,
+          center:
+              comment.canvasPosition ??
+              _toWorld(_lastCanvasSize.center(Offset.zero)),
+          isComment: true,
+        ),
+      );
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.all(InkSpacing.s12),
+        child: GlassPanel(
+          radius: InkRadii.bottomSheet,
+          padding: const EdgeInsets.all(InkSpacing.s20),
+          child: SafeArea(
+            top: false,
+            child: CanvasSearchSheet(
+              entries: entries,
+              onClose: () => Navigator.pop(sheetContext),
+              onSelected: (entry) {
+                Navigator.pop(sheetContext);
+                if (entry.isComment) {
+                  _canvasBloc.add(CanvasSetActiveComment(entry.id));
+                  if (!_canvasBloc.state.isCommentsTrayOpen) {
+                    _canvasBloc.add(const CanvasToggleCommentsTray());
+                  }
+                } else {
+                  _canvasBloc.add(CanvasSetToolMode(CanvasToolMode.select));
+                  _canvasBloc.add(CanvasSelectShape(entry.id));
+                }
+                _centerViewportOn(entry.center);
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showBoardHistorySheet(BuildContext context) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.all(InkSpacing.s12),
+        child: GlassPanel(
+          radius: InkRadii.bottomSheet,
+          padding: const EdgeInsets.all(InkSpacing.s20),
+          child: SafeArea(
+            top: false,
+            child: CanvasHistorySheet(
+              load: () => _historyService.load(widget.boardId),
+              onSave: () async {
+                final saved = await _historyService.save(
+                  widget.boardId,
+                  _canvasBloc.state.elements,
+                );
+                return saved != null;
+              },
+              onRestore: (entry) {
+                Navigator.pop(sheetContext);
+                _canvasBloc.add(CanvasRestoreSnapshot(entry.elements));
+              },
+              onDelete: (entry) =>
+                  _historyService.delete(widget.boardId, entry.id),
+              onClose: () => Navigator.pop(sheetContext),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showTemplateGallerySheet(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.all(InkSpacing.s12),
+        child: GlassPanel(
+          radius: InkRadii.bottomSheet,
+          padding: const EdgeInsets.all(InkSpacing.s20),
+          child: SafeArea(
+            top: false,
+            child: TemplateGallerySheet(
+              templates: canvasTemplates,
+              onClose: () => Navigator.pop(sheetContext),
+              onSelected: (template) {
+                Navigator.pop(sheetContext);
+                if (template.isEmpty) return;
+                final worldCenter = Offset(
+                  (size.width / 2 - _viewportOffset.dx) / _viewportScale,
+                  (size.height / 2 - _viewportOffset.dy) / _viewportScale,
+                );
+                _canvasBloc.add(
+                  CanvasImportElements(
+                    template.elements,
+                    offset: worldCenter - template.center,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showCanvasSettingsSheet(BuildContext context) {
+    var draft = _canvasBloc.state.boardSettings;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        final tokens = sheetContext.ink;
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            void apply(CanvasBoardSettings next) {
+              setSheetState(() => draft = next);
+              _canvasBloc.add(CanvasSetBoardSettings(next));
+            }
+
+            Widget swatch(Color color) {
+              final selected = draft.backgroundColor == color;
+              return InkWell(
+                onTap: () => apply(draft.copyWith(backgroundColor: color)),
+                child: Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: selected
+                          ? tokens.accent
+                          : tokens.ink.withValues(alpha: 0.12),
+                      width: selected ? 3 : 1,
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(InkSpacing.s12),
+                child: GlassPanel(
+                  radius: InkRadii.bottomSheet,
+                  padding: const EdgeInsets.all(InkSpacing.s20),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Canvas Settings',
+                                style: InkType.title(tokens.ink),
+                              ),
+                            ),
+                            IconButton(
+                              icon: Icon(
+                                LucideIcons.x,
+                                color: tokens.inkSecondary,
+                              ),
+                              onPressed: () => Navigator.pop(sheetContext),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: InkSpacing.s8),
+                        Text(
+                          'Background',
+                          style: InkType.caption(tokens.inkMuted),
+                        ),
+                        const SizedBox(height: InkSpacing.s8),
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: [
+                            for (final color in const [
+                              Color(0xFFFFFFFF),
+                              Color(0xFFFFF8ED),
+                              Color(0xFFF1F5F9),
+                              Color(0xFFECFDF5),
+                              Color(0xFF1E293B),
+                              Color(0xFF0F172A),
+                            ])
+                              swatch(color),
+                          ],
+                        ),
+                        const SizedBox(height: InkSpacing.s16),
+                        Text(
+                          'Pattern',
+                          style: InkType.caption(tokens.inkMuted),
+                        ),
+                        const SizedBox(height: InkSpacing.s8),
+                        Wrap(
+                          spacing: 6,
+                          children: [
+                            for (final pattern
+                                in CanvasBackgroundPattern.values)
+                              ChoiceChip(
+                                label: Text(
+                                  pattern == CanvasBackgroundPattern.none
+                                      ? 'None'
+                                      : pattern.name[0].toUpperCase() +
+                                            pattern.name.substring(1),
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                                selected: draft.backgroundPattern == pattern,
+                                visualDensity: VisualDensity.compact,
+                                onSelected: (_) => apply(
+                                  draft.copyWith(backgroundPattern: pattern),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: InkSpacing.s16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Show page bounds',
+                                style: InkType.bodyStrong(tokens.ink),
+                              ),
+                            ),
+                            Switch(
+                              value: draft.pageBoundsEnabled,
+                              onChanged: (value) => apply(
+                                draft.copyWith(pageBoundsEnabled: value),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (draft.pageBoundsEnabled) ...[
+                          const SizedBox(height: InkSpacing.s8),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              for (final (name, width, height)
+                                  in CanvasBoardSettings.pagePresets)
+                                ChoiceChip(
+                                  label: Text(
+                                    name,
+                                    style: const TextStyle(fontSize: 11),
+                                  ),
+                                  selected:
+                                      (draft.pageWidth - width).abs() < 0.5 &&
+                                      (draft.pageHeight - height).abs() < 0.5,
+                                  visualDensity: VisualDensity.compact,
+                                  onSelected: (_) => apply(
+                                    draft.copyWith(
+                                      pageWidth: width,
+                                      pageHeight: height,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: InkSpacing.s8),
+                          Text(
+                            'Page: ${draft.pageWidth.round()} × '
+                            '${draft.pageHeight.round()}',
+                            style: InkType.caption(tokens.inkMuted),
+                          ),
+                        ],
+                        const SizedBox(height: InkSpacing.s16),
+                        Text(
+                          'The paper colour is shared with collaborators and '
+                          'used by PNG, PDF and SVG exports.',
+                          style: InkType.caption(tokens.inkMuted),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _showExportOptionsSheet(BuildContext context) {
+    final initial = _canvasBloc.state;
+    var draft = CanvasExportOptions(
+      scope: initial.selectedIds.isEmpty
+          ? CanvasExportScope.board
+          : CanvasExportScope.selection,
+      suffix: initial.selectedIds.isEmpty ? null : 'selection',
+    );
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1344,84 +2120,223 @@ class _CanvasScreenState extends State<CanvasScreen>
       elevation: 0,
       builder: (sheetContext) {
         final tokens = sheetContext.ink;
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(InkSpacing.s12),
-            child: GlassPanel(
-              radius: InkRadii.bottomSheet,
-              padding: const EdgeInsets.all(InkSpacing.s20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            final live = _canvasBloc.state;
+            final hasSelection = live.selectedIds.isNotEmpty;
+            final selectedFrame = live.elements
+                .whereType<FrameElement>()
+                .where((frame) => live.selectedIds.contains(frame.id))
+                .firstOrNull;
+            var scope = draft.scope;
+            if (scope == CanvasExportScope.selection && !hasSelection) {
+              scope = CanvasExportScope.board;
+            }
+            if (scope == CanvasExportScope.frame && selectedFrame == null) {
+              scope = CanvasExportScope.board;
+            }
+            final suffix = scope == CanvasExportScope.selection
+                ? 'selection'
+                : scope == CanvasExportScope.frame
+                ? (selectedFrame?.title ?? 'frame')
+                : null;
+            final effective = draft.copyWith(
+              scope: scope,
+              frameId: selectedFrame?.id,
+              suffix: suffix,
+            );
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(InkSpacing.s12),
+                child: GlassPanel(
+                  radius: InkRadii.bottomSheet,
+                  padding: const EdgeInsets.all(InkSpacing.s20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Text(
-                          'Export & Share Board',
-                          style: InkType.title(tokens.ink),
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Export & Share Board',
+                              style: InkType.title(tokens.ink),
+                            ),
+                          ),
+                          IconButton(
+                            icon: Icon(
+                              LucideIcons.x,
+                              color: tokens.inkSecondary,
+                            ),
+                            onPressed: () => Navigator.pop(sheetContext),
+                          ),
+                        ],
                       ),
-                      IconButton(
-                        icon: Icon(LucideIcons.x, color: tokens.inkSecondary),
-                        onPressed: () => Navigator.pop(sheetContext),
+                      const SizedBox(height: InkSpacing.s4),
+                      Text(
+                        'Export your canvas elements with full layout integrity:',
+                        style: InkType.caption(tokens.inkMuted),
+                      ),
+                      const SizedBox(height: InkSpacing.s16),
+                      Text('Scope', style: InkType.caption(tokens.inkMuted)),
+                      const SizedBox(height: InkSpacing.s8),
+                      Wrap(
+                        spacing: 6,
+                        children: [
+                          ChoiceChip(
+                            label: const Text(
+                              'Whole board',
+                              style: TextStyle(fontSize: 11),
+                            ),
+                            selected:
+                                effective.scope == CanvasExportScope.board,
+                            visualDensity: VisualDensity.compact,
+                            onSelected: (_) => setSheetState(
+                              () => draft = draft.copyWith(
+                                scope: CanvasExportScope.board,
+                              ),
+                            ),
+                          ),
+                          ChoiceChip(
+                            label: const Text(
+                              'Selection',
+                              style: TextStyle(fontSize: 11),
+                            ),
+                            selected:
+                                effective.scope == CanvasExportScope.selection,
+                            visualDensity: VisualDensity.compact,
+                            onSelected: hasSelection
+                                ? (_) => setSheetState(
+                                    () => draft = draft.copyWith(
+                                      scope: CanvasExportScope.selection,
+                                    ),
+                                  )
+                                : null,
+                          ),
+                          ChoiceChip(
+                            label: const Text(
+                              'Frame',
+                              style: TextStyle(fontSize: 11),
+                            ),
+                            selected:
+                                effective.scope == CanvasExportScope.frame,
+                            visualDensity: VisualDensity.compact,
+                            onSelected: selectedFrame != null
+                                ? (_) => setSheetState(
+                                    () => draft = draft.copyWith(
+                                      scope: CanvasExportScope.frame,
+                                    ),
+                                  )
+                                : null,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: InkSpacing.s16),
+                      Text('Scale', style: InkType.caption(tokens.inkMuted)),
+                      const SizedBox(height: InkSpacing.s8),
+                      Wrap(
+                        spacing: 6,
+                        children: [
+                          for (final optionScale in const [1.0, 2.0, 4.0])
+                            ChoiceChip(
+                              label: Text(
+                                '${optionScale.round()}×',
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                              selected: draft.scale == optionScale,
+                              visualDensity: VisualDensity.compact,
+                              onSelected: (_) => setSheetState(
+                                () =>
+                                    draft = draft.copyWith(scale: optionScale),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: InkSpacing.s8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Transparent background',
+                                  style: InkType.bodyStrong(tokens.ink),
+                                ),
+                                Text(
+                                  'PNG and SVG only',
+                                  style: InkType.caption(tokens.inkMuted),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Switch(
+                            value: draft.hasTransparentBackground,
+                            onChanged: (value) => setSheetState(
+                              () => draft = draft.copyWith(
+                                transparentBackground: value,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: InkSpacing.s16),
+                      _buildExportTile(
+                        sheetContext,
+                        icon: LucideIcons.image,
+                        iconColor: tokens.accentText,
+                        title: 'PNG Image',
+                        subtitle: 'Lossless raster at ${draft.scale.round()}×',
+                        format: BoardExportFormat.png,
+                        options: effective,
+                      ),
+                      const SizedBox(height: InkSpacing.s8),
+                      _buildExportTile(
+                        sheetContext,
+                        icon: LucideIcons.fileText,
+                        iconColor: tokens.danger,
+                        title: 'PDF Document',
+                        subtitle:
+                            'Printable formatted document with metadata header',
+                        format: BoardExportFormat.pdf,
+                        options: effective,
+                      ),
+                      const SizedBox(height: InkSpacing.s8),
+                      _buildExportTile(
+                        sheetContext,
+                        icon: LucideIcons.code,
+                        iconColor: tokens.success,
+                        title: 'SVG Vector File',
+                        subtitle:
+                            'Scalable vector graphics compatible with Figma & Illustrator',
+                        format: BoardExportFormat.svg,
+                        options: effective,
+                      ),
+                      const SizedBox(height: InkSpacing.s16),
+                      InkButton.hero(
+                        label: 'Share Board File (Native Sheet)',
+                        icon: const Icon(LucideIcons.share2),
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          _canvasBloc.add(
+                            CanvasExportBoardRequested(
+                              format: BoardExportFormat.png,
+                              options: effective.copyWith(
+                                format: BoardExportFormat.png,
+                              ),
+                              shareAfterExport: true,
+                              sharePositionOrigin: _shareAnchorRect(),
+                            ),
+                          );
+                        },
                       ),
                     ],
                   ),
-                  const SizedBox(height: InkSpacing.s4),
-                  Text(
-                    'Export your canvas elements with full layout integrity:',
-                    style: InkType.caption(tokens.inkMuted),
-                  ),
-                  const SizedBox(height: InkSpacing.s16),
-                  _buildExportTile(
-                    sheetContext,
-                    icon: LucideIcons.image,
-                    iconColor: tokens.accentText,
-                    title: 'PNG Image',
-                    subtitle:
-                        'High-resolution lossless raster export (2x scale)',
-                    format: BoardExportFormat.png,
-                  ),
-                  const SizedBox(height: InkSpacing.s8),
-                  _buildExportTile(
-                    sheetContext,
-                    icon: LucideIcons.fileText,
-                    iconColor: tokens.danger,
-                    title: 'PDF Document',
-                    subtitle:
-                        'Printable formatted document with metadata header',
-                    format: BoardExportFormat.pdf,
-                  ),
-                  const SizedBox(height: InkSpacing.s8),
-                  _buildExportTile(
-                    sheetContext,
-                    icon: LucideIcons.code,
-                    iconColor: tokens.success,
-                    title: 'SVG Vector File',
-                    subtitle:
-                        'Scalable vector graphics compatible with Figma & Illustrator',
-                    format: BoardExportFormat.svg,
-                  ),
-                  const SizedBox(height: InkSpacing.s16),
-                  InkButton.hero(
-                    label: 'Share Board File (Native Sheet)',
-                    icon: const Icon(LucideIcons.share2),
-                    onPressed: () {
-                      Navigator.pop(sheetContext);
-                      _canvasBloc.add(
-                        CanvasExportBoardRequested(
-                          format: BoardExportFormat.png,
-                          shareAfterExport: true,
-                          sharePositionOrigin: _shareAnchorRect(),
-                        ),
-                      );
-                    },
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );
@@ -1431,7 +2346,15 @@ class _CanvasScreenState extends State<CanvasScreen>
     BuildContext sheetContext,
     BoardExportFormat format, {
     required bool share,
+    CanvasExportOptions? options,
   }) {
+    if (options != null && format == BoardExportFormat.pdf) {
+      options = options.copyWith(
+        format: format,
+        transparentBackground: false,
+        includeBackground: true,
+      );
+    }
     Navigator.pop(sheetContext);
     ScaffoldMessenger.of(context).removeCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1447,6 +2370,7 @@ class _CanvasScreenState extends State<CanvasScreen>
     _canvasBloc.add(
       CanvasExportBoardRequested(
         format: format,
+        options: options?.copyWith(format: format),
         shareAfterExport: share,
         sharePositionOrigin: share ? _shareAnchorRect() : null,
       ),
@@ -1468,6 +2392,7 @@ class _CanvasScreenState extends State<CanvasScreen>
     required String title,
     required String subtitle,
     required BoardExportFormat format,
+    CanvasExportOptions? options,
   }) {
     final tokens = sheetContext.ink;
     return Material(
@@ -1475,7 +2400,8 @@ class _CanvasScreenState extends State<CanvasScreen>
       borderRadius: BorderRadius.circular(InkRadii.input),
       child: InkWell(
         borderRadius: BorderRadius.circular(InkRadii.input),
-        onTap: () => _runExport(sheetContext, format, share: false),
+        onTap: () =>
+            _runExport(sheetContext, format, share: false, options: options),
         child: Padding(
           padding: const EdgeInsets.symmetric(
             horizontal: InkSpacing.s12,
@@ -1509,7 +2435,12 @@ class _CanvasScreenState extends State<CanvasScreen>
                   color: tokens.inkSecondary,
                 ),
                 tooltip: 'Save to Device Storage',
-                onPressed: () => _runExport(sheetContext, format, share: false),
+                onPressed: () => _runExport(
+                  sheetContext,
+                  format,
+                  share: false,
+                  options: options,
+                ),
               ),
               IconButton(
                 icon: Icon(
@@ -1518,7 +2449,12 @@ class _CanvasScreenState extends State<CanvasScreen>
                   color: tokens.inkSecondary,
                 ),
                 tooltip: 'Share via...',
-                onPressed: () => _runExport(sheetContext, format, share: true),
+                onPressed: () => _runExport(
+                  sheetContext,
+                  format,
+                  share: true,
+                  options: options,
+                ),
               ),
             ],
           ),
@@ -1535,12 +2471,25 @@ class _CanvasScreenState extends State<CanvasScreen>
       value: _canvasBloc,
       child: BlocListener<CanvasBloc, CanvasState>(
         listenWhen: (previous, current) =>
+            previous.isLoading != current.isLoading ||
             previous.error != current.error ||
             previous.infoMessage != current.infoMessage ||
             previous.infoMessageRedoable != current.infoMessageRedoable ||
             (current.exportSuccessMessage != null &&
                 current.exportSuccessMessage != previous.exportSuccessMessage),
         listener: (context, state) async {
+          if (!state.isLoading &&
+              !_historySavedThisSession &&
+              state.elements.isNotEmpty) {
+            _historySavedThisSession = true;
+            unawaited(
+              _historyService.save(
+                widget.boardId,
+                state.elements,
+                label: 'Opened board',
+              ),
+            );
+          }
           if (state.exportSuccessMessage != null) {
             final msg = state.exportSuccessMessage!;
             final path = state.lastExportedFilePath;
@@ -1716,6 +2665,8 @@ class _CanvasScreenState extends State<CanvasScreen>
                       state,
                       Size(constraints.maxWidth, constraints.maxHeight),
                     );
+                    _syncEditingBarSelection(state);
+                    final editingElement = _showsElementEditingBar(state);
 
                     return RepaintBoundary(
                       key: _canvasPreviewKey,
@@ -1723,8 +2674,17 @@ class _CanvasScreenState extends State<CanvasScreen>
                         children: [
                           Listener(
                             behavior: HitTestBehavior.translucent,
-                            onPointerDown: _capturePointerPressure,
-                            onPointerMove: _capturePointerPressure,
+                            onPointerDown: (event) {
+                              _capturePointerPressure(event);
+                              _handleCanvasPointerDown(event, state);
+                            },
+                            onPointerMove: (event) {
+                              _capturePointerPressure(event);
+                              _handleCanvasPointerMove(event);
+                            },
+                            onPointerUp: _handleCanvasPointerEnd,
+                            onPointerCancel: _handleCanvasPointerEnd,
+                            onPointerSignal: _handleViewportPointerSignal,
                             child: GestureDetector(
                               onScaleStart: (details) {
                                 // The in-place text editor owns the gesture while
@@ -1733,12 +2693,30 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 // The eyedropper is a one-shot tap; a drag while
                                 // it is armed must not paint.
                                 if (_isEyedropperActive) return;
-                                if (details.pointerCount >= 2 ||
-                                    !state.canEdit) {
+                                if (_rawStrokePointerId != null) return;
+                                // A palm landing beside the pen must not start a
+                                // camera transform while the stylus is down.
+                                if (_stylusPointers.isNotEmpty &&
+                                    details.pointerCount > 1) {
+                                  return;
+                                }
+                                if (startsCanvasTransform(
+                                  tool: state.currentToolMode,
+                                  spacePressed: HardwareKeyboard
+                                      .instance
+                                      .logicalKeysPressed
+                                      .contains(LogicalKeyboardKey.space),
+                                  pointerCount: details.pointerCount,
+                                  canEdit: state.canEdit,
+                                  forceOneFingerPan:
+                                      _isBrushTool(state.currentToolMode) &&
+                                      !state.fingerDrawingEnabled,
+                                )) {
                                   _isTransformingCanvas = true;
                                   _gestureStartScale = _viewportScale;
                                   _gestureStartOffset = _viewportOffset;
-                                  _gestureStartFocal = details.focalPoint;
+                                  _gestureStartFocal = details.localFocalPoint;
+                                  _pinchIntent = _PinchIntent.undecided;
                                   return;
                                 }
 
@@ -1747,15 +2725,20 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   details.localFocalPoint,
                                 );
 
-                                // The eraser always erases: it must not be
-                                // diverted into connecting, drawing a shape, or
-                                // dragging a selected element.
+                                // Brush tools are driven by raw pointer events
+                                // above; the gesture recognizer must not start a
+                                // second stroke.
+                                if (_isBrushTool(state.currentToolMode)) {
+                                  return;
+                                }
+
                                 if (state.currentToolMode ==
-                                    CanvasToolMode.eraser) {
-                                  _isDraggingShape = false;
-                                  _isDraggingStroke = false;
-                                  _showEraserPreview = true;
-                                  _startStroke(worldPoint);
+                                    CanvasToolMode.fill) {
+                                  _fillTopmostAt(
+                                    state,
+                                    mappedElements,
+                                    worldPoint,
+                                  );
                                   return;
                                 }
 
@@ -1824,17 +2807,10 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 }
 
                                 if (hitShapeId != null &&
-                                    (isSelectTool ||
-                                        selectedIds.contains(hitShapeId))) {
+                                    selectedIds.contains(hitShapeId)) {
                                   final draggingExistingGroup =
                                       selectedIds.length > 1 &&
                                       selectedIds.contains(hitShapeId);
-                                  if (!draggingExistingGroup &&
-                                      state.selectedShapeId != hitShapeId) {
-                                    _canvasBloc.add(
-                                      CanvasSelectShape(hitShapeId),
-                                    );
-                                  }
                                   if (draggingExistingGroup) {
                                     _isDraggingStroke = false;
                                     _isDraggingShape = true;
@@ -1866,32 +2842,61 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   return;
                                 }
 
+                                // Selecting elements is a deliberate double-tap.
+                                // A drag on an unselected shape must not start a
+                                // doodle or move it.
                                 _isDraggingShape = false;
                                 _isDraggingStroke = false;
-                                _startStroke(worldPoint);
                               },
                               onScaleUpdate: (details) {
                                 if (_textEditor != null) return;
-                                if (details.pointerCount >= 2) {
-                                  if (!_isTransformingCanvas) {
-                                    return;
-                                  }
-
+                                if (_rawStrokePointerId != null) return;
+                                if (_stylusPointers.isNotEmpty &&
+                                    details.pointerCount > 1) {
+                                  return;
+                                }
+                                if (_isTransformingCanvas) {
                                   final nextScale =
                                       (_gestureStartScale * details.scale)
                                           .clamp(0.5, 4.0);
                                   final focalDelta =
-                                      details.focalPoint - _gestureStartFocal;
+                                      details.localFocalPoint -
+                                      _gestureStartFocal;
 
-                                  setState(() {
-                                    _viewportScale = nextScale;
-                                    _viewportOffset =
-                                        _gestureStartOffset + focalDelta;
-                                  });
-                                  return;
-                                }
+                                  if (details.pointerCount < 2) {
+                                    _pinchIntent = _PinchIntent.pan;
+                                  } else if (_pinchIntent ==
+                                      _PinchIntent.undecided) {
+                                    final scaleChange =
+                                        (nextScale / _gestureStartScale - 1)
+                                            .abs();
+                                    if (scaleChange > 0.015) {
+                                      _pinchIntent = _PinchIntent.zoom;
+                                    } else if (focalDelta.distance > 3) {
+                                      _pinchIntent = _PinchIntent.pan;
+                                    }
+                                  }
 
-                                if (_isTransformingCanvas) {
+                                  if (_pinchIntent == _PinchIntent.zoom) {
+                                    // Zoom around the pinch point and ignore
+                                    // focal drift so the canvas does not pan
+                                    // while the user is pinching.
+                                    setState(() {
+                                      _viewportScale = nextScale;
+                                      _viewportOffset = canvasOffsetForPinch(
+                                        startFocal: _gestureStartFocal,
+                                        startOffset: _gestureStartOffset,
+                                        startScale: _gestureStartScale,
+                                        nextScale: nextScale,
+                                      );
+                                    });
+                                  } else if (_pinchIntent == _PinchIntent.pan) {
+                                    setState(() {
+                                      _viewportScale = _gestureStartScale;
+                                      _viewportOffset =
+                                          _gestureStartOffset + focalDelta;
+                                    });
+                                  }
                                   return;
                                 }
 
@@ -1929,13 +2934,6 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   });
                                   return;
                                 }
-                                if (state.currentToolMode ==
-                                    CanvasToolMode.eraser) {
-                                  // Erase even while an element is selected.
-                                  _showEraserPreview = true;
-                                  _appendStroke(worldPoint);
-                                  return;
-                                }
                                 if (_isDraggingStroke) {
                                   final delta =
                                       worldPoint - _strokeDragStartWorldPoint;
@@ -1959,18 +2957,14 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   );
                                   return;
                                 }
-                                // A selection no longer blocks drawing: if this
-                                // gesture did not start on the selected element,
-                                // onScaleStart began a new stroke and it must be
-                                // allowed to continue (C-12).
-                                _showEraserPreview = false;
-                                _appendStroke(worldPoint);
                               },
                               onScaleEnd: (_) {
                                 if (_isTransformingCanvas) {
                                   _isTransformingCanvas = false;
+                                  _pinchIntent = _PinchIntent.undecided;
                                   return;
                                 }
+                                if (_rawStrokePointerId != null) return;
 
                                 // End shape drawing
                                 if (_isDrawingShape || state.isDrawingShape) {
@@ -2083,8 +3077,6 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   _setShapeEditing(false);
                                   return;
                                 }
-                                _showEraserPreview = false;
-                                _endStroke();
                               },
                               onTapDown: (details) {
                                 // Tapping the canvas commits whatever was typed.
@@ -2092,7 +3084,11 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   _commitTextEditing();
                                   return;
                                 }
-                                if (_isTransformingCanvas) return;
+                                if (_isTransformingCanvas ||
+                                    _rawStrokePointerId != null) {
+                                  return;
+                                }
+
                                 final worldPoint = _toWorld(
                                   details.localPosition,
                                 );
@@ -2204,23 +3200,25 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   }
                                 }
 
+                                if (_isBrushTool(state.currentToolMode)) {
+                                  return;
+                                }
                                 final hitShapeId = _hitTestShape(
                                   mappedElements,
                                   worldPoint,
                                 );
-                                final hit = hitShapeId != null
-                                    ? mappedElements.firstWhere(
-                                        (e) => e.id == hitShapeId,
-                                      )
-                                    : null;
-                                if (hit?.kind == _ElementKind.stroke) {
-                                  // Stroke selection is deferred to onDoubleTap
-                                  return;
+                                if (hitShapeId != null) return;
+                                if (state.currentToolMode ==
+                                    CanvasToolMode.select) {
+                                  _selectShape(null);
                                 }
-                                _selectShape(hitShapeId, expandEditor: false);
                               },
                               onDoubleTap: () {
                                 if (_textEditor != null || !state.canEdit) {
+                                  return;
+                                }
+                                if (state.currentToolMode !=
+                                    CanvasToolMode.select) {
                                   return;
                                 }
                                 final worldPoint = _lastTapWorldPoint;
@@ -2233,10 +3231,12 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 final hit = mappedElements.firstWhere(
                                   (e) => e.id == hitShapeId,
                                 );
-                                if (hit.kind == _ElementKind.stroke) {
-                                  _selectShape(hitShapeId, expandEditor: false);
-                                } else if (hit.kind ==
-                                    _ElementKind.stickyNote) {
+                                final activeTray = state.activeTray;
+                                if (activeTray != null) {
+                                  _canvasBloc.add(CanvasToggleTray(activeTray));
+                                }
+                                _selectShape(hitShapeId, expandEditor: false);
+                                if (hit.kind == _ElementKind.stickyNote) {
                                   _editStickyNote(hit);
                                 } else if (hit.kind == _ElementKind.text) {
                                   final source = _canvasBloc.state.elements
@@ -2268,36 +3268,47 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 }
                               },
                               behavior: HitTestBehavior.translucent,
-                              child: SizedBox.expand(
-                                child: CustomPaint(
-                                  painter: _CanvasPainter(
-                                    elements: mappedElements,
-                                    decodedImages: _decodedUiImages,
-                                    currentPoints: state.currentStroke,
-                                    currentStrokePressures:
-                                        state.currentStrokePressures,
-                                    currentColor: state.selectedColor,
-                                    currentStrokeWidth: state.strokeWidth,
-                                    currentBrushOpacity: state.brushOpacity,
-                                    currentBrushType: state.brushType,
-                                    showEraserPreview:
-                                        _showEraserPreview &&
-                                        state.currentToolMode ==
-                                            CanvasToolMode.eraser,
-                                    selectedShapeId: state.selectedShapeId,
-                                    viewportScale: _viewportScale,
-                                    viewportOffset: _viewportOffset,
-                                    isDrawingShape: state.isDrawingShape,
-                                    shapeDrawStart: state.shapeDrawStart,
-                                    shapeDrawCurrent: state.shapeDrawCurrent,
-                                    pendingShapeType: state.pendingShapeType,
-                                    accentColor: _tokens.accent,
-                                    remoteEraserCursors:
-                                        _canvasBloc.remoteEraserCursors,
-                                    arrowConnectStartElementId:
-                                        _isArrowMode(state)
-                                        ? _arrowConnectStartElementId
-                                        : null,
+                              child: Semantics(
+                                container: true,
+                                label:
+                                    'Board canvas, ${state.elements.where((element) => !element.hidden).length} objects',
+                                child: SizedBox.expand(
+                                  child: CustomPaint(
+                                    painter: _CanvasPainter(
+                                      elements: mappedElements,
+                                      layerEffects: layerPaintEffects(
+                                        state.elements,
+                                      ),
+                                      decodedImages: _decodedUiImages,
+                                      currentPoints: state.currentStroke,
+                                      currentStrokePressures:
+                                          state.currentStrokePressures,
+                                      currentStrokeTilts:
+                                          state.currentStrokeTilts,
+                                      currentColor: state.selectedColor,
+                                      currentStrokeWidth: state.strokeWidth,
+                                      currentBrushOpacity: state.brushOpacity,
+                                      currentBrushType: state.brushType,
+                                      showEraserPreview:
+                                          _showEraserPreview &&
+                                          state.currentToolMode ==
+                                              CanvasToolMode.eraser,
+                                      selectedShapeId: state.selectedShapeId,
+                                      viewportScale: _viewportScale,
+                                      viewportOffset: _viewportOffset,
+                                      isDrawingShape: state.isDrawingShape,
+                                      shapeDrawStart: state.shapeDrawStart,
+                                      shapeDrawCurrent: state.shapeDrawCurrent,
+                                      pendingShapeType: state.pendingShapeType,
+                                      boardSettings: state.boardSettings,
+                                      accentColor: _tokens.accent,
+                                      remoteEraserCursors:
+                                          _canvasBloc.remoteEraserCursors,
+                                      arrowConnectStartElementId:
+                                          _isArrowMode(state)
+                                          ? _arrowConnectStartElementId
+                                          : null,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -2309,22 +3320,43 @@ class _CanvasScreenState extends State<CanvasScreen>
                           ..._buildPinnedCommentPins(state),
 
                           _buildEdgeTriggers(state, isDark),
-                          _buildCanvasToolbar(state),
-                          _buildSelectionModeToggle(state),
+                          if (!editingElement) _buildCanvasToolbar(state),
+                          if (!editingElement) _buildSelectionModeToggle(state),
+                          _buildZoomControls(state),
+                          if (_lastCanvasSize.width >= 720)
+                            _buildMinimap(state),
+                          if (_showTemplateCoachmark &&
+                              !state.isLoading &&
+                              state.elements.isEmpty &&
+                              !editingElement)
+                            Positioned(
+                              left: 12,
+                              right: 12,
+                              bottom:
+                                  MediaQuery.of(context).padding.bottom + 72,
+                              child: Center(
+                                child: TemplateCoachmark(
+                                  onOpen: () {
+                                    _dismissTemplateCoachmark();
+                                    _showTemplateGallerySheet(context);
+                                  },
+                                  onDismiss: _dismissTemplateCoachmark,
+                                ),
+                              ),
+                            ),
                           _buildMultiSelectBar(state),
                           if (state.selectedShapeId != null)
                             _buildSelectionOutline(state, mappedElements),
                           _buildGroupTransformOverlay(state),
-                          _buildAllTrays(state),
+                          if (!editingElement) _buildAllTrays(state),
                           _buildTextEditorOverlay(),
                           const BoardChatDrawer(),
                           const CommentsTray(),
                           const VoiceCallHud(),
-                          if (state.selectedShapeId != null)
-                            _buildSelectedElementPanel(state, mappedElements),
+                          _buildElementEditingBar(state, mappedElements),
                           _buildTopPills(state, title),
 
-                          _buildToolModeIndicator(state),
+                          if (!editingElement) _buildToolModeIndicator(state),
 
                           if (state.showTrayTips)
                             TrayTipsOverlay(
@@ -2349,7 +3381,9 @@ class _CanvasScreenState extends State<CanvasScreen>
     // Group transforms are previewed by rewriting payloads, so painter,
     // hit-testing and overlays all see the same transformed geometry.
     // Layers paint as bands: Default bottom-most, then each layer by z.
-    final ordered = canvasPaintOrder(elements).elements.toList(growable: false);
+    final order = canvasPaintOrder(elements);
+    _lockedLayerElementIds = order.lockedElementIds;
+    final ordered = order.elements.toList(growable: false);
     final previewed = ordered.map(_groupPreviewElement).toList();
     final paintRank = {
       for (var i = 0; i < previewed.length; i++) previewed[i].id: i,
@@ -2369,10 +3403,23 @@ class _CanvasScreenState extends State<CanvasScreen>
               brushType: e.brushType,
               brushId: e.brushId,
               pressures: e.pressures,
+              tilts: e.tilts,
               spacing: e.spacing,
               textureSeed: e.textureSeed,
+              data: e.toMap(),
             ),
             LayerElement _ => null,
+            FrameElement e => _CanvasElement.frame(
+              id: e.id,
+              z: e.z,
+              center: e.center,
+              width: e.width,
+              height: e.height,
+              title: e.title,
+              color: e.color,
+              cornerRadius: e.cornerRadius,
+              data: e.toMap(),
+            ),
             ShapeElement e => _CanvasElement.shape(
               id: e.id,
               z: e.z,
@@ -2548,6 +3595,57 @@ class _CanvasScreenState extends State<CanvasScreen>
     return hitId;
   }
 
+  /// Fills the topmost shape or closed freehand outline under [point].
+  ///
+  /// The loop walks the painted order backwards and stops at the first
+  /// fillable candidate, so art above it is respected. Locked/hidden elements
+  /// and their layers are skipped. A closed outline uses a screen-constant gap
+  /// tolerance, keeping the fill action predictable at every zoom level.
+  void _fillTopmostAt(
+    CanvasState state,
+    List<_CanvasElement> elements,
+    Offset point,
+  ) {
+    final sourceById = {
+      for (final element in state.elements) element.id: element,
+    };
+    final closureTolerance = 24 / _viewportScale;
+    for (var i = elements.length - 1; i >= 0; i--) {
+      final candidate = elements[i];
+      final source = sourceById[candidate.id];
+      if (source == null ||
+          source.hidden ||
+          source.locked ||
+          _lockedLayerElementIds.contains(candidate.id)) {
+        continue;
+      }
+      if (source is ShapeElement &&
+          elementContains(source, point, tolerance: 12)) {
+        _canvasBloc.add(
+          CanvasUpdateShapeFill(
+            shapeId: candidate.id,
+            fillMode: 'solid',
+            fillColor: state.selectedColor,
+          ),
+        );
+        _canvasBloc.add(CanvasSelectShape(candidate.id));
+        return;
+      }
+      if (source is StrokeElement &&
+          strokeContainsClosedRegion(
+            source,
+            point,
+            closureTolerance: closureTolerance,
+          )) {
+        _canvasBloc.add(
+          CanvasFillStroke(strokeId: candidate.id, color: state.selectedColor),
+        );
+        _canvasBloc.add(CanvasSelectShape(candidate.id));
+        return;
+      }
+    }
+  }
+
   String? _hitTestShape(List<_CanvasElement> elements, Offset position) {
     // Resolve against the domain elements so hit geometry comes from the same
     // shared module as painting, erasing and export.
@@ -2557,7 +3655,21 @@ class _CanvasScreenState extends State<CanvasScreen>
     for (var i = elements.length - 1; i >= 0; i--) {
       final element = elements[i];
       final source = sourceById[element.id];
-      if (source == null || source.hidden || source.locked) continue;
+      if (source == null ||
+          source.hidden ||
+          source.locked ||
+          _lockedLayerElementIds.contains(element.id)) {
+        continue;
+      }
+      if (source is FrameElement) {
+        // A frame is a plain section: only its border is a drag handle, so art
+        // placed inside remains independently selectable and movable.
+        final rect = frameRect(source);
+        final onBorder =
+            rect.contains(position) && !rect.deflate(8).contains(position);
+        if (onBorder) return element.id;
+        continue;
+      }
       if (source is ConnectorElement) {
         // Resolve exactly like the painter so the tappable line follows the
         // drawn curve/step instead of the straight chord.
@@ -2603,6 +3715,574 @@ class _CanvasScreenState extends State<CanvasScreen>
     return null;
   }
 
+  void _syncEditingBarSelection(CanvasState state) {
+    final id = state.selectedShapeId;
+    if (_editingBarSelectionId == id) return;
+    _editingBarSelectionId = id;
+    _elementEditorDismissed = false;
+    _activeEditControl = null;
+  }
+
+  bool _showsElementEditingBar(CanvasState state) =>
+      state.canEdit &&
+      state.currentToolMode == CanvasToolMode.select &&
+      state.selectedIds.length == 1 &&
+      state.selectedShapeId != null &&
+      _textEditor == null &&
+      !_elementEditorDismissed;
+
+  /// Replaces the main toolbar with direct object controls while one element
+  /// is selected. Sliders and switches open above this bar, not in a tray.
+  Widget _buildElementEditingBar(
+    CanvasState state,
+    List<_CanvasElement> mappedElements,
+  ) {
+    if (!_showsElementEditingBar(state)) return const SizedBox.shrink();
+    final selected = mappedElements.where((e) => e.id == state.selectedShapeId);
+    if (selected.isEmpty) return const SizedBox.shrink();
+    final element = selected.first;
+    final parsed = CanvasElement.fromMap(element.id, element.data);
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+
+    final actions = <({String id, IconData icon, String label})>[];
+    switch (element.kind) {
+      case _ElementKind.shape:
+        actions.addAll([
+          (id: 'fill', icon: LucideIcons.paintBucket, label: 'Fill'),
+          (id: 'color', icon: LucideIcons.palette, label: 'Colour'),
+          (id: 'stroke', icon: LucideIcons.brush, label: 'Stroke'),
+          (id: 'opacity', icon: LucideIcons.droplet, label: 'Opacity'),
+        ]);
+      case _ElementKind.stroke:
+        actions.addAll([
+          (id: 'fill', icon: LucideIcons.paintBucket, label: 'Fill'),
+          (id: 'color', icon: LucideIcons.palette, label: 'Colour'),
+          (id: 'width', icon: LucideIcons.brush, label: 'Width'),
+          (id: 'opacity', icon: LucideIcons.droplet, label: 'Opacity'),
+        ]);
+      case _ElementKind.text:
+        actions.addAll([
+          (id: 'edit', icon: LucideIcons.pencil, label: 'Edit'),
+          (id: 'size', icon: LucideIcons.type, label: 'Size'),
+          (id: 'color', icon: LucideIcons.palette, label: 'Colour'),
+          (id: 'rotation', icon: LucideIcons.rotateCw, label: 'Rotate'),
+        ]);
+      case _ElementKind.stickyNote:
+        actions.addAll([
+          (id: 'edit', icon: LucideIcons.pencil, label: 'Edit'),
+          (id: 'color', icon: LucideIcons.palette, label: 'Colour'),
+          (id: 'size', icon: LucideIcons.type, label: 'Text size'),
+        ]);
+      case _ElementKind.frame:
+        actions.addAll([
+          (id: 'color', icon: LucideIcons.palette, label: 'Colour'),
+          (id: 'duplicate', icon: LucideIcons.copy, label: 'Duplicate'),
+        ]);
+      case _ElementKind.connector:
+        actions.addAll([
+          (id: 'color', icon: LucideIcons.palette, label: 'Colour'),
+          (id: 'width', icon: LucideIcons.brush, label: 'Width'),
+        ]);
+      case _ElementKind.image:
+        actions.addAll([
+          (id: 'opacity', icon: LucideIcons.droplet, label: 'Opacity'),
+          (id: 'duplicate', icon: LucideIcons.copy, label: 'Duplicate'),
+        ]);
+    }
+
+    void activate(String id) {
+      if (id == 'edit') {
+        if (parsed is TextElement) {
+          _beginTextEditing(parsed, parsed.center);
+        } else if (parsed is StickyNoteElement) {
+          _editStickyNote(element);
+        }
+        return;
+      }
+      if (id == 'duplicate') {
+        _canvasBloc.add(CanvasDuplicateElements({element.id}));
+        return;
+      }
+      if (id == 'delete') {
+        _canvasBloc.add(CanvasDeleteElement(element.id));
+        return;
+      }
+      setState(() {
+        _activeEditControl = _activeEditControl == id ? null : id;
+      });
+    }
+
+    return Positioned(
+      left: 12,
+      right: 12,
+      bottom: bottomInset + 6,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_activeEditControl != null) _elementEditPanel(state, parsed),
+              if (_activeEditControl != null) const SizedBox(height: 6),
+              Material(
+                color: _tokens.paper,
+                elevation: 6,
+                borderRadius: BorderRadius.circular(InkRadii.glassBar),
+                child: Stack(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 6, 30, 6),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              _elementEditorLabel(element.kind),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: InkType.label(_tokens.inkMuted),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  for (final action in actions)
+                                    _elementEditAction(
+                                      action.icon,
+                                      action.label,
+                                      active: _activeEditControl == action.id,
+                                      onTap: () => activate(action.id),
+                                    ),
+                                  _elementEditAction(
+                                    LucideIcons.trash2,
+                                    'Delete',
+                                    danger: true,
+                                    onTap: () => activate('delete'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: IconButton(
+                        tooltip: 'Close editing options',
+                        splashRadius: 14,
+                        iconSize: 15,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 26,
+                          minHeight: 26,
+                        ),
+                        onPressed: () => setState(() {
+                          _activeEditControl = null;
+                          _elementEditorDismissed = true;
+                        }),
+                        icon: Icon(LucideIcons.x, color: _tokens.inkMuted),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _elementEditorLabel(_ElementKind kind) => switch (kind) {
+    _ElementKind.shape => 'Shape',
+    _ElementKind.stroke => 'Doodle',
+    _ElementKind.text => 'Text',
+    _ElementKind.stickyNote => 'Sticky note',
+    _ElementKind.frame => 'Frame',
+    _ElementKind.connector => 'Connector',
+    _ElementKind.image => 'Image',
+  };
+
+  Widget _fillSwatch({
+    required Color color,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: 'Colour ${color.toARGB32().toRadixString(16)}',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: selected ? _tokens.accent : Colors.black12,
+              width: selected ? 3 : 1,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _elementEditAction(
+    IconData icon,
+    String tooltip, {
+    bool active = false,
+    bool danger = false,
+    required VoidCallback onTap,
+  }) {
+    final color = danger
+        ? _tokens.danger
+        : active
+        ? _tokens.accent
+        : _tokens.ink;
+    return IconButton(
+      tooltip: tooltip,
+      splashRadius: 18,
+      iconSize: 18,
+      style: IconButton.styleFrom(
+        backgroundColor: active
+            ? _tokens.accent.withValues(alpha: 0.12)
+            : Colors.transparent,
+        minimumSize: const Size(36, 36),
+        padding: EdgeInsets.zero,
+      ),
+      onPressed: onTap,
+      icon: Icon(icon, color: color),
+    );
+  }
+
+  Widget _elementEditPanel(CanvasState state, CanvasElement element) {
+    final control = _activeEditControl;
+    if (control == null) return const SizedBox.shrink();
+    final panel = Container(
+      constraints: const BoxConstraints(maxWidth: 520),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: _tokens.paper,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x22000000),
+            blurRadius: 8,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: _elementEditControlBody(state, element, control),
+    );
+    return panel;
+  }
+
+  Widget _elementEditControlBody(
+    CanvasState state,
+    CanvasElement element,
+    String control,
+  ) {
+    if (control == 'color') {
+      final current = switch (element) {
+        ShapeElement e => e.color,
+        TextElement e => e.color,
+        StickyNoteElement e => e.color,
+        FrameElement e => e.color,
+        ConnectorElement e => e.color,
+        StrokeElement e => e.color,
+        ImageElement _ => _tokens.ink,
+        LayerElement _ => _tokens.ink,
+      };
+      return Wrap(
+        spacing: 10,
+        runSpacing: 8,
+        children: [
+          for (final color in _editorPalette)
+            _fillSwatch(
+              color: color,
+              selected: color == current,
+              onTap: () => _applyElementColor(element, color),
+            ),
+        ],
+      );
+    }
+
+    if (control == 'fill' && element is StrokeElement) {
+      final fill = element.fillColor;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                fill == null ? 'No fill' : 'Filled outline',
+                style: const TextStyle(fontSize: 13),
+              ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: fill == null
+                    ? null
+                    : () => _canvasBloc.add(CanvasClearStrokeFill(element.id)),
+                icon: const Icon(LucideIcons.ban, size: 16),
+                label: const Text('Remove fill'),
+                style: TextButton.styleFrom(
+                  foregroundColor: _tokens.danger,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              for (final color in _editorPalette)
+                _fillSwatch(
+                  color: color,
+                  selected: color == fill,
+                  onTap: () => _canvasBloc.add(
+                    CanvasFillStroke(strokeId: element.id, color: color),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      );
+    }
+
+    if (control == 'fill' && element is ShapeElement) {
+      final filled = element.effectiveFillMode != 'none';
+      final currentFill = element.resolvedFillColor;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              const Text('Filled', style: TextStyle(fontSize: 13)),
+              const Spacer(),
+              Switch.adaptive(
+                value: filled,
+                activeColor: Colors.white,
+                activeTrackColor: _tokens.accent,
+                onChanged: (value) {
+                  _canvasBloc.add(
+                    CanvasUpdateShapeFill(fillMode: value ? 'solid' : 'none'),
+                  );
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              for (final color in _editorPalette)
+                _fillSwatch(
+                  color: color,
+                  selected:
+                      filled &&
+                      element.effectiveFillMode == 'solid' &&
+                      color == currentFill,
+                  onTap: () => _canvasBloc.add(
+                    CanvasUpdateShapeFill(
+                      shapeId: element.id,
+                      fillMode: 'solid',
+                      fillColor: color,
+                    ),
+                  ),
+                ),
+              TextButton.icon(
+                onPressed: () => _pickShapeFillColor(solidFill: true),
+                icon: const Icon(LucideIcons.palette, size: 16),
+                label: const Text('Custom'),
+                style: TextButton.styleFrom(
+                  foregroundColor: _tokens.accent,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+
+    if (control == 'opacity') {
+      final source = state.elements
+          .where((e) => e.id == element.id)
+          .firstOrNull;
+      final value = source?.opacity ?? element.opacity;
+      return _elementEditSlider('Opacity', value.clamp(0, 1), 0, 1, (v) {
+        if (element is StrokeElement) {
+          _canvasBloc.add(CanvasUpdateSelectedStrokeOpacity(v));
+        } else {
+          // Shapes, images, text and other objects fade as a whole so a filled
+          // shape's interior changes with its outline.
+          _canvasBloc.add(CanvasSetElementOpacity(element.id, v));
+        }
+      }, percent: true);
+    }
+
+    if (control == 'width' || control == 'stroke') {
+      final value = switch (element) {
+        ShapeElement e => e.strokeWidth,
+        ConnectorElement e => e.strokeWidth,
+        StrokeElement _ => state.selectedStrokeWidth,
+        _ => 1.0,
+      };
+      return _elementEditSlider(
+        control == 'stroke' ? 'Stroke width' : 'Width',
+        value.clamp(1, 48),
+        1,
+        48,
+        (v) {
+          if (element is ShapeElement) {
+            _canvasBloc.add(CanvasUpdateSelectedShapeStrokeWidth(v));
+          } else if (element is ConnectorElement) {
+            _canvasBloc.add(
+              CanvasUpdateConnector(elementId: element.id, strokeWidth: v),
+            );
+          } else if (element is StrokeElement) {
+            _canvasBloc.add(CanvasUpdateSelectedStrokeWidth(v));
+          }
+        },
+        decimals: 0,
+      );
+    }
+
+    if (control == 'size') {
+      if (element is TextElement) {
+        return _elementEditSlider(
+          'Text size',
+          element.fontSize.clamp(8, 96),
+          8,
+          96,
+          (v) => _canvasBloc.add(
+            CanvasUpdateText(elementId: element.id, fontSize: v),
+          ),
+        );
+      }
+      if (element is StickyNoteElement) {
+        return _elementEditSlider(
+          'Text size',
+          element.fontSize.clamp(8, 48),
+          8,
+          48,
+          (v) => _canvasBloc.add(
+            CanvasUpdateStickyNote(elementId: element.id, fontSize: v),
+          ),
+        );
+      }
+    }
+
+    if (control == 'rotation' && element is TextElement) {
+      return _elementEditSlider(
+        'Rotation',
+        element.rotation.clamp(0, math.pi * 2),
+        0,
+        math.pi * 2,
+        (v) => _canvasBloc.add(
+          CanvasUpdateText(elementId: element.id, rotation: v),
+        ),
+        degrees: true,
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  Widget _elementEditSlider(
+    String label,
+    double value,
+    double min,
+    double max,
+    ValueChanged<double> onChanged, {
+    int decimals = 0,
+    bool percent = false,
+    bool degrees = false,
+  }) {
+    final suffix = percent
+        ? '${(value * 100).round()}%'
+        : degrees
+        ? '${(value * 180 / math.pi).round()}°'
+        : value.toStringAsFixed(decimals);
+    return Row(
+      children: [
+        SizedBox(
+          width: 82,
+          child: Text(label, style: const TextStyle(fontSize: 12)),
+        ),
+        Expanded(
+          child: Slider(
+            value: value.clamp(min, max),
+            min: min,
+            max: max,
+            onChanged: onChanged,
+          ),
+        ),
+        SizedBox(
+          width: 42,
+          child: Text(
+            suffix,
+            textAlign: TextAlign.right,
+            style: TextStyle(fontSize: 11, color: _tokens.inkMuted),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _applyElementColor(CanvasElement element, Color color) {
+    switch (element) {
+      case ShapeElement e:
+        _canvasBloc.add(CanvasUpdateSelectedShapeColor(color));
+        if (e.effectiveFillMode != 'none') {
+          _canvasBloc.add(
+            CanvasUpdateShapeFill(shapeId: e.id, fillColor: color),
+          );
+        }
+      case TextElement e:
+        _canvasBloc.add(CanvasUpdateText(elementId: e.id, color: color));
+      case StickyNoteElement e:
+        _canvasBloc.add(CanvasUpdateStickyNote(elementId: e.id, color: color));
+      case FrameElement e:
+        _canvasBloc.add(CanvasUpdateFrame(elementId: e.id, color: color));
+      case ConnectorElement e:
+        _canvasBloc.add(CanvasUpdateConnector(elementId: e.id, color: color));
+      case StrokeElement _:
+        _canvasBloc.add(CanvasUpdateSelectedStrokeColor(color.value));
+      case ImageElement _:
+      case LayerElement _:
+        break;
+    }
+  }
+
+  // Retained for old serialized editor surfaces; the selected-object bar above
+  // is the only editor opened from the canvas now.
+  // ignore: unused_element
   Widget _buildSelectedElementPanel(
     CanvasState state,
     List<_CanvasElement> mappedElements,
@@ -2656,6 +4336,19 @@ class _CanvasScreenState extends State<CanvasScreen>
             _buildStickyNoteEditBanner(
               Theme.of(context).brightness == Brightness.dark,
               element,
+            ),
+        ],
+      );
+    }
+    if (element.kind == _ElementKind.frame) {
+      return Stack(
+        children: [
+          if (!_isEditingShape && _isShapeEditTrayExpanded)
+            _buildSelectedFramePanel(element),
+          if (!_isEditingShape && !_isShapeEditTrayExpanded)
+            _buildShapeEditBanner(
+              Theme.of(context).brightness == Brightness.dark,
+              label: 'Edit Frame',
             ),
         ],
       );
@@ -3011,6 +4704,127 @@ class _CanvasScreenState extends State<CanvasScreen>
     );
   }
 
+  Widget _buildSelectedFramePanel(_CanvasElement element) {
+    final parsed = CanvasElement.fromMap(element.id, element.data);
+    if (parsed is! FrameElement) return const SizedBox.shrink();
+    final frame = parsed;
+    final tokens = context.ink;
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+
+    Widget swatch(Color color) {
+      final selected = frame.color == color;
+      return InkWell(
+        onTap: () => _canvasBloc.add(
+          CanvasUpdateFrame(elementId: frame.id, color: color),
+        ),
+        child: Container(
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: color,
+            border: Border.all(
+              color: selected ? tokens.accent : Colors.black12,
+              width: selected ? 3 : 1,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Positioned(
+      left: 12,
+      right: 12,
+      bottom: 84 + bottomInset,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 430),
+          child: Material(
+            color: tokens.paper,
+            elevation: 4,
+            borderRadius: BorderRadius.circular(14),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(LucideIcons.frame, size: 18),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Frame',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        tooltip: 'Duplicate frame',
+                        icon: const Icon(LucideIcons.copy, size: 18),
+                        onPressed: () => _canvasBloc.add(
+                          CanvasDuplicateElements({frame.id}),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Delete frame (keeps contents)',
+                        icon: Icon(
+                          LucideIcons.trash2,
+                          color: tokens.danger,
+                          size: 18,
+                        ),
+                        onPressed: () =>
+                            _canvasBloc.add(CanvasDeleteElement(frame.id)),
+                      ),
+                    ],
+                  ),
+                  TextFormField(
+                    key: ValueKey('frame-title-${frame.id}-${frame.title}'),
+                    initialValue: frame.title,
+                    maxLength: 80,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: const InputDecoration(
+                      labelText: 'Title',
+                      isDense: true,
+                      counterText: '',
+                    ),
+                    onFieldSubmitted: (value) => _canvasBloc.add(
+                      CanvasUpdateFrame(
+                        elementId: frame.id,
+                        title: value.trim(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text('Colour', style: TextStyle(fontSize: 12)),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final color in const [
+                        Color(0xFF64748B),
+                        Color(0xFF2563EB),
+                        Color(0xFF16A34A),
+                        Color(0xFFD97706),
+                        Color(0xFFDC2626),
+                        Color(0xFF7C3AED),
+                      ])
+                        swatch(color),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${frame.width.round()} × ${frame.height.round()} · resize from the corner handles',
+                    style: TextStyle(fontSize: 11, color: tokens.inkMuted),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildStickyNoteEditBanner(bool isDark, _CanvasElement element) {
     final tokens = context.ink;
     return Positioned(
@@ -3333,6 +5147,13 @@ class _CanvasScreenState extends State<CanvasScreen>
   // Primary toolbar
   // ──────────────────────────────────────────────
 
+  /// Inserts a frame behind the current art at the middle of the viewport.
+  void _addFrame() {
+    final size = MediaQuery.of(context).size;
+    final center = _toWorld(Offset(size.width / 2, size.height / 2));
+    _canvasBloc.add(CanvasAddFrame(center: center));
+  }
+
   Widget _buildCanvasToolbar(CanvasState state) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
     return Positioned(
@@ -3349,6 +5170,7 @@ class _CanvasScreenState extends State<CanvasScreen>
             isArrowPreset: _isArrowMode(state),
             onToolSelected: _onToolbarToolSelected,
             onStickyNote: state.canEdit ? _addStickyNoteDialog : null,
+            onFrame: state.canEdit ? _addFrame : null,
             onImage: state.canEdit ? () => _uploadImageToCanvas() : null,
             onMore: () => _toggleTray('tools'),
           ),
@@ -3549,6 +5371,18 @@ class _CanvasScreenState extends State<CanvasScreen>
           ),
         ),
         (
+          Icons.layers_outlined,
+          'Move to active layer',
+          () => _canvasBloc.add(
+            CanvasMoveSelectionToLayer(state.selectedIds, state.activeLayerId),
+          ),
+        ),
+        (
+          Icons.palette_outlined,
+          'Style selection',
+          () => _openSelectionStyleSheet(state),
+        ),
+        (
           Icons.copy_all,
           'Duplicate',
           () => _canvasBloc.add(CanvasDuplicateElements(state.selectedIds)),
@@ -3602,6 +5436,53 @@ class _CanvasScreenState extends State<CanvasScreen>
                     ),
                   ),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openSelectionStyleSheet(CanvasState state) {
+    final selected = state.elements
+        .where((element) => state.selectedIds.contains(element.id))
+        .toList(growable: false);
+    if (selected.isEmpty) return;
+    final allLocked = selected.every((element) => element.locked);
+    final allVisible = selected.every((element) => !element.hidden);
+    final opacity =
+        selected.fold<double>(0, (sum, element) => sum + element.opacity) /
+        selected.length;
+    final ids = state.selectedIds;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.all(InkSpacing.s12),
+        child: GlassPanel(
+          radius: InkRadii.bottomSheet,
+          padding: const EdgeInsets.all(InkSpacing.s20),
+          child: SafeArea(
+            top: false,
+            child: CanvasSelectionStyleSheet(
+              count: selected.length,
+              initialOpacity: opacity.clamp(0.0, 1.0),
+              allLocked: allLocked,
+              allVisible: allVisible,
+              onColor: (color) => _canvasBloc.add(
+                CanvasUpdateSelectionStyle(ids, color: color),
+              ),
+              onOpacity: (value) => _canvasBloc.add(
+                CanvasUpdateSelectionStyle(ids, opacity: value),
+              ),
+              onLockedChanged: (locked) => _canvasBloc.add(
+                CanvasUpdateSelectionStyle(ids, locked: locked),
+              ),
+              onVisibleChanged: (visible) => _canvasBloc.add(
+                CanvasUpdateSelectionStyle(ids, visible: visible),
+              ),
+              onClose: () => Navigator.pop(sheetContext),
             ),
           ),
         ),
@@ -4350,15 +6231,60 @@ class _CanvasScreenState extends State<CanvasScreen>
           activeColor: _tokens.accent,
           dense: true,
           contentPadding: EdgeInsets.zero,
-          value:
-              (_pendingShapeEdits['isFilled'] as bool?) ??
-              state.selectedShapeIsFilled,
+          value: domainShape.effectiveFillMode != 'none',
           title: const Text('Filled', style: TextStyle(fontSize: 13)),
           onChanged: (v) {
             HapticFeedback.lightImpact();
-            _deferredSetSelectedShapeFill(v);
+            _canvasBloc.add(
+              CanvasUpdateShapeFill(fillMode: v ? 'solid' : 'none'),
+            );
           },
         ),
+        if (domainShape.effectiveFillMode != 'none' &&
+            !domainShape.isLinear) ...[
+          DropdownButton<String>(
+            value: domainShape.effectiveFillMode,
+            isDense: true,
+            underline: const SizedBox.shrink(),
+            items: const [
+              DropdownMenuItem(value: 'solid', child: Text('Solid fill')),
+              DropdownMenuItem(value: 'linear', child: Text('Linear gradient')),
+              DropdownMenuItem(value: 'radial', child: Text('Radial gradient')),
+            ],
+            onChanged: (v) {
+              if (v == null) return;
+              _canvasBloc.add(CanvasUpdateShapeFill(fillMode: v));
+            },
+          ),
+          if (domainShape.effectiveFillMode == 'solid')
+            _shapeFillColorRow(
+              'Fill color',
+              domainShape.resolvedFillColor,
+              onTap: _pickShapeFillColor,
+            ),
+          if (domainShape.effectiveFillMode == 'linear' ||
+              domainShape.effectiveFillMode == 'radial') ...[
+            _shapeFillColorRow(
+              'Gradient start',
+              domainShape.resolvedGradientStart,
+              onTap: _pickShapeFillColor,
+            ),
+            _shapeFillColorRow(
+              'Gradient end',
+              domainShape.resolvedGradientEnd,
+              onTap: () => _pickShapeFillColor(gradientEnd: true),
+            ),
+            if (domainShape.effectiveFillMode == 'linear')
+              _shapePanelSlider(
+                label: 'Gradient angle',
+                value: domainShape.gradientAngle,
+                min: 0,
+                max: 360,
+                onChanged: (v) =>
+                    _deferredSetSelectedShapeProperty('gradientAngle', v),
+              ),
+          ],
+        ],
         const SizedBox(height: 4),
         _shapePanelSlider(
           label: 'Width',
@@ -4680,6 +6606,37 @@ class _CanvasScreenState extends State<CanvasScreen>
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _shapeFillColorRow(
+    String label,
+    Color color, {
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+        child: Row(
+          children: [
+            Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(5),
+                border: Border.all(color: _tokens.glassStroke),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(label, style: const TextStyle(fontSize: 13)),
+            const Spacer(),
+            Icon(LucideIcons.chevronRight, size: 16, color: _tokens.inkMuted),
+          ],
         ),
       ),
     );
@@ -5589,6 +7546,9 @@ class _CanvasScreenState extends State<CanvasScreen>
       // same 180x48 estimate used by the erase hit-test.
       rawW = shape.width > 0 ? shape.width : 180.0;
       rawH = shape.height > 0 ? shape.height : 48.0;
+    } else if (shape.kind == _ElementKind.frame) {
+      rawW = shape.width > 0 ? shape.width : FrameElement.defaultWidth;
+      rawH = shape.height > 0 ? shape.height : FrameElement.defaultHeight;
     } else if (shape.kind == _ElementKind.stickyNote ||
         shape.kind == _ElementKind.image) {
       rawW = shape.width > 0
@@ -5755,7 +7715,8 @@ class _CanvasScreenState extends State<CanvasScreen>
                     ),
                   ),
                   // Rotate handle (top center)
-                  if (shape.kind != _ElementKind.image)
+                  if (shape.kind != _ElementKind.image &&
+                      shape.kind != _ElementKind.frame)
                     Positioned(
                       top: 2,
                       left: 16 + (screenW / 2) - 14,
@@ -5893,9 +7854,13 @@ class _CanvasScreenState extends State<CanvasScreen>
                             ? 1.0
                             : shape.kind == _ElementKind.stickyNote
                             ? 80.0
+                            : shape.kind == _ElementKind.frame
+                            ? 120.0
                             : 40.0;
                         final maxDim = shape.kind == _ElementKind.image
                             ? 720.0
+                            : shape.kind == _ElementKind.frame
+                            ? 4000.0
                             : 480.0;
                         final nextW = (_resizeStartWidth + localDx * 1.8)
                             .clamp(minDim, maxDim)
@@ -5923,7 +7888,8 @@ class _CanvasScreenState extends State<CanvasScreen>
                           _canvasBloc.add(
                             CanvasPreviewResizeSelectedShape(nextW),
                           );
-                        } else if (shape.kind == _ElementKind.shape) {
+                        } else if (shape.kind == _ElementKind.shape ||
+                            shape.kind == _ElementKind.frame) {
                           _canvasBloc.add(
                             CanvasPreviewResizeSelectedShape(
                               nextSize,
@@ -5957,7 +7923,8 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 height: draft.height,
                               ),
                             );
-                          } else if (shape.kind == _ElementKind.shape) {
+                          } else if (shape.kind == _ElementKind.shape ||
+                              shape.kind == _ElementKind.frame) {
                             _resizeSelectedShape(
                               draft.size,
                               width: draft.width ?? 0,
@@ -6105,6 +8072,8 @@ class _CanvasScreenState extends State<CanvasScreen>
               : null,
           onAddStickyNote: _addStickyNoteDialog,
           onAddConnector: _addConnectorDialog,
+          onCanvasSettings: () => _showCanvasSettingsSheet(context),
+          onTemplates: () => _showTemplateGallerySheet(context),
           onExport: () => _showExportOptionsSheet(context),
           onClose: () => _toggleTray('tools'),
         ),
@@ -6138,6 +8107,8 @@ class _CanvasScreenState extends State<CanvasScreen>
           onAddLayer: (name) => _canvasBloc.add(CanvasAddLayer(name)),
           onRenameLayer: (id, name) =>
               _canvasBloc.add(CanvasRenameLayer(id, name)),
+          onBlendModeChanged: (id, mode) =>
+              _canvasBloc.add(CanvasUpdateLayerBlendMode(id, mode)),
           onDeleteLayer: (id) => _canvasBloc.add(CanvasDeleteLayer(id)),
           onClose: () => _toggleTray('layers'),
         ),
@@ -6174,6 +8145,18 @@ class _CanvasScreenState extends State<CanvasScreen>
           onStylusPressureChanged: (v) {
             _canvasBloc.add(CanvasUpdateStylusPressure(v));
           },
+          fingerDrawingEnabled: state.fingerDrawingEnabled,
+          onFingerDrawingChanged: (v) async {
+            _canvasBloc.add(CanvasSetFingerDrawing(v));
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool(_fingerDrawingPreferenceKey, v);
+            } catch (_) {}
+          },
+          quickShapeEnabled: state.quickShapeEnabled,
+          onQuickShapeChanged: (v) {
+            _canvasBloc.add(CanvasSetQuickShapeEnabled(v));
+          },
           onToolModeChanged: (mode) {
             _canvasBloc.add(CanvasSetToolMode(mode, keepTray: true));
           },
@@ -6181,6 +8164,45 @@ class _CanvasScreenState extends State<CanvasScreen>
         ),
       ],
     );
+  }
+
+  Widget _buildSyncIndicator(CanvasState state) {
+    final tokens = _tokens;
+    switch (state.syncStatus) {
+      case CanvasSyncStatus.syncing:
+        return const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 8),
+          child: SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        );
+      case CanvasSyncStatus.offline:
+        return Semantics(
+          button: true,
+          label: 'Offline. Tap to retry syncing changes.',
+          child: IconButton(
+            tooltip: state.syncMessage ?? 'Retry sync',
+            icon: Icon(LucideIcons.cloudOff, color: tokens.danger, size: 18),
+            onPressed: () => _canvasBloc.add(const CanvasRetrySync()),
+          ),
+        );
+      case CanvasSyncStatus.saved:
+        return Semantics(
+          label: 'All changes saved',
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Icon(
+              LucideIcons.cloudCheck,
+              color: tokens.success,
+              size: 17,
+            ),
+          ),
+        );
+      case CanvasSyncStatus.idle:
+        return const SizedBox.shrink();
+    }
   }
 
   Widget _buildTopPills(CanvasState state, String title) {
@@ -6279,6 +8301,12 @@ class _CanvasScreenState extends State<CanvasScreen>
                     _buildMemberAvatarStack(state.boardMembers),
                     const SizedBox(width: 4),
                   ],
+                  _buildSyncIndicator(state),
+                  IconButton(
+                    tooltip: 'Find on board',
+                    icon: Icon(LucideIcons.search, color: tokens.ink, size: 18),
+                    onPressed: () => _showBoardSearchSheet(context),
+                  ),
                   IconButton(
                     tooltip: 'Reset View',
                     icon: Icon(LucideIcons.scan, color: tokens.ink, size: 18),
@@ -6330,6 +8358,8 @@ class _CanvasScreenState extends State<CanvasScreen>
                         _showRequestEditDialog(context);
                       } else if (value == 'export') {
                         _showExportOptionsSheet(context);
+                      } else if (value == 'history') {
+                        await _showBoardHistorySheet(context);
                       } else if (value == 'copy_selection') {
                         _canvasBloc.add(const CanvasCopySelection());
                       } else if (value == 'paste_selection') {
@@ -6404,6 +8434,14 @@ class _CanvasScreenState extends State<CanvasScreen>
                         child: _menuRow(
                           LucideIcons.download,
                           'Export Board...',
+                          tokens.ink,
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'history',
+                        child: _menuRow(
+                          LucideIcons.history,
+                          'Board History...',
                           tokens.ink,
                         ),
                       ),
@@ -6753,7 +8791,9 @@ class _CanvasScreenState extends State<CanvasScreen>
   }
 
   Widget _buildToolModeIndicator(CanvasState state) {
-    if (state.currentToolMode == CanvasToolMode.doodle) {
+    // The brush, highlighter and eraser trays already name the active tool.
+    // A second "Tap to exit" pill duplicates that and covers the tray.
+    if (_isBrushTool(state.currentToolMode)) {
       return const SizedBox.shrink();
     }
 
@@ -6766,6 +8806,7 @@ class _CanvasScreenState extends State<CanvasScreen>
           )
         : switch (state.currentToolMode) {
             CanvasToolMode.select => (LucideIcons.mousePointer2, 'Select'),
+            CanvasToolMode.hand => (LucideIcons.hand, 'Hand: drag to pan'),
             CanvasToolMode.shape => (
               LucideIcons.shapes,
               state.pendingShapeType != null
@@ -6777,6 +8818,10 @@ class _CanvasScreenState extends State<CanvasScreen>
             CanvasToolMode.arrow => (LucideIcons.arrowRight, 'Arrow'),
             CanvasToolMode.image => (LucideIcons.image, 'Image'),
             CanvasToolMode.highlight => (LucideIcons.highlighter, 'Highlight'),
+            CanvasToolMode.fill => (
+              LucideIcons.paintBucket,
+              'Fill: tap a shape',
+            ),
             CanvasToolMode.doodle => (LucideIcons.penLine, 'Doodle'),
           };
 

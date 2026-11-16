@@ -49,7 +49,10 @@ class AITray extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text('AI Image Generation', style: InkType.label(tokens.inkMuted)),
+                  Text(
+                    'AI Image Generation',
+                    style: InkType.label(tokens.inkMuted),
+                  ),
                   const SizedBox(height: InkSpacing.s8),
                   InkTextField(
                     controller: controller,

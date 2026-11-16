@@ -325,6 +325,25 @@ List<Offset> shapeArrowheadPoints(Offset tip, double direction, double length) {
 /// Renders a shape exactly the same way on the interactive canvas and in
 /// PNG/PDF export: independent fill and stroke paints, stroke opacity, dashes,
 /// arrowheads for line/arrow, and a centred, clipped label.
+/// Builds the shader for a gradient fill, or null for a solid/none fill.
+ui.Shader? buildShapeFillShader(ShapeElement shape, Rect rect) {
+  final mode = shape.effectiveFillMode;
+  if (mode != 'linear' && mode != 'radial') return null;
+  final colors = [shape.resolvedGradientStart, shape.resolvedGradientEnd];
+  if (mode == 'radial') {
+    return ui.Gradient.radial(
+      Offset.zero,
+      math.max(rect.width, rect.height) / 2,
+      colors,
+    );
+  }
+  final angle = shape.gradientAngle * math.pi / 180;
+  final direction = Offset(math.cos(angle), math.sin(angle));
+  final half =
+      math.sqrt(rect.width * rect.width + rect.height * rect.height) / 2;
+  return ui.Gradient.linear(-direction * half, direction * half, colors);
+}
+
 void paintShapeElement(Canvas canvas, ShapeElement shape) {
   final rect = shapeElementRect(shape);
   final path = buildShapePath(shape);
@@ -334,13 +353,15 @@ void paintShapeElement(Canvas canvas, ShapeElement shape) {
   canvas.translate(shape.center.dx, shape.center.dy);
   if (shape.rotation != 0) canvas.rotate(shape.rotation);
 
-  if (shape.isFilled && !shape.isLinear) {
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = shape.color
-        ..style = PaintingStyle.fill,
-    );
+  if (shape.effectiveFillMode != 'none' && !shape.isLinear) {
+    final paint = Paint()..style = PaintingStyle.fill;
+    final shader = buildShapeFillShader(shape, rect);
+    if (shader != null) {
+      paint.shader = shader;
+    } else {
+      paint.color = shape.resolvedFillColor;
+    }
+    canvas.drawPath(path, paint);
   }
 
   final strokeColor = shape.color.withValues(
@@ -480,6 +501,55 @@ Rect rotatedRectBounds(Rect rect, double rotation) {
   return Rect.fromLTRB(minX, minY, maxX, maxY);
 }
 
+/// The on-canvas box of a frame. Frames are plain sections: no title strip
+/// and no painted label, matching how Figma frames read on a canvas.
+Rect frameRect(FrameElement frame) => Rect.fromCenter(
+  center: frame.center,
+  width: math.max(1, frame.width),
+  height: math.max(1, frame.height),
+);
+
+/// Whether [element] sits fully inside [frame]'s box.
+///
+/// Membership is geometric in v1 (no per-element parent field). A small slack
+/// keeps stroked shapes from falling out of their frame. Layers and the frame
+/// itself never belong to a frame.
+bool frameContainsElement(FrameElement frame, CanvasElement element) {
+  if (identical(frame, element) || element is LayerElement) return false;
+  final bounds = elementBounds(element);
+  if (bounds == null) return false;
+  final box = frameRect(frame).inflate(2);
+  return box.contains(bounds.topLeft) && box.contains(bounds.bottomRight);
+}
+
+List<CanvasElement> elementsContainedByFrame(
+  FrameElement frame,
+  Iterable<CanvasElement> elements,
+) => elements
+    .where((element) => frameContainsElement(frame, element))
+    .toList(growable: false);
+
+/// Paints a frame identically on the interactive canvas and in PNG/PDF
+/// export: a faint paper tint and a border. Frames carry no heading.
+void paintFrameElement(Canvas canvas, FrameElement frame) {
+  final rect = frameRect(frame);
+  final radius = math.min(
+    frame.cornerRadius,
+    math.min(rect.width, rect.height) / 2,
+  );
+  final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
+  final color = frame.color;
+
+  canvas.drawRRect(rrect, Paint()..color = color.withValues(alpha: 0.04));
+  canvas.drawRRect(
+    rrect,
+    Paint()
+      ..color = color.withValues(alpha: 0.55)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5,
+  );
+}
+
 /// Bounds of any element, including rotation and stroke width.
 Rect? elementBounds(CanvasElement element, {double padding = 0}) {
   switch (element) {
@@ -536,6 +606,8 @@ Rect? elementBounds(CanvasElement element, {double padding = 0}) {
         ),
         e.rotation,
       ).inflate(padding);
+    case FrameElement e:
+      return frameRect(e).inflate(1.5 + padding);
     case ConnectorElement e:
       final points = connectorPolyline(
         e.startPoint,
@@ -576,6 +648,40 @@ double distanceToSegment(Offset point, Offset start, Offset end) {
   final clamped = t.clamp(0.0, 1.0);
   return (point - Offset(start.dx + clamped * dx, start.dy + clamped * dy))
       .distance;
+}
+
+/// Closed interior path for a hand-drawn shape, or null when the stroke is
+/// still open.
+///
+/// The start and end have to meet within a small tolerance so an open arc or
+/// squiggle can never be treated as an enclosed region. The tolerance scales
+/// with the ink width, which also bridges the natural gap left by a quick
+/// hand-drawn circle.
+Path? strokeClosedFillPath(
+  StrokeElement stroke, {
+  double closureTolerance = 24,
+}) {
+  if (stroke.points.length < 3) return null;
+  final tolerance = math.max(stroke.strokeWidth * 3.0, closureTolerance);
+  if ((stroke.points.last - stroke.points.first).distance > tolerance) {
+    return null;
+  }
+  return Path()..addPolygon(stroke.points, true);
+}
+
+/// Whether [point] is inside the area enclosed by a closed freehand stroke.
+///
+/// [closureTolerance] is a world-space gap allowance; callers pass a
+/// screen-constant value divided by the viewport scale so a visually closed
+/// loop remains fillable at every zoom level.
+bool strokeContainsClosedRegion(
+  StrokeElement stroke,
+  Offset point, {
+  double closureTolerance = 24,
+}) {
+  final path = strokeClosedFillPath(stroke, closureTolerance: closureTolerance);
+  if (path == null || !path.getBounds().contains(point)) return false;
+  return path.contains(point);
 }
 
 /// Shortest distance from [point] to a sampled polyline.
@@ -1018,6 +1124,10 @@ bool elementContains(
       ).inflate(tolerance).contains(rotatePoint(point, e.center, -e.rotation));
     case LayerElement _:
       return false;
+    // Frames are structural: the eraser and generic hit-testing ignore their
+    // interior. The screen selects a frame through its title bar or border.
+    case FrameElement _:
+      return false;
     case StickyNoteElement e:
       final rect = Rect.fromCenter(
         center: e.center,
@@ -1074,9 +1184,31 @@ class CanvasPaintBand {
 
   String get label => layer?.name ?? 'Default';
 
+  bool get isHidden => layer?.hidden ?? false;
+  bool get isLocked => layer?.locked ?? false;
+
   bool contains(String elementId) =>
       elements.any((element) => element.id == elementId);
 }
+
+/// Layer compositing applied to each member when it is painted.
+class CanvasLayerPaintEffect {
+  final String blendMode;
+  final double opacity;
+
+  const CanvasLayerPaintEffect({this.blendMode = 'normal', this.opacity = 1});
+
+  bool get isIdentity => blendMode == 'normal' && opacity >= 1;
+}
+
+BlendMode canvasBlendModeForName(String name) => switch (name) {
+  'multiply' => BlendMode.multiply,
+  'screen' => BlendMode.screen,
+  'overlay' => BlendMode.overlay,
+  'darken' => BlendMode.darken,
+  'lighten' => BlendMode.lighten,
+  _ => BlendMode.srcOver,
+};
 
 /// The canvas paint order: layers are bands, not just organisation.
 ///
@@ -1091,7 +1223,15 @@ class CanvasPaintOrder {
 
   const CanvasPaintOrder(this.bands);
 
-  Iterable<CanvasElement> get elements => bands.expand((b) => b.elements);
+  /// Visible members only: hiding a layer hides every element in its band.
+  Iterable<CanvasElement> get elements =>
+      bands.where((band) => !band.isHidden).expand((b) => b.elements);
+
+  /// Members of locked layers, which hit-testing must ignore.
+  Set<String> get lockedElementIds => {
+    for (final band in bands)
+      if (band.isLocked) ...band.elements.map((element) => element.id),
+  };
 
   CanvasPaintBand? bandFor(String elementId) {
     for (final band in bands) {
@@ -1164,6 +1304,27 @@ CanvasPaintOrder canvasPaintOrder(List<CanvasElement> elements) {
 List<CanvasElement> orderedElementsForPaint(List<CanvasElement> elements) =>
     canvasPaintOrder(elements).elements.toList(growable: false);
 
+/// Resolves per-member compositing for layers with a blend mode or opacity.
+/// Hidden layers are omitted, matching [CanvasPaintOrder.elements].
+Map<String, CanvasLayerPaintEffect> layerPaintEffects(
+  List<CanvasElement> elements,
+) {
+  final result = <String, CanvasLayerPaintEffect>{};
+  for (final band in canvasPaintOrder(elements).bands) {
+    final layer = band.layer;
+    if (layer == null || band.isHidden) continue;
+    final effect = CanvasLayerPaintEffect(
+      blendMode: layer.blendMode,
+      opacity: layer.opacity.clamp(0.0, 1.0),
+    );
+    if (effect.isIdentity) continue;
+    for (final element in band.elements) {
+      result[element.id] = effect;
+    }
+  }
+  return result;
+}
+
 /// Union of every element's bounds; empty when nothing has geometry.
 Rect? elementsBounds(Iterable<CanvasElement> elements) {
   Rect? union;
@@ -1220,6 +1381,18 @@ Rect? elementsBounds(Iterable<CanvasElement> elements) {
           height: e.height > 0 ? e.height : 160,
         ),
         e.rotation,
+      );
+    case FrameElement e:
+      final base = frameRect(e);
+      return (
+        overrideCenter == null
+            ? base
+            : Rect.fromCenter(
+                center: overrideCenter,
+                width: base.width,
+                height: base.height,
+              ),
+        0.0,
       );
     case StrokeElement _:
     case ConnectorElement _:

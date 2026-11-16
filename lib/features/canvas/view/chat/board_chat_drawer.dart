@@ -65,10 +65,10 @@ class _BoardChatDrawerState extends State<BoardChatDrawer> {
         final currentUserId = state.currentUserId.isNotEmpty
             ? state.currentUserId
             : (context.read<AuthService?>()?.getCurrentUserId() ??
-                state.boardMembers
-                    .where((m) => m.role == state.currentUserRole)
-                    .map((m) => m.uid)
-                    .firstOrNull);
+                  state.boardMembers
+                      .where((m) => m.role == state.currentUserRole)
+                      .map((m) => m.uid)
+                      .firstOrNull);
 
         final topInset = MediaQuery.of(context).padding.top + 64;
 
@@ -90,9 +90,7 @@ class _BoardChatDrawerState extends State<BoardChatDrawer> {
                   ),
                   decoration: BoxDecoration(
                     border: Border(
-                      bottom: BorderSide(
-                        color: tokens.glassStroke,
-                      ),
+                      bottom: BorderSide(color: tokens.glassStroke),
                     ),
                   ),
                   child: Row(
@@ -103,18 +101,19 @@ class _BoardChatDrawerState extends State<BoardChatDrawer> {
                         color: tokens.accent,
                       ),
                       const SizedBox(width: InkSpacing.s8),
-                      Text(
-                        'Board Chat',
-                        style: InkType.subhead(tokens.ink),
-                      ),
+                      Text('Board Chat', style: InkType.subhead(tokens.ink)),
                       const Spacer(),
                       IconButton(
-                        icon: Icon(LucideIcons.x, size: 18, color: tokens.inkMuted),
+                        icon: Icon(
+                          LucideIcons.x,
+                          size: 18,
+                          color: tokens.inkMuted,
+                        ),
                         tooltip: 'Close chat',
                         onPressed: () {
-                          context
-                              .read<CanvasBloc>()
-                              .add(const CanvasToggleChatDrawer());
+                          context.read<CanvasBloc>().add(
+                            const CanvasToggleChatDrawer(),
+                          );
                         },
                       ),
                     ],
@@ -173,11 +172,7 @@ class _BoardChatDrawerState extends State<BoardChatDrawer> {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    border: Border(
-                      top: BorderSide(
-                        color: tokens.glassStroke,
-                      ),
-                    ),
+                    border: Border(top: BorderSide(color: tokens.glassStroke)),
                   ),
                   child: Row(
                     children: [
@@ -213,7 +208,11 @@ class _BoardChatDrawerState extends State<BoardChatDrawer> {
                           onTap: _sendMessage,
                           child: const Padding(
                             padding: EdgeInsets.all(10.0),
-                            child: Icon(LucideIcons.send, size: 16, color: Colors.white),
+                            child: Icon(
+                              LucideIcons.send,
+                              size: 16,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
@@ -252,26 +251,25 @@ class _ChatMessageBubble extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Column(
-        crossAxisAlignment:
-            isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment: isMe
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
         children: [
           if (!isMe)
             Padding(
               padding: const EdgeInsets.only(left: 4, bottom: 2),
               child: Text(
                 message.senderName,
-                style: InkType.caption(tokens.accent).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                style: InkType.caption(
+                  tokens.accent,
+                ).copyWith(fontWeight: FontWeight.bold),
               ),
             ),
           Container(
             constraints: const BoxConstraints(maxWidth: 240),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: isMe
-                  ? tokens.accent
-                  : tokens.paper,
+              color: isMe ? tokens.accent : tokens.paper,
               borderRadius: BorderRadius.only(
                 topLeft: const Radius.circular(14),
                 topRight: const Radius.circular(14),

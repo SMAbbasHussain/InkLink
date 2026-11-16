@@ -1,5 +1,6 @@
 enum CanvasToolMode {
   select,
+  hand,
   doodle,
   eraser,
   shape,
@@ -7,4 +8,5 @@ enum CanvasToolMode {
   arrow,
   image,
   highlight,
+  fill,
 }

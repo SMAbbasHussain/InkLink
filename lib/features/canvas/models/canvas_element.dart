@@ -24,7 +24,7 @@ sealed class CanvasElement {
 
   static CanvasElement fromMap(String id, Map<String, dynamic> data) {
     final type = data['type'] as String;
-    final z = data['z'] as int? ?? 0;
+    final z = (data['z'] as num?)?.toInt() ?? 0;
     switch (type) {
       case 'stroke':
         final rawType = data['brushType'] as String? ?? 'solid';
@@ -34,7 +34,7 @@ sealed class CanvasElement {
           z: z,
           hidden: data['hidden'] as bool? ?? false,
           locked: data['locked'] as bool? ?? false,
-          color: Color(data['color'] as int),
+          color: Color((data['color'] as num).toInt()),
           strokeWidth: (data['strokeWidth'] as num).toDouble(),
           opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
           brushType: rawType,
@@ -54,13 +54,33 @@ sealed class CanvasElement {
                   ?.map((p) => (p as num).toDouble())
                   .toList() ??
               const [],
+          tilts:
+              (data['tilts'] as List<dynamic>?)
+                  ?.map((t) => (t as num).toDouble())
+                  .toList() ??
+              const [],
           spacing: (data['spacing'] as num?)?.toDouble() ?? 0.25,
           textureSeed: (data['textureSeed'] as num?)?.toInt() ?? 0,
+          fillColor: data['fillColor'] == null
+              ? null
+              : Color((data['fillColor'] as num).toInt()),
         );
       case 'shape':
         final shapeType = CanvasShapeType.values.byName(
           data['shapeType'] as String,
         );
+        final legacyFilled = data['isFilled'] as bool? ?? false;
+        final rawFillMode = data['fillMode'] as String?;
+        final fillMode =
+            rawFillMode != null &&
+                const {
+                  'none',
+                  'solid',
+                  'linear',
+                  'radial',
+                }.contains(rawFillMode)
+            ? rawFillMode
+            : (legacyFilled ? 'solid' : 'none');
         return ShapeElement(
           id: id,
           z: z,
@@ -75,13 +95,24 @@ sealed class CanvasElement {
           size: (data['size'] as num).toDouble(),
           width: (data['width'] as num?)?.toDouble() ?? 0,
           height: (data['height'] as num?)?.toDouble() ?? 0,
-          color: Color(data['color'] as int),
+          color: Color((data['color'] as num).toInt()),
           strokeWidth: (data['strokeWidth'] as num).toDouble(),
           strokeOpacity: (data['strokeOpacity'] as num?)?.toDouble() ?? 1.0,
           dashPattern: (data['dashPattern'] as List<dynamic>?)
               ?.map((d) => (d as num).toDouble())
               .toList(growable: false),
-          isFilled: data['isFilled'] as bool? ?? false,
+          isFilled: fillMode != 'none',
+          fillMode: fillMode,
+          fillColor: data['fillColor'] == null
+              ? null
+              : Color((data['fillColor'] as num).toInt()),
+          gradientStart: data['gradientStart'] == null
+              ? null
+              : Color((data['gradientStart'] as num).toInt()),
+          gradientEnd: data['gradientEnd'] == null
+              ? null
+              : Color((data['gradientEnd'] as num).toInt()),
+          gradientAngle: (data['gradientAngle'] as num?)?.toDouble() ?? 0,
           rotation: (data['rotation'] as num?)?.toDouble() ?? 0,
           borderRadius: (data['borderRadius'] as num?)?.toDouble() ?? 0,
           label: data['label'] as String? ?? '',
@@ -176,7 +207,7 @@ sealed class CanvasElement {
               (data['size'] as num?)?.toDouble() ??
               160,
           text: data['text'] as String? ?? '',
-          color: Color(data['color'] as int? ?? 0xFFFFF9A6),
+          color: Color((data['color'] as num?)?.toInt() ?? 0xFFFFF9A6),
           rotation: (data['rotation'] as num?)?.toDouble() ?? 0,
           fontSize: (data['fontSize'] as num?)?.toDouble() ?? 14,
           fontWeight: (data['fontWeight'] as num?)?.toInt() ?? 500,
@@ -184,6 +215,23 @@ sealed class CanvasElement {
           textAlign: data['textAlign'] as String? ?? 'left',
           autoSize: data['autoSize'] as bool? ?? false,
           authorUid: data['authorUid'] as String?,
+        );
+      case 'frame':
+        return FrameElement(
+          id: id,
+          z: z,
+          hidden: data['hidden'] as bool? ?? false,
+          locked: data['locked'] as bool? ?? false,
+          opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          center: Offset(
+            (data['cx'] as num?)?.toDouble() ?? 0,
+            (data['cy'] as num?)?.toDouble() ?? 0,
+          ),
+          width: (data['width'] as num?)?.toDouble() ?? 480,
+          height: (data['height'] as num?)?.toDouble() ?? 320,
+          title: data['title'] as String? ?? '',
+          color: Color((data['color'] as num?)?.toInt() ?? 0xFF64748B),
+          cornerRadius: (data['cornerRadius'] as num?)?.toDouble() ?? 12,
         );
       case 'layer':
         return LayerElement(
@@ -193,6 +241,7 @@ sealed class CanvasElement {
           locked: data['locked'] as bool? ?? false,
           opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
           name: data['name'] as String? ?? 'Layer',
+          blendMode: data['blendMode'] as String? ?? 'normal',
           elementIds: (data['elementIds'] as List<dynamic>? ?? const [])
               .map((value) => value as String)
               .toList(growable: false),
@@ -217,7 +266,7 @@ sealed class CanvasElement {
           ),
           endAnchor: data['endAnchor'] as String? ?? 'center',
           lineStyle: data['lineStyle'] as String? ?? 'straight',
-          color: Color(data['color'] as int? ?? 0xFF000000),
+          color: Color((data['color'] as num?)?.toInt() ?? 0xFF000000),
           strokeWidth: (data['strokeWidth'] as num?)?.toDouble() ?? 2.5,
           hasArrowhead:
               data['endArrowhead'] as bool? ??
@@ -266,8 +315,17 @@ class StrokeElement extends CanvasElement {
   final String brushType;
   final String brushId;
   final List<double> pressures;
+
+  /// Stylus tilt per point in radians (0 = upright). Empty on mouse/touch and
+  /// on strokes recorded before tilt support.
+  final List<double> tilts;
   final double spacing;
   final int textureSeed;
+
+  /// Interior colour for a closed freehand shape. Null keeps the stroke
+  /// unfilled. The fill follows the stroke's closed outline and is painted
+  /// beneath the ink on canvas and in exports.
+  final Color? fillColor;
 
   const StrokeElement({
     required super.id,
@@ -281,9 +339,46 @@ class StrokeElement extends CanvasElement {
     this.brushType = 'solid',
     String? brushId,
     this.pressures = const [],
+    this.tilts = const [],
     this.spacing = 0.15,
     this.textureSeed = 0,
+    this.fillColor,
   }) : brushId = brushId ?? brushType;
+
+  StrokeElement copyWith({
+    String? id,
+    int? z,
+    List<Offset>? points,
+    Color? color,
+    double? strokeWidth,
+    bool? hidden,
+    bool? locked,
+    double? opacity,
+    String? brushType,
+    String? brushId,
+    List<double>? pressures,
+    List<double>? tilts,
+    double? spacing,
+    int? textureSeed,
+    Color? fillColor,
+    bool clearFillColor = false,
+  }) => StrokeElement(
+    id: id ?? this.id,
+    z: z ?? this.z,
+    points: points ?? this.points,
+    color: color ?? this.color,
+    strokeWidth: strokeWidth ?? this.strokeWidth,
+    hidden: hidden ?? this.hidden,
+    locked: locked ?? this.locked,
+    opacity: opacity ?? this.opacity,
+    brushType: brushType ?? this.brushType,
+    brushId: brushId ?? this.brushId,
+    pressures: pressures ?? this.pressures,
+    tilts: tilts ?? this.tilts,
+    spacing: spacing ?? this.spacing,
+    textureSeed: textureSeed ?? this.textureSeed,
+    fillColor: clearFillColor ? null : (fillColor ?? this.fillColor),
+  );
 
   @override
   Map<String, dynamic> toMap() => {
@@ -298,8 +393,10 @@ class StrokeElement extends CanvasElement {
     'brushId': brushId,
     'points': points.map((p) => {'x': p.dx, 'y': p.dy}).toList(growable: false),
     if (pressures.isNotEmpty) 'pressures': pressures,
+    if (tilts.isNotEmpty) 'tilts': tilts,
     'spacing': spacing,
     'textureSeed': textureSeed,
+    if (fillColor != null) 'fillColor': fillColor!.value,
   };
 
   @override
@@ -313,8 +410,10 @@ class StrokeElement extends CanvasElement {
           brushId == other.brushId &&
           spacing == other.spacing &&
           textureSeed == other.textureSeed &&
+          fillColor == other.fillColor &&
           _listEquals(points, other.points) &&
-          _doubleListEquals(pressures, other.pressures);
+          _doubleListEquals(pressures, other.pressures) &&
+          _doubleListEquals(tilts, other.tilts);
 
   @override
   int get hashCode =>
@@ -325,7 +424,9 @@ class StrokeElement extends CanvasElement {
       brushId.hashCode ^
       spacing.hashCode ^
       textureSeed.hashCode ^
-      Object.hashAll(points);
+      fillColor.hashCode ^
+      Object.hashAll(points) ^
+      Object.hashAll(tilts);
 
   static bool _listEquals(List<Offset> a, List<Offset> b) {
     if (a.length != b.length) return false;
@@ -367,6 +468,25 @@ class ShapeElement extends CanvasElement {
   /// Dash lengths in logical pixels (on, off, …). null/empty means solid.
   final List<double>? dashPattern;
   final bool isFilled;
+
+  /// `none`, `solid`, `linear` or `radial`. The source of truth for fill;
+  /// [isFilled] is kept in sync for legacy payload readers.
+  final String fillMode;
+  final Color? fillColor;
+  final Color? gradientStart;
+  final Color? gradientEnd;
+
+  /// Gradient direction in degrees; 0 points left-to-right.
+  final double gradientAngle;
+
+  /// Resolves the fill mode while honoring legacy `isFilled` payloads.
+  String get effectiveFillMode =>
+      fillMode != 'none' ? fillMode : (isFilled ? 'solid' : 'none');
+
+  Color get resolvedFillColor => fillColor ?? color;
+  Color get resolvedGradientStart => gradientStart ?? resolvedFillColor;
+  Color get resolvedGradientEnd => gradientEnd ?? Colors.white;
+
   final double rotation;
   final double borderRadius;
 
@@ -398,6 +518,11 @@ class ShapeElement extends CanvasElement {
     this.strokeOpacity = 1,
     this.dashPattern,
     this.isFilled = false,
+    this.fillMode = 'none',
+    this.fillColor,
+    this.gradientStart,
+    this.gradientEnd,
+    this.gradientAngle = 0,
     this.rotation = 0,
     this.borderRadius = 0,
     this.label = '',
@@ -426,7 +551,12 @@ class ShapeElement extends CanvasElement {
     'strokeWidth': strokeWidth,
     'strokeOpacity': strokeOpacity,
     if (dashPattern != null) 'dashPattern': dashPattern,
-    'isFilled': isFilled,
+    'isFilled': effectiveFillMode != 'none',
+    'fillMode': effectiveFillMode,
+    if (fillColor != null) 'fillColor': fillColor!.value,
+    if (gradientStart != null) 'gradientStart': gradientStart!.value,
+    if (gradientEnd != null) 'gradientEnd': gradientEnd!.value,
+    'gradientAngle': gradientAngle,
     'rotation': rotation,
     'borderRadius': borderRadius,
     'label': label,
@@ -452,7 +582,11 @@ class ShapeElement extends CanvasElement {
           strokeWidth == other.strokeWidth &&
           strokeOpacity == other.strokeOpacity &&
           _dashEquals(dashPattern, other.dashPattern) &&
-          isFilled == other.isFilled &&
+          effectiveFillMode == other.effectiveFillMode &&
+          fillColor == other.fillColor &&
+          gradientStart == other.gradientStart &&
+          gradientEnd == other.gradientEnd &&
+          gradientAngle == other.gradientAngle &&
           rotation == other.rotation &&
           borderRadius == other.borderRadius &&
           label == other.label &&
@@ -475,7 +609,12 @@ class ShapeElement extends CanvasElement {
       strokeWidth.hashCode ^
       strokeOpacity.hashCode ^
       Object.hashAll(dashPattern ?? const []) ^
-      isFilled.hashCode ^
+      effectiveFillMode.hashCode ^
+      fillMode.hashCode ^
+      fillColor.hashCode ^
+      gradientStart.hashCode ^
+      gradientEnd.hashCode ^
+      gradientAngle.hashCode ^
       rotation.hashCode ^
       borderRadius.hashCode ^
       label.hashCode ^
@@ -936,12 +1075,113 @@ class StickyNoteElement extends CanvasElement {
   );
 }
 
+/// A titled region that groups other elements visually.
+///
+/// V1 membership is geometric: any element whose bounds sit fully inside the
+/// frame belongs to it, so no per-element parent field or migration is needed.
+/// Moving a frame moves its contents in one transaction. Frames are ordinary
+/// elements (CRDT type `frame`) with the lowest `z`, so contents stay above the
+/// background.
+class FrameElement extends CanvasElement {
+  final Offset center;
+  final double width;
+  final double height;
+  final String title;
+  final Color color;
+  final double cornerRadius;
+
+  static const double defaultWidth = 480;
+  static const double defaultHeight = 320;
+  static const double titleBarHeight = 32;
+
+  const FrameElement({
+    required super.id,
+    required super.z,
+    super.hidden,
+    super.locked,
+    super.opacity,
+    required this.center,
+    this.width = defaultWidth,
+    this.height = defaultHeight,
+    this.title = '',
+    this.color = const Color(0xFF64748B),
+    this.cornerRadius = 12,
+  });
+
+  FrameElement copyWith({
+    int? z,
+    bool? hidden,
+    bool? locked,
+    double? opacity,
+    Offset? center,
+    double? width,
+    double? height,
+    String? title,
+    Color? color,
+    double? cornerRadius,
+  }) => FrameElement(
+    id: id,
+    z: z ?? this.z,
+    hidden: hidden ?? this.hidden,
+    locked: locked ?? this.locked,
+    opacity: opacity ?? this.opacity,
+    center: center ?? this.center,
+    width: width ?? this.width,
+    height: height ?? this.height,
+    title: title ?? this.title,
+    color: color ?? this.color,
+    cornerRadius: cornerRadius ?? this.cornerRadius,
+  );
+
+  @override
+  Map<String, dynamic> toMap() => {
+    'type': 'frame',
+    'z': z,
+    'hidden': hidden,
+    'locked': locked,
+    'opacity': opacity,
+    'cx': center.dx,
+    'cy': center.dy,
+    'width': width,
+    'height': height,
+    'title': title,
+    'color': color.toARGB32(),
+    'cornerRadius': cornerRadius,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FrameElement &&
+          super == other &&
+          center == other.center &&
+          width == other.width &&
+          height == other.height &&
+          title == other.title &&
+          color == other.color &&
+          cornerRadius == other.cornerRadius;
+
+  @override
+  int get hashCode => Object.hash(
+    super.hashCode,
+    center,
+    width,
+    height,
+    title,
+    color,
+    cornerRadius,
+  );
+}
+
 /// A named group of elements. Layers are organisational: painting still uses
 /// each element's own `z`, and membership is stored as element ids on the
 /// layer so element payloads stay unchanged.
 class LayerElement extends CanvasElement {
   final String name;
   final List<String> elementIds;
+
+  /// `normal`, `multiply`, `screen`, `overlay`, `darken` or `lighten`.
+  final String blendMode;
 
   const LayerElement({
     required super.id,
@@ -951,6 +1191,7 @@ class LayerElement extends CanvasElement {
     super.opacity,
     this.name = 'Layer',
     this.elementIds = const [],
+    this.blendMode = 'normal',
   });
 
   @override
@@ -962,6 +1203,7 @@ class LayerElement extends CanvasElement {
     'opacity': opacity,
     'name': name,
     'elementIds': elementIds,
+    'blendMode': blendMode,
   };
 
   @override
@@ -970,6 +1212,7 @@ class LayerElement extends CanvasElement {
       other is LayerElement &&
           super == other &&
           name == other.name &&
+          blendMode == other.blendMode &&
           elementIds.length == other.elementIds.length &&
           elementIds.indexed.every(
             (entry) => other.elementIds[entry.$1] == entry.$2,
@@ -977,7 +1220,10 @@ class LayerElement extends CanvasElement {
 
   @override
   int get hashCode =>
-      super.hashCode ^ name.hashCode ^ Object.hashAll(elementIds);
+      super.hashCode ^
+      name.hashCode ^
+      blendMode.hashCode ^
+      Object.hashAll(elementIds);
 }
 
 class ConnectorElement extends CanvasElement {

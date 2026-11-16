@@ -49,7 +49,9 @@ class VoiceParticipant {
       uid: map['uid'] as String? ?? '',
       displayName: map['displayName'] as String? ?? 'Anonymous',
       photoUrl: map['photoUrl'] as String?,
-      joinedAt: (map['joinedAt'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch,
+      joinedAt:
+          (map['joinedAt'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
       isSpeaking: map['isSpeaking'] as bool? ?? false,
       isMuted: map['isMuted'] as bool? ?? false,
     );
