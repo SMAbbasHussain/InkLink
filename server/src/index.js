@@ -6,6 +6,12 @@ const admin = require('firebase-admin');
 const cors = require('cors');
 const Y = require('yjs');
 const crypto = require('crypto');
+const historyR2 = require('./history/r2');
+const { getProfile } = require('./history/profiles');
+const { reconstruct } = require('./history/reconstruct');
+const { buildPlan, applyPlan, collectUserOps, describeOps, UNDO_WINDOW_MS } = require('./history/revert');
+const { buildUserTimeline } = require('./history/timeline');
+const { describeChange, summarizeOperation } = require('./history/describe');
 // Official Agora token generator for Node. NOTE: the npm package is
 // "agora-token" (verified against registry.npmjs.org in Oct 2026 —
 // "agora-token-builder" does not exist on npm; only the Dart/Flutter and
@@ -828,36 +834,47 @@ function buildAgoraRtcToken(appId, appCertificate, channelName) {
 
 // ============================================================
 // REDIS LUA SCRIPT — atomic append to board op log
-// KEYS[1] = board:{boardId}:version       (INCR counter)
-// KEYS[2] = board_updates:{boardId}       (STREAM)
-// KEYS[3] = board:dedup:{boardId}         (SET for dedup)
-// ARGV[1] = maxlen                        (e.g., "1000")
-// ARGV[2] = updateId
-// ARGV[3] = payloadBase64
-// ARGV[4] = elementId
-// ARGV[5] = sourceClientId
-// ARGV[6] = timestamp (ISO8601)
-// ARGV[7] = _singleUser ("true"|"false")
+// KEYS[1] = board:{boardId}:version          (INCR counter)
+// KEYS[2] = board_updates:{boardId}          (STREAM)
+// KEYS[3] = board:dedup:{boardId}:{slot}     (dedup set, current hour)
+// KEYS[4] = board:dedup:{boardId}:{slot-1}   (dedup set, previous hour)
+// ARGV[1] = updateId
+// ARGV[2] = payloadBase64
+// ARGV[3] = elementId
+// ARGV[4] = uid (server-authenticated author — D9)
+// ARGV[5] = timestamp (ISO8601)
+// ARGV[6] = _singleUser ("true"|"false")
+// ARGV[7] = userDisplayName
+// ARGV[8] = action (client hint; truth is derived by the archiver)
+// ARGV[9] = restoredFromVersion (empty unless a restore op)
 // Returns: version number, or -1 if duplicate
+//
+// NOTE: no MAXLEN here (fixes B2). Trimming happens ONLY in the archive worker
+// after a durable archive; the stream is bounded by the archive cadence.
+// The two-slot dedup set is bounded to ~2 hours, so it cannot grow forever.
 // ============================================================
 const APPEND_UPDATE_LUA = `
-local seen = redis.call('SADD', KEYS[3], ARGV[2])
+if redis.call('SISMEMBER', KEYS[4], ARGV[1]) == 1 then return -1 end
+local seen = redis.call('SADD', KEYS[3], ARGV[1])
 if seen == 0 then
   return -1
 end
-redis.call('EXPIRE', KEYS[3], 3600)
+redis.call('EXPIRE', KEYS[3], 7200)
 local version = redis.call('INCR', KEYS[1])
 -- Refresh the version key TTL on every append so it can never expire while
 -- the board is active (a version reset would rewind the snapshot cursor).
 redis.call('EXPIRE', KEYS[1], 604800)
-redis.call('XADD', KEYS[2], 'MAXLEN', '~', ARGV[1], '*',
+redis.call('XADD', KEYS[2], '*',
   'version', version,
-  'updateId', ARGV[2],
-  'payloadBase64', ARGV[3],
-  'elementId', ARGV[4],
-  'sourceClientId', ARGV[5],
-  'timestamp', ARGV[6],
-  '_singleUser', ARGV[7]
+  'updateId', ARGV[1],
+  'payloadBase64', ARGV[2],
+  'elementId', ARGV[3],
+  'sourceClientId', ARGV[4],
+  'timestamp', ARGV[5],
+  '_singleUser', ARGV[6],
+  'userDisplayName', ARGV[7],
+  'action', ARGV[8],
+  'restoredFromVersion', ARGV[9]
 )
 return version
 `;
@@ -873,6 +890,151 @@ redis.on('connect', async () => {
     console.warn('⚠ Failed to load Lua script:', e.message);
   }
 });
+
+// ============================================================
+// BOARD HISTORY — shared helpers
+// ============================================================
+
+function dedupKeys(boardId) {
+  const slot = Math.floor(Date.now() / 3600000);
+  return {
+    current: `board:dedup:${boardId}:${slot}`,
+    previous: `board:dedup:${boardId}:${slot - 1}`,
+  };
+}
+
+// Atomic append to the board op log. `uid` is the authenticated author (D9).
+async function appendToStream(boardId, {
+  updateId,
+  payloadBase64,
+  elementId,
+  uid,
+  timestamp,
+  singleUser,
+  userDisplayName,
+  action,
+  restoredFromVersion,
+}) {
+  const dedup = dedupKeys(boardId);
+  const args = [
+    updateId,
+    payloadBase64,
+    elementId || '',
+    uid || '',
+    timestamp || new Date().toISOString(),
+    singleUser ? 'true' : 'false',
+    userDisplayName || 'InkLink User',
+    action || 'upsert',
+    restoredFromVersion == null ? '' : String(restoredFromVersion),
+  ];
+  const keys = [
+    `board:${boardId}:version`,
+    `board_updates:${boardId}`,
+    dedup.current,
+    dedup.previous,
+  ];
+
+  if (appendUpdateSha) {
+    try {
+      return await redis.evalsha(appendUpdateSha, 4, ...keys, ...args);
+    } catch (shaError) {
+      if (!(shaError.message && shaError.message.includes('NOSCRIPT'))) throw shaError;
+    }
+  }
+  return redis.eval(APPEND_UPDATE_LUA, 4, ...keys, ...args);
+}
+
+// Element ids present in the current materialized snapshot (used to tell
+// members which elements a clear removed, D14).
+async function readCurrentElementIds(boardId) {
+  if (!db) return [];
+  try {
+    const snap = await db.collection('boards').doc(boardId)
+      .collection('snapshot').doc('latest').get();
+    if (!snap.exists) return [];
+    const stateUpdate = (snap.data() || {}).stateUpdate;
+    if (!stateUpdate) return [];
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, Buffer.from(stateUpdate, 'base64'));
+    return [...doc.getMap('elements').keys()];
+  } catch (_) {
+    return [];
+  }
+}
+
+// Owner check with a short-lived cache (history is owner-only, D3).
+const boardOwnerCache = new Map(); // `${boardId}:${uid}` -> { isOwner, expiresAt }
+
+async function isBoardOwner(boardId, uid) {
+  if (!uid || !boardId || !db) return false;
+  const key = `${boardId}:${uid}`;
+  const hit = boardOwnerCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.isOwner;
+  let isOwner = false;
+  try {
+    const doc = await db.collection('boards').doc(boardId).get();
+    isOwner = doc.exists && (doc.data() || {}).ownerId === uid;
+  } catch (_) {
+    isOwner = false;
+  }
+  boardOwnerCache.set(key, { isOwner, expiresAt: Date.now() + ACCESS_CACHE_TTL_MS });
+  return isOwner;
+}
+
+// Append a server-generated compensating op (revert/undo_own/restore) and
+// broadcast it. Per-element reverts do NOT force a flush; full-board restores do
+// (D13) and abort the whole operation if the checkpoint cannot be written.
+async function appendAndBroadcast(boardId, {
+  updateId,
+  payloadBase64,
+  uid,
+  elementId,
+  action,
+  displayName,
+  restoredFromVersion,
+  affectedElementIds,
+}) {
+  if (!redisAvailable) throw new Error('append failed');
+
+  if (action === 'clear' || action === 'restore') {
+    await triggerSnapshot(boardId, { force: true });
+  }
+
+  await seedRedisFromFirestore(boardId);
+  const version = await appendToStream(boardId, {
+    updateId,
+    payloadBase64,
+    elementId,
+    uid,
+    timestamp: new Date().toISOString(),
+    singleUser: false,
+    userDisplayName: displayName,
+    action,
+    restoredFromVersion,
+  });
+  if (version === -1 || version === null || version === undefined) {
+    throw new Error('append failed');
+  }
+
+  redis.set(`board:lastActivity:${boardId}`, Date.now().toString(), 'EX', 604800).catch(() => { });
+
+  io.to(`board_room:${boardId}`).emit('crdt_update', {
+    boardId,
+    update: {
+      updateId,
+      payloadBase64,
+      sourceClientId: uid,
+      elementId: elementId || null,
+      version,
+      action,
+      affectedElementIds: affectedElementIds || [],
+      restoredFromVersion: restoredFromVersion == null ? null : restoredFromVersion,
+    },
+  });
+
+  maybeTriggerArchive(boardId, version);
+  return version;
+}
 
 // ============================================================
 // PARSE REDIS STREAM ENTRY (field-value array → object)
@@ -892,13 +1054,18 @@ function parseStreamEntry(fields) {
 // ============================================================
 async function seedRedisFromFirestore(boardId) {
   if (!redisAvailable || !db) return;
-  if (seededBoards.has(boardId)) return;
   const versionKey = `board:${boardId}:version`;
   const exists = await redis.exists(versionKey);
   if (exists) {
     seededBoards.add(boardId);
     return;
   }
+  // The version key carries a 7-day TTL and Redis can be flushed/restarted
+  // while this process stays up. `seededBoards` is process-local, so trusting
+  // it here let INCR silently restart at 1: version numbers rewound below the
+  // last snapshot version and archiving stalled for the board. Always verify
+  // the key actually exists; the set only spares us the Firestore read.
+  seededBoards.delete(boardId);
 
   try {
     const snap = await db.collection('boards').doc(boardId)
@@ -908,11 +1075,14 @@ async function seedRedisFromFirestore(boardId) {
       const p = redis.pipeline();
       if (data.lastAppliedVersion) {
         p.set(versionKey, data.lastAppliedVersion.toString(), 'EX', 604800);
+        p.set(`board:lastSnapshotVersion:${boardId}`, data.lastAppliedVersion.toString(), 'EX', 604800);
         console.log(`[seed] Board ${boardId}: version seeded to ${data.lastAppliedVersion} from Firestore`);
       }
       if (data.lastAppliedStreamId) {
         p.set(`board:lastSnapshotCursor:${boardId}`, data.lastAppliedStreamId, 'EX', 604800);
-        p.set(`board:lastSnapshotVersion:${boardId}`, (data.lastAppliedVersion || 0).toString(), 'EX', 604800);
+        if (!data.lastAppliedVersion) {
+          p.set(`board:lastSnapshotVersion:${boardId}`, '0', 'EX', 604800);
+        }
       }
       await p.exec();
     } else {
@@ -927,7 +1097,47 @@ async function seedRedisFromFirestore(boardId) {
 // ============================================================
 // SNAPSHOT WORKER (Phase 3)
 // ============================================================
-async function triggerSnapshot(boardId) {
+//
+// Per-board snapshot mutex. The forced pre-clear/restore flush (D13) must wait
+// for any in-flight archive and then run a fresh pass, so this guard is
+// awaitable and supports `force`.
+// ============================================================
+const snapshotInFlight = new Map(); // boardId -> Promise<void>
+const ARCHIVE_BLOCK_OPS = 100;
+
+async function maybeTriggerArchive(boardId, version) {
+  if (!redisAvailable || version === null || version === undefined || version <= 0) return;
+  try {
+    const lastVerStr = await redis.get(`board:lastSnapshotVersion:${boardId}`);
+    const lastSnapshotVersion = parseInt(lastVerStr || '0', 10) || 0;
+    if (version - lastSnapshotVersion >= ARCHIVE_BLOCK_OPS) {
+      await triggerSnapshot(boardId);
+    }
+  } catch (e) {
+    console.warn(`[snapshot] trigger failed for ${boardId}: ${e.message}`);
+  }
+}
+
+async function triggerSnapshot(boardId, { force = false } = {}) {
+  if (snapshotInFlight.has(boardId)) {
+    if (!force) return snapshotInFlight.get(boardId);
+    // force: drain ALL in-flight passes, then run our own.
+    while (snapshotInFlight.has(boardId)) {
+      try {
+        await snapshotInFlight.get(boardId);
+      } catch (_) {
+        /* our own pass retries the same range */
+      }
+    }
+  }
+  const p = (async () => {
+    await runSnapshot(boardId);
+  })().finally(() => snapshotInFlight.delete(boardId));
+  snapshotInFlight.set(boardId, p);
+  return p;
+}
+
+async function runSnapshot(boardId) {
   if (!redisAvailable || !db) {
     console.warn(`[snapshot] Skipped board ${boardId}: Redis or Firestore unavailable`);
     return;
@@ -981,16 +1191,80 @@ async function triggerSnapshot(boardId) {
       console.warn(`[snapshot] Could not load prior snapshot for board ${boardId}: ${e.message} — rebuilding from stream`);
     }
   }
+  const elementsMap = doc.getMap('elements');
+  const rawOps = [];
+  const profileCache = new Map();
+
+  // Resolve each distinct author once (getProfile is cached for 10 minutes).
+  const authorUids = [...new Set(entries.map(e => e.sourceClientId).filter(Boolean))];
+  await Promise.all(authorUids.map(async (authorUid) => {
+    try {
+      profileCache.set(authorUid, await getProfile(authorUid));
+    } catch (_) {
+      profileCache.set(authorUid, { displayName: 'InkLink User', photoURL: null });
+    }
+  }));
+
   for (const entry of entries) {
     // Single-user updates are persisted to the stream too — they must be
     // included in the snapshot or solo-board content would be lost.
     if (!entry.payloadBase64) continue;
+    const before = elementsMap.toJSON();
     try {
       const buffer = Buffer.from(entry.payloadBase64, 'base64');
       Y.applyUpdate(doc, buffer);
     } catch (e) {
       console.warn(`[snapshot] Skipping corrupt update ${entry.updateId}: ${e.message}`);
+      continue;
     }
+    const after = elementsMap.toJSON();
+
+    // Authoritative per-element diff — never the client hint (§5.6).
+    // Only the one-line `detail` is archived; the field-level diff table is
+    // rebuilt live by buildPlan, so blocks do not carry per-field rows.
+    const changes = [];
+    for (const key of Object.keys(after)) {
+      if (!(key in before)) {
+        changes.push({ elementId: key, kind: 'add', detail: describeChange(undefined, after[key]).detail });
+      } else if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+        changes.push({ elementId: key, kind: 'update', detail: describeChange(before[key], after[key]).detail });
+      }
+    }
+    for (const key of Object.keys(before)) {
+      if (!(key in after)) {
+        changes.push({ elementId: key, kind: 'delete', detail: describeChange(before[key], undefined).detail });
+      }
+    }
+
+    let action = entry.action;
+    if (action !== 'restore' && action !== 'revert') {
+      if (changes.length > 0 && changes.every(c => c.kind === 'delete')) {
+        action = Object.keys(after).length === 0 ? 'clear' : 'delete';
+      } else {
+        action = 'upsert';
+      }
+    }
+
+    const authorUid = entry.sourceClientId || '';
+    const profile = profileCache.get(authorUid)
+      || { displayName: 'InkLink User', photoURL: null };
+    const opRecord = {
+      version: entry.version,
+      updateId: entry.updateId,
+      userId: authorUid,
+      userDisplayName: profile.displayName,
+      userPhotoUrl: profile.photoURL || null,
+      elementId: entry.elementId || null,
+      action,
+      changes,
+      payloadBase64: entry.payloadBase64,
+      timestamp: entry.timestamp,
+      ...(entry.restoredFromVersion
+        ? { restoredFromVersion: parseInt(entry.restoredFromVersion, 10) }
+        : {}),
+    };
+    opRecord.summary = summarizeOperation(opRecord, changes);
+    rawOps.push(opRecord);
   }
 
   const stateUpdate = Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64');
@@ -1001,50 +1275,273 @@ async function triggerSnapshot(boardId) {
   const lastIncluded = entries.filter(e => e.version <= snapshotTargetVersion).pop();
   const lastAppliedStreamId = lastIncluded ? lastIncluded._streamId : lastCursor;
 
-  // 6. Write to Firestore
+  // 6. Archive the block to private R2 + checkpoint the exact block-end state,
+  //    then commit the Firestore batch (snapshot + activity index).
+  const fromVersion = lastSnapshotVersion + 1;
+  const toVersion = snapshotTargetVersion;
+  const pad6 = (n) => String(n).padStart(6, '0');
+  const blockId = `block_${pad6(fromVersion)}_${pad6(toVersion)}`;
+  const r2BlockKey = `${boardId}/blocks/ops_v${pad6(fromVersion)}_v${pad6(toVersion)}.json.gz`;
+  const milestoneKey = `${boardId}/milestones/state_v${toVersion}.bin.gz`;
+
   const snapshotRef = db.collection('boards').doc(boardId)
     .collection('snapshot').doc('latest');
+  const indexRef = db.collection('boards').doc(boardId)
+    .collection('activity_index').doc(blockId);
+
+  const summary = {};
+  for (const op of rawOps) {
+    const authorKey = op.userId || 'unknown';
+    const s = summary[authorKey] || {
+      name: op.userDisplayName || 'InkLink User',
+      photoUrl: op.userPhotoUrl || null,
+      ops: 0,
+      adds: 0,
+      updates: 0,
+      deletes: 0,
+    };
+    s.ops++;
+    for (const change of op.changes) {
+      if (change.kind === 'add') s.adds++;
+      else if (change.kind === 'delete') s.deletes++;
+      else s.updates++;
+    }
+    summary[authorKey] = s;
+  }
+
+  let contributorUids = Object.keys(summary);
+  let summaryTruncated = false;
+  if (contributorUids.length > 200) {
+    contributorUids = contributorUids
+      .sort((a, b) => summary[b].ops - summary[a].ops)
+      .slice(0, 200);
+    const trimmed = {};
+    for (const authorKey of contributorUids) trimmed[authorKey] = summary[authorKey];
+    contributorUids.sort();
+    summaryTruncated = true;
+  }
+
+  const restores = rawOps
+    .filter(op => op.action === 'restore' && op.restoredFromVersion != null)
+    .slice(0, 20)
+    .map(op => ({
+      byUid: op.userId,
+      restoredFromVersion: op.restoredFromVersion,
+      atVersion: op.version,
+    }));
+
+  // Durable archive BEFORE any Firestore mutation or stream trim.
+  try {
+    await historyR2.putGzip(r2BlockKey, rawOps);
+    // Exactly ONE checkpoint per block, at the block-end version (D8).
+    await historyR2.putBytesGzip(
+      milestoneKey,
+      Buffer.from(Y.encodeStateAsUpdate(doc)),
+    );
+  } catch (e) {
+    console.warn(`[archive] R2 write FAILED for board ${boardId} (${blockId}): ${e.message} — will retry`);
+    return;
+  }
+
+  const batch = db.batch();
+  batch.set(snapshotRef, {
+    boardId,
+    lastAppliedVersion: toVersion,
+    lastAppliedStreamId,
+    stateUpdate,
+    stateVector,
+    elementCount,
+    snapshotVersion: lastSnapshotVersion + 1,
+    lastSnapshotAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: '__snapshot_worker__',
+  });
+  batch.set(indexRef, {
+    boardId,
+    blockId,
+    fromVersion,
+    toVersion,
+    operationCount: rawOps.length,
+    firstOpAt: rawOps.length ? rawOps[0].timestamp : null,
+    lastOpAt: rawOps.length ? rawOps[rawOps.length - 1].timestamp : null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    contributorUids,
+    summary,
+    ...(summaryTruncated ? { summaryTruncated: true } : {}),
+    ...(restores.length ? { restores } : {}),
+    r2BlockKey,
+    milestoneVersion: toVersion,
+  });
 
   try {
-    await snapshotRef.set({
-      boardId,
-      lastAppliedVersion: snapshotTargetVersion,
-      lastAppliedStreamId,
-      stateUpdate,
-      stateVector,
-      elementCount,
-      snapshotVersion: lastSnapshotVersion + 1,
-      lastSnapshotAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedBy: '__snapshot_worker__',
-    });
+    await batch.commit();
+  } catch (e) {
+    console.warn(`[archive] Firestore batch FAILED for board ${boardId}: ${e.message} — will retry`);
+    // Do NOT update the Redis cursor or trim — the next trigger retries.
+    return;
+  }
 
-    // 7 & 8. Update Redis cursor and trim stream at snapshot boundary atomically via pipeline
+  // 7. Only after the durable archive: move the cursor and trim the stream.
+  try {
     const p = redis.pipeline();
     p.set(snapshotCursorKey, lastAppliedStreamId, 'EX', 604800);
-    p.set(snapshotVersionKey, snapshotTargetVersion.toString(), 'EX', 604800);
+    p.set(snapshotVersionKey, toVersion.toString(), 'EX', 604800);
     p.xtrim(streamKey, 'MINID', lastAppliedStreamId);
     await p.exec();
-
-    console.log(`[snapshot] Board ${boardId}: v${lastSnapshotVersion} → v${snapshotTargetVersion} (${entries.length} updates, ${elementCount} elements)`);
   } catch (e) {
-    console.warn(`[snapshot] Firestore write FAILED for board ${boardId}: ${e.message} — will retry`);
-    // Do NOT update Redis cursor or trim — next attempt will include same entries
+    // The archive is idempotent (deterministic block key), so a retry is safe.
+    console.warn(`[archive] Redis trim FAILED for board ${boardId}: ${e.message}`);
   }
+
+  console.log(`[archive] Board ${boardId}: v${lastSnapshotVersion} → v${toVersion} (${rawOps.length} ops, ${elementCount} elements, ${blockId})`);
+}
+
+async function buildLiveTailBlock(boardId) {
+  if (!redisAvailable) return { block: null, ops: [] };
+  await seedRedisFromFirestore(boardId);
+
+  const streamKey = `board_updates:${boardId}`;
+  const versionKey = `board:${boardId}:version`;
+  const snapshotCursorKey = `board:lastSnapshotCursor:${boardId}`;
+  const snapshotVersionKey = `board:lastSnapshotVersion:${boardId}`;
+
+  const [targetVerStr, lastVerStr, lastCursorStr] = await redis.mget(
+    versionKey,
+    snapshotVersionKey,
+    snapshotCursorKey,
+  );
+  const currentVersion = parseInt(targetVerStr || '0', 10) || 0;
+  const lastSnapshotVersion = parseInt(lastVerStr || '0', 10) || 0;
+  if (currentVersion <= lastSnapshotVersion) {
+    return { block: null, ops: [] };
+  }
+
+  const lastCursor = lastCursorStr || '0-0';
+  const rawEntries = await redis.xrange(streamKey, lastCursor, '+');
+  const entries = (rawEntries || [])
+    .map(([id, fields]) => {
+      const entry = parseStreamEntry(fields);
+      entry._streamId = id;
+      return entry;
+    })
+    .filter(e => e.version > lastSnapshotVersion && e.version <= currentVersion)
+    .sort((a, b) => a.version - b.version);
+
+  if (entries.length === 0) {
+    return { block: null, ops: [] };
+  }
+
+  const localProfiles = new Map();
+  const authorUids = [...new Set(entries.map(e => e.sourceClientId).filter(Boolean))];
+  await Promise.all(authorUids.map(async (authorUid) => {
+    try {
+      localProfiles.set(authorUid, await getProfile(authorUid));
+    } catch (_) {
+      localProfiles.set(authorUid, { displayName: 'InkLink User', photoURL: null });
+    }
+  }));
+
+  const rawOps = entries.map((entry) => {
+    const authorUid = entry.sourceClientId || '';
+    const profile = localProfiles.get(authorUid)
+      || { displayName: entry.userDisplayName || 'InkLink User', photoURL: null };
+    return {
+      version: entry.version,
+      updateId: entry.updateId,
+      userId: authorUid,
+      userDisplayName: profile.displayName,
+      userPhotoUrl: profile.photoURL || null,
+      elementId: entry.elementId || null,
+      action: entry.action || 'upsert',
+      payloadBase64: entry.payloadBase64,
+      timestamp: entry.timestamp,
+      ...(entry.restoredFromVersion
+        ? { restoredFromVersion: parseInt(entry.restoredFromVersion, 10) }
+        : {}),
+    };
+  });
+
+  const describedOps = await describeOps(boardId, rawOps, redis);
+
+  const summary = {};
+  for (const op of describedOps) {
+    const authorKey = op.userId || 'unknown';
+    const s = summary[authorKey] || {
+      name: op.userDisplayName || 'InkLink User',
+      photoUrl: op.userPhotoUrl || null,
+      ops: 0,
+      adds: 0,
+      updates: 0,
+      deletes: 0,
+    };
+    s.ops++;
+    for (const change of (op.changes || [])) {
+      if (change.kind === 'add') s.adds++;
+      else if (change.kind === 'delete') s.deletes++;
+      else s.updates++;
+    }
+    summary[authorKey] = s;
+  }
+
+  let contributorUids = Object.keys(summary);
+  let summaryTruncated = false;
+  if (contributorUids.length > 200) {
+    contributorUids = contributorUids
+      .sort((a, b) => summary[b].ops - summary[a].ops)
+      .slice(0, 200);
+    const trimmed = {};
+    for (const authorKey of contributorUids) trimmed[authorKey] = summary[authorKey];
+    contributorUids.sort();
+    summaryTruncated = true;
+  }
+
+  const restores = describedOps
+    .filter(op => op.action === 'restore' && op.restoredFromVersion != null)
+    .slice(0, 20)
+    .map(op => ({
+      byUid: op.userId,
+      restoredFromVersion: op.restoredFromVersion,
+      atVersion: op.version,
+    }));
+
+  const fromVersion = describedOps[0].version;
+  const toVersion = describedOps[describedOps.length - 1].version;
+
+  const block = {
+    boardId,
+    blockId: 'live_tail',
+    fromVersion,
+    toVersion,
+    operationCount: describedOps.length,
+    firstOpAt: describedOps[0].timestamp || null,
+    lastOpAt: describedOps[describedOps.length - 1].timestamp || null,
+    contributorUids,
+    summary,
+    ...(summaryTruncated ? { summaryTruncated: true } : {}),
+    ...(restores.length ? { restores } : {}),
+    r2BlockKey: '',
+    milestoneVersion: null,
+  };
+
+  return { block, ops: describedOps };
 }
 
 // ============================================================
-// CLEANUP WORKER (Phase 3) — snapshot stale boards, then trim
+// INACTIVITY SAFETY-NET WORKER (Every 3 hours)
+// Flushes boards inactive for > 6 hours that have unarchived ops (< 100 ops).
 // ============================================================
+const INACTIVE_FLUSH_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
+const INACTIVE_BOARD_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours
+
 setInterval(async () => {
   if (!redisAvailable) return;
 
-  const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+  const inactiveCutoff = Date.now() - INACTIVE_BOARD_THRESHOLD_MS;
   const stream = redis.scanStream({ match: 'board:lastActivity:*', count: 100 });
 
   stream.on('error', (err) => {
     // Without an error listener, an unhandled 'error' event on the stream
     // throws and kills the process.
-    console.warn(`[cleanup] Scan stream error: ${err.message}`);
+    console.warn(`[inactivity-flush] Scan stream error: ${err.message}`);
   });
 
   stream.on('data', async (keys) => {
@@ -1054,49 +1551,28 @@ setInterval(async () => {
       for (let i = 0; i < keys.length; i++) {
         const key = keys[i];
         const boardId = key.replace('board:lastActivity:', '');
-        const lastActivity = parseInt(activities[i] || '0', 10);
-        if (lastActivity === 0 || lastActivity > threeDaysAgo) continue;
-        console.log(`[cleanup] Board ${boardId} inactive > 3 days — taking snapshot`);
-        await triggerSnapshot(boardId);
-      }
-    } catch (e) {
-      console.warn(`[cleanup] Failed for keys batch: ${e.message}`);
-    }
-  });
-}, 60 * 60 * 1000);
+        const lastActivity = parseInt(activities[i] || '0', 10) || 0;
+        if (lastActivity === 0 || lastActivity > inactiveCutoff) continue;
 
-// Snapshot worker loop — persists pending stream updates to Firestore every
-// 5 minutes. Without this, snapshots only happen on `% 100 === 0` appends or
-// after 3 days of inactivity, so a crash could lose up to ~100 acknowledged
-// updates for later joiners.
-setInterval(async () => {
-  if (!redisAvailable) return;
-  const stream = redis.scanStream({ match: 'board:lastActivity:*', count: 100 });
-
-  stream.on('error', (err) => {
-    console.warn(`[snapshot-loop] Scan stream error: ${err.message}`);
-  });
-
-  stream.on('data', async (keys) => {
-    if (!keys || keys.length === 0) return;
-    for (const key of keys) {
-      const boardId = key.replace('board:lastActivity:', '');
-      try {
         const [verStr, snapVerStr] = await redis.mget(
           `board:${boardId}:version`,
           `board:lastSnapshotVersion:${boardId}`,
         );
         const version = parseInt(verStr || '0', 10) || 0;
         const snapshotVersion = parseInt(snapVerStr || '0', 10) || 0;
-        if (version > snapshotVersion) {
+        const pendingOps = version - snapshotVersion;
+        if (pendingOps > 0) {
+          console.log(
+            `[inactivity-flush] Board ${boardId} inactive > 6h with ${pendingOps} unarchived op(s) (v${snapshotVersion} → v${version}) — taking snapshot`
+          );
           await triggerSnapshot(boardId);
         }
-      } catch (e) {
-        console.warn(`[snapshot-loop] Failed for board ${boardId}: ${e.message}`);
       }
+    } catch (e) {
+      console.warn(`[inactivity-flush] Failed for keys batch: ${e.message}`);
     }
   });
-}, 5 * 60 * 1000);
+}, INACTIVE_FLUSH_INTERVAL_MS);
 
 // ============================================================
 // SOCKET.IO AUTH MIDDLEWARE
@@ -1227,54 +1703,53 @@ io.on('connection', (socket) => {
       delete update._singleUser;
     }
 
+    // The client's action is a HINT only (§4.4). It triggers the D13 forced
+    // flush and labels the live stream; the archive worker derives the
+    // authoritative per-element action from the CRDT diff.
+    const actionHint = ['upsert', 'delete', 'clear'].includes(update.action)
+      ? update.action
+      : 'upsert';
+    const { displayName } = await getProfile(uid);
+
     try {
       // -------------------------------------------------------
       // PHASE 1: Atomic append to Redis STREAM via Lua script
-      // Single-user boards are persisted the same way (skip only the
-      // broadcast below) so the snapshot worker durably stores them —
-      // acking "success" without persisting would lose all solo work.
+      // Single-user and shared boards are persisted the same way so the
+      // snapshot worker durably stores them — acking "success" without
+      // persisting would lose work.
       // -------------------------------------------------------
       let version = null;
       let isDuplicate = false;
+      let clearedElementIds = [];
+
+      // D13: a clear may never be appended without a durable checkpoint at the
+      // exact pre-clear version. Abort (nothing appended/broadcast) on failure.
+      if (redisAvailable && actionHint === 'clear') {
+        try {
+          await triggerSnapshot(boardId, { force: true });
+          clearedElementIds = await readCurrentElementIds(boardId);
+        } catch (e) {
+          console.warn(`[crdt_update] Forced pre-clear flush failed for ${boardId}: ${e.message}`);
+          if (typeof ack === 'function') ack({ status: 'error', message: 'archive_unavailable' });
+          return;
+        }
+      }
 
       if (redisAvailable) {
         // Seed Redis version from Firestore if missing (handles Redis loss recovery)
         await seedRedisFromFirestore(boardId);
 
-        const now = new Date().toISOString();
         try {
-          let result;
-          try {
-            result = await redis.evalsha(appendUpdateSha, 3,
-              `board:${boardId}:version`,
-              `board_updates:${boardId}`,
-              `board:dedup:${boardId}`,
-              1000,
-              update.updateId,
-              update.payloadBase64,
-              update.elementId || '',
-              update.sourceClientId || '',
-              now,
-              isSingleUser ? 'true' : 'false'
-            );
-          } catch (shaError) {
-            if (shaError.message && shaError.message.includes('NOSCRIPT')) {
-              result = await redis.eval(APPEND_UPDATE_LUA, 3,
-                `board:${boardId}:version`,
-                `board_updates:${boardId}`,
-                `board:dedup:${boardId}`,
-                1000,
-                update.updateId,
-                update.payloadBase64,
-                update.elementId || '',
-                update.sourceClientId || '',
-                now,
-                isSingleUser ? 'true' : 'false'
-              );
-            } else {
-              throw shaError;
-            }
-          }
+          const result = await appendToStream(boardId, {
+            updateId: update.updateId,
+            payloadBase64: update.payloadBase64,
+            elementId: update.elementId,
+            uid,
+            timestamp: new Date().toISOString(),
+            singleUser: isSingleUser,
+            userDisplayName: displayName,
+            action: actionHint,
+          });
 
           if (result === -1) {
             isDuplicate = true;
@@ -1308,22 +1783,32 @@ io.on('connection', (socket) => {
 
       // -------------------------------------------------------
       // Broadcast to room (with version for client cursor tracking).
-      // Single-user boards skip the broadcast — no peers to relay to —
-      // but the update is already durably appended to the stream above.
+      // Always relay, even when the sender believes this is a single-user
+      // board. Membership can change while a board is open, and a stale
+      // client-side `_singleUser` hint must never turn a live edit into a
+      // silent no-op for the other participants. A truly single-user board
+      // has no other sockets in the room, so this is a no-op in that case.
       // -------------------------------------------------------
-      if (!isSingleUser) {
-        const broadcastPayload = { boardId, update: { ...update, version } };
-        socket.to(`board_room:${boardId}`).emit('crdt_update', broadcastPayload);
-        console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId} version=${version}`);
-      }
+      // Server-stamped author (D9) + authoritative action for the live feed.
+      // affectedElementIds lets members prune their local undo stack (D14).
+      const broadcastPayload = {
+        boardId,
+        update: {
+          ...update,
+          version,
+          sourceClientId: uid,
+          action: actionHint,
+          affectedElementIds: actionHint === 'clear' ? clearedElementIds : [],
+        },
+      };
+      socket.to(`board_room:${boardId}`).emit('crdt_update', broadcastPayload);
+      console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId} version=${version}`);
 
       // -------------------------------------------------------
-      // Trigger snapshot every 100 updates (fire-and-forget)
+      // Trigger an archive every ARCHIVE_BLOCK_OPS updates (fire-and-forget)
       // -------------------------------------------------------
-      if (redisAvailable && version !== null && version % 100 === 0) {
-        triggerSnapshot(boardId).catch(e =>
-          console.warn(`[snapshot] trigger failed: ${e.message}`)
-        );
+      if (redisAvailable && version !== null) {
+        maybeTriggerArchive(boardId, version);
       }
 
       if (typeof ack === 'function') {
@@ -1336,6 +1821,428 @@ io.on('connection', (socket) => {
           ack({ status: 'error', message: error.message });
         } catch (e) { }
       }
+    }
+  });
+
+  // ============================================================
+  // BOARD HISTORY — OWNER-ONLY (§6.4). Members never read the log (D3).
+  // ============================================================
+  const historyPlanCache = new Map(); // planId -> { plan, boardId, expiresAt }
+
+  function historyError(ack, message) {
+    if (typeof ack === 'function') ack({ status: 'error', message });
+  }
+
+  socket.on('history_get_block', async ({ boardId, blockId } = {}, ack) => {
+    if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
+    if (!isValidBoardId(boardId) || typeof blockId !== 'string' || !blockId) {
+      return historyError(ack, 'invalid_payload');
+    }
+    if (!db || !(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
+    try {
+      if (blockId === 'live_tail') {
+        if (!redisAvailable) return historyError(ack, 'persistence_unavailable');
+        const { block, ops } = await buildLiveTailBlock(boardId);
+        if (typeof ack === 'function') {
+          ack({
+            status: 'success',
+            block: block || { blockId: 'live_tail', fromVersion: 0, toVersion: 0 },
+            ops,
+          });
+        }
+        return;
+      }
+      const doc = await db.collection('boards').doc(boardId)
+        .collection('activity_index').doc(blockId).get();
+      if (!doc.exists) return historyError(ack, 'not_found');
+      const block = doc.data() || {};
+      const ops = await historyR2.getGzipJson(block.r2BlockKey);
+      const described = await describeOps(boardId, ops || [], redis);
+      if (typeof ack === 'function') ack({ status: 'success', block, ops: described });
+    } catch (e) {
+      console.warn(`[history_get_block] ${e.message}`);
+      historyError(ack, 'archive_unavailable');
+    }
+  });
+
+  socket.on('history_get_live_tail', async ({ boardId } = {}, ack) => {
+    if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
+    if (!isValidBoardId(boardId)) return historyError(ack, 'invalid_payload');
+    if (!redisAvailable || !db) return historyError(ack, 'persistence_unavailable');
+    if (!(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
+    try {
+      const { block, ops } = await buildLiveTailBlock(boardId);
+      if (typeof ack === 'function') ack({ status: 'success', block, ops });
+    } catch (e) {
+      console.warn(`[history_get_live_tail] ${e.message}`);
+      historyError(ack, 'archive_unavailable');
+    }
+  });
+
+  socket.on('history_get_user_ops', async (payload = {}, ack) => {
+    if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
+    const { boardId, targetUid, fromTime, toTime, beforeVersion, limit } = payload;
+    if (!isValidBoardId(boardId) || typeof targetUid !== 'string' || !targetUid) {
+      return historyError(ack, 'invalid_payload');
+    }
+    if (!redisAvailable || !db) return historyError(ack, 'persistence_unavailable');
+    if (!(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
+    try {
+      const all = await collectUserOps(boardId, targetUid, { fromTime, toTime }, redis);
+      const pageSize = Math.max(1, Math.min(200, Number(limit) || 50));
+      const filtered = beforeVersion == null
+        ? all
+        : all.filter(op => op.version < Number(beforeVersion));
+      filtered.sort((a, b) => b.version - a.version);
+      const page = filtered.slice(0, pageSize);
+      const hasMore = filtered.length > pageSize;
+      const nextBeforeVersion = page.length ? page[page.length - 1].version : null;
+      const described = await describeOps(boardId, page, redis);
+      if (typeof ack === 'function') {
+        ack({ status: 'success', ops: described, hasMore, nextBeforeVersion });
+      }
+    } catch (e) {
+      console.warn(`[history_get_user_ops] ${e.message}`);
+      historyError(ack, 'archive_unavailable');
+    }
+  });
+
+  // One user's ops + the board-state delta at each of them, so the owner can
+  // replay that user's work on the canvas (scrub) without further round-trips.
+  // A member may request their OWN timeline — the undo-request slider (D5) —
+  // but never another member's. Read-only; never appends.
+  socket.on('history_preview_user_timeline', async (payload = {}, ack) => {
+    if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
+    const {
+      boardId,
+      targetUid,
+      fromTime,
+      toTime,
+      beforeVersion,
+      limit,
+      elementIds,
+      afterVersion,
+    } = payload;
+    if (!isValidBoardId(boardId) || typeof targetUid !== 'string' || !targetUid) {
+      return historyError(ack, 'invalid_payload');
+    }
+    if (!redisAvailable || !db) return historyError(ack, 'persistence_unavailable');
+    const isSelf = targetUid === uid;
+    if (isSelf) {
+      // Members scope their own replay for the undo request they are about
+      // to send; ordinary edit access is enough.
+      const canEdit = await canUserAccessBoard(boardId, uid, true);
+      if (!canEdit) return historyError(ack, 'forbidden');
+    } else if (!(await isBoardOwner(boardId, uid))) {
+      return historyError(ack, 'forbidden');
+    }
+    // Optional element scope (the member's picked area / double-tapped
+    // elements). Unknown or malformed ids are dropped; an empty scope means
+    // "no filter" rather than "no ops".
+    let scopeIds;
+    if (elementIds != null) {
+      if (!Array.isArray(elementIds)) return historyError(ack, 'invalid_payload');
+      scopeIds = elementIds
+        .filter(id => typeof id === 'string' && id)
+        .slice(0, 200);
+      if (!scopeIds.length) scopeIds = undefined;
+    }
+    try {
+      const timeline = await buildUserTimeline(
+        boardId,
+        targetUid,
+        {
+          fromTime,
+          toTime,
+          beforeVersion: beforeVersion == null ? null : Number(beforeVersion),
+          limit: Number(limit),
+          elementIds: scopeIds,
+          afterVersion: afterVersion == null ? null : Number(afterVersion),
+        },
+        redis,
+      );
+      if (typeof ack === 'function') ack({ status: 'success', ...timeline });
+    } catch (e) {
+      console.warn(`[history_preview_user_timeline] ${e.message}`);
+      historyError(ack, 'archive_unavailable');
+    }
+  });
+
+  socket.on('history_preview_version', async ({ boardId, version } = {}, ack) => {
+    if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
+    const targetVersion = Number(version);
+    if (!isValidBoardId(boardId) || !Number.isFinite(targetVersion) || targetVersion < 0) {
+      return historyError(ack, 'invalid_payload');
+    }
+    if (!redisAvailable) return historyError(ack, 'persistence_unavailable');
+    if (!(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
+    try {
+      // Read-only: never appends.
+      const { doc, version: resolved } = await reconstruct(boardId, targetVersion, redis);
+      const stateUpdate = Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64');
+      if (typeof ack === 'function') {
+        ack({
+          status: 'success',
+          version: resolved,
+          stateUpdate,
+          elementCount: doc.getMap('elements').size,
+        });
+      }
+    } catch (e) {
+      console.warn(`[history_preview_version] ${e.message}`);
+      historyError(ack, 'archive_unavailable');
+    }
+  });
+
+  socket.on('history_plan_revert', async (payload = {}, ack) => {
+    if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
+    const { boardId, requestId } = payload;
+    if (!isValidBoardId(boardId)) return historyError(ack, 'invalid_payload');
+    if (!redisAvailable || !db) return historyError(ack, 'persistence_unavailable');
+    if (!(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
+    try {
+      let opts;
+      if (requestId) {
+        const reqDoc = await db.collection('boards').doc(boardId)
+          .collection('undo_requests').doc(String(requestId)).get();
+        if (!reqDoc.exists) return historyError(ack, 'not_found');
+        const req = reqDoc.data() || {};
+        opts = {
+          mode: 'user',
+          targetUid: req.requesterUid,
+          elementIds: Array.isArray(req.targetElementIds) ? req.targetElementIds : undefined,
+          fromTime: req.timeRangeStart?.toDate?.().toISOString?.() || undefined,
+          toTime: req.timeRangeEnd?.toDate?.().toISOString?.() || undefined,
+        };
+      } else if (payload.mode === 'restore') {
+        const targetVersion = Number(payload.targetVersion);
+        if (!Number.isFinite(targetVersion)) return historyError(ack, 'invalid_payload');
+        opts = { mode: 'restore', targetVersion };
+      } else if (payload.mode === 'ops') {
+        // Undo specific logged ops (per-op revert, multi-select, or the tail
+        // of a user's replay after settling on the scrub slider) — or, without
+        // opVersions, everything a user did to a scope after a version (the
+        // owner's "restore partway between a request's state and now").
+        const opVersions = Array.isArray(payload.opVersions)
+          ? payload.opVersions.map(Number).filter(Number.isFinite)
+          : [];
+        const hasTargetUid = typeof payload.targetUid === 'string'
+          && payload.targetUid;
+        if (!opVersions.length && !hasTargetUid) {
+          return historyError(ack, 'invalid_payload');
+        }
+        const afterVersion = payload.afterVersion == null
+          ? undefined
+          : Number(payload.afterVersion);
+        if (hasTargetUid && !opVersions.length
+            && (afterVersion === undefined || !Number.isFinite(afterVersion))) {
+          return historyError(ack, 'invalid_payload');
+        }
+        opts = {
+          mode: 'ops',
+          ...(opVersions.length ? { opVersions } : {}),
+          // Lets replayTouches seed from the milestone below the earliest
+          // selected op instead of replaying the board's whole life. For the
+          // ops-scope form buildPlan collects the target's ops itself.
+          ...(opVersions.length ? { fromVersion: Math.min(...opVersions) } : {}),
+          targetUid: hasTargetUid ? payload.targetUid : undefined,
+          afterVersion,
+          elementIds: Array.isArray(payload.elementIds)
+            ? payload.elementIds
+            : undefined,
+        };
+      } else if (payload.mode === 'user') {
+        if (typeof payload.targetUid !== 'string' || !payload.targetUid) {
+          return historyError(ack, 'invalid_payload');
+        }
+        opts = {
+          mode: 'user',
+          targetUid: payload.targetUid,
+          fromTime: payload.fromTime || undefined,
+          toTime: payload.toTime || undefined,
+          elementIds: Array.isArray(payload.elementIds) ? payload.elementIds : undefined,
+        };
+      } else {
+        return historyError(ack, 'invalid_payload');
+      }
+
+      const plan = await buildPlan(boardId, opts, redis, uid);
+      // Remember which request this plan answers so apply cannot resolve a
+      // different one.
+      if (requestId) plan.requestId = String(requestId);
+      const now = Date.now();
+      for (const [key, entry] of historyPlanCache.entries()) {
+        if (entry.expiresAt <= now) historyPlanCache.delete(key);
+      }
+      historyPlanCache.set(plan.planId, {
+        plan,
+        boardId,
+        expiresAt: now + 10 * 60 * 1000,
+      });
+      if (typeof ack === 'function') {
+        ack({
+          status: 'success',
+          plan: {
+            planId: plan.planId,
+            mode: plan.mode,
+            baseVersion: plan.baseVersion,
+            items: plan.items,
+            requestId: requestId || null,
+          },
+        });
+      }
+    } catch (e) {
+      console.warn(`[history_plan_revert] ${e.message}`);
+      historyError(ack, 'archive_unavailable');
+    }
+  });
+
+  socket.on('history_apply_revert', async ({ boardId, planId, decisions, requestId } = {}, ack) => {
+    if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
+    if (!isValidBoardId(boardId) || typeof planId !== 'string' || !planId) {
+      return historyError(ack, 'invalid_payload');
+    }
+    if (!redisAvailable) return historyError(ack, 'persistence_unavailable');
+    if (!(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
+    const cached = historyPlanCache.get(planId);
+    if (!cached || cached.boardId !== boardId || cached.expiresAt <= Date.now()) {
+      historyPlanCache.delete(planId);
+      return historyError(ack, 'plan_expired');
+    }
+    if (requestId && cached.plan.requestId && cached.plan.requestId !== requestId) {
+      return historyError(ack, 'invalid_payload');
+    }
+    try {
+      const { update, applied, skipped } = await applyPlan(
+        boardId,
+        cached.plan,
+        decisions || {},
+        redis,
+        uid,
+      );
+      historyPlanCache.delete(planId);
+      if (!applied.length) {
+        if (typeof ack === 'function') {
+          ack({
+            status: 'success',
+            appliedVersion: cached.plan.baseVersion,
+            reverted: [],
+            skipped,
+            requestId: requestId || null,
+          });
+        }
+        return;
+      }
+      const { displayName } = await getProfile(uid);
+      const isRestore = cached.plan.mode === 'restore';
+      const appliedVersion = await appendAndBroadcast(boardId, {
+        updateId: `revert_${crypto.randomUUID()}`,
+        payloadBase64: Buffer.from(update).toString('base64'),
+        uid,
+        elementId: null,
+        action: isRestore ? 'restore' : 'revert',
+        displayName,
+        restoredFromVersion: isRestore ? cached.plan._opts.targetVersion : null,
+        affectedElementIds: applied,
+      });
+      if (typeof ack === 'function') {
+        ack({
+          status: 'success',
+          appliedVersion,
+          reverted: applied,
+          skipped,
+          requestId: requestId || null,
+        });
+      }
+    } catch (e) {
+      console.warn(`[history_apply_revert] ${e.message}`);
+      historyError(ack, 'archive_unavailable');
+    }
+  });
+
+  socket.on('history_undo_own', async ({ boardId, updateIds } = {}, ack) => {
+    if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
+    if (!isValidBoardId(boardId)) return historyError(ack, 'invalid_payload');
+    if (!redisAvailable) return historyError(ack, 'persistence_unavailable');
+    const canEdit = await canUserAccessBoard(boardId, uid, true);
+    if (!canEdit) return historyError(ack, 'forbidden');
+    try {
+      // The server window is authoritative and always uses the server-stamped
+      // op timestamp — never client time (D2).
+      const fromTime = new Date(Date.now() - UNDO_WINDOW_MS).toISOString();
+      // Optional explicit updateIds: narrow the plan to the elements those own,
+      // in-window updates touched. Unmatched ids are ignored, so a stale client
+      // cannot widen its undo reach.
+      let elementIds;
+      if (Array.isArray(updateIds) && updateIds.length) {
+        const wanted = new Set(updateIds.filter(id => typeof id === 'string' && id));
+        const ownOps = await collectUserOps(boardId, uid, { fromTime }, redis);
+        const touched = new Set();
+        for (const op of ownOps) {
+          if (!wanted.has(op.updateId)) continue;
+          if (op.elementId) touched.add(op.elementId);
+          for (const c of (op.changes || [])) {
+            if (c.elementId) touched.add(c.elementId);
+          }
+        }
+        if (touched.size) elementIds = [...touched];
+      }
+      const plan = await buildPlan(
+        boardId,
+        { mode: 'user', targetUid: uid, fromTime, elementIds },
+        redis,
+        uid,
+      );
+      if (!plan.items.length) return historyError(ack, 'nothing_to_undo');
+      const conflicted = plan.items.filter(item => item.conflict);
+      const conflicts = conflicted.map(item => ({
+        elementId: item.elementId,
+        lastEditorUid: item.lastEditorUid || null,
+      }));
+      if (conflicted.length === plan.items.length) {
+        // Every in-window edit was later changed by someone else. Report WHICH
+        // elements conflict so the client can offer the "send a request to the
+        // owner" flow instead of a dead-end error (§7.2 conflict UX).
+        if (typeof ack === 'function') {
+          ack({
+            status: 'success',
+            appliedVersion: plan.baseVersion,
+            reverted: [],
+            skipped: [],
+            conflicts,
+          });
+        }
+        return;
+      }
+      const decisions = {};
+      for (const item of plan.items) {
+        decisions[item.elementId] = item.conflict ? 'keep' : 'revert';
+      }
+      const { update, applied, skipped } = await applyPlan(boardId, plan, decisions, redis, uid);
+      if (!applied.length) return historyError(ack, 'nothing_to_undo');
+      const { displayName } = await getProfile(uid);
+      const appliedVersion = await appendAndBroadcast(boardId, {
+        updateId: `undo_${crypto.randomUUID()}`,
+        payloadBase64: Buffer.from(update).toString('base64'),
+        uid,
+        elementId: null,
+        action: 'revert',
+        displayName,
+        restoredFromVersion: null,
+        affectedElementIds: applied,
+      });
+      if (typeof ack === 'function') {
+        ack({
+          status: 'success',
+          appliedVersion,
+          reverted: applied,
+          skipped,
+          conflicts,
+        });
+      }
+    } catch (e) {
+      console.warn(`[history_undo_own] ${e.message}`);
+      historyError(ack, 'archive_unavailable');
     }
   });
 
@@ -1528,6 +2435,7 @@ io.on('connection', (socket) => {
                 },
                 updates,
                 cursor: newCursor,
+                hasMore: updates.length >= 100,
                 source: 'snapshot_with_deltas',
               });
             }
@@ -1727,6 +2635,10 @@ io.on('connection', (socket) => {
         return;
       }
 
+      // Validate the RTC configuration BEFORE registering the participant.
+      // Previously a join without AGORA_APP_ID/AGORA_APP_CERTIFICATE still
+      // broadcast `voice_participant_joined`, leaving everyone else showing a
+      // caller who was never able to connect to the RTC channel.
       const channelName = `board_${boardId}`;
       const appId = process.env.AGORA_APP_ID;
       const appCertificate = process.env.AGORA_APP_CERTIFICATE;
@@ -1735,6 +2647,8 @@ io.on('connection', (socket) => {
         if (typeof callback === 'function') callback({ status: 'error', message: 'agora certificate not configured' });
         return;
       }
+
+      const { token } = buildAgoraRtcToken(appId, appCertificate, channelName);
 
       const participant = {
         uid,
@@ -1760,8 +2674,6 @@ io.on('connection', (socket) => {
       // this room as an observer, so a newly started call is visible even to
       // people who have not joined it yet.
       io.to(`board_voice:${boardId}`).emit('voice_participant_joined', participant);
-
-      const { token } = buildAgoraRtcToken(appId, appCertificate, channelName);
 
       console.log(`[voice] User ${uid} joined voice channel ${channelName}`);
       if (typeof callback === 'function') {

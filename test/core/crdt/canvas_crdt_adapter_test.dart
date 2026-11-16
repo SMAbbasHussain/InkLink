@@ -169,5 +169,29 @@ void main() {
       },
       timeout: const Timeout(Duration(minutes: 3)),
     );
+
+    test(
+      'handles updates with gaps and deletions without throwing Skip type cast error',
+      () async {
+        final source = await CanvasCrdtAdapter.create();
+        source.upsertElement('e1', {'type': 'shape', 'val': 1});
+        final svAfter1 = source.encodeStateVector();
+
+        // Second update creates e2 and deletes e1
+        source.upsertElement('e2', {'type': 'shape', 'val': 2});
+        source.deleteElement('e1');
+
+        final delta = source.encodeStateUpdate(vector: svAfter1);
+
+        // Fresh peer that never received e1: applying delta creates a Skip for e1's clock range
+        // and processes the deletion of e1 in the delete set.
+        final peer = await CanvasCrdtAdapter.create();
+        expect(() => peer.applyUpdate(delta), returnsNormally);
+        final elements = peer.materializeElements();
+        expect(elements.containsKey('e1'), isFalse);
+        expect(elements.containsKey('e2'), isTrue);
+      },
+      timeout: const Timeout(Duration(minutes: 3)),
+    );
   });
 }

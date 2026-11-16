@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -7,6 +9,12 @@ import '../../../../ui/theme/ink_type.dart';
 import '../widgets/sliding_tray.dart';
 
 class ToolsTray extends StatelessWidget {
+  /// Height of one tool row plus the gap that follows it.
+  static const double _rowHeight = 58;
+
+  /// Handle + title bar + divider + content padding.
+  static const double _chromeHeight = 92;
+
   final bool isOpen;
   final bool canEdit;
   final VoidCallback onUndo;
@@ -17,6 +25,8 @@ class ToolsTray extends StatelessWidget {
   final VoidCallback? onCanvasSettings;
   final VoidCallback? onTemplates;
   final VoidCallback? onExport;
+  final VoidCallback? onHistory;
+  final VoidCallback? onRequestUndo;
   final VoidCallback? onClose;
 
   const ToolsTray({
@@ -31,15 +41,95 @@ class ToolsTray extends StatelessWidget {
     this.onCanvasSettings,
     this.onTemplates,
     this.onExport,
+    this.onHistory,
+    this.onRequestUndo,
     this.onClose,
   });
 
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
-    final trayHeight = !canEdit
-        ? (onExport != null ? 140.0 : 96.0)
-        : (onClearAll != null ? 528.0 : 468.0);
+    final buttons = <Widget>[
+      if (canEdit && onAddStickyNote != null)
+        _ToolButton(
+          icon: LucideIcons.stickyNote,
+          label: 'Sticky Note',
+          color: tokens.pending,
+          onTap: onAddStickyNote!,
+        ),
+      if (canEdit && onAddConnector != null)
+        _ToolButton(
+          icon: LucideIcons.spline,
+          label: 'Connector / Link',
+          color: tokens.success,
+          onTap: onAddConnector!,
+        ),
+      if (canEdit && onCanvasSettings != null)
+        _ToolButton(
+          icon: LucideIcons.slidersHorizontal,
+          label: 'Canvas Settings',
+          color: tokens.inkSecondary,
+          onTap: onCanvasSettings!,
+        ),
+      if (canEdit && onTemplates != null)
+        _ToolButton(
+          icon: LucideIcons.frame,
+          label: 'Templates',
+          color: tokens.accent,
+          onTap: onTemplates!,
+        ),
+      if (canEdit) ...[
+        _ToolButton(
+          icon: LucideIcons.undo2,
+          label: 'Undo',
+          color: tokens.ink,
+          onTap: onUndo,
+        ),
+        _ToolButton(
+          icon: LucideIcons.redo2,
+          label: 'Redo',
+          color: tokens.ink,
+          onTap: onRedo,
+        ),
+      ],
+      if (canEdit && onClearAll != null)
+        _ToolButton(
+          icon: LucideIcons.trash2,
+          label: 'Clear All',
+          color: tokens.danger,
+          onTap: onClearAll!,
+        ),
+      if (onHistory != null)
+        _ToolButton(
+          icon: LucideIcons.history,
+          label: 'History',
+          color: tokens.accentText,
+          onTap: onHistory!,
+        ),
+      if (canEdit && onRequestUndo != null)
+        _ToolButton(
+          icon: LucideIcons.undo2,
+          label: 'Request undo',
+          color: tokens.pending,
+          onTap: onRequestUndo!,
+        ),
+      if (onExport != null)
+        _ToolButton(
+          icon: LucideIcons.share2,
+          label: 'Export & Share',
+          color: tokens.accentText,
+          onTap: onExport!,
+        ),
+    ];
+
+    // Size the tray from the rows that are actually shown and cap below the
+    // top bar so adding role-specific or tool-specific actions never clips or
+    // overlaps the header on smaller viewports.
+    final desiredHeight = _chromeHeight + buttons.length * _rowHeight;
+    final media = MediaQuery.of(context);
+    final maxHeight = math.max(150.0, media.size.height - media.padding.top - 124);
+    final trayHeight = math.min(desiredHeight, maxHeight);
+
     return SlidingTray(
       isOpen: isOpen,
       direction: TrayDirection.left,
@@ -48,78 +138,14 @@ class ToolsTray extends StatelessWidget {
       width: 230,
       bottomOffset: 60,
       onClose: onClose,
-      child: Padding(
+      child: SingleChildScrollView(
+        // Safety net: the row math can be off on unusual text scales or short viewports.
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
-            if (canEdit && onAddStickyNote != null) ...[
-              _ToolButton(
-                icon: LucideIcons.stickyNote,
-                label: 'Sticky Note',
-                color: tokens.pending,
-                onTap: onAddStickyNote!,
-              ),
-              const SizedBox(height: 10),
-            ],
-            if (canEdit && onAddConnector != null) ...[
-              _ToolButton(
-                icon: LucideIcons.spline,
-                label: 'Connector / Link',
-                color: tokens.success,
-                onTap: onAddConnector!,
-              ),
-              const SizedBox(height: 10),
-            ],
-            if (canEdit && onCanvasSettings != null) ...[
-              _ToolButton(
-                icon: LucideIcons.slidersHorizontal,
-                label: 'Canvas Settings',
-                color: tokens.inkSecondary,
-                onTap: onCanvasSettings!,
-              ),
-              const SizedBox(height: 10),
-            ],
-            if (canEdit && onTemplates != null) ...[
-              _ToolButton(
-                icon: LucideIcons.frame,
-                label: 'Templates',
-                color: tokens.accent,
-                onTap: onTemplates!,
-              ),
-              const SizedBox(height: 10),
-            ],
-            if (canEdit) ...[
-              _ToolButton(
-                icon: LucideIcons.undo2,
-                label: 'Undo',
-                color: tokens.ink,
-                onTap: onUndo,
-              ),
-              const SizedBox(height: 10),
-              _ToolButton(
-                icon: LucideIcons.redo2,
-                label: 'Redo',
-                color: tokens.ink,
-                onTap: onRedo,
-              ),
-            ],
-            if (canEdit && onClearAll != null) ...[
-              const SizedBox(height: 10),
-              _ToolButton(
-                icon: LucideIcons.trash2,
-                label: 'Clear All',
-                color: tokens.danger,
-                onTap: onClearAll!,
-              ),
-            ],
-            if (onExport != null) ...[
-              if (canEdit) const SizedBox(height: 10),
-              _ToolButton(
-                icon: LucideIcons.share2,
-                label: 'Export & Share',
-                color: tokens.accentText,
-                onTap: onExport!,
-              ),
+            for (var i = 0; i < buttons.length; i++) ...[
+              if (i > 0) const SizedBox(height: 10),
+              buttons[i],
             ],
           ],
         ),

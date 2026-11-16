@@ -46,6 +46,7 @@ class _Service extends Fake implements CanvasService {
     required String updateId,
     required Uint8List payload,
     String? elementId,
+    String action = 'upsert',
   }) async {
     if (failWrites) throw StateError('offline');
     count++;

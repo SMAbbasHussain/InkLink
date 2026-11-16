@@ -15,6 +15,13 @@ class LocalCrdtUpdate {
   @Index()
   late String? elementId; // Which element this update represents (for in-place edits)
 
+  /// D13 action hint sent to the server ('upsert' | 'delete' | 'clear') and
+  /// the authoritative action carried on inbound updates.
+  String? action;
+
+  /// Inbound-only: the element ids an owner revert touched (D14 pruning).
+  List<String>? affectedElementIds;
+
   // Base64 encoded CRDT update payload bytes.
   late String payloadBase64;
   late String sourceClientId;

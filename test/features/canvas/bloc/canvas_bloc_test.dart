@@ -635,6 +635,50 @@ void main() {
       await bloc.close();
     });
 
+    test('resizing a sticky note updates its width and height', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddStickyNote(center: Offset(100, 100)));
+      await Future<void>.delayed(Duration.zero);
+
+      // Grow wider than default without changing height.
+      bloc.add(const CanvasResizeSelectedShape(
+        240,
+        width: 240,
+        height: 120,
+      ));
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      final note = bloc.state.elements.first as StickyNoteElement;
+      expect(note.width, 240);
+      expect(note.height, 120);
+      await bloc.close();
+    });
+
+    test('sticky notes can shrink below their default 160px size', () async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CanvasAddStickyNote(center: Offset(100, 100)));
+      await Future<void>.delayed(Duration.zero);
+
+      bloc.add(const CanvasResizeSelectedShape(
+        80,
+        width: 80,
+        height: 60,
+      ));
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      final note = bloc.state.elements.first as StickyNoteElement;
+      expect(note.width, 80);
+      expect(note.height, 60);
+      expect(note.width, lessThan(160));
+      await bloc.close();
+    });
+
     test('CanvasAddConnector adds a ConnectorElement to state', () async {
       final bloc = CanvasBloc();
       _grantEditor(bloc);
@@ -1120,6 +1164,56 @@ void main() {
       expect(fakeBoardService.updatedTargetUid, 'user-2');
       expect(fakeBoardService.updatedRole, Board.roleEditor);
       expect(bloc.state.error, isNull);
+      await bloc.close();
+    });
+
+    test('CanvasBoardTitleUpdated with isArchived locks board and cancels stroke', () async {
+      final bloc = CanvasBloc(boardId: 'test-board-123');
+      bloc.add(const CanvasBoardTitleUpdated(
+        'My Board',
+        currentUserRole: Board.roleEditor,
+        isArchived: false,
+      ));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.isArchived, isFalse);
+
+      // Start a stroke while active
+      bloc.add(const CanvasStartStroke(Offset(10, 10)));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.currentStroke, hasLength(1));
+
+      // Owner archives the board
+      bloc.add(const CanvasBoardTitleUpdated(
+        'My Board',
+        currentUserRole: Board.roleEditor,
+        isArchived: true,
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bloc.state.isArchived, isTrue);
+      expect(bloc.state.currentStroke, isEmpty);
+      expect(bloc.state.infoMessage, contains('archived'));
+
+      // Attempting to draw while archived is blocked
+      bloc.add(const CanvasStartStroke(Offset(20, 20)));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.currentStroke, isEmpty);
+      expect(bloc.state.error, contains('archived'));
+
+      // Unarchiving restores editing
+      bloc.add(const CanvasBoardTitleUpdated(
+        'My Board',
+        currentUserRole: Board.roleEditor,
+        isArchived: false,
+      ));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.isArchived, isFalse);
+      expect(bloc.state.infoMessage, contains('unarchived'));
+
+      bloc.add(const CanvasStartStroke(Offset(30, 30)));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.currentStroke, hasLength(1));
+
       await bloc.close();
     });
   });

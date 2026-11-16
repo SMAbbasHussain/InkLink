@@ -73,6 +73,17 @@ class _CanvasElement {
       }
       return Rect.fromLTRB(minX, minY, maxX, maxY).inflate(strokeWidth + 12);
     }
+    if (kind == _ElementKind.shape) {
+      return Rect.fromCenter(center: center, width: size * 1.6, height: size * 1.6)
+          .inflate(strokeWidth + 8);
+    }
+    if (kind == _ElementKind.text) {
+      return Rect.fromCenter(
+        center: center,
+        width: width > 0 ? width : 220,
+        height: height > 0 ? height : 72,
+      ).inflate(8);
+    }
     if (points.isEmpty) return null;
     double minX = points.first.dx;
     double minY = points.first.dy;
@@ -552,8 +563,9 @@ class _CanvasPainter extends CustomPainter {
   final List<double> currentStrokePressures;
   final List<double> currentStrokeTilts;
   final CanvasBoardSettings boardSettings;
-
   final Map<String, CanvasLayerPaintEffect> layerEffects;
+  final Set<String> highlightElementIds;
+  final Rect? areaSelectionRect;
 
   const _CanvasPainter({
     required this.elements,
@@ -578,6 +590,8 @@ class _CanvasPainter extends CustomPainter {
     this.arrowConnectStartElementId,
     this.remoteEraserCursors = const [],
     this.boardSettings = const CanvasBoardSettings(),
+    this.highlightElementIds = const {},
+    this.areaSelectionRect,
   });
 
   @override
@@ -653,6 +667,19 @@ class _CanvasPainter extends CustomPainter {
           break;
       }
       if (useLayer) canvas.restore();
+    }
+
+    if (highlightElementIds.isNotEmpty) {
+      for (final element in elements) {
+        if (!highlightElementIds.contains(element.id)) continue;
+        final b = element.layerBounds ?? element.bounds;
+        if (b != null) _paintHistoryHighlight(canvas, b);
+      }
+    }
+
+    final marquee = areaSelectionRect;
+    if (marquee != null) {
+      _paintAreaSelection(canvas, marquee);
     }
 
     if (arrowConnectStartElementId != null) {
@@ -766,6 +793,40 @@ class _CanvasPainter extends CustomPainter {
     for (int i = 0; i < points.length - 1; i++) {
       canvas.drawLine(points[i], points[i + 1], paint);
     }
+  }
+
+  void _paintHistoryHighlight(Canvas canvas, Rect bounds) {
+    final rrect = RRect.fromRectAndRadius(bounds, const Radius.circular(10));
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..color = accentColor.withValues(alpha: 0.10)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..color = accentColor.withValues(alpha: 0.9)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
+    );
+  }
+
+  void _paintAreaSelection(Canvas canvas, Rect rect) {
+    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(6));
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..color = accentColor.withValues(alpha: 0.08)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..color = accentColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
   }
 
   void _paintShape(Canvas canvas, _CanvasElement element) {
@@ -1213,6 +1274,10 @@ class _CanvasPainter extends CustomPainter {
           oldDelegate.remoteEraserCursors,
           remoteEraserCursors,
         ) ||
-        oldDelegate.accentColor != accentColor;
+        oldDelegate.accentColor != accentColor ||
+        oldDelegate.boardSettings != boardSettings ||
+        !mapEquals(oldDelegate.layerEffects, layerEffects) ||
+        !setEquals(oldDelegate.highlightElementIds, highlightElementIds) ||
+        oldDelegate.areaSelectionRect != areaSelectionRect;
   }
 }

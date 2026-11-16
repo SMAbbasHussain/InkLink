@@ -42,6 +42,7 @@ class _RecordingCanvasService extends Fake implements CanvasService {
     required String updateId,
     required Uint8List payload,
     String? elementId,
+    String action = 'upsert',
   }) async {
     writes++;
     if (!committed.isCompleted) committed.complete(payload);

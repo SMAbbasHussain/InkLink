@@ -6,6 +6,7 @@ import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/board_chat_service.dart';
 import '../../../domain/services/canvas/board_comments_service.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
+import '../../../domain/services/history/board_history_service.dart';
 import '../../../domain/services/settings/settings_service.dart';
 import '../../../domain/services/voice/voice_service.dart';
 import '../bloc/canvas_bloc.dart';
@@ -68,7 +69,9 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
             boardCommentsService: context.read<BoardCommentsService>(),
             boardChatService: context.read<BoardChatService>(),
             voiceService: context.read<VoiceService>(),
-            currentUserId: context.read<AuthService>().getCurrentUserId() ?? '',
+            historyService: context.read<BoardHistoryService>(),
+            currentUserId:
+                context.read<AuthService>().getCurrentUserId() ?? '',
             boardId: widget.boardId,
           )..add(CanvasInitializeCrdt(widget.boardId)),
           child: CanvasScreen(
@@ -76,6 +79,7 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
             showTrayTipsOnEntry: widget.showTrayTipsOnEntry,
             boardPreviewQuality: data?.quality ?? 'medium',
             boardPreviewCompressionEnabled: data?.compressionEnabled ?? true,
+            historyService: context.read<BoardHistoryService>(),
           ),
         );
       },
