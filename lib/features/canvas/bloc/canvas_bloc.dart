@@ -95,12 +95,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   Timer? _liveTailDebounceTimer;
   CanvasDocAdapter? _crdtAdapter;
   List<CanvasElement>? _cachedCrdtElements;
+  List<CanvasElement> _committedElements = const <CanvasElement>[];
   Future<void>? _crdtInitFuture;
   Timer? _boardUnavailableTimer;
   final Set<String> _appliedCrdtUpdateIds = <String>{};
   final Map<String, CanvasElement> _remotePreviewElements =
       <String, CanvasElement>{};
   final Set<String> _remotePreviewDeletedIds = <String>{};
+  final Map<String, DateTime> _remotePreviewDeletedAt = <String, DateTime>{};
   /// When each remote preview arrived. Previews are transient overlays: without
   /// an expiry a peer's in-flight drag (or a preview that never got a matching
   /// committed update) masks the element's real state on this device forever.
@@ -651,6 +653,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         _remotePreviewClearsBoard = false;
         _remotePreviewElements.clear();
         _remotePreviewDeletedIds.clear();
+        _remotePreviewDeletedAt.clear();
+        _remotePreviewReceivedAt.clear();
       } catch (_) {
         _appliedCrdtUpdateIds.add(snapshot.updateId);
       }
@@ -658,6 +662,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
     // Then apply remaining deltas in order
     for (final update in regularUpdates) {
+      if (update.elementId != null) {
+        _forgetPreviews(update.elementId!);
+      }
+      if (update.affectedElementIds != null) {
+        for (final id in update.affectedElementIds!) {
+          _forgetPreviews(id);
+        }
+      }
       if (update.isDeleted) {
         _appliedCrdtUpdateIds.add(update.updateId);
         continue;
@@ -702,9 +714,20 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         if (update.elementId != null) {
           _forgetPreviews(update.elementId!);
         }
+        if (update.affectedElementIds != null) {
+          for (final id in update.affectedElementIds!) {
+            _forgetPreviews(id);
+          }
+        }
         _appliedCrdtUpdateIds.add(update.updateId);
       } catch (_) {
         _appliedCrdtUpdateIds.add(update.updateId);
+      }
+    }
+    if (_remotePreviewDeletedIds.isNotEmpty) {
+      final materialized = adapter.materializeElements();
+      for (final id in materialized.keys) {
+        _forgetPreviews(id);
       }
     }
     _refreshFromCrdtAdapter(emit);
@@ -738,6 +761,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           _remotePreviewClearsBoard = true;
           _remotePreviewElements.clear();
           _remotePreviewDeletedIds.clear();
+          _remotePreviewDeletedAt.clear();
+          _remotePreviewReceivedAt.clear();
           continue;
         }
         _remotePreviewClearsBoard = false;
@@ -763,11 +788,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         }
         if (action == 'delete') {
           _remotePreviewDeletedIds.add(elementId);
+          _remotePreviewDeletedAt[elementId] = DateTime.now();
           _remotePreviewElements.remove(elementId);
           _remotePreviewReceivedAt.remove(elementId);
           continue;
         }
         _remotePreviewDeletedIds.remove(elementId);
+        _remotePreviewDeletedAt.remove(elementId);
         if (type == 'image') {
           final incomingBase64 = decoded['imageBase64'] as String?;
           if (incomingBase64 == null || incomingBase64.isEmpty) {
@@ -1054,8 +1081,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         );
       }
       rebuilt = _cachedCrdtElements!;
+      _committedElements = rebuilt;
     } else {
-      rebuilt = state.elements;
+      rebuilt = _committedElements.isNotEmpty
+          ? _committedElements
+          : state.elements;
     }
     // A collaborator update can rebuild the board in the middle of an erase
     // gesture; re-apply the live erase so already-erased ink does not pop back.
@@ -1074,7 +1104,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (_remotePreviewClearsBoard) return const <CanvasElement>[];
     _pruneExpiredPreviews();
     if (_remotePreviewElements.isEmpty && _remotePreviewDeletedIds.isEmpty) {
-      return committedElements;
+      return List<CanvasElement>.unmodifiable(committedElements);
     }
     final byId = <String, CanvasElement>{
       for (final element in committedElements)
@@ -1088,19 +1118,29 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       if (a.z != b.z) return a.z.compareTo(b.z);
       return a.id.compareTo(b.id);
     });
-    return composed;
+    return List<CanvasElement>.unmodifiable(composed);
   }
 
   void _pruneExpiredPreviews() {
-    if (_remotePreviewElements.isEmpty) return;
     final now = DateTime.now();
-    _remotePreviewElements.removeWhere((id, _) {
-      final receivedAt = _remotePreviewReceivedAt[id];
-      final expired = receivedAt != null &&
-          now.difference(receivedAt) > _remotePreviewTtl;
-      if (expired) _remotePreviewReceivedAt.remove(id);
-      return expired;
-    });
+    if (_remotePreviewElements.isNotEmpty) {
+      _remotePreviewElements.removeWhere((id, _) {
+        final receivedAt = _remotePreviewReceivedAt[id];
+        final expired = receivedAt != null &&
+            now.difference(receivedAt) > _remotePreviewTtl;
+        if (expired) _remotePreviewReceivedAt.remove(id);
+        return expired;
+      });
+    }
+    if (_remotePreviewDeletedIds.isNotEmpty) {
+      _remotePreviewDeletedIds.removeWhere((id) {
+        final deletedAt = _remotePreviewDeletedAt[id];
+        final expired = deletedAt == null ||
+            now.difference(deletedAt) > _remotePreviewTtl;
+        if (expired) _remotePreviewDeletedAt.remove(id);
+        return expired;
+      });
+    }
   }
 
   /// Drop every preview overlay for [elementId]. Called as soon as this device
@@ -1110,6 +1150,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _remotePreviewElements.remove(elementId);
     _remotePreviewDeletedIds.remove(elementId);
     _remotePreviewReceivedAt.remove(elementId);
+    _remotePreviewDeletedAt.remove(elementId);
   }
 
   /// Payload of the element as committed to the CRDT document.
@@ -1716,6 +1757,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       textureSeed: DateTime.now().microsecondsSinceEpoch & 0x7FFFFFFF,
     );
     final nextElements = List<CanvasElement>.from(state.elements)..add(stroke);
+    _committedElements = nextElements;
     emit(
       state.copyWith(
         elements: nextElements,
@@ -1865,6 +1907,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     bool resetDrawState = false,
   }) async {
     final nextElements = List<CanvasElement>.from(state.elements)..add(shape);
+    _committedElements = nextElements;
     var next = state.copyWith(
       elements: nextElements,
       activeTray: null,
@@ -5687,6 +5730,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       _remotePreviewReceivedAt.remove(id);
       if (_remotePreviewElements.remove(id) != null) {
         _remotePreviewDeletedIds.add(id);
+        _remotePreviewDeletedAt[id] = DateTime.now();
       }
     }
     final changes = <({String id, Map<String, dynamic>? payload})>[];

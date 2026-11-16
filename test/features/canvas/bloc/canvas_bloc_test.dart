@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:inklink/core/crdt/canvas_crdt_adapter.dart';
 import 'package:inklink/domain/models/board.dart';
 import 'package:inklink/core/database/collections/local_crdt_update.dart';
 import 'package:inklink/domain/services/board/board_service.dart';
@@ -970,6 +971,82 @@ void main() {
         await bloc.close();
       },
     );
+
+    test('Remote delete preview masks element temporarily but clears on committed update or TTL', () async {
+      final adapter = await CanvasCrdtAdapter.create();
+      final bloc = CanvasBloc(crdtAdapter: adapter);
+      _grantEditor(bloc);
+      await Future<void>.delayed(Duration.zero);
+
+      final shapePayload = {
+        'type': 'shape',
+        'shapeType': 'square',
+        'cx': 100.0,
+        'cy': 100.0,
+        'size': 64.0,
+        'color': 0xFF000000,
+        'strokeWidth': 3.0,
+        'isFilled': false,
+      };
+      final updateBytes = adapter.upsertElement('shape-1', shapePayload);
+
+      final committedShapeUpdate = LocalCrdtUpdate()
+        ..updateId = 'init-shape-1'
+        ..boardId = 'board-1'
+        ..elementId = 'shape-1'
+        ..sourceClientId = 'peer-1'
+        ..payloadBase64 = base64Encode(updateBytes)
+        ..appliedAt = DateTime.now()
+        ..isSynced = true
+        ..version = 1;
+
+      bloc.add(CanvasApplyRemoteUpdate([committedShapeUpdate]));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bloc.state.elements, hasLength(1));
+      expect(bloc.state.elements.first.id, 'shape-1');
+
+      // Peer sends a delete preview for the shape
+      final deletePreviewPayload = jsonEncode({
+        'type': 'shape',
+        'action': 'delete',
+        'elementId': 'shape-1',
+      });
+      final deletePreview = LocalCrdtUpdate()
+        ..updateId = 'preview-del-1'
+        ..boardId = 'board-1'
+        ..elementId = 'shape-1'
+        ..sourceClientId = 'peer-1'
+        ..payloadBase64 = base64Encode(utf8.encode(deletePreviewPayload))
+        ..appliedAt = DateTime.now()
+        ..isSynced = true;
+
+      bloc.add(CanvasApplyRemotePreview([deletePreview]));
+      await Future<void>.delayed(Duration.zero);
+
+      // Element is temporarily masked while delete preview is active
+      expect(bloc.state.elements.where((e) => e.id == 'shape-1'), isEmpty);
+
+      // Now apply an update (or committed update with affectedElementIds)
+      final committedUpdate = LocalCrdtUpdate()
+        ..updateId = 'update-commit-1'
+        ..boardId = 'board-1'
+        ..elementId = 'shape-1'
+        ..affectedElementIds = ['shape-1']
+        ..sourceClientId = 'peer-1'
+        ..payloadBase64 = base64Encode(updateBytes)
+        ..appliedAt = DateTime.now()
+        ..isSynced = true
+        ..version = 2;
+
+      bloc.add(CanvasApplyRemoteUpdate([committedUpdate]));
+      await Future<void>.delayed(Duration.zero);
+
+      // Preview deletion is cleared and element is visible on the board again!
+      expect(bloc.state.elements.where((e) => e.id == 'shape-1'), isNotEmpty);
+
+      await bloc.close();
+    });
 
     test('CanvasMoveSelectedShape on ImageElement updates center and preserves imageBase64', () async {
       final bloc = CanvasBloc();

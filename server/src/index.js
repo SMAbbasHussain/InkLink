@@ -1653,8 +1653,11 @@ io.on('connection', (socket) => {
     // Warm up seed status and edit permission cache asynchronously on join
     seedRedisFromFirestore(boardId).catch(() => { });
     canUserAccessBoard(boardId, uid, true).catch(() => { });
-    console.log(`[watch_board] User ${uid} joined board ${boardId} (socket: ${socket.id})`);
-    if (typeof callback === 'function') callback({ status: 'success', boardId });
+    const currentVersion = redisAvailable
+      ? parseInt(await redis.get(`board:${boardId}:version`) || '0', 10)
+      : 0;
+    console.log(`[watch_board] User ${uid} joined board ${boardId} (socket: ${socket.id}, version: ${currentVersion})`);
+    if (typeof callback === 'function') callback({ status: 'success', boardId, currentVersion });
   });
 
   // ----------------------------------------------------------
@@ -2294,6 +2297,122 @@ io.on('connection', (socket) => {
   });
 
   // ============================================================
+  // get_missing_crdt_updates — TARGETED VERSION GAP RECOVERY
+  // ============================================================
+  socket.on('get_missing_crdt_updates', async (data = {}, callback) => {
+    const { boardId, fromVersion, toVersion, sinceVersion, missingVersions } = data;
+    if (isRateLimited(socket.id)) {
+      if (typeof callback === 'function') callback({ status: 'error', message: 'rate_limited' });
+      return;
+    }
+    if (!isValidBoardId(boardId)) {
+      if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
+      return;
+    }
+    const hasAccess = await canUserAccessBoard(boardId, uid, false);
+    if (!hasAccess) {
+      if (typeof callback === 'function') callback({ status: 'error', message: 'forbidden' });
+      return;
+    }
+
+    try {
+      if (!redisAvailable) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'persistence_unavailable' });
+        return;
+      }
+
+      await seedRedisFromFirestore(boardId);
+      const streamKey = `board_updates:${boardId}`;
+      const rawEntries = await redis.xrange(streamKey, '-', '+');
+      const allEntries = (rawEntries || []).map(([id, fields]) => {
+        const entry = parseStreamEntry(fields);
+        entry._streamId = id;
+        entry.appliedAt = entry.timestamp;
+        return entry;
+      });
+
+      let filtered = [];
+      const minVer = fromVersion != null
+        ? parseInt(fromVersion, 10)
+        : (sinceVersion != null ? parseInt(sinceVersion, 10) + 1 : null);
+      const maxVer = toVersion != null ? parseInt(toVersion, 10) : null;
+      const targetSet = Array.isArray(missingVersions) && missingVersions.length > 0
+        ? new Set(missingVersions.map(v => parseInt(v, 10)))
+        : null;
+
+      if (targetSet) {
+        filtered = allEntries.filter(e => targetSet.has(e.version));
+      } else if (minVer != null && maxVer != null) {
+        filtered = allEntries.filter(e => e.version >= minVer && e.version <= maxVer);
+      } else if (minVer != null) {
+        filtered = allEntries.filter(e => e.version >= minVer);
+      } else {
+        filtered = allEntries;
+      }
+
+      filtered.sort((a, b) => a.version - b.version);
+      const currentVersion = parseInt(await redis.get(`board:${boardId}:version`) || '0', 10);
+
+      logWsEvent('GAP UPDATES SERVED', [
+        `[user] ${uid}`,
+        `[board] ${boardId}`,
+        `[minVer] ${minVer ?? 'n/a'}`,
+        `[maxVer] ${maxVer ?? 'n/a'}`,
+        `[count] ${filtered.length}`,
+        `[currentVersion] ${currentVersion}`,
+      ]);
+
+      if (typeof callback === 'function') {
+        callback({
+          status: 'success',
+          boardId,
+          updates: filtered,
+          currentVersion,
+        });
+      }
+    } catch (error) {
+      console.error('[get_missing_crdt_updates] Error:', sanitizeErrorMessage(error));
+      if (typeof callback === 'function') {
+        callback({ status: 'error', message: error.message });
+      }
+    }
+  });
+
+  // ============================================================
+  // PEER UPDATE RECOVERY — Request & relay missing updates between peers
+  // ============================================================
+  socket.on('request_peer_crdt_updates', async ({ boardId, fromVersion, toVersion, missingVersions } = {}) => {
+    if (!isValidBoardId(boardId) || isRateLimited(socket.id)) return;
+    const hasAccess = await canUserAccessBoard(boardId, uid, false);
+    if (!hasAccess) return;
+
+    socket.to(`board_room:${boardId}`).emit('peer_crdt_updates_requested', {
+      boardId,
+      requesterUid: uid,
+      fromVersion,
+      toVersion,
+      missingVersions,
+    });
+  });
+
+  socket.on('relay_peer_crdt_updates', async ({ boardId, targetUid, updates } = {}) => {
+    if (!isValidBoardId(boardId) || !Array.isArray(updates) || isRateLimited(socket.id)) return;
+    const hasAccess = await canUserAccessBoard(boardId, uid, false);
+    if (!hasAccess) return;
+
+    if (targetUid) {
+      const sockets = await io.in(`board_room:${boardId}`).fetchSockets();
+      for (const s of sockets) {
+        if (s.data.uid === targetUid) {
+          s.emit('peer_crdt_updates_received', { boardId, updates, senderUid: uid });
+        }
+      }
+    } else {
+      socket.to(`board_room:${boardId}`).emit('peer_crdt_updates_received', { boardId, updates, senderUid: uid });
+    }
+  });
+
+  // ============================================================
   // sync_offline — VERSION-BASED SYNC (Phase 2+)
   // ============================================================
   socket.on('sync_offline', async ({ boardId, lastSeenCursor, sinceVersion }, callback) => {
@@ -2448,34 +2567,49 @@ io.on('connection', (socket) => {
 
         // Snapshot path didn't apply (no snapshot, or client is current).
         // Try reading any pending entries from the Redis stream directly
-        // before giving up.  This handles boards with < 100 updates where
-        // no snapshot has been created yet.
+        // before giving up. This handles boards with < 100 updates where
+        // no snapshot has been created yet, or catch-up past effectiveServerVersion.
         const streamKey = `board_updates:${boardId}`;
-        const raw = await redis.xread('COUNT', 100, 'STREAMS', streamKey, '0-0');
-        if (raw && raw[0] && raw[0][1] && raw[0][1].length > 0) {
-          const entries = raw[0][1];
-          const updates = [];
-          let lastEntryId = '0-0';
-          let lastVer = 0;
-          for (const [entryId, fields] of entries) {
+        const rawEntries = await redis.xrange(streamKey, '-', '+');
+        if (rawEntries && rawEntries.length > 0) {
+          const parsed = rawEntries.map(([id, fields]) => {
             const entry = parseStreamEntry(fields);
+            entry._streamId = id;
             entry.appliedAt = entry.timestamp;
-            updates.push(entry);
-            lastEntryId = entryId;
+            return entry;
+          });
+
+          const filtered = effectiveServerVersion > 0
+            ? parsed.filter(e => e.version > effectiveServerVersion)
+            : parsed;
+
+          const paged = filtered.slice(0, 100);
+          let lastEntryId = '0-0';
+          let lastVer = effectiveServerVersion || 0;
+          for (const entry of paged) {
+            lastEntryId = entry._streamId;
             if (entry.version > lastVer) lastVer = entry.version;
           }
+
           const newCursor = `${lastEntryId}:${lastVer}`;
           await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => { });
 
           logWsEvent('SYNC RESPONSE (stream catch-up)', [
             `[user] ${uid}`,
             `[board] ${boardId}`,
-            `[updates] ${updates.length}`,
+            `[updates] ${paged.length}`,
             `[cursor] ${newCursor}`,
+            `[effectiveServerVersion] ${effectiveServerVersion}`,
           ]);
 
           if (typeof callback === 'function') {
-            callback({ status: 'success', updates, cursor: newCursor, hasMore: entries.length >= 100, source: 'cursor' });
+            callback({
+              status: 'success',
+              updates: paged,
+              cursor: newCursor,
+              hasMore: filtered.length > 100,
+              source: 'cursor',
+            });
           }
           return;
         }

@@ -1245,9 +1245,29 @@ class _CanvasPainter extends CustomPainter {
     return true;
   }
 
+  static bool _elementsEqual(List<_CanvasElement> a, List<_CanvasElement> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id ||
+          a[i].z != b[i].z ||
+          a[i].kind != b[i].kind ||
+          a[i].color != b[i].color ||
+          a[i].strokeWidth != b[i].strokeWidth ||
+          a[i].center != b[i].center ||
+          a[i].points.length != b[i].points.length ||
+          a[i].rotation != b[i].rotation ||
+          a[i].text != b[i].text) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   @override
   bool shouldRepaint(covariant _CanvasPainter oldDelegate) {
     return oldDelegate.elements != elements ||
+        !_elementsEqual(oldDelegate.elements, elements) ||
         oldDelegate.decodedImages != decodedImages ||
         oldDelegate.currentPoints != currentPoints ||
         !_doubleListEquals(

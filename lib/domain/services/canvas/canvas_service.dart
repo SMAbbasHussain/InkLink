@@ -237,6 +237,12 @@ class CanvasServiceImpl implements CanvasService {
 
     await _boardRepository.ensureBoardCached(boardId);
 
+    // Pre-join socket room and arm inbound buffering immediately so no live
+    // peer updates are dropped while the baseline history fetch is in flight.
+    try {
+      await _syncRepository.preWatchBoard(boardId);
+    } catch (_) {}
+
     final localUpdates = await _syncRepository.getLocalCrdtUpdates(boardId);
     final useFirestoreFirst = localUpdates.isEmpty;
     // Only use previously-synced rows to compute the 'since' cursor. If there

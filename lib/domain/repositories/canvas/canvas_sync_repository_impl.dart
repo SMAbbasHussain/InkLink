@@ -34,6 +34,15 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       <String, void Function(dynamic)>{};
   final Map<String, void Function(dynamic)> _previewHandlers =
       <String, void Function(dynamic)>{};
+  final Map<String, List<LocalCrdtUpdate>> _inboundUpdateBuffers =
+      <String, List<LocalCrdtUpdate>>{};
+  final Map<String, int> _serverBoardVersions = <String, int>{};
+  final Map<String, int> _highestAppliedVersionPerBoard = <String, int>{};
+  final Map<String, bool> _gapRecoveryInFlight = <String, bool>{};
+  final Map<String, List<LocalCrdtUpdate>> _pendingOutOfOrderUpdates =
+      <String, List<LocalCrdtUpdate>>{};
+  Timer? _versionPeriodicCheckTimer;
+  StreamController<List<LocalCrdtUpdate>>? _peerUpdatesController;
   io.Socket? _handlersBoundSocket;
   StreamController<List<LocalCrdtUpdate>>? _socketUpdatesController;
   StreamController<List<LocalCrdtUpdate>>? _socketPreviewController;
@@ -88,6 +97,8 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       _watchConfirmedSocketIds.clear();
       _watchAttempts.clear();
       _watchInFlight.clear();
+      _versionPeriodicCheckTimer?.cancel();
+      _versionPeriodicCheckTimer = null;
       _handlersBoundSocket = null;
     }
     if (stale == null) return;
@@ -224,6 +235,10 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     for (final handler in _previewHandlers.values) {
       socket.on('crdt_preview', handler);
     }
+    socket.off('peer_crdt_updates_requested');
+    socket.on('peer_crdt_updates_requested', _handlePeerUpdatesRequested);
+    socket.off('peer_crdt_updates_received');
+    socket.on('peer_crdt_updates_received', _handlePeerUpdatesReceived);
   }
 
   /// Ensures this socket is in the board room, waiting for the server's
@@ -253,7 +268,16 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           _watchConfirmedSocketIds[boardId] = socketId;
           _watchAttempts.remove(boardId);
           _watchRetryTimers.remove(boardId)?.cancel();
-          _logWs('WATCH CONFIRMED', boardId, 'watch_board');
+          final version = (ack['currentVersion'] as num?)?.toInt();
+          if (version != null && version > 0) {
+            _serverBoardVersions[boardId] = version;
+          }
+          _logWs(
+            'WATCH CONFIRMED',
+            boardId,
+            'watch_board',
+            detail: version != null ? 'version=$version' : null,
+          );
           return;
         }
 
@@ -535,6 +559,368 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     }
   }
 
+  LocalCrdtUpdate _parseRemoteUpdateMap(
+    Map<String, dynamic> map,
+    String defaultBoardId,
+  ) {
+    final payload = (map['update'] as Map<String, dynamic>?) ?? map;
+    final appliedAtStr =
+        payload['appliedAt'] as String? ??
+        payload['timestamp'] as String? ??
+        map['appliedAt'] as String? ??
+        map['timestamp'] as String?;
+    final version = (payload['version'] as num?)?.toInt() ??
+        (map['version'] as num?)?.toInt() ??
+        0;
+    return LocalCrdtUpdate()
+      ..updateId = (payload['updateId'] as String?) ??
+          (map['updateId'] as String?) ??
+          (map['id'] as String?) ??
+          ''
+      ..boardId = (payload['boardId'] as String?) ??
+          (map['boardId'] as String?) ??
+          defaultBoardId
+      ..elementId =
+          payload['elementId'] as String? ?? map['elementId'] as String?
+      ..action = payload['action'] as String? ?? map['action'] as String?
+      ..affectedElementIds =
+          ((payload['affectedElementIds'] ?? map['affectedElementIds'])
+                  as List?)
+              ?.whereType<String>()
+              .toList()
+      ..payloadBase64 = (payload['payloadBase64'] as String?) ??
+          (map['payloadBase64'] as String?) ??
+          ''
+      ..sourceClientId = (payload['sourceClientId'] as String?) ??
+          (map['sourceClientId'] as String?) ??
+          ''
+      ..appliedAt = appliedAtStr != null
+          ? DateTime.tryParse(appliedAtStr) ?? DateTime.now()
+          : DateTime.now()
+      ..isSynced = true
+      ..version = version;
+  }
+
+  @override
+  Future<int?> preWatchBoard(String boardId) async {
+    _inboundUpdateBuffers.putIfAbsent(boardId, () => <LocalCrdtUpdate>[]);
+    await _ensureSocketConnected();
+    final socket = _socket;
+    if (socket != null && socket.connected) {
+      if (_updateHandlers[boardId] == null) {
+        _updateHandlers[boardId] = (dynamic data) {
+          try {
+            final map = data as Map<String, dynamic>;
+            if ((map['boardId'] as String?) == boardId) {
+              final update = _parseRemoteUpdateMap(map, boardId);
+              _inboundUpdateBuffers[boardId]?.add(update);
+              final h = _highestAppliedVersionPerBoard[boardId] ?? 0;
+              if (update.version > h) {
+                _highestAppliedVersionPerBoard[boardId] = update.version;
+              }
+            }
+          } catch (_) {}
+        };
+        if (identical(_handlersBoundSocket, socket)) {
+          socket.on('crdt_update', _updateHandlers[boardId]!);
+        } else {
+          _bindStoredSocketHandlers(socket);
+        }
+      }
+      _watchBoard(boardId);
+      final ack = await _emitWithAck(
+        'watch_board',
+        boardId,
+        timeout: const Duration(seconds: 4),
+      );
+      if (ack != null && ack['status'] == 'success') {
+        final ver = (ack['currentVersion'] as num?)?.toInt();
+        if (ver != null && ver > 0) {
+          _serverBoardVersions[boardId] = ver;
+        }
+        return ver;
+      }
+    }
+    return _serverBoardVersions[boardId];
+  }
+
+  @override
+  Future<List<LocalCrdtUpdate>> fetchMissingCrdtUpdates({
+    required String boardId,
+    int? fromVersion,
+    int? toVersion,
+    int? sinceVersion,
+    List<int>? missingVersions,
+  }) async {
+    try {
+      await _ensureSocketConnected();
+      final socket = _socket;
+      if (socket == null || !socket.connected) {
+        return const <LocalCrdtUpdate>[];
+      }
+      final payload = <String, dynamic>{
+        'boardId': boardId,
+        if (fromVersion != null) 'fromVersion': fromVersion,
+        if (toVersion != null) 'toVersion': toVersion,
+        if (sinceVersion != null) 'sinceVersion': sinceVersion,
+        if (missingVersions != null) 'missingVersions': missingVersions,
+      };
+      final ack = await _emitWithAck(
+        'get_missing_crdt_updates',
+        payload,
+        timeout: const Duration(seconds: 4),
+      );
+      if (ack != null && ack['status'] == 'success') {
+        final updatesList = (ack['updates'] as List?) ?? const [];
+        final parsed = <LocalCrdtUpdate>[];
+        for (final item in updatesList) {
+          if (item is Map<String, dynamic>) {
+            parsed.add(_parseRemoteUpdateMap(item, boardId));
+          }
+        }
+        return parsed;
+      }
+    } catch (e, st) {
+      _logError('Failed to fetch missing crdt updates', e, st, boardId: boardId);
+    }
+    return const <LocalCrdtUpdate>[];
+  }
+
+  @override
+  void requestPeerCrdtUpdates({
+    required String boardId,
+    int? fromVersion,
+    int? toVersion,
+    List<int>? missingVersions,
+  }) {
+    final socket = _socket;
+    if (socket == null || !socket.connected) return;
+    socket.emit('request_peer_crdt_updates', {
+      'boardId': boardId,
+      if (fromVersion != null) 'fromVersion': fromVersion,
+      if (toVersion != null) 'toVersion': toVersion,
+      if (missingVersions != null) 'missingVersions': missingVersions,
+    });
+  }
+
+  @override
+  void relayPeerCrdtUpdates({
+    required String boardId,
+    required List<LocalCrdtUpdate> updates,
+    String? targetUid,
+  }) {
+    final socket = _socket;
+    if (socket == null || !socket.connected) return;
+    socket.emit('relay_peer_crdt_updates', {
+      'boardId': boardId,
+      if (targetUid != null) 'targetUid': targetUid,
+      'updates': updates
+          .map(
+            (u) => {
+              'updateId': u.updateId,
+              'boardId': u.boardId,
+              'elementId': u.elementId,
+              'action': u.action,
+              'affectedElementIds': u.affectedElementIds,
+              'payloadBase64': u.payloadBase64,
+              'sourceClientId': u.sourceClientId,
+              'timestamp': u.appliedAt.toIso8601String(),
+              'version': u.version,
+            },
+          )
+          .toList(),
+    });
+  }
+
+  @override
+  Stream<List<LocalCrdtUpdate>> watchPeerCrdtUpdates(String boardId) {
+    _peerUpdatesController ??=
+        StreamController<List<LocalCrdtUpdate>>.broadcast();
+    return _peerUpdatesController!.stream;
+  }
+
+  Future<void> _handlePeerUpdatesRequested(dynamic data) async {
+    try {
+      final map = data as Map<String, dynamic>;
+      final boardId = map['boardId'] as String?;
+      final requesterUid = map['requesterUid'] as String?;
+      if (boardId == null || requesterUid == null || requesterUid == currentUserId) {
+        return;
+      }
+      final fromVersion = (map['fromVersion'] as num?)?.toInt();
+      final toVersion = (map['toVersion'] as num?)?.toInt();
+      final missingList = (map['missingVersions'] as List?)
+          ?.whereType<num>()
+          .map((n) => n.toInt())
+          .toSet();
+
+      final isar = await _localDatabaseService.database;
+      final local = await isar.localCrdtUpdates
+          .filter()
+          .boardIdEqualTo(boardId)
+          .findAll();
+      final matching = local.where((u) {
+        if (missingList != null && missingList.contains(u.version)) return true;
+        if (fromVersion != null && toVersion != null) {
+          return u.version >= fromVersion && u.version <= toVersion;
+        }
+        if (fromVersion != null) return u.version >= fromVersion;
+        return false;
+      }).toList();
+
+      if (matching.isNotEmpty) {
+        relayPeerCrdtUpdates(
+          boardId: boardId,
+          updates: matching,
+          targetUid: requesterUid,
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _handlePeerUpdatesReceived(dynamic data) {
+    try {
+      final map = data as Map<String, dynamic>;
+      final boardId = map['boardId'] as String?;
+      final rawUpdates = map['updates'] as List?;
+      if (boardId == null || rawUpdates == null) return;
+      final updates = <LocalCrdtUpdate>[];
+      for (final raw in rawUpdates) {
+        if (raw is Map<String, dynamic>) {
+          updates.add(_parseRemoteUpdateMap(raw, boardId));
+        }
+      }
+      if (updates.isNotEmpty) {
+        _peerUpdatesController?.add(updates);
+        for (final u in updates) {
+          final h = _highestAppliedVersionPerBoard[boardId] ?? 0;
+          if (u.version > h) {
+            _highestAppliedVersionPerBoard[boardId] = u.version;
+          }
+        }
+        _socketUpdatesController?.add(updates);
+        _drainPendingOutOfOrderUpdates(boardId);
+      }
+    } catch (_) {}
+  }
+
+  void _drainPendingOutOfOrderUpdates(String boardId) {
+    final pending = _pendingOutOfOrderUpdates[boardId];
+    if (pending == null || pending.isEmpty) return;
+
+    pending.sort((a, b) => a.version.compareTo(b.version));
+    final toEmit = <LocalCrdtUpdate>[];
+
+    while (pending.isNotEmpty) {
+      final first = pending.first;
+      final currentHighest = _highestAppliedVersionPerBoard[boardId] ?? 0;
+      if (first.version <= currentHighest) {
+        pending.removeAt(0);
+      } else if (first.version == currentHighest + 1) {
+        pending.removeAt(0);
+        _highestAppliedVersionPerBoard[boardId] = first.version;
+        toEmit.add(first);
+      } else {
+        break;
+      }
+    }
+
+    if (toEmit.isNotEmpty) {
+      _socketUpdatesController?.add(toEmit);
+    }
+  }
+
+  void _triggerGapRecovery(String boardId, int fromVersion, int toVersion) {
+    if (_gapRecoveryInFlight[boardId] == true) return;
+    _gapRecoveryInFlight[boardId] = true;
+    unawaited(() async {
+      try {
+        _logWs(
+          'RECOVERY START',
+          boardId,
+          'get_missing_crdt_updates',
+          detail: 'from=$fromVersion to=$toVersion',
+        );
+        final missing = await fetchMissingCrdtUpdates(
+          boardId: boardId,
+          fromVersion: fromVersion,
+          toVersion: toVersion,
+        );
+
+        if (missing.isNotEmpty) {
+          for (final update in missing) {
+            await saveLocalCrdtUpdate(update);
+            final currentHighest = _highestAppliedVersionPerBoard[boardId] ?? 0;
+            if (update.version > currentHighest) {
+              _highestAppliedVersionPerBoard[boardId] = update.version;
+            }
+          }
+          _socketUpdatesController?.add(missing);
+          _drainPendingOutOfOrderUpdates(boardId);
+        } else {
+          _logWs(
+            'RECOVERY PEER FALLBACK',
+            boardId,
+            'request_peer_crdt_updates',
+            detail: 'from=$fromVersion to=$toVersion',
+          );
+          requestPeerCrdtUpdates(
+            boardId: boardId,
+            fromVersion: fromVersion,
+            toVersion: toVersion,
+          );
+        }
+      } catch (e, st) {
+        _logError('Gap recovery failed', e, st, boardId: boardId);
+        requestPeerCrdtUpdates(
+          boardId: boardId,
+          fromVersion: fromVersion,
+          toVersion: toVersion,
+        );
+      } finally {
+        _gapRecoveryInFlight[boardId] = false;
+        _drainPendingOutOfOrderUpdates(boardId);
+      }
+    }());
+  }
+
+  void _startVersionPeriodicCheck() {
+    _versionPeriodicCheckTimer ??= Timer.periodic(
+      const Duration(seconds: 8),
+      (_) async {
+        final socket = _socket;
+        if (socket == null || !socket.connected) return;
+        for (final boardId in _watchedBoardRefCounts.keys) {
+          final currentHighest = _highestAppliedVersionPerBoard[boardId] ?? 0;
+          if (currentHighest <= 0) continue;
+          try {
+            final missing = await fetchMissingCrdtUpdates(
+              boardId: boardId,
+              sinceVersion: currentHighest,
+            );
+            if (missing.isNotEmpty) {
+              _logWs(
+                'PERIODIC RECOVERY FOUND UPDATES',
+                boardId,
+                'get_missing_crdt_updates',
+                detail: 'count=${missing.length}',
+              );
+              for (final update in missing) {
+                await saveLocalCrdtUpdate(update);
+                final h = _highestAppliedVersionPerBoard[boardId] ?? 0;
+                if (update.version > h) {
+                  _highestAppliedVersionPerBoard[boardId] = update.version;
+                }
+              }
+              _socketUpdatesController?.add(missing);
+              _drainPendingOutOfOrderUpdates(boardId);
+            }
+          } catch (_) {}
+        }
+      },
+    );
+  }
+
   @override
   Future<List<LocalCrdtUpdate>> getLocalCrdtUpdates(String boardId) async {
     final isar = await _localDatabaseService.database;
@@ -633,26 +1019,14 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       // --- Parse updates list ---
       final updatesList = (response['updates'] as List?) ?? <dynamic>[];
       for (final data in updatesList) {
-        final map = data as Map<String, dynamic>;
-        final appliedAtStr =
-            map['appliedAt'] as String? ?? map['timestamp'] as String?;
-        allUpdates.add(
-          LocalCrdtUpdate()
-            ..updateId = (map['updateId'] as String?) ?? ''
-            ..boardId = (map['boardId'] as String?) ?? boardId
-            ..elementId = map['elementId'] as String?
-            ..action = map['action'] as String?
-            ..affectedElementIds = (map['affectedElementIds'] as List?)
-                ?.whereType<String>()
-                .toList()
-            ..payloadBase64 = map['payloadBase64'] as String? ?? ''
-            ..sourceClientId = map['sourceClientId'] as String? ?? ''
-            ..appliedAt = appliedAtStr != null
-                ? DateTime.tryParse(appliedAtStr) ?? DateTime.now()
-                : DateTime.now()
-            ..isSynced = true
-            ..version = (map['version'] as num?)?.toInt() ?? 0,
-        );
+        if (data is Map<String, dynamic>) {
+          final u = _parseRemoteUpdateMap(data, boardId);
+          allUpdates.add(u);
+          final currentHighest = _highestAppliedVersionPerBoard[boardId] ?? 0;
+          if (u.version > currentHighest) {
+            _highestAppliedVersionPerBoard[boardId] = u.version;
+          }
+        }
       }
 
       // --- Store cursor ---
@@ -780,37 +1154,57 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         _socketUpdatesController?.close();
         _socketUpdatesController = StreamController<List<LocalCrdtUpdate>>();
 
+        if ((_highestAppliedVersionPerBoard[boardId] ?? 0) == 0) {
+          final isar = await _localDatabaseService.database;
+          final latestUpdate = await isar.localCrdtUpdates
+              .filter()
+              .boardIdEqualTo(boardId)
+              .sortByVersionDesc()
+              .findFirst();
+          if (latestUpdate != null && latestUpdate.version > 0) {
+            _highestAppliedVersionPerBoard[boardId] = latestUpdate.version;
+          }
+        }
+
         void handleUpdate(dynamic data) {
           try {
             final map = data as Map<String, dynamic>;
             if ((map['boardId'] as String?) == boardId) {
-              final payload = (map['update'] as Map<String, dynamic>?) ?? {};
-              final version = (payload['version'] as num?)?.toInt() ?? 0;
-              final update = LocalCrdtUpdate()
-                ..updateId =
-                    (payload['updateId'] as String?) ??
-                    (map['id'] as String?) ??
-                    ''
-                ..boardId = boardId
-                ..elementId = payload['elementId'] as String?
-                ..action = payload['action'] as String?
-                ..affectedElementIds = (payload['affectedElementIds'] as List?)
-                    ?.whereType<String>()
-                    .toList()
-                ..payloadBase64 = payload['payloadBase64'] as String? ?? ''
-                ..sourceClientId = payload['sourceClientId'] as String? ?? ''
-                ..appliedAt = DateTime.now()
-                ..isSynced = true
-                ..version = version;
+              final update = _parseRemoteUpdateMap(map, boardId);
+              final version = update.version;
+              final currentHighest =
+                  _highestAppliedVersionPerBoard[boardId] ?? 0;
+
               _logWs(
                 'UPDATE RECEIVED',
                 boardId,
                 'crdt_update',
                 updateId: update.updateId,
                 elementId: update.elementId,
-                detail: 'version=$version',
+                detail: 'version=$version, highest=$currentHighest',
               );
-              _socketUpdatesController?.add([update]);
+
+              if (version > 0 &&
+                  currentHighest > 0 &&
+                  version > currentHighest + 1) {
+                _logWs(
+                  'GAP DETECTED',
+                  boardId,
+                  'crdt_update',
+                  detail:
+                      'missing ${currentHighest + 1}..${version - 1}, got $version',
+                );
+                _pendingOutOfOrderUpdates
+                    .putIfAbsent(boardId, () => <LocalCrdtUpdate>[])
+                    .add(update);
+                _triggerGapRecovery(boardId, currentHighest + 1, version - 1);
+              } else {
+                if (version > currentHighest) {
+                  _highestAppliedVersionPerBoard[boardId] = version;
+                }
+                _socketUpdatesController?.add([update]);
+                _drainPendingOutOfOrderUpdates(boardId);
+              }
             }
           } catch (error, stackTrace) {
             _logError(
@@ -830,6 +1224,27 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           subscribeLabel: 'watch_board',
           handleEvent: handleUpdate,
         );
+
+        final buffered = _inboundUpdateBuffers.remove(boardId);
+        if (buffered != null && buffered.isNotEmpty) {
+          for (final b in buffered) {
+            handleUpdate({
+              'boardId': boardId,
+              'update': {
+                'updateId': b.updateId,
+                'elementId': b.elementId,
+                'action': b.action,
+                'affectedElementIds': b.affectedElementIds,
+                'payloadBase64': b.payloadBase64,
+                'sourceClientId': b.sourceClientId,
+                'version': b.version,
+                'timestamp': b.appliedAt.toIso8601String(),
+              },
+            });
+          }
+        }
+
+        _startVersionPeriodicCheck();
 
         yield* _socketUpdatesController!.stream;
         return;

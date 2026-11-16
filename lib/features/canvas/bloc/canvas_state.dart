@@ -500,7 +500,7 @@ class CanvasState {
       other is CanvasState &&
           runtimeType == other.runtimeType &&
           boardTitle == other.boardTitle &&
-          elements == other.elements &&
+          _listEquals(elements, other.elements) &&
           currentStroke == other.currentStroke &&
           currentStrokePressures == other.currentStrokePressures &&
           currentStrokeTilts == other.currentStrokeTilts &&

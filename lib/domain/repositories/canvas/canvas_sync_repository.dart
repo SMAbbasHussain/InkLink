@@ -60,6 +60,38 @@ abstract class CanvasSyncRepository {
   /// that the next sync can resume from where the user left off.
   Future<void> persistCursorForBoard(String boardId);
 
+  /// Pre-joins the socket room for [boardId] and arms inbound buffering so no
+  /// live broadcast updates are missed while initial hydration/history fetch is running.
+  /// Returns the current server version at the moment of join, if available.
+  Future<int?> preWatchBoard(String boardId);
+
+  /// Fetches specific missing CRDT updates from the server by version range or version list.
+  Future<List<LocalCrdtUpdate>> fetchMissingCrdtUpdates({
+    required String boardId,
+    int? fromVersion,
+    int? toVersion,
+    int? sinceVersion,
+    List<int>? missingVersions,
+  });
+
+  /// Broadcasts a request to online peers in [boardId] for missing CRDT updates.
+  void requestPeerCrdtUpdates({
+    required String boardId,
+    int? fromVersion,
+    int? toVersion,
+    List<int>? missingVersions,
+  });
+
+  /// Relays local CRDT updates to a peer who requested them.
+  void relayPeerCrdtUpdates({
+    required String boardId,
+    required List<LocalCrdtUpdate> updates,
+    String? targetUid,
+  });
+
+  /// Stream of CRDT updates received directly from peers.
+  Stream<List<LocalCrdtUpdate>> watchPeerCrdtUpdates(String boardId);
+
   /// Send an explicit logout handshake to the server which clears cursor tracking.
   Future<void> logoutSocket();
 
