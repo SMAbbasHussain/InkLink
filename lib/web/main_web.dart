@@ -10,6 +10,7 @@
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../firebase_options.dart';
@@ -17,6 +18,10 @@ import 'web_companion_app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Flutter web keeps the accessibility tree off until something asks for it,
+  // so screen readers and keyboard users only see "Enable accessibility".
+  // Turn it on from the start so every field, button and label is readable.
+  SemanticsBinding.instance.ensureSemantics();
   await dotenv.load(fileName: '.env');
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const WebCompanionApp());

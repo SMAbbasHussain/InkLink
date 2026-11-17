@@ -20,6 +20,8 @@ Not on the web: drawing and editing boards, AI images, chat, voice, push notific
 
 Layout: a side rail on wide screens, a bottom bar on narrow ones, light and dark mode following the system.
 
+Design: the same "Desk" look as the mobile app, reusing its widgets without changing them: the dot-grid desk background, the live-board hero (strokes and collaborator cursors), the app-icon logo tile, the gradient sign-in button and the real Google logo. On wide screens, sign-in is two columns, with sticky notes on the left explaining what the web version does. Screen-reader support is on from the start (`ensureSemantics()` in `main_web.dart`), so every field and button has a label.
+
 ## Run and build
 
 ```bash
@@ -59,7 +61,7 @@ test/web/
 3. **R2 CORS (optional):** profile photos are loaded by the browser. If avatars show initials instead of photos on the web, add a CORS rule on the R2 bucket allowing the web origin.
 
 ## Known limitations
-- `web/index.html` and `web/manifest.json` still say "inklink" / "A new Flutter project." They were left unchanged to keep this change additive. Rename later if wanted.
+- `web/index.html` and `web/manifest.json` (web-only files; phone builds don't use them) now carry the "InkLink" name, description and brand colors. The splash-screen CSS in `index.html` is managed by `flutter_native_splash`, so re-running that generator may reset it.
 - Board previews (thumbnails) are stored on each phone, not in the cloud, so the web shows board cards without previews.
 - The "open in the app" link (`https://inklink.app/board/<id>`) opens the board on a phone with InkLink installed and app links verified.
 - Role for joined boards is shown as "Member" (the exact role lives in a subcollection the companion doesn't read).

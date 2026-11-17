@@ -6,8 +6,8 @@ import '../../domain/models/user_model.dart';
 import '../../ui/theme/ink_theme.dart';
 import '../../ui/theme/ink_tokens.dart';
 import '../../ui/theme/ink_type.dart';
+import '../../ui/widgets/desk_background.dart';
 import '../../ui/widgets/ink_avatar.dart';
-import '../../ui/widgets/ink_logo.dart';
 import '../data/web_companion_repository.dart';
 import '../data/web_mappers.dart';
 import 'boards_page.dart';
@@ -15,6 +15,7 @@ import 'friends_page.dart';
 import 'invites_page.dart';
 import 'notifications_page.dart';
 import 'profile_page.dart';
+import 'sign_in_screen.dart' show WebLogoTile;
 
 class _Section {
   final String label;
@@ -57,10 +58,13 @@ class _WebHomeShellState extends State<WebHomeShell> {
       appBar: AppBar(
         backgroundColor: ink.paper,
         surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shape: Border(bottom: BorderSide(color: ink.glassStroke)),
         titleSpacing: InkSpacing.s16,
         title: Row(
           children: [
-            const InkLogo(size: 28),
+            const WebLogoTile(size: 34),
             const SizedBox(width: InkSpacing.s8),
             Text('InkLink', style: InkType.title(ink.ink)),
             const SizedBox(width: InkSpacing.s8),
@@ -79,22 +83,34 @@ class _WebHomeShellState extends State<WebHomeShell> {
       body: Row(
         children: [
           if (wide)
-            NavigationRail(
-              backgroundColor: ink.paper,
-              selectedIndex: _index,
-              labelType: NavigationRailLabelType.all,
-              onDestinationSelected: (i) => setState(() => _index = i),
-              destinations: [
-                for (final s in _sections)
-                  NavigationRailDestination(icon: Icon(s.icon), label: Text(s.label)),
-              ],
+            DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border(right: BorderSide(color: ink.glassStroke)),
+              ),
+              child: NavigationRail(
+                backgroundColor: ink.paper,
+                selectedIndex: _index,
+                labelType: NavigationRailLabelType.all,
+                indicatorColor: ink.accentSoft,
+                selectedIconTheme: IconThemeData(color: ink.accentText),
+                unselectedIconTheme: IconThemeData(color: ink.inkSecondary),
+                selectedLabelTextStyle: InkType.label(ink.accentText),
+                unselectedLabelTextStyle: InkType.label(ink.inkSecondary),
+                onDestinationSelected: (i) => setState(() => _index = i),
+                destinations: [
+                  for (final s in _sections)
+                    NavigationRailDestination(icon: Icon(s.icon), label: Text(s.label)),
+                ],
+              ),
             ),
           Expanded(
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1100),
-                child: page,
+            child: DeskBackground(
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1100),
+                  child: page,
+                ),
               ),
             ),
           ),
@@ -103,6 +119,8 @@ class _WebHomeShellState extends State<WebHomeShell> {
       bottomNavigationBar: wide
           ? null
           : NavigationBar(
+              backgroundColor: ink.paper,
+              indicatorColor: ink.accentSoft,
               selectedIndex: _index,
               onDestinationSelected: (i) => setState(() => _index = i),
               labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
