@@ -1,4 +1,3 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -6,16 +5,24 @@ import '../core/services/auth_service.dart';
 import '../core/services/cloud_functions_service.dart';
 import '../core/services/firestore_service.dart';
 import '../ui/theme/ink_theme.dart';
+import 'data/firebase_web_companion_repository.dart';
+import 'data/web_account.dart';
 import 'data/web_companion_repository.dart';
 import 'screens/home_shell.dart';
 import 'screens/sign_in_screen.dart';
 
 /// Root of the web companion: theme, services and the sign-in gate.
 class WebCompanionApp extends StatelessWidget {
-  /// Tests can inject a repository; the real app builds one from Firebase.
+  /// Preview mode and tests inject a sample-data repository; the real app
+  /// builds the Firebase one.
   final WebCompanionRepository? repository;
+  final ThemeMode themeMode;
 
-  const WebCompanionApp({super.key, this.repository});
+  const WebCompanionApp({
+    super.key,
+    this.repository,
+    this.themeMode = ThemeMode.system,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +31,7 @@ class WebCompanionApp extends StatelessWidget {
         RepositoryProvider<WebCompanionRepository>(
           create: (_) =>
               repository ??
-              WebCompanionRepository(
+              FirebaseWebCompanionRepository(
                 authService: AuthServiceImpl(),
                 firestoreService: FirestoreServiceImpl(),
                 cloudFunctionsService: CloudFunctionsServiceImpl(),
@@ -37,7 +44,7 @@ class WebCompanionApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         theme: InkTheme.light(),
         darkTheme: InkTheme.dark(),
-        themeMode: ThemeMode.system,
+        themeMode: themeMode,
         home: const _WebAuthGate(),
       ),
     );
@@ -53,16 +60,13 @@ class _WebAuthGate extends StatelessWidget {
     final repo = context.read<WebCompanionRepository>();
     return ListenableBuilder(
       listenable: context.read<WebAuthRefresh>(),
-      builder: (context, _) => StreamBuilder<User?>(
+      builder: (context, _) => StreamBuilder<WebAccount?>(
         stream: repo.authChanges,
         initialData: repo.currentUser,
         builder: (context, snapshot) {
           final user = repo.currentUser ?? snapshot.data;
           if (user == null) return const WebSignInScreen();
-          final usesPassword = user.providerData.any(
-            (p) => p.providerId == 'password',
-          );
-          if (usesPassword && !user.emailVerified) {
+          if (user.usesPassword && !user.emailVerified) {
             return WebVerifyEmailScreen(email: user.email ?? 'your email');
           }
           return WebHomeShell(key: ValueKey(user.uid));

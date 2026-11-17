@@ -118,6 +118,61 @@ NotificationKind notificationKindOf(String type) {
   return NotificationKind.other;
 }
 
+/// "Good morning" / "Good afternoon" / "Good evening" for the local hour.
+String greetingFor(DateTime time) {
+  final h = time.hour;
+  if (h >= 5 && h < 12) return 'Good morning';
+  if (h >= 12 && h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+/// First word of a display name, or null when there is no usable name.
+String? firstNameOf(String? name) {
+  final parts = (name ?? '').trim().split(RegExp(r'\s+'));
+  final first = parts.isEmpty ? '' : parts.first;
+  return first.isEmpty ? null : first;
+}
+
+/// The most used tags across boards (most frequent first, then A–Z).
+List<String> topTags(Iterable<List<String>> tagLists, {int limit = 8}) {
+  final counts = <String, int>{};
+  for (final tags in tagLists) {
+    for (final t in tags) {
+      final tag = t.trim();
+      if (tag.isEmpty) continue;
+      counts[tag] = (counts[tag] ?? 0) + 1;
+    }
+  }
+  final sorted = counts.keys.toList()
+    ..sort((a, b) {
+      final byCount = counts[b]!.compareTo(counts[a]!);
+      return byCount != 0 ? byCount : a.compareTo(b);
+    });
+  return sorted.take(limit).toList();
+}
+
+/// "Mar 2025" style date for "Member since".
+String memberSince(DateTime date) {
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return '${months[date.month - 1]} ${date.year}';
+}
+
+/// Notification feed sections, newest first.
+enum NotificationGroup { today, thisWeek, earlier }
+
+NotificationGroup notificationGroupOf(DateTime time, {DateTime? now}) {
+  final current = now ?? DateTime.now();
+  final today = DateTime(current.year, current.month, current.day);
+  if (!time.isBefore(today)) return NotificationGroup.today;
+  if (time.isAfter(today.subtract(const Duration(days: 7)))) {
+    return NotificationGroup.thisWeek;
+  }
+  return NotificationGroup.earlier;
+}
+
 /// Validation for the profile form, matching the mobile limits loosely.
 String? validateDisplayName(String value) {
   final trimmed = value.trim();

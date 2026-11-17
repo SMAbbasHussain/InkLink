@@ -100,31 +100,66 @@ class _WebFriendsPageState extends State<WebFriendsPage> {
                 stream: _friends,
                 emptyIcon: LucideIcons.users,
                 emptyText: 'No friends yet',
-                builder: (context, friends) => PaperCard(
-                  padding: const EdgeInsets.symmetric(vertical: InkSpacing.s8),
-                  child: Column(
-                    children: [
-                      for (final f in friends)
-                        ListTile(
-                          key: ValueKey(f.uid),
-                          leading: InkAvatar(
-                            id: f.uid,
-                            imageUrl: f.photoURL,
-                            initials: initialsOf(f.displayName),
-                            size: 36,
+                builder: (context, friends) => LayoutBuilder(
+                  builder: (context, constraints) {
+                    final columns = constraints.maxWidth >= 520 ? 2 : 1;
+                    const gap = InkSpacing.s12;
+                    final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
+                    return Wrap(
+                      spacing: gap,
+                      runSpacing: gap,
+                      children: [
+                        for (final f in friends)
+                          SizedBox(
+                            key: ValueKey(f.uid),
+                            width: width,
+                            child: PaperCard(
+                              padding: const EdgeInsets.all(InkSpacing.s16),
+                              child: Row(
+                                children: [
+                                  InkAvatar(
+                                    id: f.uid,
+                                    imageUrl: f.photoURL,
+                                    initials: initialsOf(f.displayName),
+                                    size: 44,
+                                  ),
+                                  const SizedBox(width: InkSpacing.s12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          f.displayName,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: InkType.bodyStrong(ink.ink),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Row(
+                                          children: [
+                                            Icon(LucideIcons.layoutGrid,
+                                                size: 13, color: ink.inkMuted),
+                                            const SizedBox(width: 4),
+                                            Text('${f.boardCount}',
+                                                style: InkType.caption(ink.inkSecondary)),
+                                            const SizedBox(width: 12),
+                                            Icon(LucideIcons.users,
+                                                size: 13, color: ink.inkMuted),
+                                            const SizedBox(width: 4),
+                                            Text('${f.friendCount}',
+                                                style: InkType.caption(ink.inkSecondary)),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
-                          title: Text(
-                            f.displayName,
-                            style: InkType.bodyStrong(ink.ink),
-                          ),
-                          subtitle: Text(
-                            '${f.boardCount} ${f.boardCount == 1 ? 'board' : 'boards'}'
-                            ' · ${f.friendCount} ${f.friendCount == 1 ? 'friend' : 'friends'}',
-                            style: InkType.caption(ink.inkMuted),
-                          ),
-                        ),
-                    ],
-                  ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ],

@@ -36,54 +36,57 @@ class _WebNotificationsPageState extends State<WebNotificationsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final ink = context.ink;
     return ListView(
       padding: const EdgeInsets.all(InkSpacing.s24),
       children: [
-        const WebPageHeader(
-          title: 'Notifications',
-          subtitle: 'Accept invites and friend requests on their own pages.',
-        ),
-        WebStreamList<InAppNotification>(
-          stream: _stream,
-          compactEmpty: false,
-          emptyIcon: LucideIcons.bell,
-          emptyText: "You're all caught up",
-          builder: (context, items) => WebReadableWidth(
-            child: PaperCard(
-              padding: const EdgeInsets.symmetric(vertical: InkSpacing.s8),
-              child: Column(
-                children: [
-                  for (final n in items)
-                    ListTile(
-                      key: ValueKey(n.id),
-                      leading: _NotificationAvatar(notification: n),
-                      title: Text(
-                        n.title,
-                        style: n.read
-                            ? InkType.body(ink.ink)
-                            : InkType.bodyStrong(ink.ink),
-                      ),
-                      subtitle: Text(
-                        [
-                          if (n.body != null && n.body!.isNotEmpty) n.body!,
-                          timeAgo(n.timestamp),
-                        ].join(' · '),
-                        style: InkType.caption(ink.inkMuted),
-                      ),
-                      trailing: IconButton(
-                        tooltip: 'Remove',
-                        icon: Icon(
-                          LucideIcons.x,
-                          size: 18,
-                          color: ink.inkMuted,
-                        ),
-                        onPressed: () => _delete(n),
-                      ),
-                    ),
-                ],
+        WebReadableWidth(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const WebPageHeader(
+                title: 'Notifications',
+                subtitle: 'Accept invites and friend requests on their own pages.',
               ),
-            ),
+              WebStreamList<InAppNotification>(
+                stream: _stream,
+                compactEmpty: false,
+                emptyIcon: LucideIcons.bell,
+                emptyText: "You're all caught up",
+                builder: (context, items) {
+                  final now = DateTime.now();
+                  final groups = <NotificationGroup, List<InAppNotification>>{};
+                  for (final n in items) {
+                    groups.putIfAbsent(notificationGroupOf(n.timestamp, now: now), () => []).add(n);
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final g in NotificationGroup.values)
+                        if (groups[g] != null) ...[
+                          WebSectionLabel(switch (g) {
+                            NotificationGroup.today => 'Today',
+                            NotificationGroup.thisWeek => 'This week',
+                            NotificationGroup.earlier => 'Earlier',
+                          }),
+                          PaperCard(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            child: Column(
+                              children: [
+                                for (final n in groups[g]!)
+                                  _NotificationRow(
+                                    key: ValueKey(n.id),
+                                    notification: n,
+                                    onDelete: () => _delete(n),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                    ],
+                  );
+                },
+              ),
+            ],
           ),
         ),
       ],
@@ -127,6 +130,90 @@ class _NotificationAvatar extends StatelessWidget {
           shape: BoxShape.circle,
         ),
         child: Icon(icon, size: 18, color: ink.accentText),
+      ),
+    );
+  }
+}
+
+/// One notification: unread dot, avatar, title, details and time, with a
+/// remove button. Highlights on hover.
+class _NotificationRow extends StatefulWidget {
+  final InAppNotification notification;
+  final VoidCallback onDelete;
+  const _NotificationRow({super.key, required this.notification, required this.onDelete});
+
+  @override
+  State<_NotificationRow> createState() => _NotificationRowState();
+}
+
+class _NotificationRowState extends State<_NotificationRow> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = context.ink;
+    final n = widget.notification;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        margin: const EdgeInsets.symmetric(horizontal: 6),
+        padding: const EdgeInsets.fromLTRB(10, 12, 6, 12),
+        decoration: BoxDecoration(
+          color: _hover ? ink.field : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 12,
+              height: 36,
+              child: Center(
+                child: n.read
+                    ? null
+                    : Semantics(
+                        label: 'Unread',
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(color: ink.accent, shape: BoxShape.circle),
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            _NotificationAvatar(notification: n),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    n.title,
+                    style: n.read ? InkType.body(ink.ink) : InkType.bodyStrong(ink.ink),
+                  ),
+                  if (n.body != null && n.body!.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(n.body!, style: InkType.caption(ink.inkSecondary)),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(timeAgo(n.timestamp), style: InkType.caption(ink.inkMuted)),
+            ),
+            IconButton(
+              tooltip: 'Remove',
+              visualDensity: VisualDensity.compact,
+              icon: Icon(LucideIcons.x, size: 16, color: ink.inkMuted),
+              onPressed: widget.onDelete,
+            ),
+          ],
+        ),
       ),
     );
   }
