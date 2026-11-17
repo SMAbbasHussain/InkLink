@@ -8,6 +8,9 @@
  * Ends in `_utils.js` so functions/index.js does not export it.
  */
 
+const fs = require('fs/promises');
+const os = require('os');
+const path = require('path');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 
@@ -125,6 +128,66 @@ function createR2Storage(env = process.env) {
   };
 }
 
+// ──────────────────────────────────────────────
+// Local storage: Functions EMULATOR ONLY
+// ──────────────────────────────────────────────
+// Lets a developer without access to the R2 secrets test the AI feature on a
+// phone. Images are written to a folder on the PC and served by
+// scripts/serve_local_ai_images.js. It is used only when BOTH
+// FUNCTIONS_EMULATOR=true (set by the emulator itself, never in production)
+// and AI_LOCAL_STORAGE=true (set in functions/.env.local).
+
+const DEFAULT_LOCAL_IMAGE_BASE_URL = 'http://127.0.0.1:5005';
+
+function localStorageDir(env = process.env) {
+  const configured = String(env.AI_LOCAL_STORAGE_DIR || '').trim();
+  return configured || path.join(os.tmpdir(), 'inklink-ai-local-images');
+}
+
+function isLocalStorageEnabled(env = process.env) {
+  return (
+    String(env.FUNCTIONS_EMULATOR || '').trim().toLowerCase() === 'true' &&
+    String(env.AI_LOCAL_STORAGE || '').trim().toLowerCase() === 'true'
+  );
+}
+
+function createLocalStorage(env = process.env) {
+  const dir = localStorageDir(env);
+  const base = String(env.AI_LOCAL_IMAGE_BASE_URL || DEFAULT_LOCAL_IMAGE_BASE_URL).trim();
+  // Reuse the R2 URL helpers with the local base so URL validation is identical.
+  const localEnv = { CLOUDFLARE_R2_PUBLIC_URL: base };
+
+  return {
+    assertConfigured: () => {},
+
+    parseSourceUrl: (sourceImageUrl, boardId) =>
+      parseAiImageUrl(sourceImageUrl, boardId, localEnv),
+
+    async upload({ boardId, generationId, pngBuffer }) {
+      const file = path.join(dir, aiImageKey(boardId, generationId));
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, pngBuffer);
+      return aiImageUrl(boardId, generationId, localEnv);
+    },
+
+    async download(key) {
+      try {
+        return await fs.readFile(path.join(dir, key));
+      } catch (error) {
+        if (error?.code === 'ENOENT') {
+          throw new HttpsError('not-found', 'The source image no longer exists.');
+        }
+        throw error;
+      }
+    },
+  };
+}
+
+/** R2 in production; local folder only inside the emulator when opted in. */
+function createAiStorage(env = process.env) {
+  return isLocalStorageEnabled(env) ? createLocalStorage(env) : createR2Storage(env);
+}
+
 module.exports = {
   AI_IMAGE_PREFIX,
   assertStorageConfigured,
@@ -132,4 +195,9 @@ module.exports = {
   aiImageUrl,
   parseAiImageUrl,
   createR2Storage,
+  DEFAULT_LOCAL_IMAGE_BASE_URL,
+  localStorageDir,
+  isLocalStorageEnabled,
+  createLocalStorage,
+  createAiStorage,
 };

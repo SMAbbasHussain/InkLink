@@ -25,7 +25,7 @@ const {
 } = require('./ai_provider_utils');
 const { assertBoardEditAccess } = require('./ai_access_utils');
 const { reserveDailySlot, refundDailySlot, getDailyLimit } = require('./ai_usage_utils');
-const { createR2Storage } = require('./ai_storage_utils');
+const { createAiStorage } = require('./ai_storage_utils');
 
 const AI_GENERATIONS_COLLECTION = 'ai_generations';
 const MAX_PROMPT_LENGTH = 1000;
@@ -130,11 +130,13 @@ function defaultDeps() {
   const logger = require('../utils/logger');
   return {
     firestore: admin.firestore(),
-    storage: createR2Storage(),
+    storage: createAiStorage(),
     provider: getProvider(),
     logger,
     dailyLimit: getDailyLimit(),
-    serverTimestamp: () => admin.firestore.FieldValue.serverTimestamp(),
+    // Imported from the module directly: the Functions emulator's wrapper
+    // around `admin.firestore` does not expose `FieldValue`.
+    serverTimestamp: () => require('firebase-admin/firestore').FieldValue.serverTimestamp(),
     newGenerationId: () => crypto.randomUUID().replace(/-/g, ''),
     providerTimeoutMs: PROVIDER_TIMEOUT_MS,
   };

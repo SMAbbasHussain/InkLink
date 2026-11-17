@@ -91,23 +91,61 @@ Now run the app with `AI_IMAGE_ENABLED=true` and work through the checklist belo
 
 When you are ready for the real API: set the real token (step 3), delete the `AI_PROVIDER=mock` line from `functions/.env`, and deploy again.
 
-### 4c. Functions emulator (not verified)
+### 4c. Test on an Android phone without deploying (verified)
+
+For developers who cannot deploy yet (for example, an Editor without Secret Manager access). The three AI functions run in the Functions emulator on your PC, and the phone reaches them over USB. Images are stored on your PC instead of R2. Auth and Firestore stay on the real project. Verified on a real Android 14 phone with both the mock provider and real Cloudflare AI.
+
+**How it is wired (debug builds only):**
+- `CloudFunctionsServiceImpl` sends **only** `generateAiImage`, `editAiImage` and `inpaintAiImage` to the emulator, and only when `kDebugMode` **and** `USE_FUNCTIONS_EMULATOR=true` in `.env`. Every other callable, and every release build, uses the deployed functions.
+- `createAiStorage()` uses a local folder **only** when `FUNCTIONS_EMULATOR=true` (set by the emulator itself) **and** `AI_LOCAL_STORAGE=true`. Production always uses R2.
+- `functions/scripts/serve_local_ai_images.js` serves those images on port 5005.
+
+**One-time setup (all of these files are git-ignored):**
+
+1. `.env` (project root):
+   ```
+   AI_IMAGE_ENABLED=true
+   USE_FUNCTIONS_EMULATOR=true
+   FUNCTIONS_EMULATOR_HOST=127.0.0.1
+   ```
+2. `functions/.env.local`:
+   ```
+   AI_PROVIDER=mock
+   AI_LOCAL_STORAGE=true
+   AI_LOCAL_IMAGE_BASE_URL=http://127.0.0.1:5005
+   ```
+   Remove `AI_PROVIDER=mock` to use real Cloudflare AI.
+3. `functions/.secret.local`: one line per declared secret, so the emulator does not ask Secret Manager. Placeholders are fine for the R2 secrets. For real AI, put your own Cloudflare account ID in `CLOUDFLARE_ACCOUNT_ID` and a Workers AI token in `CLOUDFLARE_AI_API_TOKEN`.
+   ```
+   CLOUDFLARE_R2_ACCESS_KEY=local-placeholder
+   CLOUDFLARE_R2_SECRET_KEY=local-placeholder
+   CLOUDFLARE_ACCOUNT_ID=local-placeholder
+   CLOUDFLARE_R2_BUCKET=local-placeholder
+   CLOUDFLARE_R2_PUBLIC_URL=local-placeholder
+   CLOUDFLARE_R2_HISTORY_BUCKET=local-placeholder
+   CLOUDFLARE_AI_API_TOKEN=local-placeholder
+   ```
+
+**Each test session (Windows, three terminals):**
 
 ```bash
-cd functions
-# R2 values for the emulator; *.local files are git-ignored
-printf 'CLOUDFLARE_ACCOUNT_ID=...\nCLOUDFLARE_R2_ACCESS_KEY=...\nCLOUDFLARE_R2_SECRET_KEY=...\nCLOUDFLARE_R2_BUCKET=...\nCLOUDFLARE_R2_PUBLIC_URL=...\n' > .secret.local
-npm run shell
-# then, in the shell:
-generateAiImage({data: {boardId: '<a board you own>', prompt: 'a red fox', aspectRatio: '16:9'}}, {auth: {uid: '<your uid>'}})
+# Terminal 1: local image server
+cd functions && node scripts/serve_local_ai_images.js
+
+# Terminal 2: the AI functions
+firebase emulators:start --only functions --project inklink-f0308
+
+# Terminal 3: link the phone over USB, then run the app
+adb reverse tcp:5001 tcp:5001
+adb reverse tcp:5005 tcp:5005
+flutter run
 ```
 
-Two limits to know:
-
-- This still uploads to the real R2 bucket and reads the real Firestore, so it needs your Firebase login and the R2 values.
-- **The app cannot talk to the emulator today.** `CloudFunctionsServiceImpl` always uses the deployed `us-central1` functions, and changing that file was outside this task. Use 4b to test from the app.
-
-I have not run this route; treat the commands as a starting point.
+Tips:
+- `adb reverse` links can drop while the cable stays connected. If the app says **"AI image service is unavailable"** and no request appears in the emulator log, run the two `adb reverse` commands again.
+- Turn on **Developer options → Stay awake** so the phone does not drop the USB connection.
+- On a PC with little RAM, cap Gradle in `%USERPROFILE%\.gradle\gradle.properties` (`org.gradle.jvmargs=-Xmx2g`); the project default of `-Xmx8G` can freeze builds.
+- The emulator reads and writes the **real Firestore** (`ai_usage`, `ai_generations`), so the normal daily limit applies.
 
 ## 5. Manual test checklist
 
@@ -120,6 +158,7 @@ Run once with the mock provider and once with the real token.
 - [ ] **Repaint area.** Paint a region, type a prompt. Only that region changes.
 - [ ] **Regenerate.** A new variation replaces the image.
 - [ ] **Undo / redo** after each of: generate, edit, repaint, regenerate. One undo goes back one version.
+  Known issue, **not caused by this feature**: on `main`, Redo currently fails for every element type, because each re-emitted board snapshot clears the local undo/redo history (`CanvasBloc._onApplyRemoteUpdate`). That is tracked as a separate fix. The AI undo/redo path itself is covered by `test/features/canvas/ai_image_undo_redo_flow_test.dart`.
 - [ ] **Move and resize** an AI image, then reopen the board. It is still sharp (not just the thumbnail).
 - [ ] **Second user** on the same board sees the image appear and change live.
 - [ ] **Viewer.** The tray controls and the action bar are disabled with an explanation. Calling the function directly is refused.
@@ -131,9 +170,11 @@ Run once with the mock provider and once with the real token.
 - [ ] **Export** a board with an AI image. The export shows the full-quality image.
 - [ ] **Older app build** opens a board with an AI image and shows the low-res thumbnail (no crash, no grey box).
 
-## 6. TODO: confirm the FLUX.2 klein request format
+## 6. FLUX.2 klein request format
 
-`@cf/black-forest-labs/flux-2-klein-4b` takes multipart form data, but Cloudflare's docs do not list the field names. The code assumes `prompt`, `width`, `height` and `input_image_0`, and that input images must fit in 512px.
+**Status (2026-11-17): Generate and Edit confirmed with real calls** through the route in 4c: Generate 1:1 (1024×1024) and 16:9 (1280×720), and Edit with AI all returned klein images with no fallback. **Repaint with real AI is not yet confirmed** (it was tested with the mock provider only).
+
+`@cf/black-forest-labs/flux-2-klein-4b` takes multipart form data, but Cloudflare's docs do not list the field names. The code uses `prompt`, `width`, `height` and `input_image_0`, and input images must fit in 512px.
 
 - **Where:** `functions/src/ai/ai_provider_utils.js`, function `callKlein`, marked `// UNVERIFIED: confirm field names with first real call`. It is the only place that builds the klein request.
 - **How to check:** make one real Generate and one real Edit, then read the function logs (`firebase functions:log`). A wrong field name shows as "AI image request rejected" with code `invalid-argument` or `unavailable`.
