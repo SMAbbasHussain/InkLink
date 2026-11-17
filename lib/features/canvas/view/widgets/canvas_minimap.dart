@@ -146,6 +146,7 @@ class _MinimapPainter extends CustomPainter {
 
   Color _colorFor(CanvasElement element) {
     if (element is FrameElement) return border;
+    if (element is TableElement) return border;
     if (element is ConnectorElement) return border;
     if (element is StickyNoteElement) return const Color(0xFFEAB308);
     if (element is ShapeElement) return accent;

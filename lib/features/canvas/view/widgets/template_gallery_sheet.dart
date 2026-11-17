@@ -8,7 +8,7 @@ import '../../models/board_template.dart';
 
 /// Pick a starting layout. Kept as a plain widget so the gallery can be
 /// tested without opening a route.
-class TemplateGallerySheet extends StatelessWidget {
+class TemplateGallerySheet extends StatefulWidget {
   final List<BoardTemplate> templates;
   final ValueChanged<BoardTemplate> onSelected;
   final VoidCallback? onClose;
@@ -19,6 +19,13 @@ class TemplateGallerySheet extends StatelessWidget {
     required this.onSelected,
     this.onClose,
   });
+
+  @override
+  State<TemplateGallerySheet> createState() => _TemplateGallerySheetState();
+}
+
+class _TemplateGallerySheetState extends State<TemplateGallerySheet> {
+  String _selectedCategory = 'All';
 
   static (IconData, Color) _styleFor(String category) => switch (category) {
     'Ideas' => (LucideIcons.lightbulb, const Color(0xFFD97706)),
@@ -31,6 +38,16 @@ class TemplateGallerySheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final categories = <String>[
+      'All',
+      ...{for (final t in widget.templates) t.category},
+    ];
+    final filtered = _selectedCategory == 'All'
+        ? widget.templates
+        : widget.templates
+              .where((t) => t.category == _selectedCategory)
+              .toList(growable: false);
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -43,10 +60,10 @@ class TemplateGallerySheet extends StatelessWidget {
                 style: InkType.title(tokens.ink),
               ),
             ),
-            if (onClose != null)
+            if (widget.onClose != null)
               IconButton(
                 icon: Icon(LucideIcons.x, color: tokens.inkSecondary),
-                onPressed: onClose,
+                onPressed: widget.onClose,
               ),
           ],
         ),
@@ -55,22 +72,46 @@ class TemplateGallerySheet extends StatelessWidget {
           'Templates are added in one undoable step.',
           style: InkType.caption(tokens.inkMuted),
         ),
-        const SizedBox(height: InkSpacing.s16),
+        if (categories.length > 2) ...[
+          const SizedBox(height: InkSpacing.s12),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final category in categories)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: ChoiceChip(
+                      label: Text(
+                        category,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      selected: _selectedCategory == category,
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) =>
+                          setState(() => _selectedCategory = category),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: InkSpacing.s12),
         SizedBox(
-          height: 380,
+          height: 360,
           child: ListView.separated(
             shrinkWrap: true,
-            itemCount: templates.length,
+            itemCount: filtered.length,
             separatorBuilder: (_, _) => const SizedBox(height: InkSpacing.s8),
             itemBuilder: (context, index) {
-              final template = templates[index];
+              final template = filtered[index];
               final (icon, accent) = _styleFor(template.category);
               return Material(
                 color: tokens.glass.withValues(alpha: 0.6),
                 borderRadius: BorderRadius.circular(InkRadii.card),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(InkRadii.card),
-                  onTap: () => onSelected(template),
+                  onTap: () => widget.onSelected(template),
                   child: Padding(
                     padding: const EdgeInsets.all(InkSpacing.s12),
                     child: Row(

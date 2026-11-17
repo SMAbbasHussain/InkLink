@@ -29,6 +29,7 @@ Color? sampleCanvasColorAt(Iterable<CanvasElement> elements, Offset point) {
       ImageElement _ => null,
       // Frames are background chrome; their tint is not an ink colour.
       FrameElement _ => null,
+      TableElement e => e.borderColor,
       LayerElement _ => null,
     };
     if (color == null) continue;

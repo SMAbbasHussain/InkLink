@@ -1,6 +1,6 @@
 part of 'canvas_screen.dart';
 
-enum _ElementKind { stroke, shape, text, image, stickyNote, connector, frame }
+enum _ElementKind { stroke, shape, text, image, stickyNote, connector, frame, table }
 
 class _CanvasElement {
   final String id;
@@ -46,11 +46,14 @@ class _CanvasElement {
   final Rect? layerBounds;
 
   Rect? get bounds {
-    if (kind == _ElementKind.frame) {
-      return Rect.fromCenter(
-        center: center,
-        width: width,
-        height: height,
+    if (kind == _ElementKind.frame || kind == _ElementKind.table) {
+      return rotatedRectBounds(
+        Rect.fromCenter(
+          center: center,
+          width: width,
+          height: height,
+        ),
+        kind == _ElementKind.table ? rotation : 0.0,
       ).inflate(2);
     }
     if (kind == _ElementKind.image || kind == _ElementKind.stickyNote) {
@@ -313,6 +316,34 @@ class _CanvasElement {
     );
   }
 
+  factory _CanvasElement.table({
+    required String id,
+    int z = 0,
+    required Offset center,
+    required double width,
+    required double height,
+    required Color color,
+    double rotation = 0,
+    double opacity = 1,
+    Rect? layerBounds,
+    Map<String, dynamic> data = const {},
+  }) {
+    return _CanvasElement._(
+      id: id,
+      z: z,
+      kind: _ElementKind.table,
+      center: center,
+      size: math.max(width, height),
+      width: width,
+      height: height,
+      color: color,
+      rotation: rotation,
+      opacity: opacity,
+      layerBounds: layerBounds,
+      data: data,
+    );
+  }
+
   factory _CanvasElement.connector({
     required String id,
     int z = 0,
@@ -475,6 +506,26 @@ Offset _resolveConnectorEnd(
       rotation: target.rotation,
       maxLines: target.maxLines,
     ),
+    _ElementKind.frame => FrameElement(
+      id: target.id,
+      z: target.z,
+      center: target.center,
+      width: target.width,
+      height: target.height,
+      title: target.text,
+      color: target.color,
+      cornerRadius: target.strokeWidth,
+    ),
+    _ElementKind.table => CanvasElement.fromMap(target.id, {
+      ...target.data,
+      'type': 'table',
+      'z': target.z,
+      'cx': target.center.dx,
+      'cy': target.center.dy,
+      'width': target.width,
+      'height': target.height,
+      'rotation': target.rotation,
+    }),
     _ => null,
   };
   if (domainTarget != null) {
@@ -601,6 +652,22 @@ class _CanvasPainter extends CustomPainter {
     canvas.translate(viewportOffset.dx, viewportOffset.dy);
     canvas.scale(viewportScale);
 
+    final clipFrames = <FrameElement>[
+      for (final e in elements)
+        if (e.kind == _ElementKind.frame && (e.data['clipContents'] == true))
+          FrameElement(
+            id: e.id,
+            z: e.z,
+            center: e.center,
+            width: e.width,
+            height: e.height,
+            title: e.text,
+            color: e.color,
+            cornerRadius: e.strokeWidth,
+            clipContents: true,
+          ),
+    ];
+
     for (final element in elements) {
       // Strokes already carry their alpha in the paint; every other kind is
       // composited through a layer so images and fills fade uniformly.
@@ -612,6 +679,26 @@ class _CanvasPainter extends CustomPainter {
           : canvasBlendModeForName(layerEffect.blendMode);
       final effectiveOpacity = (elementOpacity * layerOpacity).clamp(0.0, 1.0);
       final bounds = element.layerBounds ?? element.bounds;
+      FrameElement? clipFrame;
+      if (clipFrames.isNotEmpty &&
+          element.kind != _ElementKind.frame &&
+          bounds != null) {
+        for (final frame in clipFrames.reversed) {
+          if (frameRect(frame).contains(bounds.center)) {
+            clipFrame = frame;
+            break;
+          }
+        }
+      }
+      if (clipFrame != null) {
+        final fRect = frameRect(clipFrame);
+        final r = math.min(
+          clipFrame.cornerRadius,
+          math.min(fRect.width, fRect.height) / 2,
+        );
+        canvas.save();
+        canvas.clipRRect(RRect.fromRectAndRadius(fRect, Radius.circular(r)));
+      }
       final useLayer =
           bounds != null &&
           ((element.kind != _ElementKind.stroke && effectiveOpacity < 1) ||
@@ -665,8 +752,12 @@ class _CanvasPainter extends CustomPainter {
         case _ElementKind.frame:
           _paintFrame(canvas, element);
           break;
+        case _ElementKind.table:
+          _paintTable(canvas, element);
+          break;
       }
       if (useLayer) canvas.restore();
+      if (clipFrame != null) canvas.restore();
     }
 
     if (highlightElementIds.isNotEmpty) {
@@ -727,6 +818,22 @@ class _CanvasPainter extends CustomPainter {
             pressures: currentStrokePressures,
             tilts: currentStrokeTilts,
           );
+          for (final mirrored
+              in symmetryMirroredPolylines(currentPoints, boardSettings)) {
+            if (mirrored.length > 1) {
+              _paintStroke(
+                canvas,
+                mirrored,
+                currentColor,
+                currentStrokeWidth,
+                opacity: currentBrushOpacity,
+                brushType: currentBrushType,
+                brushId: currentBrushType,
+                pressures: currentStrokePressures,
+                tilts: currentStrokeTilts,
+              );
+            }
+          }
         }
       } else if (showEraserPreview) {
         // Eraser convention: state.strokeWidth is the eraser *diameter*;
@@ -741,7 +848,13 @@ class _CanvasPainter extends CustomPainter {
       _paintShapeDrawPreview(canvas, shapeDrawStart!, shapeDrawCurrent!);
     }
 
+    _paintGuidesAndSymmetryWorld(canvas, size);
+
     canvas.restore();
+
+    if (boardSettings.rulersEnabled) {
+      _paintRulersScreen(canvas, size);
+    }
   }
 
   void _paintStroke(
@@ -842,6 +955,9 @@ class _CanvasPainter extends CustomPainter {
       width: (data['width'] as num?)?.toDouble() ?? 0.0,
       height: (data['height'] as num?)?.toDouble() ?? 0.0,
       color: element.color,
+      strokeColor: data['strokeColor'] == null
+          ? null
+          : Color((data['strokeColor'] as num).toInt()),
       strokeWidth: element.strokeWidth,
       strokeOpacity: (data['strokeOpacity'] as num?)?.toDouble() ?? 1.0,
       dashPattern: (data['dashPattern'] as List?)
@@ -875,6 +991,8 @@ class _CanvasPainter extends CustomPainter {
       endArrowhead:
           (data['endArrowhead'] as bool?) ??
           (shapeType == CanvasShapeType.arrow),
+      flipH: (data['flipH'] as bool?) ?? false,
+      flipV: (data['flipV'] as bool?) ?? false,
     );
     paintShapeElement(canvas, shape);
   }
@@ -1031,8 +1149,231 @@ class _CanvasPainter extends CustomPainter {
         title: element.text,
         color: element.color,
         cornerRadius: element.strokeWidth,
+        clipContents: (element.data['clipContents'] as bool?) ?? false,
       ),
     );
+  }
+
+  void _paintTable(Canvas canvas, _CanvasElement element) {
+    final parsed = CanvasElement.fromMap(element.id, {
+      ...element.data,
+      'type': 'table',
+      'z': element.z,
+      'cx': element.center.dx,
+      'cy': element.center.dy,
+      'width': element.width,
+      'height': element.height,
+      'rotation': element.rotation,
+    });
+    if (parsed is TableElement) {
+      paintTableElement(canvas, parsed);
+    }
+  }
+
+  void _paintGuidesAndSymmetryWorld(Canvas canvas, Size size) {
+    final settings = boardSettings;
+    final hasGuides = settings.guides.isNotEmpty;
+    final hasSymmetry = settings.symmetryMode != CanvasSymmetryMode.none;
+    final hasPerspective =
+        settings.perspectiveEnabled && settings.vanishingPoints.isNotEmpty;
+    if (!hasGuides && !hasSymmetry && !hasPerspective) return;
+
+    final invScale = viewportScale > 0.05 ? 1.0 / viewportScale : 1.0;
+    final worldRect = Rect.fromLTRB(
+      (-viewportOffset.dx) * invScale - 64,
+      (-viewportOffset.dy) * invScale - 64,
+      (size.width - viewportOffset.dx) * invScale + 64,
+      (size.height - viewportOffset.dy) * invScale + 64,
+    );
+
+    if (hasGuides) {
+      final guidePaint = Paint()
+        ..color = const Color(0xFF06B6D4).withValues(alpha: 0.75)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2 * invScale;
+      for (final g in settings.guides) {
+        if (g.axis == CanvasGuideAxis.vertical) {
+          canvas.drawLine(
+            Offset(g.position, worldRect.top),
+            Offset(g.position, worldRect.bottom),
+            guidePaint,
+          );
+        } else {
+          canvas.drawLine(
+            Offset(worldRect.left, g.position),
+            Offset(worldRect.right, g.position),
+            guidePaint,
+          );
+        }
+      }
+    }
+
+    if (hasSymmetry) {
+      final symPaint = Paint()
+        ..color = accentColor.withValues(alpha: 0.55)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4 * invScale;
+      final cx = settings.symmetryCenter.dx;
+      final cy = settings.symmetryCenter.dy;
+      final span = math.max(worldRect.width, worldRect.height) * 1.5;
+      switch (settings.symmetryMode) {
+        case CanvasSymmetryMode.none:
+          break;
+        case CanvasSymmetryMode.vertical:
+          canvas.drawPath(
+            dashPath(
+              Path()
+                ..moveTo(cx, worldRect.top)
+                ..lineTo(cx, worldRect.bottom),
+              [8 * invScale, 6 * invScale],
+            ),
+            symPaint,
+          );
+        case CanvasSymmetryMode.horizontal:
+          canvas.drawPath(
+            dashPath(
+              Path()
+                ..moveTo(worldRect.left, cy)
+                ..lineTo(worldRect.right, cy),
+              [8 * invScale, 6 * invScale],
+            ),
+            symPaint,
+          );
+        case CanvasSymmetryMode.radial:
+          final count = settings.symmetryCount.clamp(2, 16);
+          final step = (2 * math.pi) / count;
+          for (var i = 0; i < count; i++) {
+            final angle = step * i - math.pi / 2;
+            canvas.drawPath(
+              dashPath(
+                Path()
+                  ..moveTo(cx, cy)
+                  ..lineTo(
+                    cx + math.cos(angle) * span,
+                    cy + math.sin(angle) * span,
+                  ),
+                [8 * invScale, 6 * invScale],
+              ),
+              symPaint,
+            );
+          }
+      }
+      canvas.drawCircle(
+        settings.symmetryCenter,
+        4.5 * invScale,
+        Paint()..color = accentColor.withValues(alpha: 0.8),
+      );
+    }
+
+    if (hasPerspective) {
+      final vpPaint = Paint()
+        ..color = const Color(0xFF8B5CF6).withValues(alpha: 0.3)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0 * invScale;
+      final rayLen = math.max(worldRect.width, worldRect.height) * 2.0;
+      for (final vp in settings.vanishingPoints) {
+        for (var deg = 0; deg < 360; deg += 15) {
+          final rad = deg * math.pi / 180;
+          canvas.drawLine(
+            vp,
+            Offset(
+              vp.dx + math.cos(rad) * rayLen,
+              vp.dy + math.sin(rad) * rayLen,
+            ),
+            vpPaint,
+          );
+        }
+        canvas.drawCircle(
+          vp,
+          4.0 * invScale,
+          Paint()..color = const Color(0xFF8B5CF6),
+        );
+      }
+    }
+  }
+
+  void _paintRulersScreen(Canvas canvas, Size size) {
+    const thickness = 20.0;
+    final isDark = boardSettings.backgroundColor.computeLuminance() < 0.4;
+    final bgColor = isDark
+        ? const Color(0xCC1E293B)
+        : const Color(0xDCF8FAFC);
+    final ink = isDark ? const Color(0xFFCBD5E1) : const Color(0xFF475569);
+    final tickPaint = Paint()
+      ..color = ink.withValues(alpha: 0.65)
+      ..strokeWidth = 1;
+
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width, thickness),
+      Paint()..color = bgColor,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, thickness, size.height),
+      Paint()..color = bgColor,
+    );
+    canvas.drawLine(
+      const Offset(0, thickness),
+      Offset(size.width, thickness),
+      tickPaint,
+    );
+    canvas.drawLine(
+      const Offset(thickness, 0),
+      Offset(thickness, size.height),
+      tickPaint,
+    );
+
+    final rawWorldStep = 64.0 / (viewportScale > 0.05 ? viewportScale : 1.0);
+    final step = rawWorldStep <= 50
+        ? 50.0
+        : rawWorldStep <= 100
+        ? 100.0
+        : rawWorldStep <= 250
+        ? 250.0
+        : 500.0;
+
+    final startXWorld =
+        ((-viewportOffset.dx) / viewportScale / step).floorToDouble() * step;
+    final endXWorld = (size.width - viewportOffset.dx) / viewportScale;
+    for (var wx = startXWorld; wx <= endXWorld; wx += step) {
+      final sx = wx * viewportScale + viewportOffset.dx;
+      if (sx < thickness) continue;
+      canvas.drawLine(
+        Offset(sx, thickness - 6),
+        Offset(sx, thickness),
+        tickPaint,
+      );
+      final tp = TextPainter(
+        text: TextSpan(
+          text: '${wx.round()}',
+          style: TextStyle(color: ink, fontSize: 9),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(sx + 2, 2));
+      tp.dispose();
+    }
+
+    final startYWorld =
+        ((-viewportOffset.dy) / viewportScale / step).floorToDouble() * step;
+    final endYWorld = (size.height - viewportOffset.dy) / viewportScale;
+    for (var wy = startYWorld; wy <= endYWorld; wy += step) {
+      final sy = wy * viewportScale + viewportOffset.dy;
+      if (sy < thickness) continue;
+      canvas.drawLine(
+        Offset(thickness - 6, sy),
+        Offset(thickness, sy),
+        tickPaint,
+      );
+      final tp = TextPainter(
+        text: TextSpan(
+          text: '${wy.round()}',
+          style: TextStyle(color: ink, fontSize: 9),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(2, sy + 2));
+      tp.dispose();
+    }
   }
 
   void _paintText(Canvas canvas, _CanvasElement element) {
@@ -1255,9 +1596,13 @@ class _CanvasPainter extends CustomPainter {
           a[i].color != b[i].color ||
           a[i].strokeWidth != b[i].strokeWidth ||
           a[i].center != b[i].center ||
+          a[i].width != b[i].width ||
+          a[i].height != b[i].height ||
+          a[i].opacity != b[i].opacity ||
           a[i].points.length != b[i].points.length ||
           a[i].rotation != b[i].rotation ||
-          a[i].text != b[i].text) {
+          a[i].text != b[i].text ||
+          !mapEquals(a[i].data, b[i].data)) {
         return false;
       }
     }

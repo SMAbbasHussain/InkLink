@@ -198,7 +198,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasConvertStickyNote>(_onConvertStickyNote);
     on<CanvasAddFrame>(_onAddFrame);
     on<CanvasUpdateFrame>(_onUpdateFrame);
+    on<CanvasDeleteFrame>(_onDeleteFrame);
+    on<CanvasAddTable>(_onAddTable);
+    on<CanvasUpdateTableCell>(_onUpdateTableCell);
+    on<CanvasUpdateTableStyle>(_onUpdateTableStyle);
     on<CanvasSetBoardSettings>(_onSetBoardSettings);
+    on<CanvasAddGuide>(_onAddGuide);
+    on<CanvasMoveGuide>(_onMoveGuide);
+    on<CanvasRemoveGuide>(_onRemoveGuide);
     on<CanvasImportElements>(_onImportElements);
     on<CanvasAddConnector>(_onAddConnector);
     on<CanvasUpdateConnector>(_onUpdateConnector);
@@ -224,6 +231,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasSetSelectionMode>(_onSetSelectionMode);
     on<CanvasTranslateSelection>(_onTranslateSelection);
     on<CanvasAlignSelection>(_onAlignSelection);
+    on<CanvasArrangeSelection>(_onArrangeSelection);
     on<CanvasDuplicateElements>(_onDuplicateElements);
     on<CanvasDeleteElements>(_onDeleteElements);
     on<CanvasCopySelection>(_onCopySelection);
@@ -247,6 +255,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasToggleSelectedShapeFill>(_onToggleSelectedShapeFill);
     on<CanvasUpdateShapeFill>(_onUpdateShapeFill);
     on<CanvasUpdateSelectedShapeColor>(_onUpdateSelectedShapeColor);
+    on<CanvasUpdateSelectedShapeStrokeColor>(
+      _onUpdateSelectedShapeStrokeColor,
+    );
+    on<CanvasFlipSelectedShape>(_onFlipSelectedShape);
     on<CanvasUpdateSelectedShapeBorderRadius>(
       _onUpdateSelectedShapeBorderRadius,
     );
@@ -308,6 +320,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasToggleVoiceMuteRequested>(_onCanvasToggleVoiceMuteRequested);
     on<CanvasVoiceSpeakingChanged>(_onCanvasVoiceSpeakingChanged);
     on<CanvasHistoryFeedRequested>(_onHistoryFeedRequested);
+    on<CanvasHistoryLoadOlderVersionsRequested>(
+      _onHistoryLoadOlderVersionsRequested,
+    );
     on<CanvasHistoryFeedUpdated>(_onHistoryFeedUpdated);
     on<CanvasHistoryLiveTailUpdated>(_onHistoryLiveTailUpdated);
     on<CanvasHistoryPreviewRequested>(_onHistoryPreviewRequested);
@@ -338,9 +353,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasToggleUndoRequestAreaSelection>(
       _onToggleUndoRequestAreaSelection,
     );
+    on<CanvasToggleOwnerAreaHistorySelection>(
+      _onToggleOwnerAreaHistorySelection,
+    );
+    on<CanvasHistoryAreaScrubRequested>(_onHistoryAreaScrubRequested);
     on<CanvasUndoRequestsUpdated>(_onUndoRequestsUpdated);
     on<CanvasUndoConflictDismissed>(_onUndoConflictDismissed);
     on<CanvasUndoRequestDraftStarted>(_onUndoRequestDraftStarted);
+    on<CanvasUndoRequestDraftScopeModeChanged>(
+      _onUndoRequestDraftScopeModeChanged,
+    );
     on<CanvasUndoRequestDraftElementToggled>(_onUndoRequestDraftElementToggled);
     on<CanvasUndoRequestDraftAreaSet>(_onUndoRequestDraftAreaSet);
     on<CanvasUndoRequestDraftCleared>(_onUndoRequestDraftCleared);
@@ -1304,6 +1326,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             (s) => s.name == shapeName,
             orElse: () => CanvasShapeType.square,
           );
+          final legacyFilled = _parseBool(payload['isFilled']);
+          final rawFillMode = payload['fillMode'] as String?;
+          final fillMode =
+              rawFillMode != null &&
+                  const {
+                    'none',
+                    'solid',
+                    'linear',
+                    'radial',
+                  }.contains(rawFillMode)
+              ? rawFillMode
+              : (legacyFilled ? 'solid' : 'none');
           rebuilt.add(
             ShapeElement(
               id: id,
@@ -1321,13 +1355,28 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               color: Color(
                 (payload['color'] as num?)?.toInt() ?? Colors.black.value,
               ),
+              strokeColor: payload['strokeColor'] == null
+                  ? null
+                  : Color((payload['strokeColor'] as num).toInt()),
               strokeWidth: (payload['strokeWidth'] as num?)?.toDouble() ?? 3.0,
               strokeOpacity:
                   (payload['strokeOpacity'] as num?)?.toDouble() ?? 1.0,
               dashPattern: (payload['dashPattern'] as List?)
                   ?.map((e) => (e as num).toDouble())
                   .toList(),
-              isFilled: _parseBool(payload['isFilled']),
+              isFilled: fillMode != 'none',
+              fillMode: fillMode,
+              fillColor: payload['fillColor'] == null
+                  ? null
+                  : Color((payload['fillColor'] as num).toInt()),
+              gradientStart: payload['gradientStart'] == null
+                  ? null
+                  : Color((payload['gradientStart'] as num).toInt()),
+              gradientEnd: payload['gradientEnd'] == null
+                  ? null
+                  : Color((payload['gradientEnd'] as num).toInt()),
+              gradientAngle:
+                  (payload['gradientAngle'] as num?)?.toDouble() ?? 0.0,
               rotation: (payload['rotation'] as num?)?.toDouble() ?? 0.0,
               borderRadius:
                   (payload['borderRadius'] as num?)?.toDouble() ?? 0.0,
@@ -1346,6 +1395,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               endArrowhead: payload['endArrowhead'] == null
                   ? shapeType == CanvasShapeType.arrow
                   : _parseBool(payload['endArrowhead']),
+              flipH: _parseBool(payload['flipH']),
+              flipV: _parseBool(payload['flipV']),
             ),
           );
           continue;
@@ -1510,7 +1561,29 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               title: (payload['title'] as String?) ?? '',
               color: Color((payload['color'] as num?)?.toInt() ?? 0xFF64748B),
               cornerRadius: (payload['cornerRadius'] as num?)?.toDouble() ?? 12,
+              clipContents: _parseBool(payload['clipContents']),
             ),
+          );
+          continue;
+        }
+        if (type == 'table') {
+          final z = _readElementOrder(
+            elementId: id,
+            payload: payload,
+            currentOrder: currentOrder,
+            fallbackOrder: maxExistingOrder + rebuilt.length,
+          );
+          rebuilt.add(
+            CanvasElement.fromMap(id, {
+              ...payload,
+              'type': 'table',
+              'z': z,
+              'hidden': _parseBool(payload['hidden']),
+              'locked': _parseBool(payload['locked']),
+              'headerRow': payload['headerRow'] == null
+                  ? true
+                  : _parseBool(payload['headerRow']),
+            }),
           );
           continue;
         }
@@ -1584,6 +1657,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       ImageElement() => 'image',
       StickyNoteElement() => 'sticky_note',
       FrameElement() => 'frame',
+      TableElement() => 'table',
       ConnectorElement() => 'connector',
       LayerElement() => 'layer',
     };
@@ -1742,9 +1816,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     final strokeId = _activeStrokeId ?? _uuid.v4();
     final preset = brushPresetFor(state.brushType);
+    final baseZ = _nextZIndex();
+    final textureSeed = DateTime.now().microsecondsSinceEpoch & 0x7FFFFFFF;
     final stroke = StrokeElement(
       id: strokeId,
-      z: _nextZIndex(),
+      z: baseZ,
       color: state.selectedColor,
       strokeWidth: state.strokeWidth,
       opacity: state.brushOpacity,
@@ -1754,9 +1830,34 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       pressures: usePressures,
       tilts: useTilts,
       spacing: preset.spacing,
-      textureSeed: DateTime.now().microsecondsSinceEpoch & 0x7FFFFFFF,
+      textureSeed: textureSeed,
     );
-    final nextElements = List<CanvasElement>.from(state.elements)..add(stroke);
+
+    final mirroredPolylines = symmetryMirroredPolylines(
+      usePoints,
+      _boardSettings,
+    );
+    final createdStrokes = <StrokeElement>[
+      stroke,
+      for (var i = 0; i < mirroredPolylines.length; i++)
+        StrokeElement(
+          id: _uuid.v4(),
+          z: baseZ + i + 1,
+          color: state.selectedColor,
+          strokeWidth: state.strokeWidth,
+          opacity: state.brushOpacity,
+          brushType: state.brushType,
+          brushId: state.brushType,
+          points: mirroredPolylines[i],
+          pressures: usePressures,
+          tilts: useTilts,
+          spacing: preset.spacing,
+          textureSeed: textureSeed + i + 1,
+        ),
+    ];
+
+    final nextElements = List<CanvasElement>.from(state.elements)
+      ..addAll(createdStrokes);
     _committedElements = nextElements;
     emit(
       state.copyWith(
@@ -1767,13 +1868,25 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       ),
     );
     _activeStrokeId = null;
-    await _saveCrdtOperation(
-      action: 'create',
-      type: _elementType(stroke),
-      objectId: strokeId,
-      data: stroke.toMap(),
-      emit: emit,
-    );
+    if (createdStrokes.length == 1) {
+      await _saveCrdtOperation(
+        action: 'create',
+        type: _elementType(stroke),
+        objectId: strokeId,
+        data: stroke.toMap(),
+        emit: emit,
+      );
+    } else {
+      await _saveCrdtBatch([
+        for (final s in createdStrokes)
+          (
+            action: 'create',
+            type: _elementType(s),
+            objectId: s.id,
+            data: s.toMap(),
+          ),
+      ], emit);
+    }
   }
 
   void _onCancelStroke(CanvasCancelStroke event, Emitter<CanvasState> emit) {
@@ -2541,6 +2654,60 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
   }
 
+  Future<void> _onAddGuide(
+    CanvasAddGuide event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final guide = CanvasGuide(
+      id: _uuid.v4(),
+      axis: event.axis,
+      position: event.position,
+    );
+    final updated = _boardSettings.copyWith(
+      guides: [..._boardSettings.guides, guide],
+    );
+    await _onSetBoardSettings(CanvasSetBoardSettings(updated), emit);
+  }
+
+  Future<void> _onMoveGuide(
+    CanvasMoveGuide event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    var changed = false;
+    final nextGuides = <CanvasGuide>[
+      for (final g in _boardSettings.guides)
+        if (g.id == event.guideId)
+          (() {
+            changed = true;
+            return g.copyWith(position: event.position);
+          })()
+        else
+          g,
+    ];
+    if (!changed) return;
+    await _onSetBoardSettings(
+      CanvasSetBoardSettings(_boardSettings.copyWith(guides: nextGuides)),
+      emit,
+    );
+  }
+
+  Future<void> _onRemoveGuide(
+    CanvasRemoveGuide event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final nextGuides = _boardSettings.guides
+        .where((g) => g.id != event.guideId)
+        .toList(growable: false);
+    if (nextGuides.length == _boardSettings.guides.length) return;
+    await _onSetBoardSettings(
+      CanvasSetBoardSettings(_boardSettings.copyWith(guides: nextGuides)),
+      emit,
+    );
+  }
+
   // ──────────────────────────────────────────────
   // Frame operations
   // ──────────────────────────────────────────────
@@ -2594,6 +2761,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       center: event.center,
       width: event.width?.clamp(120.0, 4000.0),
       height: event.height?.clamp(80.0, 4000.0),
+      clipContents: event.clipContents,
     );
     if (updated == target) return;
     final next =
@@ -2610,6 +2778,31 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       emit: emit,
     );
     _announceUndoable(emit, _singleActionMessage(verb));
+  }
+
+  Future<void> _onDeleteFrame(
+    CanvasDeleteFrame event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final frame = state.elements
+        .whereType<FrameElement>()
+        .where((e) => e.id == event.frameId)
+        .firstOrNull;
+    if (frame == null || frame.locked) return;
+    final idsToDelete = <String>{frame.id};
+    if (event.deleteContents) {
+      for (final child in elementsContainedByFrame(frame, state.elements)) {
+        if (!child.locked) idsToDelete.add(child.id);
+      }
+    }
+    await _deleteElementsByIds(
+      idsToDelete,
+      emit,
+      messageForCount: (count) => count <= 1
+          ? 'Deleted frame · Undo to revert'
+          : _groupActionMessage('Deleted frame &', count - 1),
+    );
   }
 
   /// Moves only the frame. Art is never captured by geometric containment:
@@ -2636,6 +2829,207 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       emit: emit,
     );
     _announceUndoable(emit, _singleActionMessage('Moved'));
+  }
+
+  // ──────────────────────────────────────────────
+  // Table operations (F-16)
+  // ──────────────────────────────────────────────
+
+  Future<void> _onAddTable(
+    CanvasAddTable event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final rows = event.rows.clamp(1, TableElement.maxRows);
+    final maxCols = (TableElement.maxTotalCells ~/ rows).clamp(
+      1,
+      TableElement.maxColumns,
+    );
+    final cols = event.columns.clamp(1, maxCols);
+    final id = _uuid.v4();
+    final table = TableElement(
+      id: id,
+      z: _nextZIndex(),
+      center: event.center,
+      width: event.width
+          .clamp(TableElement.minCellWidth * cols, 4000.0)
+          .toDouble(),
+      height: event.height
+          .clamp(TableElement.minCellHeight * rows, 4000.0)
+          .toDouble(),
+      rows: rows,
+      columns: cols,
+      cells: TableElement.normalizeCells(const [], rows, cols),
+      headerRow: event.headerRow,
+    );
+    final next = <CanvasElement>[...state.elements, table]..sort(_compareByZ);
+    emit(
+      state.copyWith(
+        elements: next,
+        activeTray: null,
+        selectedShapeId: id,
+        selectedIds: <String>{id},
+      ),
+    );
+    await _saveCrdtOperation(
+      action: 'create',
+      type: 'table',
+      objectId: id,
+      data: table.toMap(),
+      emit: emit,
+    );
+  }
+
+  Future<void> _onUpdateTableCell(
+    CanvasUpdateTableCell event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final table = state.elements
+        .whereType<TableElement>()
+        .where((e) => e.id == event.tableId)
+        .firstOrNull;
+    if (table == null || table.locked) return;
+    if (event.row < 0 ||
+        event.row >= table.rows ||
+        event.column < 0 ||
+        event.column >= table.columns) {
+      return;
+    }
+    final nextCells = List<TableCellData>.from(
+      TableElement.normalizeCells(table.cells, table.rows, table.columns),
+    );
+    final idx = event.row * table.columns + event.column;
+    final prev = nextCells[idx];
+    final nextCell = prev.copyWith(
+      text: event.text,
+      backgroundColor: event.backgroundColor,
+      clearBackgroundColor: event.clearBackgroundColor,
+      textColor: event.textColor,
+      clearTextColor: event.clearTextColor,
+      fontWeight: event.fontWeight,
+      textAlign: event.textAlign,
+    );
+    if (nextCell == prev) return;
+    nextCells[idx] = nextCell;
+    final updated = table.copyWith(cells: nextCells);
+    await _updateElementMeta(
+      table.id,
+      updated.toMap(),
+      emit,
+    );
+    _announceUndoable(emit, _singleActionMessage('Updated cell'));
+  }
+
+  Future<void> _onUpdateTableStyle(
+    CanvasUpdateTableStyle event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final table = state.elements
+        .whereType<TableElement>()
+        .where((e) => e.id == event.tableId)
+        .firstOrNull;
+    if (table == null || table.locked) return;
+
+    var rows = table.rows;
+    var cols = table.columns;
+    var cells = List<TableCellData>.from(
+      TableElement.normalizeCells(table.cells, rows, cols),
+    );
+    var colFractions = List<double>.from(table.resolvedColumnFractions);
+    var rowFractions = List<double>.from(table.resolvedRowFractions);
+    var width = table.width;
+    var height = table.height;
+
+    if (event.insertRowAt != null &&
+        rows < TableElement.maxRows &&
+        (rows + 1) * cols <= TableElement.maxTotalCells) {
+      final at = event.insertRowAt!.clamp(0, rows);
+      final inserted = List<TableCellData>.filled(cols, const TableCellData());
+      cells.insertAll(at * cols, inserted);
+      final newRowH = height / rows;
+      height = (height + newRowH).clamp(
+        TableElement.minCellHeight * (rows + 1),
+        4000.0,
+      );
+      rowFractions.insert(at, 1.0 / (rows + 1));
+      rows += 1;
+    } else if (event.removeRowAt != null && rows > 1) {
+      final at = event.removeRowAt!.clamp(0, rows - 1);
+      cells.removeRange(at * cols, at * cols + cols);
+      final removedFrac = rowFractions.removeAt(at);
+      height = (height * (1.0 - removedFrac)).clamp(
+        TableElement.minCellHeight * (rows - 1),
+        4000.0,
+      );
+      rows -= 1;
+    }
+
+    if (event.insertColumnAt != null &&
+        cols < TableElement.maxColumns &&
+        rows * (cols + 1) <= TableElement.maxTotalCells) {
+      final at = event.insertColumnAt!.clamp(0, cols);
+      for (var r = rows - 1; r >= 0; r--) {
+        cells.insert(r * cols + at, const TableCellData());
+      }
+      final newColW = width / cols;
+      width = (width + newColW).clamp(
+        TableElement.minCellWidth * (cols + 1),
+        4000.0,
+      );
+      colFractions.insert(at, 1.0 / (cols + 1));
+      cols += 1;
+    } else if (event.removeColumnAt != null && cols > 1) {
+      final at = event.removeColumnAt!.clamp(0, cols - 1);
+      for (var r = rows - 1; r >= 0; r--) {
+        cells.removeAt(r * cols + at);
+      }
+      final removedFrac = colFractions.removeAt(at);
+      width = (width * (1.0 - removedFrac)).clamp(
+        TableElement.minCellWidth * (cols - 1),
+        4000.0,
+      );
+      cols -= 1;
+    }
+
+    if (event.columnFractions != null) {
+      colFractions = List<double>.from(event.columnFractions!);
+    }
+    if (event.rowFractions != null) {
+      rowFractions = List<double>.from(event.rowFractions!);
+    }
+    if (event.width != null) {
+      width = event.width!.clamp(TableElement.minCellWidth * cols, 4000.0);
+    }
+    if (event.height != null) {
+      height = event.height!.clamp(TableElement.minCellHeight * rows, 4000.0);
+    }
+
+    final updated = table.copyWith(
+      rows: rows,
+      columns: cols,
+      cells: cells,
+      width: width,
+      height: height,
+      headerRow: event.headerRow,
+      borderColor: event.borderColor,
+      borderWidth: event.borderWidth?.clamp(0.5, 12.0),
+      fontSize: event.fontSize?.clamp(8.0, 64.0),
+      textColor: event.textColor,
+      backgroundColor: event.backgroundColor,
+      headerBackgroundColor: event.headerBackgroundColor,
+      columnFractions: TableElement.normalizeFractions(colFractions, cols),
+      rowFractions: TableElement.normalizeFractions(rowFractions, rows),
+    );
+    if (updated == table) return;
+    await _updateElementMeta(
+      table.id,
+      updated.toMap(),
+      emit,
+      syncConnectors: true,
+    );
+    _announceUndoable(emit, _singleActionMessage('Updated table'));
   }
 
   Future<void> _onAddConnector(
@@ -3494,6 +3888,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final shape = primary is ShapeElement ? primary : null;
     final text = primary is TextElement ? primary : null;
     final sticky = primary is StickyNoteElement ? primary : null;
+    final table = primary is TableElement ? primary : null;
     final stroke = primary is StrokeElement ? primary : null;
     emit(
       state.copyWith(
@@ -3502,7 +3897,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         selectedShapeIsFilled: shape?.isFilled ?? false,
         selectedShapeBorderRadius: shape?.borderRadius ?? 0.0,
         selectedShapeRotation:
-            shape?.rotation ?? text?.rotation ?? sticky?.rotation ?? 0.0,
+            shape?.rotation ??
+            text?.rotation ??
+            sticky?.rotation ??
+            table?.rotation ??
+            0.0,
         selectedStrokeColor: stroke?.color.value ?? state.selectedStrokeColor,
         selectedStrokeWidth: stroke?.strokeWidth ?? state.selectedStrokeWidth,
         selectedStrokeOpacity: stroke?.opacity ?? state.selectedStrokeOpacity,
@@ -3722,6 +4121,328 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           ? Offset(target - current, 0)
           : Offset(0, target - current);
     }
+  }
+
+  Future<void> _onArrangeSelection(
+    CanvasArrangeSelection event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final nodes = <CanvasElement>[];
+    final bounds = <String, Rect>{};
+    for (final element in state.elements) {
+      if (!state.selectedIds.contains(element.id)) continue;
+      if (element.locked || element is LayerElement || element is ConnectorElement) {
+        continue;
+      }
+      final rect = elementBounds(element);
+      if (rect == null) continue;
+      nodes.add(element);
+      bounds[element.id] = rect;
+    }
+    if (nodes.length < 2) return;
+
+    final nodeIds = bounds.keys.toSet();
+    final spacing = event.spacing.clamp(8.0, 240.0);
+
+    var union = bounds.values.first;
+    for (final r in bounds.values.skip(1)) {
+      union = union.expandToInclude(r);
+    }
+
+    // Build directed graph from selected connectors attached at both ends.
+    final outgoing = <String, List<String>>{for (final id in nodeIds) id: []};
+    final inDegree = <String, int>{for (final id in nodeIds) id: 0};
+    for (final element in state.elements) {
+      if (element is! ConnectorElement) continue;
+      if (!state.selectedIds.contains(element.id)) continue;
+      final s = element.startElementId;
+      final e = element.endElementId;
+      if (s == null || e == null || s == e) continue;
+      if (!nodeIds.contains(s) || !nodeIds.contains(e)) continue;
+      if (!outgoing[s]!.contains(e)) {
+        outgoing[s]!.add(e);
+        inDegree[e] = (inDegree[e] ?? 0) + 1;
+      }
+    }
+
+    final targetTopLeft = <String, Offset>{};
+    final byPos = List<String>.from(nodeIds)
+      ..sort((a, b) {
+        final ra = bounds[a]!;
+        final rb = bounds[b]!;
+        final cmpX = ra.left.compareTo(rb.left);
+        return cmpX != 0 ? cmpX : ra.top.compareTo(rb.top);
+      });
+
+    switch (event.mode) {
+      case CanvasArrangeMode.row:
+        var x = union.left;
+        for (final id in byPos) {
+          final r = bounds[id]!;
+          targetTopLeft[id] = Offset(x, union.center.dy - r.height / 2);
+          x += r.width + spacing;
+        }
+      case CanvasArrangeMode.column:
+        final byY = List<String>.from(nodeIds)
+          ..sort((a, b) => bounds[a]!.top.compareTo(bounds[b]!.top));
+        var y = union.top;
+        for (final id in byY) {
+          final r = bounds[id]!;
+          targetTopLeft[id] = Offset(union.center.dx - r.width / 2, y);
+          y += r.height + spacing;
+        }
+      case CanvasArrangeMode.grid:
+        final gridOrder = List<String>.from(nodeIds)
+          ..sort((a, b) {
+            final ra = bounds[a]!;
+            final rb = bounds[b]!;
+            final cmpY = ra.top.compareTo(rb.top);
+            return cmpY != 0 ? cmpY : ra.left.compareTo(rb.left);
+          });
+        final cols = math.max(1, math.sqrt(gridOrder.length).ceil());
+        var curY = union.top;
+        for (var i = 0; i < gridOrder.length; i += cols) {
+          final rowEnd = math.min(i + cols, gridOrder.length);
+          var curX = union.left;
+          var rowHeight = 0.0;
+          for (var j = i; j < rowEnd; j++) {
+            final r = bounds[gridOrder[j]]!;
+            if (r.height > rowHeight) rowHeight = r.height;
+          }
+          for (var j = i; j < rowEnd; j++) {
+            final id = gridOrder[j];
+            final r = bounds[id]!;
+            targetTopLeft[id] = Offset(
+              curX,
+              curY + (rowHeight - r.height) / 2,
+            );
+            curX += r.width + spacing;
+          }
+          curY += rowHeight + spacing;
+        }
+      case CanvasArrangeMode.tree:
+        final visited = <String>{};
+        final treeChildren = <String, List<String>>{
+          for (final id in nodeIds) id: [],
+        };
+        final depthOf = <String, int>{};
+        final roots = <String>[];
+
+        String pickRoot() {
+          if (event.rootId != null &&
+              nodeIds.contains(event.rootId) &&
+              !visited.contains(event.rootId)) {
+            return event.rootId!;
+          }
+          final remaining = nodeIds.where((id) => !visited.contains(id)).toList()
+            ..sort((a, b) {
+              final zeroInA = (inDegree[a] ?? 0) == 0 ? 0 : 1;
+              final zeroInB = (inDegree[b] ?? 0) == 0 ? 0 : 1;
+              if (zeroInA != zeroInB) return zeroInA - zeroInB;
+              final outCmp =
+                  (outgoing[b]?.length ?? 0).compareTo(outgoing[a]?.length ?? 0);
+              if (outCmp != 0) return outCmp;
+              final cmpX = bounds[a]!.left.compareTo(bounds[b]!.left);
+              return cmpX != 0
+                  ? cmpX
+                  : bounds[a]!.top.compareTo(bounds[b]!.top);
+            });
+          return remaining.first;
+        }
+
+        while (visited.length < nodeIds.length) {
+          final root = pickRoot();
+          roots.add(root);
+          visited.add(root);
+          depthOf[root] = 0;
+          final queue = <String>[root];
+          while (queue.isNotEmpty) {
+            final cur = queue.removeAt(0);
+            final kids = List<String>.from(outgoing[cur] ?? const [])
+              ..sort((a, b) => bounds[a]!.top.compareTo(bounds[b]!.top));
+            for (final next in kids) {
+              if (visited.add(next)) {
+                treeChildren[cur]!.add(next);
+                depthOf[next] = (depthOf[cur] ?? 0) + 1;
+                queue.add(next);
+              }
+            }
+          }
+        }
+
+        final colWidth = <int, double>{};
+        for (final id in nodeIds) {
+          final d = depthOf[id] ?? 0;
+          final w = bounds[id]!.width;
+          if (w > (colWidth[d] ?? 0)) colWidth[d] = w;
+        }
+        final colX = <int, double>{};
+        final maxDepth = colWidth.keys.fold(0, math.max);
+        var xCursor = union.left;
+        for (var d = 0; d <= maxDepth; d++) {
+          colX[d] = xCursor;
+          xCursor += (colWidth[d] ?? 0) + spacing;
+        }
+
+        final subtreeH = <String, double>{};
+        double measureSubtree(String id) {
+          final kids = treeChildren[id]!;
+          final selfH = bounds[id]!.height;
+          if (kids.isEmpty) {
+            subtreeH[id] = selfH;
+            return selfH;
+          }
+          var total = 0.0;
+          for (var i = 0; i < kids.length; i++) {
+            total += measureSubtree(kids[i]);
+            if (i + 1 < kids.length) total += spacing;
+          }
+          final h = math.max(selfH, total);
+          subtreeH[id] = h;
+          return h;
+        }
+
+        void layoutSubtree(String id, double topY) {
+          final kids = treeChildren[id]!;
+          final d = depthOf[id] ?? 0;
+          final rect = bounds[id]!;
+          final subH = subtreeH[id] ?? rect.height;
+          targetTopLeft[id] = Offset(
+            colX[d]!,
+            topY + (subH - rect.height) / 2,
+          );
+          if (kids.isEmpty) return;
+          var childrenTotal = 0.0;
+          for (var i = 0; i < kids.length; i++) {
+            childrenTotal += subtreeH[kids[i]]!;
+            if (i + 1 < kids.length) childrenTotal += spacing;
+          }
+          var childY = topY + (subH - childrenTotal) / 2;
+          for (final kid in kids) {
+            layoutSubtree(kid, childY);
+            childY += subtreeH[kid]! + spacing;
+          }
+        }
+
+        var rootY = union.top;
+        for (final root in roots) {
+          final h = measureSubtree(root);
+          layoutSubtree(root, rootY);
+          rootY += h + spacing;
+        }
+      case CanvasArrangeMode.flow:
+        // Topological layers (Kahn), falling back to left-to-right order on cycles.
+        final remainingIn = Map<String, int>.from(inDegree);
+        final layerOf = <String, int>{};
+        final ready = <String>[
+          for (final id in byPos)
+            if ((remainingIn[id] ?? 0) == 0) id,
+        ];
+        final order = <String>[];
+        while (order.length < nodeIds.length) {
+          if (ready.isEmpty) {
+            for (final id in byPos) {
+              if (!order.contains(id)) {
+                ready.add(id);
+                break;
+              }
+            }
+          }
+          final cur = ready.removeAt(0);
+          if (order.contains(cur)) continue;
+          order.add(cur);
+          final curLayer = layerOf[cur] ?? 0;
+          for (final nxt in outgoing[cur] ?? const []) {
+            if (!order.contains(nxt)) {
+              final nextLayer = curLayer + 1;
+              if (nextLayer > (layerOf[nxt] ?? 0)) {
+                layerOf[nxt] = nextLayer;
+              }
+              remainingIn[nxt] = (remainingIn[nxt] ?? 1) - 1;
+              if (remainingIn[nxt]! <= 0 && !ready.contains(nxt)) {
+                ready.add(nxt);
+              }
+            }
+          }
+        }
+        final colGroups = <int, List<String>>{};
+        for (final id in order) {
+          final l = layerOf[id] ?? 0;
+          colGroups.putIfAbsent(l, () => []).add(id);
+        }
+        final layers = colGroups.keys.toList()..sort();
+        var xCursor = union.left;
+        for (final layer in layers) {
+          final items = colGroups[layer]!
+            ..sort((a, b) => bounds[a]!.top.compareTo(bounds[b]!.top));
+          final colW = items.map((id) => bounds[id]!.width).reduce(math.max);
+          final totalH = items.fold<double>(
+            0,
+            (sum, id) => sum + bounds[id]!.height,
+          ) + spacing * (items.length - 1);
+          var yCursor = union.center.dy - totalH / 2;
+          for (final id in items) {
+            final r = bounds[id]!;
+            targetTopLeft[id] = Offset(xCursor + (colW - r.width) / 2, yCursor);
+            yCursor += r.height + spacing;
+          }
+          xCursor += colW + spacing;
+        }
+    }
+
+    final deltas = <String, Offset>{
+      for (final id in nodeIds)
+        if (targetTopLeft[id] != null)
+          id: targetTopLeft[id]! - bounds[id]!.topLeft,
+    };
+
+    // Translate nodes and keep attached connectors pinned in a single CRDT batch.
+    final updatedById = <String, CanvasElement>{};
+    for (final node in nodes) {
+      final d = deltas[node.id];
+      if (d == null || (d.dx.abs() < 0.01 && d.dy.abs() < 0.01)) continue;
+      final data = _translatedPayload(node, d);
+      updatedById[node.id] = CanvasElement.fromMap(node.id, data);
+    }
+    if (updatedById.isEmpty) return;
+
+    final elementById = <String, CanvasElement>{
+      for (final el in state.elements) el.id: updatedById[el.id] ?? el,
+    };
+    for (final el in state.elements) {
+      if (el is! ConnectorElement) continue;
+      final startMoved =
+          el.startElementId != null && updatedById.containsKey(el.startElementId);
+      final endMoved =
+          el.endElementId != null && updatedById.containsKey(el.endElementId);
+      if (!startMoved && !endMoved) continue;
+      final (newStart, newEnd) = resolveConnectorEndpoints(el, elementById);
+      final data = Map<String, dynamic>.from(el.toMap())
+        ..['sx'] = newStart.dx
+        ..['sy'] = newStart.dy
+        ..['ex'] = newEnd.dx
+        ..['ey'] = newEnd.dy;
+      updatedById[el.id] = CanvasElement.fromMap(el.id, data);
+    }
+
+    final next = state.elements
+        .map((el) => updatedById[el.id] ?? el)
+        .toList(growable: false);
+    emit(state.copyWith(elements: next));
+    await _saveCrdtBatch([
+      for (final el in updatedById.values)
+        (
+          action: 'update',
+          type: _elementType(el),
+          objectId: el.id,
+          data: el.toMap(),
+        ),
+    ], emit);
+    _announceUndoable(
+      emit,
+      _groupActionMessage('Arranged', nodes.length),
+    );
   }
 
   Future<void> _onDuplicateElements(
@@ -4373,6 +5094,30 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       types[element.id] = _elementType(element);
     }
     if (updatedById.isEmpty) return;
+    final elementById = <String, CanvasElement>{
+      for (final el in state.elements) el.id: updatedById[el.id] ?? el,
+    };
+    for (final el in state.elements) {
+      if (el is! ConnectorElement || updatedById.containsKey(el.id)) continue;
+      final sMoved =
+          el.startElementId != null && updatedById.containsKey(el.startElementId);
+      final eMoved =
+          el.endElementId != null && updatedById.containsKey(el.endElementId);
+      if (!sMoved && !eMoved) continue;
+      final (newStart, newEnd) = resolveConnectorEndpoints(el, elementById);
+      if ((newStart - el.startPoint).distance < 0.01 &&
+          (newEnd - el.endPoint).distance < 0.01) {
+        continue;
+      }
+      final data = Map<String, dynamic>.from(el.toMap())
+        ..['sx'] = newStart.dx
+        ..['sy'] = newStart.dy
+        ..['ex'] = newEnd.dx
+        ..['ey'] = newEnd.dy;
+      updatedById[el.id] = CanvasElement.fromMap(el.id, data);
+      payloads[el.id] = data;
+      types[el.id] = 'connector';
+    }
     final next = state.elements
         .map((element) => updatedById[element.id] ?? element)
         .toList();
@@ -4442,6 +5187,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
     if (shape is FrameElement) {
       await _moveFrame(shape, event.center, emit);
+      return;
+    }
+    if (shape is TableElement) {
+      if (shape.center == event.center) return;
+      await _updateElementMeta(
+        shape.id,
+        {'cx': event.center.dx, 'cy': event.center.dy},
+        emit,
+        syncConnectors: true,
+      );
+      _announceUndoable(emit, _singleActionMessage('Moved'));
       return;
     }
     if (shape is TextElement) {
@@ -4525,6 +5281,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       );
       return;
     }
+    if (shape is TableElement) {
+      await _updateElementMeta(
+        shape.id,
+        {'rotation': normalized},
+        emit,
+        syncConnectors: true,
+      );
+      _announceUndoable(emit, _singleActionMessage('Rotated'));
+      return;
+    }
     final data = Map<String, dynamic>.from(
       _committedElementPayload(shape.id) ?? shape.toMap(),
     )..['rotation'] = normalized;
@@ -4573,6 +5339,26 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         CanvasUpdateFrame(elementId: shape.id, width: width, height: height),
         emit,
         verb: 'Resized',
+      );
+      return;
+    }
+    if (shape is TableElement) {
+      final minW = TableElement.minCellWidth * shape.columns;
+      final minH = TableElement.minCellHeight * shape.rows;
+      final width = (event.width > 0 ? event.width : event.size)
+          .clamp(minW, 4000.0)
+          .toDouble();
+      final ratio = shape.width > 0 ? shape.height / shape.width : 0.5;
+      final height = (event.height > 0 ? event.height : width * ratio)
+          .clamp(minH, 4000.0)
+          .toDouble();
+      await _onUpdateTableStyle(
+        CanvasUpdateTableStyle(
+          tableId: shape.id,
+          width: width,
+          height: height,
+        ),
+        emit,
       );
       return;
     }
@@ -4674,6 +5460,44 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final changed = await _updateShape(shape.id, data, emit);
     if (changed) {
       _announceUndoable(emit, _singleActionMessage('Recolored'));
+    }
+  }
+
+  Future<void> _onUpdateSelectedShapeStrokeColor(
+    CanvasUpdateSelectedShapeStrokeColor event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
+    if (shape is! ShapeElement) return;
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(shape.id) ?? shape.toMap(),
+    )..['strokeColor'] = event.strokeColor.value;
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Recolored'));
+    }
+  }
+
+  Future<void> _onFlipSelectedShape(
+    CanvasFlipSelectedShape event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
+    if (shape is! ShapeElement) return;
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(shape.id) ?? shape.toMap(),
+    );
+    if (event.horizontal) {
+      data['flipH'] = !_parseBool(data['flipH']);
+    }
+    if (event.vertical) {
+      data['flipV'] = !_parseBool(data['flipV']);
+    }
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Flipped'));
     }
   }
 
@@ -4947,6 +5771,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           case ConnectorElement _:
           case StrokeElement _:
             data['color'] = color.value;
+            changed = true;
+          case TableElement _:
+            data['borderColor'] = color.toARGB32();
             changed = true;
           case ImageElement _:
           case LayerElement _:
@@ -5556,6 +6383,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       data['width'] = w;
       data['height'] = (event.height > 0 ? event.height : w * ratio)
           .clamp(80.0, 4000.0)
+          .toDouble();
+    } else if (shape is TableElement) {
+      final minW = TableElement.minCellWidth * shape.columns;
+      final minH = TableElement.minCellHeight * shape.rows;
+      final w = (event.width > 0 ? event.width : event.size)
+          .clamp(minW, 4000.0)
+          .toDouble();
+      final ratio = shape.width > 0 ? shape.height / shape.width : 0.5;
+      data['width'] = w;
+      data['height'] = (event.height > 0 ? event.height : w * ratio)
+          .clamp(minH, 4000.0)
           .toDouble();
     }
     await _publishSelectedShapePreview(shape.id, data);
@@ -6175,14 +7013,120 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
   }
 
-  void _onHistoryFeedRequested(
+  List<BoardActivityBlock> _mergeArchivedBlocks(
+    List<BoardActivityBlock> existing,
+    List<BoardActivityBlock> incoming,
+  ) {
+    final byId = <String, BoardActivityBlock>{
+      for (final b in existing) b.blockId: b,
+      for (final b in incoming) b.blockId: b,
+    };
+    final merged = byId.values.toList(growable: false)
+      ..sort((a, b) => b.toVersion.compareTo(a.toVersion));
+    return merged;
+  }
+
+  int? get _oldestArchivedFromVersion {
+    if (_archivedBlocks.isEmpty) return null;
+    return _archivedBlocks.map((b) => b.fromVersion).reduce(math.min);
+  }
+
+  Future<void> _onHistoryFeedRequested(
     CanvasHistoryFeedRequested event,
     Emitter<CanvasState> emit,
-  ) {
+  ) async {
     if (_currentUserRole != Board.roleOwner) return;
+    final service = _historyService;
+    if (event.forceRefresh) {
+      emit(state.copyWith(isHistoryLoading: true, error: null));
+      unawaited(_historyFeedSub?.cancel());
+      _historyFeedSub = null;
+    }
     _syncHistorySubscriptions();
     _ensureHistoryFeedSubscription();
-    unawaited(_refreshLiveTail());
+    if (service == null || _boardId.isEmpty) {
+      if (event.forceRefresh) {
+        emit(state.copyWith(isHistoryLoading: false));
+      }
+      return;
+    }
+    try {
+      final page = await service.getVersions(
+        _boardId,
+        forceRefresh: event.forceRefresh,
+      );
+      if (isClosed) return;
+      if (page.blocks.isNotEmpty) {
+        _archivedBlocks = _mergeArchivedBlocks(_archivedBlocks, page.blocks);
+      }
+      if (page.liveTail != null) {
+        _liveTailBlock = page.liveTail;
+      } else {
+        try {
+          _liveTailBlock = await service.getLiveTail(_boardId);
+        } catch (_) {}
+      }
+      if (isClosed) return;
+      final oldestFrom = _oldestArchivedFromVersion;
+      final hasMore = page.hasMore || (oldestFrom != null && oldestFrom > 1);
+      final nextBefore =
+          page.nextBeforeVersion ?? (oldestFrom != null && oldestFrom > 1 ? oldestFrom : null);
+      emit(state.copyWith(
+        isHistoryLoading: false,
+        activityBlocks: _composeActivityBlocks(),
+        hasMoreHistoryVersions: hasMore,
+        historyNextBeforeVersion: nextBefore,
+      ));
+    } catch (_) {
+      unawaited(_refreshLiveTail());
+      if (!isClosed && event.forceRefresh) {
+        emit(state.copyWith(isHistoryLoading: false));
+      }
+    }
+  }
+
+  Future<void> _onHistoryLoadOlderVersionsRequested(
+    CanvasHistoryLoadOlderVersionsRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null || _currentUserRole != Board.roleOwner) return;
+    if (_boardId.isEmpty || state.isHistoryLoading) return;
+    final beforeVersion =
+        event.beforeVersion ??
+        state.historyNextBeforeVersion ??
+        _oldestArchivedFromVersion;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final page = await service.getVersions(
+        _boardId,
+        beforeVersion: beforeVersion,
+      );
+      if (isClosed) return;
+      if (page.blocks.isNotEmpty) {
+        _archivedBlocks = _mergeArchivedBlocks(_archivedBlocks, page.blocks);
+      }
+      final oldestFrom = _oldestArchivedFromVersion;
+      final hasMore = page.hasMore && (oldestFrom != null && oldestFrom > 1);
+      final nextBefore = page.nextBeforeVersion ??
+          (hasMore ? oldestFrom : null);
+      emit(state.copyWith(
+        isHistoryLoading: false,
+        activityBlocks: _composeActivityBlocks(),
+        hasMoreHistoryVersions: hasMore,
+        historyNextBeforeVersion: nextBefore,
+        infoMessage: page.blocks.isEmpty
+            ? 'All available previous versions are already loaded.'
+            : 'Loaded ${page.blocks.length} previous version(s).',
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          error: _historyMessage(e),
+        ));
+      }
+    }
   }
 
   void _onHistoryFeedUpdated(
@@ -6190,8 +7134,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     if (_currentUserRole != Board.roleOwner) return;
-    _archivedBlocks = event.blocks;
-    emit(state.copyWith(activityBlocks: _composeActivityBlocks()));
+    _archivedBlocks = _mergeArchivedBlocks(_archivedBlocks, event.blocks);
+    final oldestFrom = _oldestArchivedFromVersion;
+    final hasMore =
+        state.hasMoreHistoryVersions || (oldestFrom != null && oldestFrom > 1);
+    final nextBefore =
+        state.historyNextBeforeVersion ??
+        (oldestFrom != null && oldestFrom > 1 ? oldestFrom : null);
+    emit(state.copyWith(
+      activityBlocks: _composeActivityBlocks(),
+      hasMoreHistoryVersions: hasMore,
+      historyNextBeforeVersion: nextBefore,
+    ));
     unawaited(_refreshLiveTail());
   }
 
@@ -6325,46 +7279,58 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       // since that requested state, starting ON the requested state.
       final targetVersion = request?.targetVersion;
       final scopeIds = request?.targetElementIds ?? const <String>[];
-      if (request != null && targetVersion != null && scopeIds.isNotEmpty) {
-        final timeline = await service.getUserTimeline(
-          _boardId,
-          request.requesterUid,
-          elementIds: scopeIds,
-          afterVersion: targetVersion,
-        );
-        if (isClosed) return;
-        if (timeline.ops.isNotEmpty && timeline.steps.isNotEmpty) {
-          // Virtual first stop: the requested state itself (the base, with
-          // an empty delta). The slider then walks the window between what
-          // the member asked for and the current board.
-          final requestedStop = BoardOperation(
-            version: targetVersion,
-            summary: 'Requested state (v$targetVersion)',
-          );
-          final scrub = HistoryScrub(
-            stops: [requestedStop, ...timeline.ops],
-            baseStateBytes: timeline.baseStateBytes,
-            stepDeltas: [
-              Uint8List(0),
-              ...timeline.steps.map((step) => step.deltaBytes),
-            ],
-            targetUid: request.requesterUid,
+      final scopeMode = request?.scopeMode ?? UndoRequestScopeMode.myChanges;
+      if (request != null &&
+          targetVersion != null &&
+          (scopeIds.isNotEmpty || (area != null && area.isValid))) {
+        try {
+          final timeline = await service.getUserTimeline(
+            _boardId,
+            scopeMode == UndoRequestScopeMode.areaState
+                ? ''
+                : request.requesterUid,
             elementIds: scopeIds,
-            hasMore: timeline.hasMore,
-            nextBeforeVersion: timeline.nextBeforeVersion,
+            area: area,
+            scopeMode: scopeMode,
+            afterVersion: targetVersion,
           );
-          await _enterScrub(
-            scrub,
-            emit: emit,
-            returnTray: returnTray,
-            returnUserUid: returnUserUid,
-            title: 'Undo request from ${request.requesterName}',
-            startIndex: 0,
-            requestId: event.requestId,
-            focusBounds: focusBounds,
-            highlightElementIds: highlightIds ?? const <String>[],
-          );
-          return;
+          if (isClosed) return;
+          if (timeline.ops.isNotEmpty && timeline.steps.isNotEmpty) {
+            final requestedStop = BoardOperation(
+              version: targetVersion,
+              summary: 'Requested state (v$targetVersion)',
+            );
+            final scrub = HistoryScrub(
+              stops: [requestedStop, ...timeline.ops],
+              baseStateBytes: timeline.baseStateBytes,
+              stepDeltas: [
+                Uint8List(0),
+                ...timeline.steps.map((step) => step.deltaBytes),
+              ],
+              targetUid: scopeMode == UndoRequestScopeMode.areaState
+                  ? null
+                  : request.requesterUid,
+              elementIds: scopeIds,
+              area: area,
+              scopeMode: scopeMode,
+              hasMore: timeline.hasMore,
+              nextBeforeVersion: timeline.nextBeforeVersion,
+            );
+            await _enterScrub(
+              scrub,
+              emit: emit,
+              returnTray: returnTray,
+              returnUserUid: returnUserUid,
+              title: 'Undo request from ${request.requesterName}',
+              startIndex: 0,
+              requestId: event.requestId,
+              focusBounds: focusBounds,
+              highlightElementIds: highlightIds ?? const <String>[],
+            );
+            return;
+          }
+        } catch (_) {
+          // Fall back to plan-based comparison when timeline is unavailable.
         }
       }
       // Legacy requests (no targetVersion) or an empty window: build the
@@ -6404,13 +7370,21 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
   }
 
-  void _onHistoryEvidenceViewToggled(
+  Future<void> _onHistoryEvidenceViewToggled(
     CanvasHistoryEvidenceViewToggled event,
     Emitter<CanvasState> emit,
-  ) {
+  ) async {
     // The past/current toggle is shared by undo-request evidence and the
-    // per-log compare screen (historyPreviewCompare).
+    // per-log compare screen (historyPreviewCompare). When a scrub slider is
+    // active, toggling jumps between stop 0 (Requested) and lastIndex (Current).
     if (!state.isViewingHistory) return;
+    final scrub = state.historyScrub;
+    if (scrub != null) {
+      final targetIndex = event.showDesired ? 0 : scrub.lastIndex;
+      emit(state.copyWith(historyPreviewShowsDesired: event.showDesired));
+      await _onHistoryScrubMoved(CanvasHistoryScrubMoved(targetIndex), emit);
+      return;
+    }
     if (state.historyPreviewRequestId == null &&
         !state.historyPreviewCompare) {
       return;
@@ -6426,9 +7400,118 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (enable && state.isViewingHistory) return;
     emit(state.copyWith(
       isSelectingUndoRequestArea: enable,
+      isSelectingHistoryArea: false,
       activeTray: null,
       selectedShapeId: null,
     ));
+  }
+
+  void _onToggleOwnerAreaHistorySelection(
+    CanvasToggleOwnerAreaHistorySelection event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(
+        error: 'Only the board owner can view area history.',
+      ));
+      return;
+    }
+    final enable = event.enable ?? !state.isSelectingHistoryArea;
+    if (enable && state.isViewingHistory) return;
+    emit(state.copyWith(
+      isSelectingHistoryArea: enable,
+      isSelectingUndoRequestArea: false,
+      activeTray: null,
+      selectedShapeId: null,
+    ));
+  }
+
+  Future<void> _onHistoryAreaScrubRequested(
+    CanvasHistoryAreaScrubRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(
+        error: 'Only the board owner can view board history.',
+      ));
+      return;
+    }
+    final area = event.area;
+    if (!area.isValid) {
+      emit(state.copyWith(error: 'Select a valid area on the board first.'));
+      return;
+    }
+    final returnTray = state.isViewingHistory
+        ? state.historyPreviewReturnTray
+        : state.activeTray;
+    final returnUserUid = state.isViewingHistory
+        ? state.historyPreviewReturnUserUid
+        : state.selectedUserUid;
+    emit(state.copyWith(
+      isHistoryLoading: true,
+      isSelectingHistoryArea: false,
+      error: null,
+    ));
+    try {
+      final timeline = await service.getUserTimeline(
+        _boardId,
+        '',
+        elementIds: event.elementIds,
+        area: area,
+        scopeMode: UndoRequestScopeMode.areaState,
+      );
+      if (isClosed) return;
+      if (timeline.ops.isEmpty || timeline.steps.isEmpty) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          error: 'No recorded changes were found in that part of the board.',
+        ));
+        return;
+      }
+      final beforeStop = BoardOperation(
+        version: timeline.baseVersion,
+        summary: 'Before changes in this area (v${timeline.baseVersion})',
+      );
+      final scrub = HistoryScrub(
+        stops: [beforeStop, ...timeline.ops],
+        baseStateBytes: timeline.baseStateBytes,
+        stepDeltas: [
+          Uint8List(0),
+          ...timeline.steps.map((step) => step.deltaBytes),
+        ],
+        targetUid: null,
+        elementIds: event.elementIds,
+        area: area,
+        scopeMode: UndoRequestScopeMode.areaState,
+        hasMore: timeline.hasMore,
+        nextBeforeVersion: timeline.nextBeforeVersion,
+      );
+      await _enterScrub(
+        scrub,
+        emit: emit,
+        returnTray: returnTray,
+        returnUserUid: returnUserUid,
+        title:
+            'Area history (${area.width.round()} × ${area.height.round()} px)',
+        startIndex: scrub.lastIndex,
+        focusBounds: Rect.fromLTWH(
+          area.left,
+          area.top,
+          area.width,
+          area.height,
+        ),
+        highlightElementIds: event.elementIds,
+      );
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          error: _historyMessage(e),
+        ));
+      }
+    }
   }
 
   // ──────────────────────────────────────────────
@@ -6439,11 +7522,23 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasUndoRequestDraftStarted event,
     Emitter<CanvasState> emit,
   ) {
+    final existingMode = state.undoRequestDraft?.scopeMode;
     emit(state.copyWith(
       undoRequestDraft: UndoRequestDraft(
         elementIds: List<String>.unmodifiable(event.preselectedIds),
         area: event.area,
+        scopeMode: event.scopeMode ?? existingMode ?? UndoRequestScopeMode.myChanges,
       ),
+    ));
+  }
+
+  void _onUndoRequestDraftScopeModeChanged(
+    CanvasUndoRequestDraftScopeModeChanged event,
+    Emitter<CanvasState> emit,
+  ) {
+    final draft = state.undoRequestDraft ?? const UndoRequestDraft();
+    emit(state.copyWith(
+      undoRequestDraft: draft.withScopeMode(event.scopeMode),
     ));
   }
 
@@ -6476,9 +7571,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(undoRequestDraft: null));
   }
 
-  /// Loads the member's OWN timeline scoped to the draft's elements and opens
-  /// the request scrub: stop 0 is the virtual "before these changes" state,
-  /// the slider then walks through what they did in the scope.
+  /// Loads the member's timeline (either their own changes or the whole area
+  /// state according to `draft.scopeMode`) scoped to the draft's elements/area
+  /// and opens the request scrub: stop 0 is the virtual "before these changes"
+  /// state, the slider then walks through what changed in the scope.
   Future<void> _onUndoRequestPreviewRequested(
     CanvasUndoRequestPreviewRequested event,
     Emitter<CanvasState> emit,
@@ -6487,33 +7583,42 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final draft = state.undoRequestDraft;
     if (service == null || draft == null) return;
     final scopeIds = draft.elementIds;
-    if (scopeIds.isEmpty) {
-      emit(state.copyWith(error: 'Select at least one element first.'));
+    final area = draft.area;
+    final hasArea = area != null && area.isValid;
+    if (scopeIds.isEmpty && !hasArea) {
+      emit(state.copyWith(
+        error: 'Select at least one element or board area first.',
+      ));
       return;
     }
     final returnTray = state.activeTray;
     final returnUserUid = state.selectedUserUid;
+    final isAreaState = draft.scopeMode == UndoRequestScopeMode.areaState;
     emit(state.copyWith(isHistoryLoading: true, error: null));
     try {
       final timeline = await service.getUserTimeline(
         _boardId,
-        state.currentUserId,
+        isAreaState ? '' : state.currentUserId,
         elementIds: scopeIds,
+        area: area,
+        scopeMode: draft.scopeMode,
       );
       if (isClosed) return;
       if (timeline.ops.isEmpty || timeline.steps.isEmpty) {
         emit(state.copyWith(
           isHistoryLoading: false,
-          error: 'No changes of yours are recorded in that scope yet.',
+          error: isAreaState
+              ? 'No changes are recorded in that part of the board yet.'
+              : 'No changes of yours are recorded in that scope yet.',
         ));
         return;
       }
       // Virtual first stop: the state before the page's first scoped op.
-      // Picking it asks the owner to undo ALL the member's in-scope changes
-      // on the page; picking any later stop asks for that moment instead.
       final beforeStop = BoardOperation(
         version: timeline.baseVersion,
-        summary: 'Before these changes (v${timeline.baseVersion})',
+        summary: isAreaState
+            ? 'Before changes in this area (v${timeline.baseVersion})'
+            : 'Before my changes (v${timeline.baseVersion})',
       );
       final scrub = HistoryScrub(
         stops: [beforeStop, ...timeline.ops],
@@ -6522,20 +7627,23 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           Uint8List(0),
           ...timeline.steps.map((step) => step.deltaBytes),
         ],
-        targetUid: state.currentUserId,
+        targetUid: isAreaState ? null : state.currentUserId,
         elementIds: scopeIds,
+        area: area,
+        scopeMode: draft.scopeMode,
         hasMore: timeline.hasMore,
         nextBeforeVersion: timeline.nextBeforeVersion,
       );
-      final area = draft.area;
       await _enterScrub(
         scrub,
         emit: emit,
         returnTray: returnTray,
         returnUserUid: returnUserUid,
-        title: 'Your undo request',
+        title: isAreaState
+            ? 'Your undo request · Whole area state'
+            : 'Your undo request · Only my changes',
         startIndex: 0,
-        focusBounds: (area != null && area.isValid)
+        focusBounds: hasArea
             ? Rect.fromLTWH(area.left, area.top, area.width, area.height)
             : null,
         highlightElementIds: scopeIds,
@@ -6562,7 +7670,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       emit(state.copyWith(error: 'A reason is required.'));
       return;
     }
-    if (scrub == null || draft.elementIds.isEmpty) {
+    final hasArea = draft.area != null && draft.area!.isValid;
+    if (scrub == null || (draft.elementIds.isEmpty && !hasArea)) {
       emit(state.copyWith(error: 'Pick what the owner should restore first.'));
       return;
     }
@@ -6582,6 +7691,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         elementIds: draft.elementIds,
         reason: reason,
         targetVersion: targetVersion,
+        scopeMode: draft.scopeMode,
         area: draft.area,
       );
       if (isClosed) return;
@@ -6630,6 +7740,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       targetUid: event.targetUid,
       afterVersion: event.afterVersion,
       elementIds: event.elementIds,
+      area: event.area,
       requestId: event.requestId,
       emit: emit,
     );
@@ -6660,6 +7771,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     DateTime? fromTime,
     DateTime? toTime,
     List<String>? elementIds,
+    UndoRequestArea? area,
     String? requestId,
     List<int>? opVersions,
     int? afterVersion,
@@ -6680,6 +7792,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         fromTime: fromTime,
         toTime: toTime,
         elementIds: elementIds,
+        area: area,
         requestId: requestId,
         opVersions: opVersions,
         afterVersion: afterVersion,
@@ -6707,6 +7820,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     return _planHistoryRevert(
       mode: 'restore',
       targetVersion: event.version,
+      elementIds: event.elementIds,
+      area: event.area,
+      requestId: event.requestId,
       emit: emit,
     );
   }
@@ -6920,6 +8036,137 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
   }
 
+  Future<HistoryScrub> _computeScrubWithDiffs(HistoryScrub scrub) async {
+    if (scrub.stops.isEmpty) return scrub;
+    final stepElements = <List<CanvasElement>>[];
+    final adapter = await CanvasDocAdapterFactory.create();
+    if (scrub.baseStateBytes.isNotEmpty) {
+      adapter.applyUpdate(scrub.baseStateBytes, origin: 'remote');
+    }
+    for (var i = 0; i < scrub.stops.length; i++) {
+      final delta = scrub.stepDeltas[i];
+      if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
+      stepElements.add(
+        _rebuildElementsFromCrdtState(adapter.materializeElements()),
+      );
+    }
+    final reference =
+        state.elements.isNotEmpty ? state.elements : stepElements.last;
+    final refById = <String, CanvasElement>{
+      for (final e in reference) e.id: e,
+    };
+    final scopeSet = scrub.elementIds.toSet();
+    final area = scrub.area;
+    final areaRect = (area != null && area.isValid)
+        ? Rect.fromLTWH(area.left, area.top, area.width, area.height)
+        : null;
+
+    bool inScope(String id, CanvasElement? a, CanvasElement? b) {
+      if (scopeSet.isEmpty && areaRect == null) return true;
+      if (scopeSet.contains(id)) return true;
+      if (areaRect != null) {
+        if (a != null && elementBounds(a)?.overlaps(areaRect) == true) {
+          return true;
+        }
+        if (b != null && elementBounds(b)?.overlaps(areaRect) == true) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    final diffs = <HistoryScrubDiff>[];
+    for (final stopList in stepElements) {
+      final stopById = <String, CanvasElement>{
+        for (final e in stopList) e.id: e,
+      };
+      final allIds = <String>{...refById.keys, ...stopById.keys};
+      var added = 0;
+      var updated = 0;
+      var deleted = 0;
+      final changed = <String>[];
+      for (final id in allIds) {
+        final cur = refById[id];
+        final past = stopById[id];
+        if (!inScope(id, cur, past)) continue;
+        if (cur != null && past == null) {
+          added++;
+          changed.add(id);
+        } else if (cur == null && past != null) {
+          deleted++;
+          changed.add(id);
+        } else if (cur != null && past != null && cur != past) {
+          updated++;
+          changed.add(id);
+        }
+      }
+      diffs.add(
+        HistoryScrubDiff(
+          addedCount: added,
+          updatedCount: updated,
+          deletedCount: deleted,
+          changedElementIds: changed,
+        ),
+      );
+    }
+
+    return HistoryScrub(
+      stops: scrub.stops,
+      baseStateBytes: scrub.baseStateBytes,
+      stepDeltas: scrub.stepDeltas,
+      targetUid: scrub.targetUid,
+      elementIds: scrub.elementIds,
+      area: scrub.area,
+      scopeMode: scrub.scopeMode,
+      stepDiffs: diffs,
+      hasMore: scrub.hasMore,
+      nextBeforeVersion: scrub.nextBeforeVersion,
+    );
+  }
+
+  List<CanvasElement> _composeScopedScrubPreviewElements(
+    HistoryScrub scrub,
+    List<CanvasElement> rawPreviewElements,
+  ) {
+    final area = scrub.area;
+    final hasArea = area != null && area.isValid;
+    if (state.elements.isEmpty || (scrub.elementIds.isEmpty && !hasArea)) {
+      return rawPreviewElements;
+    }
+    final areaRect = hasArea
+        ? Rect.fromLTWH(area.left, area.top, area.width, area.height)
+        : null;
+    final scopeSet = <String>{...scrub.elementIds};
+    if (areaRect != null) {
+      for (final e in state.elements) {
+        if (elementBounds(e)?.overlaps(areaRect) == true) scopeSet.add(e.id);
+      }
+      for (final e in rawPreviewElements) {
+        if (elementBounds(e)?.overlaps(areaRect) == true) scopeSet.add(e.id);
+      }
+    }
+    if (scopeSet.isEmpty) return rawPreviewElements;
+    final rawById = <String, CanvasElement>{
+      for (final e in rawPreviewElements) e.id: e,
+    };
+    final liveById = <String, CanvasElement>{
+      for (final e in state.elements) e.id: e,
+    };
+    final composed = <String, Map<String, dynamic>>{};
+    for (final entry in liveById.entries) {
+      if (!scopeSet.contains(entry.key)) {
+        composed[entry.key] = entry.value.toMap();
+      }
+    }
+    for (final id in scopeSet) {
+      final past = rawById[id];
+      if (past != null) {
+        composed[id] = past.toMap();
+      }
+    }
+    return _rebuildElementsFromCrdtState(composed);
+  }
+
   /// Renders a scrub session on a fresh temporary adapter. [startIndex]
   /// defaults to the LAST stop (the newest state in range — the slider then
   /// moves back from there); request/evidence scrubs open at 0 (the base
@@ -6935,35 +8182,41 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Rect? focusBounds,
     List<String> highlightElementIds = const [],
   }) async {
+    final enrichedScrub = await _computeScrubWithDiffs(scrub);
     final adapter = await CanvasDocAdapterFactory.create();
-    if (scrub.baseStateBytes.isNotEmpty) {
-      adapter.applyUpdate(scrub.baseStateBytes, origin: 'remote');
+    if (enrichedScrub.baseStateBytes.isNotEmpty) {
+      adapter.applyUpdate(enrichedScrub.baseStateBytes, origin: 'remote');
     }
-    final index = (startIndex ?? scrub.lastIndex).clamp(0, scrub.lastIndex);
+    final index =
+        (startIndex ?? enrichedScrub.lastIndex).clamp(0, enrichedScrub.lastIndex);
     for (var i = 0; i <= index; i++) {
-      final delta = scrub.stepDeltas[i];
+      final delta = enrichedScrub.stepDeltas[i];
       if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
     }
     _historyScrubAdapter = adapter;
-    final previewElements =
+    final rawPreview =
         _rebuildElementsFromCrdtState(adapter.materializeElements());
+    final previewElements =
+        _composeScopedScrubPreviewElements(enrichedScrub, rawPreview);
+    final stepDiff = enrichedScrub.diffAt(index);
+    final effectiveHighlights = highlightElementIds.isNotEmpty
+        ? highlightElementIds
+        : (stepDiff?.changedElementIds ?? const <String>[]);
     if (isClosed) return;
     emit(state.copyWith(
       isViewingHistory: true,
       isHistoryLoading: false,
-      historyScrub: scrub,
+      historyScrub: enrichedScrub,
       historyScrubIndex: index,
-      historyPreviewVersion: scrub.stops[index].version,
+      historyPreviewVersion: enrichedScrub.stops[index].version,
       historyPreviewElements: previewElements,
-      // Highlights are set once here (never per step), so the focus key does
-      // not change and the viewport never refits mid-scrub.
-      historyHighlightElementIds: highlightElementIds,
+      historyHighlightElementIds: effectiveHighlights,
       historyPreviewTitle: title,
       historyPreviewReturnTray: returnTray,
       historyPreviewReturnUserUid: returnUserUid,
       historyPreviewFocusBounds: focusBounds,
       historyPreviewRequestId: requestId,
-      historyPreviewShowsDesired: false,
+      historyPreviewShowsDesired: index < enrichedScrub.lastIndex,
       historyPreviewCompare: false,
       historyPreviewOpVersions: const [],
       activeRevertPlan: null,
@@ -7001,38 +8254,41 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     final active = _historyScrubAdapter;
     if (active == null || isClosed) return;
-    final previewElements =
+    final rawPreview =
         _rebuildElementsFromCrdtState(active.materializeElements());
+    final previewElements =
+        _composeScopedScrubPreviewElements(scrub, rawPreview);
     emit(state.copyWith(
       historyScrubIndex: index,
       historyPreviewElements: previewElements,
-      // historyPreviewVersion stays at the anchor so the viewport never
-      // refits mid-scrub; the banner reads the stop from historyScrub.
+      historyPreviewShowsDesired: index < scrub.lastIndex,
     ));
   }
 
-  /// Prepend the user's older ops to the active scrub. The adapter already
-  /// holds the board at the previously selected stop — the same op, now at a
-  /// shifted index — so no replay is needed, only the merged session.
+  /// Prepend older ops to the active scrub.
   Future<void> _onHistoryScrubLoadOlderRequested(
     CanvasHistoryScrubLoadOlderRequested event,
     Emitter<CanvasState> emit,
   ) async {
     final service = _historyService;
     final scrub = state.historyScrub;
-    if (service == null || scrub == null || scrub.targetUid == null) return;
+    if (service == null || scrub == null) return;
+    if (scrub.targetUid == null &&
+        scrub.area == null &&
+        scrub.scopeMode != UndoRequestScopeMode.areaState) {
+      return;
+    }
     if (!scrub.hasMore || scrub.nextBeforeVersion == null) return;
     if (state.isHistoryLoading) return;
     emit(state.copyWith(isHistoryLoading: true, error: null));
     try {
       final timeline = await service.getUserTimeline(
         _boardId,
-        scrub.targetUid!,
+        scrub.targetUid ?? '',
         beforeVersion: scrub.nextBeforeVersion,
-        // Request scrubs stay scoped to the picked elements; an evidence
-        // scrub is additionally anchored at the requested state, so its
-        // virtual stop 0 stays the window's floor.
         elementIds: scrub.elementIds.isEmpty ? null : scrub.elementIds,
+        area: scrub.area,
+        scopeMode: scrub.scopeMode,
         afterVersion: state.historyPreviewRequestId != null
             ? scrub.stops.first.version
             : null,
@@ -7042,18 +8298,23 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         emit(state.copyWith(isHistoryLoading: false));
         return;
       }
-      final merged = HistoryScrub(
-        stops: [...timeline.ops, ...scrub.stops],
-        baseStateBytes: timeline.baseStateBytes,
-        stepDeltas: [
-          ...timeline.steps.map((step) => step.deltaBytes),
-          ...scrub.stepDeltas,
-        ],
-        targetUid: scrub.targetUid,
-        elementIds: scrub.elementIds,
-        hasMore: timeline.hasMore,
-        nextBeforeVersion: timeline.nextBeforeVersion,
+      final merged = await _computeScrubWithDiffs(
+        HistoryScrub(
+          stops: [...timeline.ops, ...scrub.stops],
+          baseStateBytes: timeline.baseStateBytes,
+          stepDeltas: [
+            ...timeline.steps.map((step) => step.deltaBytes),
+            ...scrub.stepDeltas,
+          ],
+          targetUid: scrub.targetUid,
+          elementIds: scrub.elementIds,
+          area: scrub.area,
+          scopeMode: scrub.scopeMode,
+          hasMore: timeline.hasMore,
+          nextBeforeVersion: timeline.nextBeforeVersion,
+        ),
       );
+      if (isClosed) return;
       emit(state.copyWith(
         isHistoryLoading: false,
         historyScrub: merged,

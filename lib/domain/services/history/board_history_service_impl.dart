@@ -314,6 +314,74 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
   }
 
   @override
+  Future<HistoryVersionsPage> getVersions(
+    String boardId, {
+    int? beforeVersion,
+    int limit = 50,
+    bool forceRefresh = false,
+  }) async {
+    if (forceRefresh) {
+      _blockCache.removeWhere((key, _) => key.startsWith('$boardId/'));
+    }
+    try {
+      final response = await _request('history_get_versions', {
+        'boardId': boardId,
+        if (beforeVersion != null) 'beforeVersion': beforeVersion,
+        'limit': limit,
+      });
+      final rawBlocks = response['blocks'];
+      final blocks = <BoardActivityBlock>[];
+      if (rawBlocks is List) {
+        for (final entry in rawBlocks) {
+          if (entry is Map) {
+            blocks.add(
+              BoardActivityBlock.fromMap(Map<String, dynamic>.from(entry)),
+            );
+          }
+        }
+      }
+      BoardActivityBlock? liveTail;
+      final rawTail = response['liveTail'];
+      if (rawTail is Map) {
+        final parsed = BoardActivityBlock.fromMap(
+          Map<String, dynamic>.from(rawTail),
+        );
+        if (parsed.operationCount > 0 && parsed.toVersion > 0) {
+          liveTail = parsed;
+        }
+      }
+      return HistoryVersionsPage(
+        blocks: blocks,
+        liveTail: liveTail,
+        hasMore: response['hasMore'] == true,
+        nextBeforeVersion: (response['nextBeforeVersion'] as num?)?.toInt(),
+      );
+    } catch (_) {
+      final repo = _historyRepository;
+      final blocks = repo == null
+          ? const <BoardActivityBlock>[]
+          : await repo.fetchActivityBlocks(
+              boardId,
+              beforeFromVersion: beforeVersion,
+              limit: limit,
+            );
+      BoardActivityBlock? liveTail;
+      if (beforeVersion == null) {
+        try {
+          liveTail = await getLiveTail(boardId);
+        } catch (_) {}
+      }
+      final nextBefore = blocks.isNotEmpty ? blocks.last.fromVersion : null;
+      return HistoryVersionsPage(
+        blocks: blocks,
+        liveTail: liveTail,
+        hasMore: blocks.length >= limit && (nextBefore ?? 0) > 1,
+        nextBeforeVersion: nextBefore,
+      );
+    }
+  }
+
+  @override
   Stream<List<UndoRequest>> watchUndoRequests(String boardId) {
     final repo = _historyRepository;
     if (repo == null) return const Stream.empty();
@@ -439,6 +507,8 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
     DateTime? toTime,
     int? beforeVersion,
     List<String>? elementIds,
+    UndoRequestArea? area,
+    UndoRequestScopeMode? scopeMode,
     int? afterVersion,
     int limit = 100,
   }) async {
@@ -451,6 +521,8 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
         if (toTime != null) 'toTime': toTime.toUtc().toIso8601String(),
         if (beforeVersion != null) 'beforeVersion': beforeVersion,
         if (elementIds != null && elementIds.isNotEmpty) 'elementIds': elementIds,
+        if (area != null && area.isValid) 'area': area.toMap(),
+        if (scopeMode != null) 'scopeMode': scopeMode.wireValue,
         if (afterVersion != null) 'afterVersion': afterVersion,
         'limit': limit,
       },
@@ -490,6 +562,8 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
     DateTime? fromTime,
     DateTime? toTime,
     List<String>? elementIds,
+    UndoRequestArea? area,
+    UndoRequestScopeMode? scopeMode,
     List<int>? opVersions,
     int? afterVersion,
     String? requestId,
@@ -504,6 +578,8 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
         if (fromTime != null) 'fromTime': fromTime.toUtc().toIso8601String(),
         if (toTime != null) 'toTime': toTime.toUtc().toIso8601String(),
         if (elementIds != null) 'elementIds': elementIds,
+        if (area != null && area.isValid) 'area': area.toMap(),
+        if (scopeMode != null) 'scopeMode': scopeMode.wireValue,
         if (opVersions != null) 'opVersions': opVersions,
         if (afterVersion != null) 'afterVersion': afterVersion,
         if (requestId != null) 'requestId': requestId,
@@ -592,6 +668,7 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
     required List<String> elementIds,
     required String reason,
     required int targetVersion,
+    UndoRequestScopeMode scopeMode = UndoRequestScopeMode.myChanges,
     UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,
@@ -605,6 +682,7 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
         'boardId': boardId,
         'targetElementIds': elementIds,
         'targetVersion': targetVersion,
+        'scopeMode': scopeMode.wireValue,
         'reason': reason,
         if (area != null) 'area': area.toMap(),
         if (fromTime != null) 'timeRangeStart': fromTime.toUtc().toIso8601String(),

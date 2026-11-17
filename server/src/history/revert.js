@@ -16,6 +16,74 @@ function unionKeys(a, b) {
   return [...new Set([...Object.keys(a || {}), ...Object.keys(b || {})])];
 }
 
+function elementOverlapsArea(el, area) {
+  if (!el || typeof el !== 'object' || !area || typeof area !== 'object') {
+    return false;
+  }
+  const left = Number(area.left);
+  const top = Number(area.top);
+  const width = Number(area.width);
+  const height = Number(area.height);
+  if (!Number.isFinite(left) || !Number.isFinite(top) || !(width > 0) || !(height > 0)) {
+    return false;
+  }
+  const areaRight = left + width;
+  const areaBottom = top + height;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  if (Array.isArray(el.points) && el.points.length > 0) {
+    const pad = (Number(el.strokeWidth) || 2) / 2;
+    for (const pt of el.points) {
+      if (!pt || typeof pt !== 'object') continue;
+      const px = Number(pt.x ?? pt.dx);
+      const py = Number(pt.y ?? pt.dy);
+      if (Number.isFinite(px) && Number.isFinite(py)) {
+        if (px - pad < minX) minX = px - pad;
+        if (py - pad < minY) minY = py - pad;
+        if (px + pad > maxX) maxX = px + pad;
+        if (py + pad > maxY) maxY = py + pad;
+      }
+    }
+  } else if (el.startPoint || el.endPoint) {
+    for (const pt of [el.startPoint, el.endPoint]) {
+      if (!pt || typeof pt !== 'object') continue;
+      const px = Number(pt.x ?? pt.dx);
+      const py = Number(pt.y ?? pt.dy);
+      if (Number.isFinite(px) && Number.isFinite(py)) {
+        if (px < minX) minX = px;
+        if (py < minY) minY = py;
+        if (px > maxX) maxX = px;
+        if (py > maxY) maxY = py;
+      }
+    }
+  } else if (el.type === 'text') {
+    const tx = Number(el.cx ?? el.centerX ?? el.x ?? (el.center && (el.center.x ?? el.center.dx)) ?? 0);
+    const ty = Number(el.cy ?? el.centerY ?? el.y ?? (el.center && (el.center.y ?? el.center.dy)) ?? 0);
+    const tw = Math.max(1, Number(el.width) || 120);
+    const th = Math.max(1, Number(el.height) || 32);
+    minX = tx;
+    minY = ty;
+    maxX = tx + tw;
+    maxY = ty + th;
+  } else {
+    const cx = Number(el.cx ?? el.centerX ?? el.x ?? (el.center && (el.center.x ?? el.center.dx)) ?? 0);
+    const cy = Number(el.cy ?? el.centerY ?? el.y ?? (el.center && (el.center.y ?? el.center.dy)) ?? 0);
+    const ew = Math.max(1, Number(el.width ?? el.size) || 80);
+    const eh = Math.max(1, Number(el.height ?? el.size) || 80);
+    minX = cx - ew / 2;
+    minY = cy - eh / 2;
+    maxX = cx + ew / 2;
+    maxY = cy + eh / 2;
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return false;
+  return maxX >= left && minX <= areaRight && maxY >= top && minY <= areaBottom;
+}
+
 function inTimeRange(timestampIso, fromTime, toTime) {
   if (!fromTime && !toTime) return true;
   const t = Date.parse(timestampIso || '');
@@ -255,18 +323,21 @@ function analyzeOpsHistory(touches, selectedVersions) {
   return analysis;
 }
 
-// Read one user's ops from archived blocks (whose contributorUids include the
-// target) plus the un-archived Redis tail. Ascending by version.
+// Read one user's (or all users' when targetUid is empty) ops from archived
+// blocks plus the un-archived Redis tail. Ascending by version.
 async function collectUserOps(boardId, targetUid, opts = {}, redis) {
   const db = admin.firestore();
   const ops = [];
   const seenVersions = new Set();
+  const filterByUser = typeof targetUid === 'string' && targetUid.length > 0;
 
   try {
-    const idx = await db.collection('boards').doc(boardId)
-      .collection('activity_index')
-      .where('contributorUids', 'array-contains', targetUid)
-      .get();
+    let query = db.collection('boards').doc(boardId)
+      .collection('activity_index');
+    if (filterByUser) {
+      query = query.where('contributorUids', 'array-contains', targetUid);
+    }
+    const idx = await query.get();
     for (const d of idx.docs) {
       const b = d.data() || {};
       if (!b.r2BlockKey) continue;
@@ -279,7 +350,7 @@ async function collectUserOps(boardId, targetUid, opts = {}, redis) {
         continue;
       }
       for (const op of (blockOps || [])) {
-        if (op.userId !== targetUid) continue;
+        if (filterByUser && op.userId !== targetUid) continue;
         if (opts.fromVersion != null && op.version < opts.fromVersion) continue;
         if (opts.toVersion != null && op.version > opts.toVersion) continue;
         if (!opMatches(op, opts)) continue;
@@ -294,7 +365,7 @@ async function collectUserOps(boardId, targetUid, opts = {}, redis) {
       const raw = await redis.xrange(`board_updates:${boardId}`, '-', '+');
       for (const [, fields] of (raw || [])) {
         const e = parseStreamFields(fields);
-        if (e.sourceClientId !== targetUid) continue;
+        if (filterByUser && e.sourceClientId !== targetUid) continue;
         if (seenVersions.has(e.version)) continue;
         const op = {
           version: e.version,
@@ -425,8 +496,29 @@ async function buildPlan(boardId, opts, redis, actingUid) {
 
   if (opts.mode === 'restore') {
     const r = await reconstruct(boardId, opts.targetVersion, redis);
-    target = r.elementMap;
-    scope = unionKeys(current, target);
+    const hasScopedIds = Array.isArray(opts.elementIds) && opts.elementIds.length > 0;
+    const hasArea = opts.area && typeof opts.area === 'object'
+      && Number(opts.area.width) > 0 && Number(opts.area.height) > 0;
+    if (hasScopedIds || hasArea) {
+      const allowedIds = new Set(hasScopedIds ? opts.elementIds : []);
+      if (hasArea) {
+        for (const id of unionKeys(current, r.elementMap)) {
+          if (elementOverlapsArea(current[id], opts.area)
+              || elementOverlapsArea(r.elementMap[id], opts.area)) {
+            allowedIds.add(id);
+          }
+        }
+      }
+      target = { ...current };
+      for (const id of allowedIds) {
+        if (id in r.elementMap) target[id] = r.elementMap[id];
+        else delete target[id];
+      }
+      scope = [...allowedIds];
+    } else {
+      target = r.elementMap;
+      scope = unionKeys(current, target);
+    }
   } else if (opts.mode === 'ops') {
     // Selected ops: either an explicit list of stream versions, or (ops-scope
     // mode) everything the target user did to the scope elements after
@@ -562,5 +654,6 @@ module.exports = {
   analyzeElementHistory,
   analyzeOpsHistory,
   replayTouches,
+  elementOverlapsArea,
   UNDO_WINDOW_MS,
 };

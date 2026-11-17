@@ -126,10 +126,19 @@ String _shapeFingerprint(String shapeId, Map<String, dynamic> data) {
   final borderRadius = ((data['borderRadius'] as num?)?.toDouble() ?? 0.0)
       .toStringAsFixed(3);
   final color = ((data['color'] as num?)?.toInt() ?? 0).toString();
+  final strokeColor = ((data['strokeColor'] as num?)?.toInt() ?? -1).toString();
+  final fillMode = (data['fillMode'] as String?) ?? '';
+  final fillColor = ((data['fillColor'] as num?)?.toInt() ?? -1).toString();
+  final gradientStart = ((data['gradientStart'] as num?)?.toInt() ?? -1).toString();
+  final gradientEnd = ((data['gradientEnd'] as num?)?.toInt() ?? -1).toString();
+  final gradientAngle = ((data['gradientAngle'] as num?)?.toDouble() ?? 0.0)
+      .toStringAsFixed(3);
   final filled = _parseBool(data['isFilled']).toString();
   final hidden = _parseBool(data['hidden']).toString();
   final locked = _parseBool(data['locked']).toString();
   final flipped = _parseBool(data['flipped']).toString();
+  final flipH = _parseBool(data['flipH']).toString();
+  final flipV = _parseBool(data['flipV']).toString();
   final text = (data['text'] as String?) ?? '';
   final z = ((data['z'] as num?)?.toInt() ?? 0).toString();
   final dash =
@@ -146,7 +155,7 @@ String _shapeFingerprint(String shapeId, Map<String, dynamic> data) {
   final labelTextAlign = (data['labelTextAlign'] as String?) ?? 'center';
   final startArrowhead = _parseBool(data['startArrowhead']).toString();
   final endArrowhead = _parseBool(data['endArrowhead']).toString();
-  return '$shapeId|$cx|$cy|$size|$width|$height|$strokeWidth|$opacity|$strokeOpacity|$rotation|$borderRadius|$color|$filled|$hidden|$locked|$flipped|$z|$text|$dash|$label|$labelColor|$labelFontSize|$labelFontWeight|$labelTextAlign|$startArrowhead|$endArrowhead';
+  return '$shapeId|$cx|$cy|$size|$width|$height|$strokeWidth|$opacity|$strokeOpacity|$rotation|$borderRadius|$color|$strokeColor|$fillMode|$fillColor|$gradientStart|$gradientEnd|$gradientAngle|$filled|$hidden|$locked|$flipped|$flipH|$flipV|$z|$text|$dash|$label|$labelColor|$labelFontSize|$labelFontWeight|$labelTextAlign|$startArrowhead|$endArrowhead';
 }
 
 /// Applies pending shape edits from sliders/UI onto [data] with the same

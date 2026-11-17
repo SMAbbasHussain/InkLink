@@ -30,6 +30,7 @@ Future<void> showUndoRequestSheet(
   required List<CanvasElement> elements,
   List<String> initialIds = const [],
   UndoRequestArea? initialArea,
+  UndoRequestScopeMode initialScopeMode = UndoRequestScopeMode.myChanges,
   required VoidCallback onSelectArea,
   required VoidCallback onPreview,
 }) {
@@ -46,6 +47,7 @@ Future<void> showUndoRequestSheet(
       elements: elements,
       initialIds: initialIds,
       initialArea: initialArea,
+      initialScopeMode: initialScopeMode,
       onSelectArea: onSelectArea,
       onPreview: onPreview,
     ),
@@ -62,6 +64,8 @@ Future<void> showUndoRequestSendSheet(
   required String? stopLabel,
   required int elementCount,
   required bool canSend,
+  UndoRequestScopeMode scopeMode = UndoRequestScopeMode.myChanges,
+  String? diffSummary,
   required ValueChanged<String> onSubmit,
 }) {
   return showModalBottomSheet<void>(
@@ -75,6 +79,8 @@ Future<void> showUndoRequestSendSheet(
       stopLabel: stopLabel,
       elementCount: elementCount,
       canSend: canSend,
+      scopeMode: scopeMode,
+      diffSummary: diffSummary,
       onSubmit: onSubmit,
     ),
   );
@@ -86,6 +92,7 @@ class _UndoRequestScopeSheet extends StatefulWidget {
   final List<CanvasElement> elements;
   final List<String> initialIds;
   final UndoRequestArea? initialArea;
+  final UndoRequestScopeMode initialScopeMode;
   final VoidCallback onSelectArea;
   final VoidCallback onPreview;
 
@@ -95,6 +102,7 @@ class _UndoRequestScopeSheet extends StatefulWidget {
     required this.elements,
     required this.initialIds,
     required this.initialArea,
+    required this.initialScopeMode,
     required this.onSelectArea,
     required this.onPreview,
   });
@@ -106,13 +114,18 @@ class _UndoRequestScopeSheet extends StatefulWidget {
 class _UndoRequestScopeSheetState extends State<_UndoRequestScopeSheet> {
   late final Set<String> _selected;
   UndoRequestArea? _area;
+  late UndoRequestScopeMode _scopeMode;
 
   @override
   void initState() {
     super.initState();
     _selected = widget.initialIds.toSet();
     _area = widget.initialArea;
+    _scopeMode = widget.initialScopeMode;
   }
+
+  bool get _canPreview =>
+      _selected.isNotEmpty || (_area != null && _area!.isValid);
 
   void _cancel() {
     widget.bloc.add(const CanvasUndoRequestDraftCleared());
@@ -120,8 +133,11 @@ class _UndoRequestScopeSheetState extends State<_UndoRequestScopeSheet> {
   }
 
   Future<void> _preview() async {
-    if (_selected.isEmpty) {
-      AppSnackBar.showError(context, 'Select at least one element.');
+    if (!_canPreview) {
+      AppSnackBar.showError(
+        context,
+        'Select at least one element or an area on the board.',
+      );
       return;
     }
     Navigator.pop(context);
@@ -189,6 +205,16 @@ class _UndoRequestScopeSheetState extends State<_UndoRequestScopeSheet> {
                     widget.onSelectArea();
                   },
                 ),
+                const SizedBox(height: InkSpacing.s12),
+                _ScopeModeSelector(
+                  value: _scopeMode,
+                  onChanged: (mode) {
+                    setState(() => _scopeMode = mode);
+                    widget.bloc.add(
+                      CanvasUndoRequestDraftScopeModeChanged(mode),
+                    );
+                  },
+                ),
                 const SizedBox(height: InkSpacing.s8),
                 if (widget.elements.isEmpty)
                   Text(
@@ -244,12 +270,107 @@ class _UndoRequestScopeSheetState extends State<_UndoRequestScopeSheet> {
                   ),
                 const SizedBox(height: InkSpacing.s8),
                 InkButton.primary(
-                  label: 'Preview my changes',
-                  onPressed: _selected.isEmpty ? null : _preview,
+                  label: _scopeMode == UndoRequestScopeMode.areaState
+                      ? 'Preview area state'
+                      : 'Preview my changes',
+                  onPressed: !_canPreview ? null : _preview,
                 ),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ScopeModeSelector extends StatelessWidget {
+  final UndoRequestScopeMode value;
+  final ValueChanged<UndoRequestScopeMode> onChanged;
+
+  const _ScopeModeSelector({
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'What should be restored?',
+          style: InkType.caption(tokens.inkSecondary),
+        ),
+        const SizedBox(height: InkSpacing.s4),
+        Container(
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            color: tokens.field,
+            borderRadius: BorderRadius.circular(InkRadii.chip),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: _option(
+                  context,
+                  mode: UndoRequestScopeMode.myChanges,
+                  label: 'Only my changes',
+                  subtitle: 'Undo just my edits',
+                ),
+              ),
+              Expanded(
+                child: _option(
+                  context,
+                  mode: UndoRequestScopeMode.areaState,
+                  label: 'Whole area state',
+                  subtitle: 'All edits in selection',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _option(
+    BuildContext context, {
+    required UndoRequestScopeMode mode,
+    required String label,
+    required String subtitle,
+  }) {
+    final tokens = context.ink;
+    final active = value == mode;
+    return InkWell(
+      onTap: () => onChanged(mode),
+      borderRadius: BorderRadius.circular(InkRadii.chip),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: InkSpacing.s8,
+          vertical: InkSpacing.s8,
+        ),
+        decoration: BoxDecoration(
+          color: active ? tokens.accentSoft : Colors.transparent,
+          borderRadius: BorderRadius.circular(InkRadii.chip),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: InkType.bodyStrong(
+                active ? tokens.accentText : tokens.ink,
+              ),
+            ),
+            Text(
+              subtitle,
+              style: InkType.caption(
+                active ? tokens.accentText : tokens.inkMuted,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -262,6 +383,8 @@ class _UndoRequestSendSheet extends StatefulWidget {
   final String? stopLabel;
   final int elementCount;
   final bool canSend;
+  final UndoRequestScopeMode scopeMode;
+  final String? diffSummary;
   final ValueChanged<String> onSubmit;
 
   const _UndoRequestSendSheet({
@@ -270,6 +393,8 @@ class _UndoRequestSendSheet extends StatefulWidget {
     required this.stopLabel,
     required this.elementCount,
     required this.canSend,
+    this.scopeMode = UndoRequestScopeMode.myChanges,
+    this.diffSummary,
     required this.onSubmit,
   });
 
@@ -365,6 +490,11 @@ class _UndoRequestSendSheetState extends State<_UndoRequestSendSheet> {
                           'Restore to version ${widget.targetVersion}',
                           style: InkType.bodyStrong(tokens.ink),
                         ),
+                        const SizedBox(height: InkSpacing.s4),
+                        Text(
+                          'Scope: ${widget.scopeMode.label}',
+                          style: InkType.caption(tokens.inkSecondary),
+                        ),
                         if (widget.stopLabel != null &&
                             widget.stopLabel!.isNotEmpty) ...[
                           const SizedBox(height: InkSpacing.s4),
@@ -373,6 +503,14 @@ class _UndoRequestSendSheetState extends State<_UndoRequestSendSheet> {
                             style: InkType.caption(tokens.inkMuted),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        if (widget.diffSummary != null &&
+                            widget.diffSummary!.isNotEmpty) ...[
+                          const SizedBox(height: InkSpacing.s4),
+                          Text(
+                            widget.diffSummary!,
+                            style: InkType.caption(tokens.accentText),
                           ),
                         ],
                         const SizedBox(height: InkSpacing.s4),
@@ -457,6 +595,8 @@ String _elementLabel(CanvasElement element) {
     case FrameElement():
       final snippet = _snippet(element.title);
       return snippet.isEmpty ? 'Frame' : 'Frame: “$snippet”';
+    case TableElement():
+      return 'Table (${element.rows}×${element.columns})';
     case LayerElement():
       final snippet = _snippet(element.name);
       return snippet.isEmpty ? 'Layer' : 'Layer: “$snippet”';
@@ -479,6 +619,8 @@ String _kindLabel(CanvasElement element) {
       return 'Connector';
     case FrameElement():
       return 'Frame';
+    case TableElement():
+      return 'Table';
     case LayerElement():
       return 'Layer';
   }

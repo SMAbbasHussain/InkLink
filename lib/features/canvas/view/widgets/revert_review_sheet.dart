@@ -11,6 +11,7 @@ import '../../../../ui/theme/ink_type.dart';
 import '../../../../ui/widgets/glass_panel.dart';
 import '../../../../ui/widgets/ink_button.dart';
 import '../../bloc/canvas_bloc.dart';
+import '../../geometry/canvas_element_geometry.dart';
 
 /// Opens the owner's per-element revert review (D4/D12).
 ///
@@ -723,6 +724,12 @@ Rect? _boundsFor(CanvasElement element) {
         width: frame.width,
         height: frame.height,
       ).inflate(4);
+    case TableElement table:
+      return Rect.fromCenter(
+        center: table.center,
+        width: table.width,
+        height: table.height,
+      ).inflate(4);
     case LayerElement():
       return null;
   }
@@ -798,6 +805,8 @@ void _paintElement(Canvas canvas, CanvasElement element) {
           frame.width - 16,
         );
       }
+    case TableElement table:
+      paintTableElement(canvas, table);
     case LayerElement():
       break;
   }

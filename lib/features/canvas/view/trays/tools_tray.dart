@@ -22,6 +22,7 @@ class ToolsTray extends StatelessWidget {
   final VoidCallback? onClearAll;
   final VoidCallback? onAddStickyNote;
   final VoidCallback? onAddConnector;
+  final VoidCallback? onAddTable;
   final VoidCallback? onCanvasSettings;
   final VoidCallback? onTemplates;
   final VoidCallback? onExport;
@@ -38,6 +39,7 @@ class ToolsTray extends StatelessWidget {
     this.onClearAll,
     this.onAddStickyNote,
     this.onAddConnector,
+    this.onAddTable,
     this.onCanvasSettings,
     this.onTemplates,
     this.onExport,
@@ -63,6 +65,13 @@ class ToolsTray extends StatelessWidget {
           label: 'Connector / Link',
           color: tokens.success,
           onTap: onAddConnector!,
+        ),
+      if (canEdit && onAddTable != null)
+        _ToolButton(
+          icon: LucideIcons.table,
+          label: 'Table',
+          color: tokens.accent,
+          onTap: onAddTable!,
         ),
       if (canEdit && onCanvasSettings != null)
         _ToolButton(

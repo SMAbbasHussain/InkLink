@@ -313,7 +313,7 @@ class CanvasImportElements extends CanvasEvent {
   const CanvasImportElements(this.payloads, {this.offset = Offset.zero});
 }
 
-/// Update a frame's title, colour or box. Null fields are left unchanged.
+/// Update a frame's title, colour, clipping or box. Null fields are left unchanged.
 class CanvasUpdateFrame extends CanvasEvent {
   final String elementId;
   final String? title;
@@ -321,6 +321,7 @@ class CanvasUpdateFrame extends CanvasEvent {
   final Offset? center;
   final double? width;
   final double? height;
+  final bool? clipContents;
 
   const CanvasUpdateFrame({
     required this.elementId,
@@ -329,7 +330,126 @@ class CanvasUpdateFrame extends CanvasEvent {
     this.center,
     this.width,
     this.height,
+    this.clipContents,
   });
+}
+
+/// Delete a frame, either keeping its contents on the board or deleting them
+/// together with the frame in one undoable CRDT batch (F-14).
+class CanvasDeleteFrame extends CanvasEvent {
+  final String frameId;
+  final bool deleteContents;
+
+  const CanvasDeleteFrame(this.frameId, {this.deleteContents = false});
+}
+
+/// Insert a structured table element on the canvas (F-16).
+class CanvasAddTable extends CanvasEvent {
+  final Offset center;
+  final int rows;
+  final int columns;
+  final double width;
+  final double height;
+  final bool headerRow;
+
+  const CanvasAddTable({
+    required this.center,
+    this.rows = 3,
+    this.columns = 3,
+    this.width = 360,
+    this.height = 180,
+    this.headerRow = true,
+  });
+}
+
+/// Update one cell's text or style in a [TableElement] (F-16).
+class CanvasUpdateTableCell extends CanvasEvent {
+  final String tableId;
+  final int row;
+  final int column;
+  final String? text;
+  final Color? backgroundColor;
+  final bool clearBackgroundColor;
+  final Color? textColor;
+  final bool clearTextColor;
+  final int? fontWeight;
+  final String? textAlign;
+
+  const CanvasUpdateTableCell({
+    required this.tableId,
+    required this.row,
+    required this.column,
+    this.text,
+    this.backgroundColor,
+    this.clearBackgroundColor = false,
+    this.textColor,
+    this.clearTextColor = false,
+    this.fontWeight,
+    this.textAlign,
+  });
+}
+
+/// Update table structure (add/remove rows or columns, header toggle, resize
+/// fractions, borders/colors/fontSize) in one undo step (F-16).
+class CanvasUpdateTableStyle extends CanvasEvent {
+  final String tableId;
+  final int? insertRowAt;
+  final int? removeRowAt;
+  final int? insertColumnAt;
+  final int? removeColumnAt;
+  final bool? headerRow;
+  final Color? borderColor;
+  final double? borderWidth;
+  final double? fontSize;
+  final Color? textColor;
+  final Color? backgroundColor;
+  final Color? headerBackgroundColor;
+  final List<double>? columnFractions;
+  final List<double>? rowFractions;
+  final double? width;
+  final double? height;
+
+  const CanvasUpdateTableStyle({
+    required this.tableId,
+    this.insertRowAt,
+    this.removeRowAt,
+    this.insertColumnAt,
+    this.removeColumnAt,
+    this.headerRow,
+    this.borderColor,
+    this.borderWidth,
+    this.fontSize,
+    this.textColor,
+    this.backgroundColor,
+    this.headerBackgroundColor,
+    this.columnFractions,
+    this.rowFractions,
+    this.width,
+    this.height,
+  });
+}
+
+/// Add a ruler guide line at [position] along [axis] (F-18).
+class CanvasAddGuide extends CanvasEvent {
+  final CanvasGuideAxis axis;
+  final double position;
+
+  const CanvasAddGuide({required this.axis, required this.position});
+}
+
+/// Move an existing ruler guide by id to [position] (F-18).
+class CanvasMoveGuide extends CanvasEvent {
+  final String guideId;
+  final double position;
+
+  const CanvasMoveGuide({required this.guideId, required this.position});
+}
+
+/// Remove an existing ruler guide by id (F-18).
+class CanvasRemoveGuide extends CanvasEvent {
+  final String guideId;
+
+  const CanvasRemoveGuide(this.guideId);
 }
 
 /// Add connector element to canvas
@@ -792,6 +912,23 @@ class CanvasAlignSelection extends CanvasEvent {
   const CanvasAlignSelection(this.alignment);
 }
 
+/// Auto-layout / tidy-up modes for a multi-element selection (F-17).
+enum CanvasArrangeMode { grid, row, column, tree, flow }
+
+/// Automatically arrange selected elements in [mode] while keeping connectors
+/// attached, committed in one CRDT batch (F-17).
+class CanvasArrangeSelection extends CanvasEvent {
+  final CanvasArrangeMode mode;
+  final String? rootId;
+  final double spacing;
+
+  const CanvasArrangeSelection(
+    this.mode, {
+    this.rootId,
+    this.spacing = 32,
+  });
+}
+
 /// Clone [ids] with new element ids, offset slightly, and select the clones.
 class CanvasDuplicateElements extends CanvasEvent {
   final Set<String> ids;
@@ -960,6 +1097,22 @@ class CanvasUpdateSelectedShapeColor extends CanvasEvent {
   final Color color;
 
   const CanvasUpdateSelectedShapeColor(this.color);
+}
+
+/// Update only the outline color of the selected shape without altering its
+/// independent fill color (F-10).
+class CanvasUpdateSelectedShapeStrokeColor extends CanvasEvent {
+  final Color strokeColor;
+
+  const CanvasUpdateSelectedShapeStrokeColor(this.strokeColor);
+}
+
+/// Flip the selected shape horizontally or vertically (F-10).
+class CanvasFlipSelectedShape extends CanvasEvent {
+  final bool horizontal;
+  final bool vertical;
+
+  const CanvasFlipSelectedShape({this.horizontal = false, this.vertical = false});
 }
 
 /// Update selected shape corner radius
@@ -1264,9 +1417,16 @@ class CanvasConsumeInfoMessage extends CanvasEvent {
 // Board history (owner-only) + member undo (D2/D3/D15)
 // ============================================================
 
-/// Subscribe to the owner-only activity feed (`activity_index`).
+/// Subscribe to (or refresh) the owner-only activity feed (`activity_index`).
 class CanvasHistoryFeedRequested extends CanvasEvent {
-  const CanvasHistoryFeedRequested();
+  final bool forceRefresh;
+  const CanvasHistoryFeedRequested({this.forceRefresh = false});
+}
+
+/// Request older archived version blocks not yet loaded locally.
+class CanvasHistoryLoadOlderVersionsRequested extends CanvasEvent {
+  final int? beforeVersion;
+  const CanvasHistoryLoadOlderVersionsRequested({this.beforeVersion});
 }
 
 /// Internal: the Firestore activity-feed stream emitted a new page.
@@ -1315,10 +1475,36 @@ class CanvasHistoryEvidenceViewToggled extends CanvasEvent {
   const CanvasHistoryEvidenceViewToggled(this.showDesired);
 }
 
-/// Owner wants to restore the previewed version.
+/// Owner wants to restore the previewed version (whole board or scoped area).
 class CanvasHistoryRestoreRequested extends CanvasEvent {
   final int version;
-  const CanvasHistoryRestoreRequested(this.version);
+  final List<String>? elementIds;
+  final UndoRequestArea? area;
+  final String? requestId;
+  const CanvasHistoryRestoreRequested(
+    this.version, {
+    this.elementIds,
+    this.area,
+    this.requestId,
+  });
+}
+
+/// Toggle marquee area-selection mode for the owner to inspect the history
+/// of a specific part of the board.
+class CanvasToggleOwnerAreaHistorySelection extends CanvasEvent {
+  final bool? enable;
+  const CanvasToggleOwnerAreaHistorySelection({this.enable});
+}
+
+/// Owner selected a part of the board to view only its history and scrub/revert
+/// it to a chosen point.
+class CanvasHistoryAreaScrubRequested extends CanvasEvent {
+  final UndoRequestArea area;
+  final List<String> elementIds;
+  const CanvasHistoryAreaScrubRequested({
+    required this.area,
+    this.elementIds = const [],
+  });
 }
 
 /// Owner wants to plan a revert of one user's work.
@@ -1415,10 +1601,19 @@ class CanvasHistoryScrubLoadOlderRequested extends CanvasEvent {
 class CanvasUndoRequestDraftStarted extends CanvasEvent {
   final List<String> preselectedIds;
   final UndoRequestArea? area;
+  final UndoRequestScopeMode? scopeMode;
   const CanvasUndoRequestDraftStarted({
     this.preselectedIds = const [],
     this.area,
+    this.scopeMode,
   });
+}
+
+/// Member changed whether they want only their changes undone or the whole
+/// state of the selected part of the board restored.
+class CanvasUndoRequestDraftScopeModeChanged extends CanvasEvent {
+  final UndoRequestScopeMode scopeMode;
+  const CanvasUndoRequestDraftScopeModeChanged(this.scopeMode);
 }
 
 /// Member toggled one element in their undo-request scope: a sheet checkbox
@@ -1466,11 +1661,13 @@ class CanvasHistoryRevertOpsAfterRequested extends CanvasEvent {
   final String targetUid;
   final int afterVersion;
   final List<String> elementIds;
+  final UndoRequestArea? area;
   final String? requestId;
   const CanvasHistoryRevertOpsAfterRequested({
     required this.targetUid,
     required this.afterVersion,
     required this.elementIds,
+    this.area,
     this.requestId,
   });
 }

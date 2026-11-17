@@ -16,11 +16,13 @@ Route<void> buildCanvasRoute(
   BuildContext context, {
   required String boardId,
   bool showTrayTipsOnEntry = false,
+  String? initialTemplateId,
 }) {
   return MaterialPageRoute(
     builder: (_) => _CanvasRouteWrapper(
       boardId: boardId,
       showTrayTipsOnEntry: showTrayTipsOnEntry,
+      initialTemplateId: initialTemplateId,
     ),
   );
 }
@@ -28,10 +30,12 @@ Route<void> buildCanvasRoute(
 class _CanvasRouteWrapper extends StatefulWidget {
   final String boardId;
   final bool showTrayTipsOnEntry;
+  final String? initialTemplateId;
 
   const _CanvasRouteWrapper({
     required this.boardId,
     required this.showTrayTipsOnEntry,
+    this.initialTemplateId,
   });
 
   @override
@@ -80,6 +84,7 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
             boardPreviewQuality: data?.quality ?? 'medium',
             boardPreviewCompressionEnabled: data?.compressionEnabled ?? true,
             historyService: context.read<BoardHistoryService>(),
+            initialTemplateId: widget.initialTemplateId,
           ),
         );
       },

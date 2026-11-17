@@ -148,6 +148,8 @@ class _StickyNoteEditorDialogState extends State<StickyNoteEditorDialog> {
             ),
             SwitchListTile.adaptive(
               key: const Key('sticky-auto-height'),
+              activeColor: Colors.white,
+              activeTrackColor: Theme.of(context).colorScheme.primary,
               contentPadding: EdgeInsets.zero,
               title: const Text('Auto height'),
               subtitle: const Text(

@@ -81,6 +81,20 @@ Map<String, dynamic> scaleElementPayload(
     data['cy'] = center.dy;
     data['width'] = (element.width * scaleX).clamp(20.0, 4000.0);
     data['height'] = (element.height * scaleY).clamp(20.0, 4000.0);
+  } else if (element is FrameElement) {
+    final center = mapPoint(element.center);
+    data['cx'] = center.dx;
+    data['cy'] = center.dy;
+    data['width'] = (element.width * scaleX).clamp(120.0, 4000.0);
+    data['height'] = (element.height * scaleY).clamp(80.0, 4000.0);
+  } else if (element is TableElement) {
+    final center = mapPoint(element.center);
+    data['cx'] = center.dx;
+    data['cy'] = center.dy;
+    data['width'] = (element.width * scaleX)
+        .clamp(TableElement.minCellWidth * element.columns, 4000.0);
+    data['height'] = (element.height * scaleY)
+        .clamp(TableElement.minCellHeight * element.rows, 4000.0);
   }
   return data;
 }
@@ -133,6 +147,11 @@ Map<String, dynamic> rotateElementPayload(
     data['cy'] = center.dy;
     data['rotation'] = element.rotation + radians;
   } else if (element is ImageElement) {
+    final center = rotate(element.center);
+    data['cx'] = center.dx;
+    data['cy'] = center.dy;
+    data['rotation'] = element.rotation + radians;
+  } else if (element is TableElement) {
     final center = rotate(element.center);
     data['cx'] = center.dx;
     data['cy'] = center.dy;

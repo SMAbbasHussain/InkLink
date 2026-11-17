@@ -81,6 +81,21 @@ class UserOpsPage {
   });
 }
 
+/// One page of archived version blocks plus optional live tail.
+class HistoryVersionsPage {
+  final List<BoardActivityBlock> blocks;
+  final BoardActivityBlock? liveTail;
+  final bool hasMore;
+  final int? nextBeforeVersion;
+
+  const HistoryVersionsPage({
+    this.blocks = const [],
+    this.liveTail,
+    this.hasMore = false,
+    this.nextBeforeVersion,
+  });
+}
+
 abstract class BoardHistoryService {
   /// `boards/{boardId}/activity_index`, newest block first.
   Stream<List<BoardActivityBlock>> watchActivityFeed(
@@ -88,6 +103,18 @@ abstract class BoardHistoryService {
     int limit = 50,
   }) =>
       const Stream.empty();
+
+  /// Fetches a page of archived version blocks (plus live tail on initial
+  /// page) from the server / Firestore, optionally older than [beforeVersion].
+  Future<HistoryVersionsPage> getVersions(
+    String boardId, {
+    int? beforeVersion,
+    int limit = 50,
+    bool forceRefresh = false,
+  }) async {
+    final liveTail = beforeVersion == null ? await getLiveTail(boardId) : null;
+    return HistoryVersionsPage(liveTail: liveTail);
+  }
 
   /// All undo requests on the board (owner view), newest first.
   Stream<List<UndoRequest>> watchUndoRequests(String boardId) =>
@@ -115,12 +142,10 @@ abstract class BoardHistoryService {
     int limit = 50,
   });
 
-  /// One user's replay timeline (D15): the ops plus the board-state delta at
-  /// each of them, so the owner can scrub that user's work on the canvas.
-  /// Members may request their OWN timeline: [elementIds] scopes the stops to
-  /// the undo-request elements they picked and [afterVersion] anchors the
-  /// base at a version (the evidence window between a requested state and
-  /// the current one).
+  /// One user's or area's replay timeline (D15): the ops plus the board-state
+  /// delta at each of them, so the owner or member can scrub work on the canvas.
+  /// When [scopeMode] is [UndoRequestScopeMode.areaState] or [targetUid] is
+  /// empty, all users' operations within [elementIds] / [area] are included.
   Future<UserTimeline> getUserTimeline(
     String boardId,
     String targetUid, {
@@ -128,6 +153,8 @@ abstract class BoardHistoryService {
     DateTime? toTime,
     int? beforeVersion,
     List<String>? elementIds,
+    UndoRequestArea? area,
+    UndoRequestScopeMode? scopeMode,
     int? afterVersion,
     int limit = 100,
   });
@@ -143,6 +170,8 @@ abstract class BoardHistoryService {
     DateTime? fromTime,
     DateTime? toTime,
     List<String>? elementIds,
+    UndoRequestArea? area,
+    UndoRequestScopeMode? scopeMode,
 
     /// `ops` mode only: versions of the logged ops to undo. When omitted,
     /// `targetUid` + [afterVersion] select that user's in-scope ops instead.
@@ -165,14 +194,15 @@ abstract class BoardHistoryService {
   Future<RevertResult> undoOwn(String boardId, {List<String>? updateIds});
 
   /// Member → owner escalation (D5). The member sends a DESIRED STATE:
-  /// [targetVersion] is the stop they picked on their own replay slider — the
-  /// owner restores the scope to that version instead of deleting every edit
-  /// the member made.
+  /// [targetVersion] is the stop they picked on their replay slider — the
+  /// owner restores the scope to that version (either just the member's edits
+  /// or the whole area state according to [scopeMode]).
   Future<String> submitUndoRequest({
     required String boardId,
     required List<String> elementIds,
     required String reason,
     required int targetVersion,
+    UndoRequestScopeMode scopeMode = UndoRequestScopeMode.myChanges,
     UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,

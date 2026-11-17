@@ -486,6 +486,8 @@ class _MediaEditorScreenState extends State<MediaEditorScreen> {
                           child: const Text('Reset filters'),
                         ),
                       SwitchListTile.adaptive(
+                        activeColor: Colors.white,
+                        activeTrackColor: context.ink.accent,
                         title: const Text('Use as reference'),
                         subtitle: const Text(
                           'Faded and locked behind artwork when added.',

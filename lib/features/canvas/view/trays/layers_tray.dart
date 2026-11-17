@@ -769,6 +769,7 @@ IconData _iconForElement(CanvasElement element) {
     ImageElement _ => LucideIcons.image,
     StickyNoteElement _ => LucideIcons.stickyNote,
     FrameElement _ => LucideIcons.frame,
+    TableElement _ => LucideIcons.table,
     ConnectorElement _ => LucideIcons.spline,
     LayerElement _ => LucideIcons.folder,
   };
@@ -786,6 +787,7 @@ String _labelForElement(CanvasElement element) {
           ? 'Sticky note'
           : e.text.trim().replaceAll('\n', ' '),
     FrameElement e => e.title.trim().isEmpty ? 'Frame' : e.title.trim(),
+    TableElement e => 'Table (${e.rows}×${e.columns})',
     ConnectorElement _ => 'Connector',
     LayerElement e => e.name,
   };

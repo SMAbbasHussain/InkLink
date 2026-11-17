@@ -3,7 +3,7 @@ import 'dart:ui';
 import 'board_export_format.dart';
 import 'canvas_element.dart';
 
-enum CanvasExportScope { board, selection, frame }
+enum CanvasExportScope { board, selection, frame, page }
 
 /// User choices for one export. Not persisted; built per export request.
 class CanvasExportOptions {
@@ -17,6 +17,7 @@ class CanvasExportOptions {
   final double scale;
   final bool transparentBackground;
   final bool includeBackground;
+  final bool includePattern;
   final bool includeComments;
   final String? frameId;
   final String? suffix;
@@ -27,6 +28,7 @@ class CanvasExportOptions {
     this.scale = 2,
     this.transparentBackground = false,
     this.includeBackground = true,
+    this.includePattern = true,
     this.includeComments = false,
     this.frameId,
     this.suffix,
@@ -44,6 +46,7 @@ class CanvasExportOptions {
     double? scale,
     bool? transparentBackground,
     bool? includeBackground,
+    bool? includePattern,
     bool? includeComments,
     String? frameId,
     String? suffix,
@@ -54,6 +57,7 @@ class CanvasExportOptions {
     transparentBackground:
         transparentBackground ?? this.transparentBackground,
     includeBackground: includeBackground ?? this.includeBackground,
+    includePattern: includePattern ?? this.includePattern,
     includeComments: includeComments ?? this.includeComments,
     frameId: frameId ?? this.frameId,
     suffix: suffix ?? this.suffix,

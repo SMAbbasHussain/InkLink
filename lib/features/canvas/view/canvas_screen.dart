@@ -85,6 +85,7 @@ class CanvasScreen extends StatefulWidget {
   final String boardPreviewQuality;
   final bool boardPreviewCompressionEnabled;
   final BoardHistoryService? historyService;
+  final String? initialTemplateId;
 
   const CanvasScreen({
     super.key,
@@ -93,6 +94,7 @@ class CanvasScreen extends StatefulWidget {
     this.boardPreviewQuality = 'medium',
     this.boardPreviewCompressionEnabled = true,
     this.historyService,
+    this.initialTemplateId,
   });
 
   @override
@@ -161,6 +163,7 @@ class _CanvasScreenState extends State<CanvasScreen>
       'canvas.template_coachmark_seen';
   bool _showTemplateCoachmark = false;
   bool _closedStrokeHintShown = false;
+  bool _appliedInitialTemplate = false;
   final List<Uint8List> _recentImages = <Uint8List>[];
   Map<String, ui.Image> _decodedUiImages = <String, ui.Image>{};
   final Map<String, String> _decodedUiImageKeys = <String, String>{};
@@ -258,6 +261,32 @@ class _CanvasScreenState extends State<CanvasScreen>
     _maybeShowTrayTipsOverlay();
     _loadColorPreferences();
     _loadCanvasPreferences();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeApplyInitialTemplate(_canvasBloc.state);
+    });
+  }
+
+  void _maybeApplyInitialTemplate(CanvasState state) {
+    if (!mounted ||
+        state.isLoading ||
+        _appliedInitialTemplate ||
+        widget.initialTemplateId == null) {
+      return;
+    }
+    _appliedInitialTemplate = true;
+    if (state.canEdit && state.elements.isEmpty) {
+      final template = canvasTemplates
+          .where((t) => t.id == widget.initialTemplateId)
+          .firstOrNull;
+      if (template != null && !template.isEmpty) {
+        _canvasBloc.add(
+          CanvasImportElements(
+            template.elements,
+            offset: -template.center,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _loadCanvasPreferences() async {
@@ -448,22 +477,35 @@ class _CanvasScreenState extends State<CanvasScreen>
   }
 
   /// "Restore to this state" inside a scrub session: confirm, then restore to
-  /// the selected stop's version.
+  /// the selected stop's version (or revert just the selected area when in an
+  /// area-history scrub).
   Future<void> _restoreScrubState(CanvasState state) async {
     final scrub = state.historyScrub;
     if (scrub == null) return;
     final stop = scrub.stopAt(state.historyScrubIndex);
+    final isAreaScrub = scrub.area != null && scrub.area!.isValid;
     final confirmed = await showInkConfirmDialog(
       context,
-      title: 'Restore version ${stop.version}?',
-      message:
-          'This reverts every change made after version ${stop.version}. '
-          'Nothing is deleted from history — you can restore again later.',
-      confirmLabel: 'Restore',
+      title: isAreaScrub
+          ? 'Revert selected area to version ${stop.version}?'
+          : 'Restore version ${stop.version}?',
+      message: isAreaScrub
+          ? 'Only elements inside the selected area will be reverted to version '
+                '${stop.version}. The rest of the board stays unchanged.'
+          : 'This reverts every change made after version ${stop.version}. '
+                'Nothing is deleted from history — you can restore again later.',
+      confirmLabel: isAreaScrub ? 'Revert area' : 'Restore',
       destructive: false,
     );
     if (!mounted || !confirmed) return;
-    _canvasBloc.add(CanvasHistoryRestoreRequested(stop.version));
+    _canvasBloc.add(
+      CanvasHistoryRestoreRequested(
+        stop.version,
+        elementIds:
+            (isAreaScrub || scrub.elementIds.isNotEmpty) ? scrub.elementIds : null,
+        area: isAreaScrub ? scrub.area : null,
+      ),
+    );
   }
 
   /// "Undo [user] after this point": undo only that user's ops after the
@@ -481,13 +523,11 @@ class _CanvasScreenState extends State<CanvasScreen>
 
   /// Owner reviewing an undo request's evidence scrub: restore the scope to
   /// the selected stop — everything the requester did to it AFTER this point
-  /// is undone, everything before (and any stop chosen later) is kept. The
-  /// revert review sheet is the confirmation step; applying resolves the
-  /// request as approved.
+  /// (or the whole area state when `scopeMode == areaState`) is reverted.
   void _restoreScrubStateInRequest(CanvasState state) {
     final scrub = state.historyScrub;
     final requestId = state.historyPreviewRequestId;
-    if (scrub == null || requestId == null || scrub.targetUid == null) return;
+    if (scrub == null || requestId == null) return;
     final index = state.historyScrubIndex.clamp(0, scrub.lastIndex);
     if (index >= scrub.lastIndex) {
       AppSnackBar.showMessage(
@@ -497,11 +537,24 @@ class _CanvasScreenState extends State<CanvasScreen>
       return;
     }
     final stop = scrub.stopAt(index);
+    if (scrub.scopeMode == UndoRequestScopeMode.areaState ||
+        scrub.targetUid == null) {
+      _canvasBloc.add(
+        CanvasHistoryRestoreRequested(
+          stop.version,
+          elementIds: scrub.elementIds,
+          area: scrub.area,
+          requestId: requestId,
+        ),
+      );
+      return;
+    }
     _canvasBloc.add(
       CanvasHistoryRevertOpsAfterRequested(
         targetUid: scrub.targetUid!,
         afterVersion: stop.version,
         elementIds: scrub.elementIds,
+        area: scrub.area,
         requestId: requestId,
       ),
     );
@@ -515,6 +568,8 @@ class _CanvasScreenState extends State<CanvasScreen>
     if (scrub == null) return;
     final index = state.historyScrubIndex.clamp(0, scrub.lastIndex);
     final stop = scrub.stopAt(index);
+    final diff = scrub.diffAt(index);
+    final scopeMode = state.undoRequestDraft?.scopeMode ?? scrub.scopeMode;
     setState(() => _undoRequestSheetOpen = true);
     showUndoRequestSendSheet(
       context,
@@ -522,6 +577,8 @@ class _CanvasScreenState extends State<CanvasScreen>
       stopLabel: stop.headline,
       elementCount: scrub.elementIds.length,
       canSend: index < scrub.lastIndex,
+      scopeMode: scopeMode,
+      diffSummary: diff?.summaryLabel,
       onSubmit: (reason) {
         _canvasBloc.add(CanvasUndoRequestSubmitRequested(reason));
       },
@@ -556,16 +613,25 @@ class _CanvasScreenState extends State<CanvasScreen>
     final state = _canvasBloc.state;
     final ids = initialIds ?? state.undoRequestDraft?.elementIds ?? const [];
     final area = initialArea ?? state.undoRequestDraft?.area;
+    final scopeMode =
+        state.undoRequestDraft?.scopeMode ?? UndoRequestScopeMode.myChanges;
     if (initialIds != null) {
       // An explicitly resolved scope (conflict preselect or a just-completed
       // area): restart the draft so stale picks never linger behind the
       // sheet's own tick state.
       _canvasBloc.add(
-        CanvasUndoRequestDraftStarted(preselectedIds: ids, area: area),
+        CanvasUndoRequestDraftStarted(
+          preselectedIds: ids,
+          area: area,
+          scopeMode: scopeMode,
+        ),
       );
     } else if (state.undoRequestDraft == null) {
       _canvasBloc.add(
-        CanvasUndoRequestDraftStarted(preselectedIds: ids),
+        CanvasUndoRequestDraftStarted(
+          preselectedIds: ids,
+          scopeMode: scopeMode,
+        ),
       );
     }
     setState(() => _undoRequestSheetOpen = true);
@@ -575,6 +641,7 @@ class _CanvasScreenState extends State<CanvasScreen>
       elements: _scopeSheetElements(state, ids, area),
       initialIds: ids,
       initialArea: area,
+      initialScopeMode: scopeMode,
       onSelectArea: () {
         _canvasBloc.add(
           const CanvasToggleUndoRequestAreaSelection(enable: true),
@@ -603,21 +670,29 @@ class _CanvasScreenState extends State<CanvasScreen>
         .toList(growable: false);
   }
 
-  /// Member finished drawing the undo-request area: resolve it to the
-  /// elements it overlaps, merge in any double-tapped extras outside the
-  /// area, and reopen the scope sheet with the fresh values.
+  /// User finished drawing an area selection on the canvas (either a member
+  /// selecting an undo-request area, or the owner selecting an area to view
+  /// only its history).
   void _completeAreaSelection() {
     final rect = _areaSelectionRect;
+    final isOwnerHistoryArea = _canvasBloc.state.isSelectingHistoryArea;
     setState(() {
       _areaSelectionStart = null;
       _areaSelectionCurrent = null;
     });
-    _canvasBloc.add(
-      const CanvasToggleUndoRequestAreaSelection(enable: false),
-    );
+    if (isOwnerHistoryArea) {
+      _canvasBloc.add(
+        const CanvasToggleOwnerAreaHistorySelection(enable: false),
+      );
+    } else {
+      _canvasBloc.add(
+        const CanvasToggleUndoRequestAreaSelection(enable: false),
+      );
+    }
     if (rect == null || rect.width < 4 || rect.height < 4) {
-      // Too small to be intentional: back to the sheet, draft untouched.
-      _openUndoRequestSheet();
+      if (!isOwnerHistoryArea) {
+        _openUndoRequestSheet();
+      }
       return;
     }
     final area = UndoRequestArea(
@@ -633,12 +708,10 @@ class _CanvasScreenState extends State<CanvasScreen>
         })
         .map((element) => element.id)
         .toList(growable: false);
-    if (ids.isEmpty) {
-      AppSnackBar.showMessage(
-        context,
-        'No elements in that area. Drag a larger region.',
+    if (isOwnerHistoryArea) {
+      _canvasBloc.add(
+        CanvasHistoryAreaScrubRequested(area: area, elementIds: ids),
       );
-      _openUndoRequestSheet();
       return;
     }
     // Keep double-tapped elements outside the area: an explicit pick should
@@ -775,6 +848,7 @@ class _CanvasScreenState extends State<CanvasScreen>
         state.isArchived ||
         state.isViewingHistory ||
         state.isSelectingUndoRequestArea ||
+        state.isSelectingHistoryArea ||
         _isPickingUndoRequestScope(state)) {
       return;
     }
@@ -931,6 +1005,7 @@ class _CanvasScreenState extends State<CanvasScreen>
       ImageElement e => e.center,
       StickyNoteElement e => e.center,
       FrameElement e => e.center,
+      TableElement e => e.center,
       ConnectorElement e => Offset(
         (e.startPoint.dx + e.endPoint.dx) / 2,
         (e.startPoint.dy + e.endPoint.dy) / 2,
@@ -1625,6 +1700,659 @@ class _CanvasScreenState extends State<CanvasScreen>
     AppSnackBar.showSuccess(context, 'Canvas cleared.');
   }
 
+  Offset _viewportWorldCenter() {
+    final size = _lastCanvasSize.isEmpty
+        ? MediaQuery.sizeOf(context)
+        : _lastCanvasSize;
+    return _toWorld(Offset(size.width / 2, size.height / 2));
+  }
+
+  Offset _snapElementCenterDrag(
+    CanvasState state,
+    _CanvasElement element,
+    Offset proposedCenter,
+  ) {
+    if (!state.boardSettings.snapEnabled ||
+        HardwareKeyboard.instance.isAltPressed) {
+      return proposedCenter;
+    }
+    final source = state.elements
+        .where((e) => e.id == element.id)
+        .firstOrNull;
+    if (source == null) return proposedCenter;
+    final baseBounds = elementBounds(source);
+    if (baseBounds == null) return proposedCenter;
+    final shifted = baseBounds.shift(proposedCenter - element.center);
+    final adj = snapBoundsAdjustment(
+      shifted,
+      state.boardSettings,
+      viewportScale: _viewportScale,
+    );
+    return proposedCenter + adj;
+  }
+
+  Offset _snapGroupDragDelta(CanvasState state, Offset delta) {
+    if (!state.boardSettings.snapEnabled ||
+        HardwareKeyboard.instance.isAltPressed) {
+      return delta;
+    }
+    final bounds = _selectionWorldBounds();
+    if (bounds == null) return delta;
+    final adj = snapBoundsAdjustment(
+      bounds.shift(delta),
+      state.boardSettings,
+      viewportScale: _viewportScale,
+    );
+    return delta + adj;
+  }
+
+  Set<String> _frameDragHighlightedIds(CanvasState state) {
+    if (state.isViewingHistory) return const {};
+    if (!_isDraggingShape && _shapeTransformDraft == null) return const {};
+    final selectedId = state.selectedShapeId;
+    if (selectedId == null) return const {};
+    final selected = state.elements
+        .where((e) => e.id == selectedId)
+        .firstOrNull;
+    if (selected is! FrameElement) return const {};
+    final previewCenter = _shapeTransformDraft?.shapeId == selected.id
+        ? _shapeTransformDraft!.center
+        : (_shapeDragPreviewCenter ?? selected.center);
+    final width =
+        (_shapeTransformDraft?.shapeId == selected.id &&
+            (_shapeTransformDraft?.width ?? 0) > 0)
+        ? _shapeTransformDraft!.width!
+        : selected.width;
+    final height =
+        (_shapeTransformDraft?.shapeId == selected.id &&
+            (_shapeTransformDraft?.height ?? 0) > 0)
+        ? _shapeTransformDraft!.height!
+        : selected.height;
+    final previewRect = Rect.fromCenter(
+      center: previewCenter,
+      width: width,
+      height: height,
+    );
+    final ids = <String>{};
+    for (final e in state.elements) {
+      if (e.hidden || e.id == selected.id || e is FrameElement || e is LayerElement) {
+        continue;
+      }
+      final b = elementBounds(e);
+      if (b != null && b.overlaps(previewRect)) {
+        ids.add(e.id);
+      }
+    }
+    return ids;
+  }
+
+  Future<void> _confirmDeleteFrame(String frameId) async {
+    if (!_canvasBloc.state.canEdit) return;
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => InkDialog(
+        title: 'Delete Frame',
+        content: const Text(
+          'Choose whether to remove only the frame border or also delete all items inside it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'cancel'),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'frame_only'),
+            child: const Text('Frame only'),
+          ),
+          InkButton.primary(
+            label: 'Frame & contents',
+            onPressed: () => Navigator.pop(ctx, 'with_contents'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || action == null || action == 'cancel') return;
+    _canvasBloc.add(
+      CanvasDeleteFrame(
+        frameId,
+        deleteContents: action == 'with_contents',
+      ),
+    );
+  }
+
+  Future<void> _editFrameTitleDialog(FrameElement frame) async {
+    if (!_canvasBloc.state.canEdit) return;
+    final controller = TextEditingController(text: frame.title);
+    final nextTitle = await showDialog<String>(
+      context: context,
+      builder: (ctx) => InkDialog(
+        title: 'Rename Frame',
+        content: InkTextField(
+          controller: controller,
+          labelText: 'Frame title',
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          InkButton.primary(
+            label: 'Save',
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted || nextTitle == null) return;
+    _canvasBloc.add(
+      CanvasUpdateFrame(elementId: frame.id, title: nextTitle),
+    );
+  }
+
+  Future<void> _addTableDialog() async {
+    if (!_canvasBloc.state.canEdit) return;
+    var rows = 3;
+    var cols = 3;
+    var headerRow = true;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => InkDialog(
+          title: 'Insert Table',
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Expanded(child: Text('Rows')),
+                  DropdownButton<int>(
+                    value: rows,
+                    items: [
+                      for (var r = 1; r <= 8; r++)
+                        DropdownMenuItem(value: r, child: Text('$r')),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setDialogState(() => rows = v);
+                    },
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  const Expanded(child: Text('Columns')),
+                  DropdownButton<int>(
+                    value: cols,
+                    items: [
+                      for (var c = 1; c <= 8; c++)
+                        DropdownMenuItem(value: c, child: Text('$c')),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setDialogState(() => cols = v);
+                    },
+                  ),
+                ],
+              ),
+              SwitchListTile.adaptive(
+                activeColor: Colors.white,
+                activeTrackColor: _tokens.accent,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Header row'),
+                value: headerRow,
+                onChanged: (v) => setDialogState(() => headerRow = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            InkButton.primary(
+              label: 'Insert Table',
+              onPressed: () => Navigator.pop(ctx, true),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+    final width = (cols * 120.0).clamp(220.0, 960.0);
+    final height = (rows * 56.0).clamp(112.0, 640.0);
+    _canvasBloc.add(
+      CanvasAddTable(
+        center: _viewportWorldCenter(),
+        rows: rows,
+        columns: cols,
+        width: width,
+        height: height,
+        headerRow: headerRow,
+      ),
+    );
+  }
+
+  Future<void> _editTableCellDialog(
+    TableElement initialTable, {
+    int initialRow = 0,
+    int initialCol = 0,
+  }) async {
+    if (!_canvasBloc.state.canEdit) return;
+    var activeRow = initialRow.clamp(0, initialTable.rows - 1);
+    var activeCol = initialCol.clamp(0, initialTable.columns - 1);
+    TableElement currentTable() {
+      final found = _canvasBloc.state.elements
+          .whereType<TableElement>()
+          .where((t) => t.id == initialTable.id)
+          .firstOrNull;
+      return found ?? initialTable;
+    }
+
+    var table = currentTable();
+    var cell = table.cellAt(activeRow, activeCol);
+    final controller = TextEditingController(text: cell.text);
+    var textAlign = cell.textAlign;
+    var bold =
+        (cell.fontWeight ?? 400) >= 600 || (table.headerRow && activeRow == 0);
+    var cellBg = cell.backgroundColor;
+
+    void loadCell(int r, int c) {
+      table = currentTable();
+      activeRow = r.clamp(0, table.rows - 1);
+      activeCol = c.clamp(0, table.columns - 1);
+      cell = table.cellAt(activeRow, activeCol);
+      controller.text = cell.text;
+      textAlign = cell.textAlign;
+      bold =
+          (cell.fontWeight ?? 400) >= 600 ||
+          (table.headerRow && activeRow == 0);
+      cellBg = cell.backgroundColor;
+    }
+
+    void commitCell() {
+      _canvasBloc.add(
+        CanvasUpdateTableCell(
+          tableId: initialTable.id,
+          row: activeRow,
+          column: activeCol,
+          text: controller.text,
+          textAlign: textAlign,
+          fontWeight: bold ? 700 : 400,
+          backgroundColor: cellBg,
+          clearBackgroundColor: cellBg == null,
+        ),
+      );
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          table = currentTable();
+          return InkDialog(
+            title: 'Edit Cell (${activeRow + 1}, ${activeCol + 1})',
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tap a cell to switch',
+                    style: InkType.caption(_tokens.inkMuted),
+                  ),
+                  const SizedBox(height: 6),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (var r = 0; r < table.rows; r++)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (var c = 0; c < table.columns; c++)
+                              Expanded(
+                                child: InkWell(
+                                  onTap: () {
+                                    commitCell();
+                                    setDialogState(() => loadCell(r, c));
+                                  },
+                                  child: Container(
+                                    height: 26,
+                                    margin: const EdgeInsets.all(1.5),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 3,
+                                    ),
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      color: r == activeRow && c == activeCol
+                                          ? _tokens.accent.withValues(
+                                              alpha: 0.16,
+                                            )
+                                          : table.cellAt(r, c).backgroundColor ??
+                                                _tokens.field,
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(
+                                        color: r == activeRow && c == activeCol
+                                            ? _tokens.accent
+                                            : _tokens.ink.withValues(
+                                                alpha: 0.2,
+                                              ),
+                                        width: r == activeRow && c == activeCol
+                                            ? 1.5
+                                            : 1,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      table.cellAt(r, c).text.isEmpty
+                                          ? '${r + 1}:${c + 1}'
+                                          : table.cellAt(r, c).text,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: table.cellAt(r, c).text.isEmpty
+                                            ? _tokens.inkMuted
+                                            : _tokens.ink,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  InkTextField(
+                    controller: controller,
+                    labelText: 'Cell text',
+                    maxLines: 3,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      for (final align in const ['left', 'center', 'right'])
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: ChoiceChip(
+                            label: Text(
+                              align[0].toUpperCase() + align.substring(1),
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                            selected: textAlign == align,
+                            visualDensity: VisualDensity.compact,
+                            onSelected: (_) =>
+                                setDialogState(() => textAlign = align),
+                          ),
+                        ),
+                      FilterChip(
+                        label: const Text(
+                          'Bold',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        selected: bold,
+                        visualDensity: VisualDensity.compact,
+                        onSelected: (v) => setDialogState(() => bold = v),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      ChoiceChip(
+                        label: const Text(
+                          'Auto fill',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        selected: cellBg == null,
+                        visualDensity: VisualDensity.compact,
+                        onSelected: (_) =>
+                            setDialogState(() => cellBg = null),
+                      ),
+                      for (final c in const [
+                        Color(0xFFFEF3C7),
+                        Color(0xFFDBEAFE),
+                        Color(0xFFDCFCE7),
+                        Color(0xFFFEE2E2),
+                        Color(0xFFF3E8FF),
+                      ])
+                        _fillSwatch(
+                          color: c,
+                          selected: cellBg == c,
+                          onTap: () => setDialogState(() => cellBg = c),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              InkButton.primary(
+                label: 'Save',
+                onPressed: () {
+                  commitCell();
+                  Navigator.pop(ctx);
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    controller.dispose();
+  }
+
+  void _showCanvasContextMenu(
+    CanvasState state,
+    List<_CanvasElement> mappedElements,
+    Offset localPosition,
+  ) {
+    if (_isTransformingCanvas ||
+        _rawStrokePointerId != null ||
+        _activeCanvasPointers.length > 1 ||
+        _textEditor != null ||
+        state.isViewingHistory ||
+        state.isSelectingUndoRequestArea ||
+        state.isSelectingHistoryArea ||
+        _isPickingUndoRequestScope(state)) {
+      return;
+    }
+    setState(() {
+      _isMarqueeSelecting = false;
+      _marqueeStart = null;
+      _marqueeCurrent = null;
+      _isLassoSelecting = false;
+      _lassoPoints = null;
+      _isDraggingShape = false;
+      _isDraggingStroke = false;
+    });
+    final worldPoint = _toWorld(localPosition);
+    final hitId = _hitTestShape(mappedElements, worldPoint);
+    final hitElement = hitId == null
+        ? null
+        : state.elements.where((e) => e.id == hitId).firstOrNull;
+    if (hitId != null && !state.selectedIds.contains(hitId)) {
+      _selectShape(hitId);
+    }
+
+    HapticFeedback.mediumImpact();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) {
+        final tokens = sheetCtx.ink;
+        Widget item(
+          IconData icon,
+          String label,
+          VoidCallback onTap, {
+          bool danger = false,
+        }) {
+          final color = danger ? tokens.danger : tokens.ink;
+          return ListTile(
+            dense: true,
+            leading: Icon(icon, size: 18, color: color),
+            title: Text(label, style: InkType.bodyStrong(color)),
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              onTap();
+            },
+          );
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(InkSpacing.s12),
+            child: GlassPanel(
+              radius: InkRadii.bottomSheet,
+              padding: const EdgeInsets.symmetric(vertical: InkSpacing.s8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (hitElement != null) ...[
+                    if (state.canEdit && hitElement is TextElement)
+                      item(
+                        LucideIcons.pencil,
+                        'Edit text',
+                        () => _beginTextEditing(hitElement, hitElement.center),
+                      ),
+                    if (state.canEdit && hitElement is StickyNoteElement)
+                      item(
+                        LucideIcons.pencil,
+                        'Edit note',
+                        () => _editStickyNote(
+                          mappedElements.firstWhere((e) => e.id == hitElement.id),
+                        ),
+                      ),
+                    if (state.canEdit && hitElement is FrameElement)
+                      item(
+                        LucideIcons.pencil,
+                        'Rename frame',
+                        () => _editFrameTitleDialog(hitElement),
+                      ),
+                    if (state.canEdit && hitElement is TableElement)
+                      item(
+                        LucideIcons.table,
+                        'Edit table cell',
+                        () {
+                          final cell = tableHitTestCell(hitElement, worldPoint);
+                          _editTableCellDialog(
+                            hitElement,
+                            initialRow: cell?.$1 ?? 0,
+                            initialCol: cell?.$2 ?? 0,
+                          );
+                        },
+                      ),
+                    if (state.canEdit) ...[
+                      item(
+                        LucideIcons.copy,
+                        'Copy',
+                        () => _canvasBloc.add(const CanvasCopySelection()),
+                      ),
+                      item(
+                        LucideIcons.copyPlus,
+                        'Duplicate',
+                        () => _canvasBloc.add(
+                          CanvasDuplicateElements(
+                            state.selectedIds.contains(hitElement.id)
+                                ? state.selectedIds
+                                : {hitElement.id},
+                          ),
+                        ),
+                      ),
+                      item(
+                        LucideIcons.arrowUpToLine,
+                        'Bring to front',
+                        () => _canvasBloc.add(
+                          CanvasReorderElement(
+                            hitElement.id,
+                            math.max(0, state.elements.length - 1),
+                          ),
+                        ),
+                      ),
+                      item(
+                        LucideIcons.arrowDownToLine,
+                        'Send to back',
+                        () => _canvasBloc.add(
+                          CanvasReorderElement(hitElement.id, 0),
+                        ),
+                      ),
+                      item(
+                        hitElement.locked
+                            ? Icons.lock_open_outlined
+                            : LucideIcons.lock,
+                        hitElement.locked ? 'Unlock' : 'Lock',
+                        () => _canvasBloc.add(
+                          CanvasSetElementLocked(
+                            hitElement.id,
+                            !hitElement.locked,
+                          ),
+                        ),
+                      ),
+                      item(
+                        LucideIcons.trash2,
+                        'Delete',
+                        () {
+                          if (hitElement is FrameElement) {
+                            _confirmDeleteFrame(hitElement.id);
+                          } else {
+                            _canvasBloc.add(
+                              CanvasDeleteElement(hitElement.id),
+                            );
+                          }
+                        },
+                        danger: true,
+                      ),
+                    ],
+                  ] else ...[
+                    if (state.canEdit && state.hasClipboard)
+                      item(
+                        LucideIcons.clipboardPaste,
+                        'Paste',
+                        () => _canvasBloc.add(const CanvasPasteSelection()),
+                      ),
+                    if (state.canEdit) ...[
+                      item(
+                        LucideIcons.stickyNote,
+                        'Add Sticky Note',
+                        _addStickyNoteDialog,
+                      ),
+                      item(
+                        LucideIcons.table,
+                        'Insert Table',
+                        _addTableDialog,
+                      ),
+                      item(
+                        LucideIcons.frame,
+                        'Add Frame',
+                        _addFrame,
+                      ),
+                    ],
+                    item(
+                      LucideIcons.maximize2,
+                      'Fit content / Reset zoom',
+                      _toggleResetView,
+                    ),
+                    item(
+                      LucideIcons.slidersHorizontal,
+                      'Canvas Settings',
+                      () => _showCanvasSettingsSheet(context),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _addStickyNoteDialog() async {
     if (!_canvasBloc.state.canEdit) return;
     final size = MediaQuery.sizeOf(context);
@@ -2110,6 +2838,21 @@ class _CanvasScreenState extends State<CanvasScreen>
             icon: LucideIcons.frame,
             center: center,
           );
+        case TableElement e:
+          final preview = e.cells
+              .map((c) => c.text.trim())
+              .where((t) => t.isNotEmpty)
+              .take(3)
+              .join(' · ');
+          entry = CanvasSearchEntry(
+            id: e.id,
+            label: preview.isEmpty
+                ? 'Table (${e.rows}×${e.columns})'
+                : preview,
+            detail: 'Table · ${e.rows}×${e.columns}',
+            icon: LucideIcons.table,
+            center: center,
+          );
         case ConnectorElement e:
           final label = e.label.trim();
           if (label.isNotEmpty) {
@@ -2230,17 +2973,17 @@ class _CanvasScreenState extends State<CanvasScreen>
   }
 
   void _showCanvasSettingsSheet(BuildContext context) {
-    var draft = _canvasBloc.state.boardSettings;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         final tokens = sheetContext.ink;
-        return StatefulBuilder(
-          builder: (sheetContext, setSheetState) {
+        return BlocBuilder<CanvasBloc, CanvasState>(
+          bloc: _canvasBloc,
+          builder: (sheetContext, liveState) {
+            final draft = liveState.boardSettings;
             void apply(CanvasBoardSettings next) {
-              setSheetState(() => draft = next);
               _canvasBloc.add(CanvasSetBoardSettings(next));
             }
 
@@ -2265,139 +3008,417 @@ class _CanvasScreenState extends State<CanvasScreen>
               );
             }
 
+            final viewportCenter = _viewportWorldCenter();
+
             return SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(InkSpacing.s12),
-                child: GlassPanel(
-                  radius: InkRadii.bottomSheet,
-                  padding: const EdgeInsets.all(InkSpacing.s20),
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Canvas Settings',
-                                style: InkType.title(tokens.ink),
-                              ),
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                LucideIcons.x,
-                                color: tokens.inkSecondary,
-                              ),
-                              onPressed: () => Navigator.pop(sheetContext),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: InkSpacing.s8),
-                        Text(
-                          'Background',
-                          style: InkType.caption(tokens.inkMuted),
-                        ),
-                        const SizedBox(height: InkSpacing.s8),
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 10,
-                          children: [
-                            for (final color in const [
-                              Color(0xFFFFFFFF),
-                              Color(0xFFFFF8ED),
-                              Color(0xFFF1F5F9),
-                              Color(0xFFECFDF5),
-                              Color(0xFF1E293B),
-                              Color(0xFF0F172A),
-                            ])
-                              swatch(color),
-                          ],
-                        ),
-                        const SizedBox(height: InkSpacing.s16),
-                        Text(
-                          'Pattern',
-                          style: InkType.caption(tokens.inkMuted),
-                        ),
-                        const SizedBox(height: InkSpacing.s8),
-                        Wrap(
-                          spacing: 6,
-                          children: [
-                            for (final pattern
-                                in CanvasBackgroundPattern.values)
-                              ChoiceChip(
-                                label: Text(
-                                  pattern == CanvasBackgroundPattern.none
-                                      ? 'None'
-                                      : pattern.name[0].toUpperCase() +
-                                            pattern.name.substring(1),
-                                  style: const TextStyle(fontSize: 11),
-                                ),
-                                selected: draft.backgroundPattern == pattern,
-                                visualDensity: VisualDensity.compact,
-                                onSelected: (_) => apply(
-                                  draft.copyWith(backgroundPattern: pattern),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+                  ),
+                  child: GlassPanel(
+                    radius: InkRadii.bottomSheet,
+                    padding: const EdgeInsets.all(InkSpacing.s20),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Canvas Settings',
+                                  style: InkType.title(tokens.ink),
                                 ),
                               ),
-                          ],
-                        ),
-                        const SizedBox(height: InkSpacing.s16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Show page bounds',
-                                style: InkType.bodyStrong(tokens.ink),
+                              IconButton(
+                                icon: Icon(
+                                  LucideIcons.x,
+                                  color: tokens.inkSecondary,
+                                ),
+                                onPressed: () => Navigator.pop(sheetContext),
                               ),
-                            ),
-                            Switch(
-                              value: draft.pageBoundsEnabled,
-                              onChanged: (value) => apply(
-                                draft.copyWith(pageBoundsEnabled: value),
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (draft.pageBoundsEnabled) ...[
+                            ],
+                          ),
+                          const SizedBox(height: InkSpacing.s8),
+                          Text(
+                            'Background',
+                            style: InkType.caption(tokens.inkMuted),
+                          ),
+                          const SizedBox(height: InkSpacing.s8),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: [
+                              for (final color in const [
+                                Color(0xFFFFFFFF),
+                                Color(0xFFFFF8ED),
+                                Color(0xFFF1F5F9),
+                                Color(0xFFECFDF5),
+                                Color(0xFF1E293B),
+                                Color(0xFF0F172A),
+                              ])
+                                swatch(color),
+                            ],
+                          ),
+                          const SizedBox(height: InkSpacing.s16),
+                          Text(
+                            'Pattern',
+                            style: InkType.caption(tokens.inkMuted),
+                          ),
                           const SizedBox(height: InkSpacing.s8),
                           Wrap(
                             spacing: 6,
-                            runSpacing: 6,
                             children: [
-                              for (final (name, width, height)
-                                  in CanvasBoardSettings.pagePresets)
+                              for (final pattern
+                                  in CanvasBackgroundPattern.values)
                                 ChoiceChip(
                                   label: Text(
-                                    name,
+                                    pattern == CanvasBackgroundPattern.none
+                                        ? 'None'
+                                        : pattern.name[0].toUpperCase() +
+                                              pattern.name.substring(1),
                                     style: const TextStyle(fontSize: 11),
                                   ),
-                                  selected:
-                                      (draft.pageWidth - width).abs() < 0.5 &&
-                                      (draft.pageHeight - height).abs() < 0.5,
+                                  selected: draft.backgroundPattern == pattern,
+                                  visualDensity: VisualDensity.compact,
+                                  onSelected: (_) => apply(
+                                    draft.copyWith(backgroundPattern: pattern),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          if (draft.backgroundPattern !=
+                                  CanvasBackgroundPattern.none ||
+                              draft.snapEnabled) ...[
+                            const SizedBox(height: InkSpacing.s8),
+                            Row(
+                              children: [
+                                Text(
+                                  'Grid spacing (${draft.patternSpacing.round()}px)',
+                                  style: InkType.caption(tokens.inkMuted),
+                                ),
+                                Expanded(
+                                  child: Slider(
+                                    value: draft.patternSpacing.clamp(
+                                      12.0,
+                                      96.0,
+                                    ),
+                                    min: 12,
+                                    max: 96,
+                                    divisions: 14,
+                                    onChanged: (v) => apply(
+                                      draft.copyWith(patternSpacing: v),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                          const SizedBox(height: InkSpacing.s8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Show page bounds',
+                                  style: InkType.bodyStrong(tokens.ink),
+                                ),
+                              ),
+                              Switch(
+                                activeColor: Colors.white,
+                                activeTrackColor: tokens.accent,
+                                value: draft.pageBoundsEnabled,
+                                onChanged: (value) => apply(
+                                  draft.copyWith(pageBoundsEnabled: value),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (draft.pageBoundsEnabled) ...[
+                            const SizedBox(height: InkSpacing.s8),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                for (final (name, width, height)
+                                    in CanvasBoardSettings.pagePresets)
+                                  ChoiceChip(
+                                    label: Text(
+                                      name,
+                                      style: const TextStyle(fontSize: 11),
+                                    ),
+                                    selected:
+                                        (draft.pageWidth - width).abs() < 0.5 &&
+                                        (draft.pageHeight - height).abs() < 0.5,
+                                    visualDensity: VisualDensity.compact,
+                                    onSelected: (_) => apply(
+                                      draft.copyWith(
+                                        pageWidth: width,
+                                        pageHeight: height,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: InkSpacing.s8),
+                            Text(
+                              'Page: ${draft.pageWidth.round()} × '
+                              '${draft.pageHeight.round()}',
+                              style: InkType.caption(tokens.inkMuted),
+                            ),
+                          ],
+                          const Divider(height: 24),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Show rulers & guides',
+                                  style: InkType.bodyStrong(tokens.ink),
+                                ),
+                              ),
+                              Switch(
+                                activeColor: Colors.white,
+                                activeTrackColor: tokens.accent,
+                                value: draft.rulersEnabled,
+                                onChanged: (value) => apply(
+                                  draft.copyWith(rulersEnabled: value),
+                                ),
+                              ),
+                            ],
+                          ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Snap to grid & guides',
+                                  style: InkType.bodyStrong(tokens.ink),
+                                ),
+                              ),
+                              Switch(
+                                activeColor: Colors.white,
+                                activeTrackColor: tokens.accent,
+                                value: draft.snapEnabled,
+                                onChanged: (value) => apply(
+                                  draft.copyWith(snapEnabled: value),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (draft.snapEnabled)
+                            Row(
+                              children: [
+                                Text(
+                                  'Snap radius (${draft.snapDistance.round()}px)',
+                                  style: InkType.caption(tokens.inkMuted),
+                                ),
+                                Expanded(
+                                  child: Slider(
+                                    value: draft.snapDistance.clamp(4.0, 24.0),
+                                    min: 4,
+                                    max: 24,
+                                    divisions: 10,
+                                    onChanged: (v) => apply(
+                                      draft.copyWith(snapDistance: v),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          const SizedBox(height: InkSpacing.s8),
+                          Row(
+                            children: [
+                              Text(
+                                'Ruler guides (${draft.guides.length})',
+                                style: InkType.caption(tokens.inkMuted),
+                              ),
+                              const Spacer(),
+                              TextButton.icon(
+                                onPressed: () => _canvasBloc.add(
+                                  CanvasAddGuide(
+                                    axis: CanvasGuideAxis.horizontal,
+                                    position: viewportCenter.dy,
+                                  ),
+                                ),
+                                icon: const Icon(LucideIcons.plus, size: 14),
+                                label: const Text('H Guide'),
+                              ),
+                              TextButton.icon(
+                                onPressed: () => _canvasBloc.add(
+                                  CanvasAddGuide(
+                                    axis: CanvasGuideAxis.vertical,
+                                    position: viewportCenter.dx,
+                                  ),
+                                ),
+                                icon: const Icon(LucideIcons.plus, size: 14),
+                                label: const Text('V Guide'),
+                              ),
+                            ],
+                          ),
+                          if (draft.guides.isNotEmpty)
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                for (final guide in draft.guides)
+                                  InputChip(
+                                    label: Text(
+                                      '${guide.axis == CanvasGuideAxis.vertical ? 'V' : 'H'} '
+                                      '${guide.position.round()}',
+                                      style: const TextStyle(fontSize: 11),
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                    onDeleted: () => _canvasBloc.add(
+                                      CanvasRemoveGuide(guide.id),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          const Divider(height: 24),
+                          Text(
+                            'Symmetry drawing',
+                            style: InkType.caption(tokens.inkMuted),
+                          ),
+                          const SizedBox(height: InkSpacing.s8),
+                          Wrap(
+                            spacing: 6,
+                            children: [
+                              for (final mode in CanvasSymmetryMode.values)
+                                ChoiceChip(
+                                  label: Text(
+                                    mode.name[0].toUpperCase() +
+                                        mode.name.substring(1),
+                                    style: const TextStyle(fontSize: 11),
+                                  ),
+                                  selected: draft.symmetryMode == mode,
                                   visualDensity: VisualDensity.compact,
                                   onSelected: (_) => apply(
                                     draft.copyWith(
-                                      pageWidth: width,
-                                      pageHeight: height,
+                                      symmetryMode: mode,
+                                      symmetryCenter:
+                                          draft.symmetryCenter == Offset.zero &&
+                                              mode != CanvasSymmetryMode.none
+                                          ? viewportCenter
+                                          : draft.symmetryCenter,
                                     ),
                                   ),
                                 ),
                             ],
                           ),
-                          const SizedBox(height: InkSpacing.s8),
+                          if (draft.symmetryMode !=
+                              CanvasSymmetryMode.none) ...[
+                            const SizedBox(height: InkSpacing.s8),
+                            Row(
+                              children: [
+                                if (draft.symmetryMode ==
+                                    CanvasSymmetryMode.radial)
+                                  Expanded(
+                                    child: Row(
+                                      children: [
+                                        Text(
+                                          'Axes (${draft.symmetryCount})',
+                                          style: InkType.caption(
+                                            tokens.inkMuted,
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Slider(
+                                            value: draft.symmetryCount
+                                                .toDouble()
+                                                .clamp(2, 12),
+                                            min: 2,
+                                            max: 12,
+                                            divisions: 10,
+                                            onChanged: (v) => apply(
+                                              draft.copyWith(
+                                                symmetryCount: v.round(),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                TextButton.icon(
+                                  onPressed: () => apply(
+                                    draft.copyWith(
+                                      symmetryCenter: viewportCenter,
+                                    ),
+                                  ),
+                                  icon: const Icon(
+                                    LucideIcons.crosshair,
+                                    size: 14,
+                                  ),
+                                  label: const Text('Center on view'),
+                                ),
+                              ],
+                            ),
+                          ],
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Perspective guide',
+                                  style: InkType.bodyStrong(tokens.ink),
+                                ),
+                              ),
+                              Switch(
+                                activeColor: Colors.white,
+                                activeTrackColor: tokens.accent,
+                                value: draft.perspectiveEnabled,
+                                onChanged: (value) => apply(
+                                  draft.copyWith(
+                                    perspectiveEnabled: value,
+                                    vanishingPoints:
+                                        value && draft.vanishingPoints.isEmpty
+                                        ? [viewportCenter]
+                                        : draft.vanishingPoints,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (draft.perspectiveEnabled)
+                            Row(
+                              children: [
+                                Text(
+                                  '${draft.vanishingPoints.length} point(s)',
+                                  style: InkType.caption(tokens.inkMuted),
+                                ),
+                                const Spacer(),
+                                TextButton.icon(
+                                  onPressed: () => apply(
+                                    draft.copyWith(
+                                      vanishingPoints: [
+                                        ...draft.vanishingPoints,
+                                        viewportCenter,
+                                      ],
+                                    ),
+                                  ),
+                                  icon: const Icon(LucideIcons.plus, size: 14),
+                                  label: const Text('Add point'),
+                                ),
+                                if (draft.vanishingPoints.isNotEmpty)
+                                  TextButton(
+                                    onPressed: () => apply(
+                                      draft.copyWith(
+                                        perspectiveEnabled: false,
+                                        vanishingPoints: const [],
+                                      ),
+                                    ),
+                                    child: const Text('Clear'),
+                                  ),
+                              ],
+                            ),
+                          const SizedBox(height: InkSpacing.s12),
                           Text(
-                            'Page: ${draft.pageWidth.round()} × '
-                            '${draft.pageHeight.round()}',
+                            'The paper colour, page bounds, guides and symmetry '
+                            'help keep diagrams tidy and export cleanly.',
                             style: InkType.caption(tokens.inkMuted),
                           ),
                         ],
-                        const SizedBox(height: InkSpacing.s16),
-                        Text(
-                          'The paper colour is shared with collaborators and '
-                          'used by PNG, PDF and SVG exports.',
-                          style: InkType.caption(tokens.inkMuted),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
@@ -2443,47 +3464,68 @@ class _CanvasScreenState extends State<CanvasScreen>
                 ? 'selection'
                 : scope == CanvasExportScope.frame
                 ? (selectedFrame?.title ?? 'frame')
+                : scope == CanvasExportScope.page
+                ? 'page'
                 : null;
             final effective = draft.copyWith(
               scope: scope,
               frameId: selectedFrame?.id,
               suffix: suffix,
             );
+            final plan = const BoardExportServiceImpl().buildExportPlan(
+              elements: live.elements,
+              options: effective,
+              selectedIds: live.selectedIds,
+              settings: live.boardSettings,
+            );
 
             return SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(InkSpacing.s12),
-                child: GlassPanel(
-                  radius: InkRadii.bottomSheet,
-                  padding: const EdgeInsets.all(InkSpacing.s20),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'Export & Share Board',
-                              style: InkType.title(tokens.ink),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.sizeOf(context).height * 0.84,
+                  ),
+                  child: GlassPanel(
+                    radius: InkRadii.bottomSheet,
+                    padding: const EdgeInsets.all(InkSpacing.s20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Export & Share Board',
+                                style: InkType.title(tokens.ink),
+                              ),
                             ),
-                          ),
-                          IconButton(
-                            icon: Icon(
-                              LucideIcons.x,
-                              color: tokens.inkSecondary,
+                            IconButton(
+                              icon: Icon(
+                                LucideIcons.x,
+                                color: tokens.inkSecondary,
+                              ),
+                              onPressed: () => Navigator.pop(sheetContext),
                             ),
-                            onPressed: () => Navigator.pop(sheetContext),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: InkSpacing.s4),
-                      Text(
-                        'Export your canvas elements with full layout integrity:',
-                        style: InkType.caption(tokens.inkMuted),
-                      ),
-                      const SizedBox(height: InkSpacing.s16),
-                      Text('Scope', style: InkType.caption(tokens.inkMuted)),
+                          ],
+                        ),
+                        const SizedBox(height: InkSpacing.s4),
+                        Text(
+                          'Export your canvas elements with full layout integrity:',
+                          style: InkType.caption(tokens.inkMuted),
+                        ),
+                        const SizedBox(height: InkSpacing.s12),
+                        Flexible(
+                          child: SingleChildScrollView(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Scope',
+                                  style: InkType.caption(tokens.inkMuted),
+                                ),
                       const SizedBox(height: InkSpacing.s8),
                       Wrap(
                         spacing: 6,
@@ -2534,10 +3576,33 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   )
                                 : null,
                           ),
+                          ChoiceChip(
+                            label: const Text(
+                              'Page',
+                              style: TextStyle(fontSize: 11),
+                            ),
+                            selected:
+                                effective.scope == CanvasExportScope.page,
+                            visualDensity: VisualDensity.compact,
+                            onSelected: (_) => setSheetState(
+                              () => draft = draft.copyWith(
+                                scope: CanvasExportScope.page,
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: InkSpacing.s16),
-                      Text('Scale', style: InkType.caption(tokens.inkMuted)),
+                      Row(
+                        children: [
+                          Text('Scale', style: InkType.caption(tokens.inkMuted)),
+                          const Spacer(),
+                          Text(
+                            'Output: ${plan.widthPixels} × ${plan.heightPixels} px',
+                            style: InkType.caption(tokens.inkMuted),
+                          ),
+                        ],
+                      ),
                       const SizedBox(height: InkSpacing.s8),
                       Wrap(
                         spacing: 6,
@@ -2576,10 +3641,41 @@ class _CanvasScreenState extends State<CanvasScreen>
                             ),
                           ),
                           Switch(
+                            activeColor: Colors.white,
+                            activeTrackColor: tokens.accent,
                             value: draft.hasTransparentBackground,
                             onChanged: (value) => setSheetState(
                               () => draft = draft.copyWith(
                                 transparentBackground: value,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Include background pattern',
+                                  style: InkType.bodyStrong(tokens.ink),
+                                ),
+                                Text(
+                                  'Grid, dots or ruled lines',
+                                  style: InkType.caption(tokens.inkMuted),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Switch(
+                            activeColor: Colors.white,
+                            activeTrackColor: tokens.accent,
+                            value: draft.includePattern,
+                            onChanged: (value) => setSheetState(
+                              () => draft = draft.copyWith(
+                                includePattern: value,
                               ),
                             ),
                           ),
@@ -2639,7 +3735,12 @@ class _CanvasScreenState extends State<CanvasScreen>
                   ),
                 ),
               ),
-            );
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
           },
         );
       },
@@ -2782,6 +3883,7 @@ class _CanvasScreenState extends State<CanvasScreen>
             (current.exportSuccessMessage != null &&
                 current.exportSuccessMessage != previous.exportSuccessMessage),
         listener: (context, state) async {
+          _maybeApplyInitialTemplate(state);
           if (state.exportSuccessMessage != null) {
             final msg = state.exportSuccessMessage!;
             final path = state.lastExportedFilePath;
@@ -3039,7 +4141,8 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 );
 
                                 if (details.pointerCount == 1 &&
-                                    state.isSelectingUndoRequestArea) {
+                                    (state.isSelectingUndoRequestArea ||
+                                        state.isSelectingHistoryArea)) {
                                   _isTransformingCanvas = false;
                                   setState(() {
                                     _areaSelectionStart = worldPoint;
@@ -3309,9 +4412,12 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 }
                                 if (_isDraggingShape &&
                                     _groupDragDelta != null) {
+                                  final nextDelta = _snapGroupDragDelta(
+                                    state,
+                                    worldPoint - _shapeDragStartWorldPoint,
+                                  );
                                   setState(() {
-                                    _groupDragDelta =
-                                        worldPoint - _shapeDragStartWorldPoint;
+                                    _groupDragDelta = nextDelta;
                                   });
                                   return;
                                 }
@@ -3327,11 +4433,24 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 if (_isDraggingShape) {
                                   final dragDelta =
                                       worldPoint - _shapeDragStartWorldPoint;
-                                  final nextCenter =
+                                  final rawCenter =
                                       _shapeDragStartCenter + dragDelta;
+                                  final dragged = mappedElements
+                                      .where(
+                                        (e) => e.id == state.selectedShapeId,
+                                      )
+                                      .firstOrNull;
+                                  final nextCenter = dragged == null
+                                      ? rawCenter
+                                      : _snapElementCenterDrag(
+                                          state,
+                                          dragged,
+                                          rawCenter,
+                                        );
                                   setState(() {
                                     _shapeDragPreviewCenter = nextCenter;
-                                    _connectorDragDelta = dragDelta;
+                                    _connectorDragDelta =
+                                        nextCenter - _shapeDragStartCenter;
                                   });
                                   _canvasBloc.add(
                                     CanvasPreviewMoveSelectedShape(nextCenter),
@@ -3482,7 +4601,8 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   return;
                                 }
                                 if (state.isViewingHistory ||
-                                    state.isSelectingUndoRequestArea) {
+                                    state.isSelectingUndoRequestArea ||
+                                    state.isSelectingHistoryArea) {
                                   return;
                                 }
 
@@ -3644,6 +4764,7 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 }
                                 if (state.isViewingHistory ||
                                     state.isSelectingUndoRequestArea ||
+                                    state.isSelectingHistoryArea ||
                                     _isPickingUndoRequestScope(state)) {
                                   return;
                                 }
@@ -3666,7 +4787,7 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   _canvasBloc.add(CanvasToggleTray(activeTray));
                                 }
                                 _selectShape(hitShapeId, expandEditor: false);
-                                if (hit.kind == _ElementKind.stickyNote) {
+                                  if (hit.kind == _ElementKind.stickyNote) {
                                   _editStickyNote(hit);
                                 } else if (hit.kind == _ElementKind.text) {
                                   final source = _canvasBloc.state.elements
@@ -3675,11 +4796,34 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   if (source is TextElement) {
                                     _beginTextEditing(source, source.center);
                                   }
+                                } else if (hit.kind == _ElementKind.table) {
+                                  final source = _canvasBloc.state.elements
+                                      .whereType<TableElement>()
+                                      .where((e) => e.id == hit.id)
+                                      .firstOrNull;
+                                  if (source != null) {
+                                    final hitCell = tableHitTestCell(
+                                      source,
+                                      worldPoint,
+                                    );
+                                    _editTableCellDialog(
+                                      source,
+                                      initialRow: hitCell?.$1 ?? 0,
+                                      initialCol: hitCell?.$2 ?? 0,
+                                    );
+                                  }
                                 }
                               },
+                              onLongPressStart: (details) =>
+                                  _showCanvasContextMenu(
+                                    state,
+                                    mappedElements,
+                                    details.localPosition,
+                                  ),
                               onTap: () {
                                 if (state.isViewingHistory ||
                                     state.isSelectingUndoRequestArea ||
+                                    state.isSelectingHistoryArea ||
                                     _isPickingUndoRequestScope(state)) {
                                   return;
                                 }
@@ -3761,7 +4905,7 @@ class _CanvasScreenState extends State<CanvasScreen>
                                           state.isViewingHistory
                                           ? state.historyHighlightElementIds
                                                 .toSet()
-                                          : const {},
+                                          : _frameDragHighlightedIds(state),
                                       areaSelectionRect: _areaSelectionRect,
                                     ),
                                   ),
@@ -3890,7 +5034,10 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   ? () => _revertPreviewOps(state)
                                   : null,
                               onLoadOlder:
-                                  state.historyScrub?.targetUid != null &&
+                                  (state.historyScrub?.targetUid != null ||
+                                          state.historyScrub?.area != null ||
+                                          state.historyScrub?.scopeMode ==
+                                              UndoRequestScopeMode.areaState) &&
                                       state.historyScrub!.hasMore
                                   ? () => _canvasBloc.add(
                                       const CanvasHistoryScrubLoadOlderRequested(),
@@ -3909,8 +5056,9 @@ class _CanvasScreenState extends State<CanvasScreen>
                           if (!state.isViewingHistory && state.isArchived)
                             _buildArchivedBanner(state),
 
-                          if (state.isSelectingUndoRequestArea)
-                            _buildAreaSelectionHint(),
+                          if (state.isSelectingUndoRequestArea ||
+                              state.isSelectingHistoryArea)
+                            _buildAreaSelectionHint(state),
 
                           if (_isPickingUndoRequestScope(state))
                             _buildUndoRequestPickHint(state),
@@ -3975,6 +5123,17 @@ class _CanvasScreenState extends State<CanvasScreen>
               title: e.title,
               color: e.color,
               cornerRadius: e.cornerRadius,
+              data: e.toMap(),
+            ),
+            TableElement e => _CanvasElement.table(
+              id: e.id,
+              z: e.z,
+              center: e.center,
+              width: e.width,
+              height: e.height,
+              color: e.borderColor,
+              rotation: e.rotation,
+              opacity: e.opacity,
               data: e.toMap(),
             ),
             ShapeElement e => _CanvasElement.shape(
@@ -4307,7 +5466,9 @@ class _CanvasScreenState extends State<CanvasScreen>
         actions.addAll([
           (id: 'fill', icon: LucideIcons.paintBucket, label: 'Fill'),
           (id: 'color', icon: LucideIcons.palette, label: 'Colour'),
+          (id: 'outline', icon: LucideIcons.penLine, label: 'Outline'),
           (id: 'stroke', icon: LucideIcons.brush, label: 'Stroke'),
+          (id: 'flip', icon: LucideIcons.flipHorizontal, label: 'Flip'),
           (id: 'opacity', icon: LucideIcons.droplet, label: 'Opacity'),
         ]);
       case _ElementKind.stroke:
@@ -4332,6 +5493,8 @@ class _CanvasScreenState extends State<CanvasScreen>
         ]);
       case _ElementKind.frame:
         actions.addAll([
+          (id: 'title', icon: LucideIcons.type, label: 'Title'),
+          (id: 'clip', icon: LucideIcons.scissors, label: 'Clip'),
           (id: 'color', icon: LucideIcons.palette, label: 'Colour'),
           (id: 'duplicate', icon: LucideIcons.copy, label: 'Duplicate'),
         ]);
@@ -4345,6 +5508,16 @@ class _CanvasScreenState extends State<CanvasScreen>
           (id: 'opacity', icon: LucideIcons.droplet, label: 'Opacity'),
           (id: 'duplicate', icon: LucideIcons.copy, label: 'Duplicate'),
         ]);
+      case _ElementKind.table:
+        actions.addAll([
+          (id: 'edit', icon: LucideIcons.pencil, label: 'Edit cells'),
+          (id: 'tableLayout', icon: LucideIcons.grid2x2, label: 'Rows/Cols'),
+          (id: 'color', icon: LucideIcons.palette, label: 'Border'),
+          (id: 'fill', icon: LucideIcons.paintBucket, label: 'Fill'),
+          (id: 'width', icon: LucideIcons.brush, label: 'Width'),
+          (id: 'opacity', icon: LucideIcons.droplet, label: 'Opacity'),
+          (id: 'duplicate', icon: LucideIcons.copy, label: 'Duplicate'),
+        ]);
     }
 
     void activate(String id) {
@@ -4353,7 +5526,13 @@ class _CanvasScreenState extends State<CanvasScreen>
           _beginTextEditing(parsed, parsed.center);
         } else if (parsed is StickyNoteElement) {
           _editStickyNote(element);
+        } else if (parsed is TableElement) {
+          _editTableCellDialog(parsed);
         }
+        return;
+      }
+      if (id == 'title' && parsed is FrameElement) {
+        _editFrameTitleDialog(parsed);
         return;
       }
       if (id == 'duplicate') {
@@ -4361,7 +5540,11 @@ class _CanvasScreenState extends State<CanvasScreen>
         return;
       }
       if (id == 'delete') {
-        _canvasBloc.add(CanvasDeleteElement(element.id));
+        if (parsed is FrameElement) {
+          _confirmDeleteFrame(parsed.id);
+        } else {
+          _canvasBloc.add(CanvasDeleteElement(element.id));
+        }
         return;
       }
       setState(() {
@@ -4464,6 +5647,7 @@ class _CanvasScreenState extends State<CanvasScreen>
     _ElementKind.frame => 'Frame',
     _ElementKind.connector => 'Connector',
     _ElementKind.image => 'Image',
+    _ElementKind.table => 'Table',
   };
 
   Widget _fillSwatch({
@@ -4526,7 +5710,7 @@ class _CanvasScreenState extends State<CanvasScreen>
     final control = _activeEditControl;
     if (control == null) return const SizedBox.shrink();
     final panel = Container(
-      constraints: const BoxConstraints(maxWidth: 520),
+      constraints: const BoxConstraints(maxWidth: 520, maxHeight: 260),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: _tokens.paper,
@@ -4539,7 +5723,9 @@ class _CanvasScreenState extends State<CanvasScreen>
           ),
         ],
       ),
-      child: _elementEditControlBody(state, element, control),
+      child: SingleChildScrollView(
+        child: _elementEditControlBody(state, element, control),
+      ),
     );
     return panel;
   }
@@ -4555,6 +5741,7 @@ class _CanvasScreenState extends State<CanvasScreen>
         TextElement e => e.color,
         StickyNoteElement e => e.color,
         FrameElement e => e.color,
+        TableElement e => e.borderColor,
         ConnectorElement e => e.color,
         StrokeElement e => e.color,
         ImageElement _ => _tokens.ink,
@@ -4570,6 +5757,195 @@ class _CanvasScreenState extends State<CanvasScreen>
               selected: color == current,
               onTap: () => _applyElementColor(element, color),
             ),
+        ],
+      );
+    }
+
+    if (control == 'outline' && element is ShapeElement) {
+      final current = element.resolvedStrokeColor;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Outline color', style: TextStyle(fontSize: 13)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              for (final color in _editorPalette)
+                _fillSwatch(
+                  color: color,
+                  selected: color == current,
+                  onTap: () => _canvasBloc.add(
+                    CanvasUpdateSelectedShapeStrokeColor(color),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      );
+    }
+
+    if (control == 'flip' && element is ShapeElement) {
+      return Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          FilterChip(
+            avatar: const Icon(LucideIcons.flipHorizontal, size: 15),
+            label: const Text('Flip horizontal'),
+            selected: element.flipH,
+            onSelected: (_) => _canvasBloc.add(
+              const CanvasFlipSelectedShape(horizontal: true),
+            ),
+          ),
+          FilterChip(
+            avatar: const Icon(Icons.flip, size: 15),
+            label: const Text('Flip vertical'),
+            selected: element.flipV,
+            onSelected: (_) => _canvasBloc.add(
+              const CanvasFlipSelectedShape(vertical: true),
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (control == 'clip' && element is FrameElement) {
+      return SwitchListTile.adaptive(
+        activeColor: Colors.white,
+        activeTrackColor: _tokens.accent,
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Clip contents inside frame'),
+        subtitle: const Text('Hide artwork outside frame bounds'),
+        value: element.clipContents,
+        onChanged: (v) => _canvasBloc.add(
+          CanvasUpdateFrame(elementId: element.id, clipContents: v),
+        ),
+      );
+    }
+
+    if (control == 'tableLayout' && element is TableElement) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Rows: ${element.rows}',
+                style: const TextStyle(fontSize: 13),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                tooltip: 'Remove last row',
+                icon: const Icon(LucideIcons.minus, size: 16),
+                onPressed: element.rows > 1
+                    ? () => _canvasBloc.add(
+                        CanvasUpdateTableStyle(
+                          tableId: element.id,
+                          removeRowAt: element.rows - 1,
+                        ),
+                      )
+                    : null,
+              ),
+              IconButton(
+                tooltip: 'Add row',
+                icon: const Icon(LucideIcons.plus, size: 16),
+                onPressed: () => _canvasBloc.add(
+                  CanvasUpdateTableStyle(
+                    tableId: element.id,
+                    insertRowAt: element.rows,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                'Cols: ${element.columns}',
+                style: const TextStyle(fontSize: 13),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                tooltip: 'Remove last column',
+                icon: const Icon(LucideIcons.minus, size: 16),
+                onPressed: element.columns > 1
+                    ? () => _canvasBloc.add(
+                        CanvasUpdateTableStyle(
+                          tableId: element.id,
+                          removeColumnAt: element.columns - 1,
+                        ),
+                      )
+                    : null,
+              ),
+              IconButton(
+                tooltip: 'Add column',
+                icon: const Icon(LucideIcons.plus, size: 16),
+                onPressed: () => _canvasBloc.add(
+                  CanvasUpdateTableStyle(
+                    tableId: element.id,
+                    insertColumnAt: element.columns,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SwitchListTile.adaptive(
+            activeColor: Colors.white,
+            activeTrackColor: _tokens.accent,
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Header row', style: TextStyle(fontSize: 13)),
+            value: element.headerRow,
+            onChanged: (v) => _canvasBloc.add(
+              CanvasUpdateTableStyle(tableId: element.id, headerRow: v),
+            ),
+          ),
+          _elementEditSlider(
+            'Font size',
+            element.fontSize.clamp(10, 28),
+            10,
+            28,
+            (v) => _canvasBloc.add(
+              CanvasUpdateTableStyle(tableId: element.id, fontSize: v),
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (control == 'fill' && element is TableElement) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Header tint', style: TextStyle(fontSize: 12)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              for (final color in const [
+                Color(0xFFF1F5F9),
+                Color(0xFFDBEAFE),
+                Color(0xFFDCFCE7),
+                Color(0xFFFEF3C7),
+                Color(0xFFF3E8FF),
+                Color(0xFFFEE2E2),
+              ])
+                _fillSwatch(
+                  color: color,
+                  selected: color == element.headerBackgroundColor,
+                  onTap: () => _canvasBloc.add(
+                    CanvasUpdateTableStyle(
+                      tableId: element.id,
+                      headerBackgroundColor: color,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ],
       );
     }
@@ -4704,6 +6080,18 @@ class _CanvasScreenState extends State<CanvasScreen>
     }
 
     if (control == 'width' || control == 'stroke') {
+      if (element is TableElement) {
+        return _elementEditSlider(
+          'Border',
+          element.borderWidth.clamp(0.5, 8.0),
+          0.5,
+          8.0,
+          (v) => _canvasBloc.add(
+            CanvasUpdateTableStyle(tableId: element.id, borderWidth: v),
+          ),
+          decimals: 1,
+        );
+      }
       final value = switch (element) {
         ShapeElement e => e.strokeWidth,
         ConnectorElement e => e.strokeWidth,
@@ -4827,6 +6215,10 @@ class _CanvasScreenState extends State<CanvasScreen>
         _canvasBloc.add(CanvasUpdateStickyNote(elementId: e.id, color: color));
       case FrameElement e:
         _canvasBloc.add(CanvasUpdateFrame(elementId: e.id, color: color));
+      case TableElement e:
+        _canvasBloc.add(
+          CanvasUpdateTableStyle(tableId: e.id, borderColor: color),
+        );
       case ConnectorElement e:
         _canvasBloc.add(CanvasUpdateConnector(elementId: e.id, color: color));
       case StrokeElement _:
@@ -5323,16 +6715,29 @@ class _CanvasScreenState extends State<CanvasScreen>
                         ),
                       ),
                       IconButton(
-                        tooltip: 'Delete frame (keeps contents)',
+                        tooltip: 'Delete frame',
                         icon: Icon(
                           LucideIcons.trash2,
                           color: tokens.danger,
                           size: 18,
                         ),
-                        onPressed: () =>
-                            _canvasBloc.add(CanvasDeleteElement(frame.id)),
+                        onPressed: () => _confirmDeleteFrame(frame.id),
                       ),
                     ],
+                  ),
+                  SwitchListTile.adaptive(
+                    activeColor: Colors.white,
+                    activeTrackColor: tokens.accent,
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: frame.clipContents,
+                    title: const Text(
+                      'Clip contents',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                    onChanged: (v) => _canvasBloc.add(
+                      CanvasUpdateFrame(elementId: frame.id, clipContents: v),
+                    ),
                   ),
                   TextFormField(
                     key: ValueKey('frame-title-${frame.id}-${frame.title}'),
@@ -5983,6 +7388,40 @@ class _CanvasScreenState extends State<CanvasScreen>
                     iconSize: 18,
                     onPressed: button.$3,
                     icon: Icon(button.$1, color: _tokens.ink),
+                  ),
+                if (state.canEdit)
+                  PopupMenuButton<CanvasArrangeMode>(
+                    tooltip: 'Arrange / Tidy up',
+                    icon: Icon(
+                      Icons.auto_awesome_mosaic_outlined,
+                      size: 18,
+                      color: _tokens.ink,
+                    ),
+                    onSelected: (mode) => _canvasBloc.add(
+                      CanvasArrangeSelection(mode),
+                    ),
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: CanvasArrangeMode.grid,
+                        child: Text('Tidy into Grid'),
+                      ),
+                      PopupMenuItem(
+                        value: CanvasArrangeMode.row,
+                        child: Text('Arrange in Row'),
+                      ),
+                      PopupMenuItem(
+                        value: CanvasArrangeMode.column,
+                        child: Text('Arrange in Column'),
+                      ),
+                      PopupMenuItem(
+                        value: CanvasArrangeMode.tree,
+                        child: Text('Mind Map Tree'),
+                      ),
+                      PopupMenuItem(
+                        value: CanvasArrangeMode.flow,
+                        child: Text('Process Flow'),
+                      ),
+                    ],
                   ),
                 if (!state.canEdit)
                   Padding(
@@ -7082,6 +8521,60 @@ class _CanvasScreenState extends State<CanvasScreen>
             )
             .toList(),
       ),
+      if (domainShape != null) ...[
+        const SizedBox(height: 8),
+        const Text('Outline colour', style: TextStyle(fontSize: 12)),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: palette
+              .map(
+                (color) => InkWell(
+                  onTap: () => _canvasBloc.add(
+                    CanvasUpdateSelectedShapeStrokeColor(color),
+                  ),
+                  child: Container(
+                    width: 20,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: color,
+                      border: Border.all(
+                        color: domainShape.resolvedStrokeColor == color
+                            ? _tokens.accent
+                            : Colors.black12,
+                        width: domainShape.resolvedStrokeColor == color ? 2 : 1,
+                      ),
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 6,
+          children: [
+            FilterChip(
+              label: const Text('Flip H', style: TextStyle(fontSize: 11)),
+              selected: domainShape.flipH,
+              visualDensity: VisualDensity.compact,
+              onSelected: (_) => _canvasBloc.add(
+                const CanvasFlipSelectedShape(horizontal: true),
+              ),
+            ),
+            FilterChip(
+              label: const Text('Flip V', style: TextStyle(fontSize: 11)),
+              selected: domainShape.flipV,
+              visualDensity: VisualDensity.compact,
+              onSelected: (_) => _canvasBloc.add(
+                const CanvasFlipSelectedShape(vertical: true),
+              ),
+            ),
+          ],
+        ),
+      ],
     ];
 
     return Positioned(
@@ -8112,6 +9605,9 @@ class _CanvasScreenState extends State<CanvasScreen>
     } else if (shape.kind == _ElementKind.frame) {
       rawW = shape.width > 0 ? shape.width : FrameElement.defaultWidth;
       rawH = shape.height > 0 ? shape.height : FrameElement.defaultHeight;
+    } else if (shape.kind == _ElementKind.table) {
+      rawW = shape.width > 0 ? shape.width : 360.0;
+      rawH = shape.height > 0 ? shape.height : 180.0;
     } else if (shape.kind == _ElementKind.stickyNote ||
         shape.kind == _ElementKind.image) {
       rawW = shape.width > 0
@@ -8210,11 +9706,16 @@ class _CanvasScreenState extends State<CanvasScreen>
                             );
                         final globalDelta =
                             details.globalPosition - _overlayDragStartGlobalPos;
-                        final nextCenter = Offset(
+                        final rawCenter = Offset(
                           _overlayDragStartCenter.dx +
                               (globalDelta.dx / _viewportScale),
                           _overlayDragStartCenter.dy +
                               (globalDelta.dy / _viewportScale),
+                        );
+                        final nextCenter = _snapElementCenterDrag(
+                          state,
+                          baseShape,
+                          rawCenter,
                         );
                         setState(() {
                           _shapeTransformDraft = draft.copyWith(
@@ -8415,14 +9916,16 @@ class _CanvasScreenState extends State<CanvasScreen>
                             .toDouble();
                         final minDim = shape.kind == _ElementKind.image
                             ? 1.0
-                            : shape.kind == _ElementKind.stickyNote
+                            : shape.kind == _ElementKind.stickyNote ||
+                                  shape.kind == _ElementKind.table
                             ? 80.0
                             : shape.kind == _ElementKind.frame
                             ? 120.0
                             : 40.0;
                         final maxDim = shape.kind == _ElementKind.image
                             ? 720.0
-                            : shape.kind == _ElementKind.frame
+                            : shape.kind == _ElementKind.frame ||
+                                  shape.kind == _ElementKind.table
                             ? 4000.0
                             : 480.0;
                         final nextW = (_resizeStartWidth + localDx * 1.8)
@@ -8449,7 +9952,8 @@ class _CanvasScreenState extends State<CanvasScreen>
                           );
                         } else if (shape.kind == _ElementKind.stickyNote ||
                             shape.kind == _ElementKind.shape ||
-                            shape.kind == _ElementKind.frame) {
+                            shape.kind == _ElementKind.frame ||
+                            shape.kind == _ElementKind.table) {
                           _canvasBloc.add(
                             CanvasPreviewResizeSelectedShape(
                               nextSize,
@@ -8484,7 +9988,8 @@ class _CanvasScreenState extends State<CanvasScreen>
                               ),
                             );
                           } else if (shape.kind == _ElementKind.shape ||
-                              shape.kind == _ElementKind.frame) {
+                              shape.kind == _ElementKind.frame ||
+                              shape.kind == _ElementKind.table) {
                             _resizeSelectedShape(
                               draft.size,
                               width: draft.width ?? 0,
@@ -8694,6 +10199,7 @@ class _CanvasScreenState extends State<CanvasScreen>
               : null,
           onAddStickyNote: _addStickyNoteDialog,
           onAddConnector: _addConnectorDialog,
+          onAddTable: _addTableDialog,
           onCanvasSettings: () => _showCanvasSettingsSheet(context),
           onTemplates: () => _showTemplateGallerySheet(context),
           onExport: () => _showExportOptionsSheet(context),
@@ -9488,6 +10994,7 @@ class _CanvasScreenState extends State<CanvasScreen>
         !state.isViewingHistory &&
         !state.isHistoryLoading &&
         !state.isSelectingUndoRequestArea &&
+        !state.isSelectingHistoryArea &&
         !_undoRequestSheetOpen;
   }
 
@@ -9553,8 +11060,9 @@ class _CanvasScreenState extends State<CanvasScreen>
     );
   }
 
-  Widget _buildAreaSelectionHint() {
+  Widget _buildAreaSelectionHint(CanvasState state) {
     final tokens = _tokens;
+    final isOwnerHistoryArea = state.isSelectingHistoryArea;
     return Positioned(
       left: 24,
       right: 24,
@@ -9571,7 +11079,9 @@ class _CanvasScreenState extends State<CanvasScreen>
             const SizedBox(width: InkSpacing.s8),
             Expanded(
               child: Text(
-                'Drag across the canvas to select an area',
+                isOwnerHistoryArea
+                    ? 'Drag across the canvas to view history for that area'
+                    : 'Drag across the canvas to select an area',
                 style: InkType.caption(tokens.ink),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -9584,10 +11094,16 @@ class _CanvasScreenState extends State<CanvasScreen>
                   _areaSelectionStart = null;
                   _areaSelectionCurrent = null;
                 });
-                _canvasBloc.add(
-                  const CanvasToggleUndoRequestAreaSelection(enable: false),
-                );
-                _openUndoRequestSheet();
+                if (isOwnerHistoryArea) {
+                  _canvasBloc.add(
+                    const CanvasToggleOwnerAreaHistorySelection(enable: false),
+                  );
+                } else {
+                  _canvasBloc.add(
+                    const CanvasToggleUndoRequestAreaSelection(enable: false),
+                  );
+                  _openUndoRequestSheet();
+                }
               },
               borderRadius: BorderRadius.circular(InkRadii.chip),
               child: Padding(

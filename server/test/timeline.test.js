@@ -255,3 +255,28 @@ test('user timeline scoped + anchored returns an empty page past the anchor', as
   assert.equal(timeline.hasMore, false);
   assert.equal(timeline.base, null);
 });
+
+test('area timeline with scopeMode area_state collects all users ops within the selected area', async () => {
+  const d = new Y.Doc();
+  const m = d.getMap('elements');
+  const p1 = captureUpdate(d, () => m.set('in1', { id: 'in1', type: 'shape', centerX: 40, centerY: 40, width: 30, height: 30 }));
+  const p2 = captureUpdate(d, () => m.set('out1', { id: 'out1', type: 'shape', centerX: 500, centerY: 500, width: 30, height: 30 }));
+  const p3 = captureUpdate(d, () => m.set('in2', { id: 'in2', type: 'shape', centerX: 60, centerY: 60, width: 30, height: 30 }));
+  const entries = [
+    { version: 1, updateId: 'u1', sourceClientId: 'A', elementId: 'in1', payloadBase64: p1, timestamp: NOW },
+    { version: 2, updateId: 'u2', sourceClientId: 'B', elementId: 'out1', payloadBase64: p2, timestamp: NOW },
+    { version: 3, updateId: 'u3', sourceClientId: 'B', elementId: 'in2', payloadBase64: p3, timestamp: NOW },
+  ];
+
+  const timeline = await buildUserTimeline(
+    'board-1',
+    null,
+    {
+      scopeMode: 'area_state',
+      area: { left: 0, top: 0, width: 120, height: 120 },
+    },
+    redisWith(entries),
+  );
+  assert.deepEqual(timeline.ops.map((op) => op.version), [1, 3], 'includes both A and B ops inside the area, skips v2 outside the area');
+  assert.deepEqual(timeline.steps.map((s) => s.version), [1, 3]);
+});

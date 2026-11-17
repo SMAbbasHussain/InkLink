@@ -1885,6 +1885,50 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('history_get_versions', async ({ boardId, beforeVersion, limit } = {}, ack) => {
+    if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
+    if (!isValidBoardId(boardId)) return historyError(ack, 'invalid_payload');
+    if (!db) return historyError(ack, 'persistence_unavailable');
+    if (!(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
+    try {
+      const pageSize = Math.max(1, Math.min(100, Number(limit) || 50));
+      const snap = await db.collection('boards').doc(boardId)
+        .collection('activity_index')
+        .orderBy('fromVersion', 'desc')
+        .get();
+      let all = snap.docs.map(d => ({ blockId: d.id, ...(d.data() || {}) }));
+      if (beforeVersion != null && Number.isFinite(Number(beforeVersion))) {
+        const bv = Number(beforeVersion);
+        all = all.filter(b => (Number(b.fromVersion) || 0) < bv);
+      }
+      all.sort((a, b) => (Number(b.toVersion) || 0) - (Number(a.toVersion) || 0));
+      const blocks = all.slice(0, pageSize);
+      const hasMore = all.length > pageSize;
+      const nextBeforeVersion = blocks.length
+        ? Number(blocks[blocks.length - 1].fromVersion) || null
+        : null;
+      let liveTail = null;
+      if (beforeVersion == null && redisAvailable) {
+        try {
+          const tail = await buildLiveTailBlock(boardId);
+          liveTail = tail.block || null;
+        } catch (_) {}
+      }
+      if (typeof ack === 'function') {
+        ack({
+          status: 'success',
+          blocks,
+          hasMore,
+          nextBeforeVersion,
+          liveTail,
+        });
+      }
+    } catch (e) {
+      console.warn(`[history_get_versions] ${e.message}`);
+      historyError(ack, 'archive_unavailable');
+    }
+  });
+
   socket.on('history_get_user_ops', async (payload = {}, ack) => {
     if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
     const { boardId, targetUid, fromTime, toTime, beforeVersion, limit } = payload;
@@ -1913,10 +1957,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  // One user's ops + the board-state delta at each of them, so the owner can
-  // replay that user's work on the canvas (scrub) without further round-trips.
-  // A member may request their OWN timeline — the undo-request slider (D5) —
-  // but never another member's. Read-only; never appends.
+  // One user's (or selected area's) ops + the board-state delta at each of
+  // them, so the owner or member can replay work on the canvas (scrub) without
+  // further round-trips.
   socket.on('history_preview_user_timeline', async (payload = {}, ack) => {
     if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
     const {
@@ -1927,24 +1970,15 @@ io.on('connection', (socket) => {
       beforeVersion,
       limit,
       elementIds,
+      area,
+      scopeMode,
       afterVersion,
     } = payload;
-    if (!isValidBoardId(boardId) || typeof targetUid !== 'string' || !targetUid) {
+    if (!isValidBoardId(boardId)) {
       return historyError(ack, 'invalid_payload');
     }
     if (!redisAvailable || !db) return historyError(ack, 'persistence_unavailable');
-    const isSelf = targetUid === uid;
-    if (isSelf) {
-      // Members scope their own replay for the undo request they are about
-      // to send; ordinary edit access is enough.
-      const canEdit = await canUserAccessBoard(boardId, uid, true);
-      if (!canEdit) return historyError(ack, 'forbidden');
-    } else if (!(await isBoardOwner(boardId, uid))) {
-      return historyError(ack, 'forbidden');
-    }
-    // Optional element scope (the member's picked area / double-tapped
-    // elements). Unknown or malformed ids are dropped; an empty scope means
-    // "no filter" rather than "no ops".
+
     let scopeIds;
     if (elementIds != null) {
       if (!Array.isArray(elementIds)) return historyError(ack, 'invalid_payload');
@@ -1953,16 +1987,48 @@ io.on('connection', (socket) => {
         .slice(0, 200);
       if (!scopeIds.length) scopeIds = undefined;
     }
+
+    let validArea;
+    if (area && typeof area === 'object' && !Array.isArray(area)) {
+      const l = Number(area.left);
+      const t = Number(area.top);
+      const w = Number(area.width);
+      const h = Number(area.height);
+      if (Number.isFinite(l) && Number.isFinite(t) && w > 0 && h > 0) {
+        validArea = { left: l, top: t, width: w, height: h };
+      }
+    }
+
+    const isOwner = await isBoardOwner(boardId, uid);
+    const isSelf = typeof targetUid === 'string' && targetUid === uid;
+    const isScopedAreaRequest = scopeMode === 'area_state' && (scopeIds || validArea);
+    if (!isOwner) {
+      if (!isSelf && !isScopedAreaRequest) {
+        return historyError(ack, 'forbidden');
+      }
+      const canEdit = await canUserAccessBoard(boardId, uid, true);
+      if (!canEdit) return historyError(ack, 'forbidden');
+    }
+
+    const effectiveTargetUid = typeof targetUid === 'string' && targetUid.length > 0
+      ? targetUid
+      : null;
+    if (!effectiveTargetUid && !scopeIds && !validArea && !isOwner) {
+      return historyError(ack, 'invalid_payload');
+    }
+
     try {
       const timeline = await buildUserTimeline(
         boardId,
-        targetUid,
+        effectiveTargetUid,
         {
           fromTime,
           toTime,
           beforeVersion: beforeVersion == null ? null : Number(beforeVersion),
           limit: Number(limit),
           elementIds: scopeIds,
+          area: validArea,
+          scopeMode: scopeMode === 'area_state' ? 'area_state' : 'my_changes',
           afterVersion: afterVersion == null ? null : Number(afterVersion),
         },
         redis,
@@ -2008,22 +2074,45 @@ io.on('connection', (socket) => {
     if (!(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
     try {
       let opts;
-      if (requestId) {
+      if (requestId && !payload.mode) {
         const reqDoc = await db.collection('boards').doc(boardId)
           .collection('undo_requests').doc(String(requestId)).get();
         if (!reqDoc.exists) return historyError(ack, 'not_found');
         const req = reqDoc.data() || {};
-        opts = {
-          mode: 'user',
-          targetUid: req.requesterUid,
-          elementIds: Array.isArray(req.targetElementIds) ? req.targetElementIds : undefined,
-          fromTime: req.timeRangeStart?.toDate?.().toISOString?.() || undefined,
-          toTime: req.timeRangeEnd?.toDate?.().toISOString?.() || undefined,
-        };
+        if (req.scopeMode === 'area_state' && req.targetVersion != null) {
+          opts = {
+            mode: 'restore',
+            targetVersion: Number(req.targetVersion),
+            elementIds: Array.isArray(req.targetElementIds) ? req.targetElementIds : undefined,
+            area: req.area || undefined,
+          };
+        } else if (req.targetVersion != null) {
+          opts = {
+            mode: 'ops',
+            targetUid: req.requesterUid,
+            afterVersion: Number(req.targetVersion),
+            elementIds: Array.isArray(req.targetElementIds) ? req.targetElementIds : undefined,
+            area: req.area || undefined,
+          };
+        } else {
+          opts = {
+            mode: 'user',
+            targetUid: req.requesterUid,
+            elementIds: Array.isArray(req.targetElementIds) ? req.targetElementIds : undefined,
+            area: req.area || undefined,
+            fromTime: req.timeRangeStart?.toDate?.().toISOString?.() || undefined,
+            toTime: req.timeRangeEnd?.toDate?.().toISOString?.() || undefined,
+          };
+        }
       } else if (payload.mode === 'restore') {
         const targetVersion = Number(payload.targetVersion);
         if (!Number.isFinite(targetVersion)) return historyError(ack, 'invalid_payload');
-        opts = { mode: 'restore', targetVersion };
+        opts = {
+          mode: 'restore',
+          targetVersion,
+          elementIds: Array.isArray(payload.elementIds) ? payload.elementIds : undefined,
+          area: payload.area && typeof payload.area === 'object' ? payload.area : undefined,
+        };
       } else if (payload.mode === 'ops') {
         // Undo specific logged ops (per-op revert, multi-select, or the tail
         // of a user's replay after settling on the scrub slider) — or, without
@@ -2056,6 +2145,7 @@ io.on('connection', (socket) => {
           elementIds: Array.isArray(payload.elementIds)
             ? payload.elementIds
             : undefined,
+          area: payload.area && typeof payload.area === 'object' ? payload.area : undefined,
         };
       } else if (payload.mode === 'user') {
         if (typeof payload.targetUid !== 'string' || !payload.targetUid) {
@@ -2067,6 +2157,20 @@ io.on('connection', (socket) => {
           fromTime: payload.fromTime || undefined,
           toTime: payload.toTime || undefined,
           elementIds: Array.isArray(payload.elementIds) ? payload.elementIds : undefined,
+          area: payload.area && typeof payload.area === 'object' ? payload.area : undefined,
+        };
+      } else if (requestId) {
+        const reqDoc = await db.collection('boards').doc(boardId)
+          .collection('undo_requests').doc(String(requestId)).get();
+        if (!reqDoc.exists) return historyError(ack, 'not_found');
+        const req = reqDoc.data() || {};
+        opts = {
+          mode: 'user',
+          targetUid: req.requesterUid,
+          elementIds: Array.isArray(req.targetElementIds) ? req.targetElementIds : undefined,
+          area: req.area || undefined,
+          fromTime: req.timeRangeStart?.toDate?.().toISOString?.() || undefined,
+          toTime: req.timeRangeEnd?.toDate?.().toISOString?.() || undefined,
         };
       } else {
         return historyError(ack, 'invalid_payload');

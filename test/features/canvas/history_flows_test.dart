@@ -25,7 +25,19 @@ class _FakeHistoryService extends BoardHistoryService {
   String? lastPlanMode;
   int? lastPlanTargetVersion;
   String? lastPlanRequestId;
+  UndoRequestArea? lastPlanArea;
+  List<String>? lastPlanElementIds;
   List<String>? lastUndoUpdateIds;
+  String? lastTimelineTargetUid;
+  UndoRequestScopeMode? lastTimelineScopeMode;
+  UndoRequestArea? lastTimelineArea;
+  List<String>? lastTimelineElementIds;
+  int? lastTimelineAfterVersion;
+  UserTimeline? timeline;
+  int? lastSubmittedTargetVersion;
+  UndoRequestScopeMode? lastSubmittedScopeMode;
+  UndoRequestArea? lastSubmittedArea;
+  List<String>? lastSubmittedElementIds;
 
   HistoryPreview? preview;
   BoardActivityBlock? liveTail;
@@ -62,9 +74,19 @@ class _FakeHistoryService extends BoardHistoryService {
     DateTime? toTime,
     int? beforeVersion,
     List<String>? elementIds,
+    UndoRequestArea? area,
+    UndoRequestScopeMode? scopeMode,
     int? afterVersion,
     int limit = 100,
-  }) => throw UnimplementedError();
+  }) async {
+    lastTimelineTargetUid = targetUid;
+    lastTimelineScopeMode = scopeMode;
+    lastTimelineArea = area;
+    lastTimelineElementIds = elementIds;
+    lastTimelineAfterVersion = afterVersion;
+    if (timeline != null) return timeline!;
+    throw UnimplementedError();
+  }
 
   @override
   Future<RevertPlan> planRevert(
@@ -75,6 +97,8 @@ class _FakeHistoryService extends BoardHistoryService {
     DateTime? fromTime,
     DateTime? toTime,
     List<String>? elementIds,
+    UndoRequestArea? area,
+    UndoRequestScopeMode? scopeMode,
     List<int>? opVersions,
     int? afterVersion,
     String? requestId,
@@ -83,6 +107,8 @@ class _FakeHistoryService extends BoardHistoryService {
     lastPlanMode = mode;
     lastPlanTargetVersion = targetVersion;
     lastPlanRequestId = requestId;
+    lastPlanArea = area;
+    lastPlanElementIds = elementIds;
     return plan;
   }
 
@@ -141,10 +167,17 @@ class _FakeHistoryService extends BoardHistoryService {
     required List<String> elementIds,
     required String reason,
     required int targetVersion,
+    UndoRequestScopeMode scopeMode = UndoRequestScopeMode.myChanges,
     UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,
-  }) => throw UnimplementedError();
+  }) async {
+    lastSubmittedTargetVersion = targetVersion;
+    lastSubmittedScopeMode = scopeMode;
+    lastSubmittedArea = area;
+    lastSubmittedElementIds = elementIds;
+    return 'req-submitted';
+  }
 
   @override
   void dispose() {}
@@ -480,6 +513,183 @@ void main() {
         'block_000101_000200',
         'block_000001_000100',
       ]);
+
+      await bloc.close();
+    });
+  });
+
+  group('area history and undo request slider flows', () {
+    test('owner can scrub history of a selected area and revert only that area', () async {
+      final bloc = buildBloc();
+      _setRole(bloc, Board.roleOwner);
+      await _settle();
+
+      final baseAdapter = await CanvasCrdtAdapter.create();
+      final step1Bytes = baseAdapter.upsertElement('in-1', {
+        'type': 'shape',
+        'shapeType': 'square',
+        'cx': 40.0,
+        'cy': 40.0,
+        'size': 30.0,
+        'strokeWidth': 2.0,
+        'color': 0xFF000000,
+      });
+      final step2Bytes = baseAdapter.upsertElement('in-1', {
+        'type': 'shape',
+        'shapeType': 'square',
+        'cx': 50.0,
+        'cy': 50.0,
+        'size': 30.0,
+        'strokeWidth': 2.0,
+        'color': 0xFFFF0000,
+      });
+
+      history.timeline = UserTimeline(
+        ops: const [
+          BoardOperation(version: 2, summary: 'Added square in-1'),
+          BoardOperation(version: 4, summary: 'Moved square in-1'),
+        ],
+        baseVersion: 1,
+        baseStateBytes: Uint8List(0),
+        steps: [
+          TimelineStep(version: 2, deltaBytes: step1Bytes),
+          TimelineStep(version: 4, deltaBytes: step2Bytes),
+        ],
+      );
+
+      const area = UndoRequestArea(left: 0, top: 0, width: 100, height: 100);
+      bloc.add(
+        const CanvasHistoryAreaScrubRequested(
+          area: area,
+          elementIds: ['in-1'],
+        ),
+      );
+      await _settle(120);
+
+      expect(bloc.state.isViewingHistory, isTrue);
+      expect(bloc.state.historyScrub, isNotNull);
+      expect(bloc.state.historyScrub!.area, area);
+      expect(bloc.state.historyScrub!.scopeMode, UndoRequestScopeMode.areaState);
+      expect(bloc.state.historyScrub!.stops.length, 3);
+      expect(bloc.state.historyScrub!.stepDiffs.length, 3);
+      expect(bloc.state.historyScrub!.diffAt(0)!.totalChanges, greaterThan(0));
+
+      // Scrub back to stop 1 (version 2)
+      bloc.add(const CanvasHistoryScrubMoved(1));
+      await _settle(80);
+      expect(bloc.state.historyScrubIndex, 1);
+
+      // Revert only that area to version 2
+      bloc.add(
+        const CanvasHistoryRestoreRequested(
+          2,
+          elementIds: ['in-1'],
+          area: area,
+        ),
+      );
+      await _settle(80);
+
+      expect(history.lastPlanMode, 'restore');
+      expect(history.lastPlanTargetVersion, 2);
+      expect(history.lastPlanArea, area);
+      expect(history.lastPlanElementIds, ['in-1']);
+
+      await bloc.close();
+    });
+
+    test('member can request whole area state on slider and owner can scrub between requested and current state', () async {
+      final bloc = buildBloc();
+      _setRole(bloc, Board.roleEditor);
+      await _settle();
+
+      final baseAdapter = await CanvasCrdtAdapter.create();
+      final step1Bytes = baseAdapter.upsertElement('e-1', {
+        'type': 'shape',
+        'shapeType': 'square',
+        'cx': 40.0,
+        'cy': 40.0,
+        'size': 30.0,
+        'strokeWidth': 2.0,
+        'color': 0xFF000000,
+      });
+
+      history.timeline = UserTimeline(
+        ops: const [
+          BoardOperation(version: 3, summary: 'Added square e-1'),
+        ],
+        baseVersion: 2,
+        baseStateBytes: Uint8List(0),
+        steps: [
+          TimelineStep(version: 3, deltaBytes: step1Bytes),
+        ],
+      );
+
+      const area = UndoRequestArea(left: 0, top: 0, width: 120, height: 120);
+      bloc.add(
+        const CanvasUndoRequestDraftStarted(
+          preselectedIds: ['e-1'],
+          area: area,
+          scopeMode: UndoRequestScopeMode.areaState,
+        ),
+      );
+      await _settle();
+      expect(
+        bloc.state.undoRequestDraft?.scopeMode,
+        UndoRequestScopeMode.areaState,
+      );
+
+      bloc.add(const CanvasUndoRequestPreviewRequested());
+      await _settle(120);
+
+      expect(bloc.state.isViewingHistory, isTrue);
+      expect(bloc.state.historyScrub, isNotNull);
+      expect(bloc.state.historyScrubIndex, 0);
+      expect(bloc.state.historyScrub!.diffAt(0)!.addedCount, 1);
+
+      bloc.add(const CanvasUndoRequestSubmitRequested('restore whole section'));
+      await _settle(80);
+
+      expect(history.lastSubmittedTargetVersion, 2);
+      expect(history.lastSubmittedScopeMode, UndoRequestScopeMode.areaState);
+      expect(history.lastSubmittedArea, area);
+
+      // Now switch to owner and open evidence of the request:
+      _setRole(bloc, Board.roleOwner);
+      await _settle();
+      bloc.add(
+        const CanvasUndoRequestsUpdated([
+          UndoRequest(
+            requestId: 'req-area',
+            boardId: 'board-1',
+            requesterUid: 'member-1',
+            requesterName: 'Alice',
+            targetElementIds: ['e-1'],
+            targetVersion: 2,
+            scopeMode: UndoRequestScopeMode.areaState,
+            area: area,
+            reason: 'restore whole section',
+          ),
+        ]),
+      );
+      await _settle();
+
+      bloc.add(const CanvasHistoryRequestEvidenceRequested('req-area'));
+      await _settle(120);
+
+      expect(bloc.state.isViewingHistory, isTrue);
+      expect(bloc.state.historyPreviewRequestId, 'req-area');
+      expect(bloc.state.historyScrub, isNotNull);
+      expect(bloc.state.historyScrubIndex, 0, reason: 'starts on requested state');
+
+      // Owner toggles to Current state (jumps slider to lastIndex):
+      bloc.add(const CanvasHistoryEvidenceViewToggled(false));
+      await _settle(80);
+      expect(bloc.state.historyScrubIndex, bloc.state.historyScrub!.lastIndex);
+
+      // Owner toggles back to Requested state (jumps slider to 0):
+      bloc.add(const CanvasHistoryEvidenceViewToggled(true));
+      await _settle(80);
+      expect(bloc.state.historyScrubIndex, 0);
 
       await bloc.close();
     });

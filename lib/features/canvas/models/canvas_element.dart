@@ -127,6 +127,11 @@ sealed class CanvasElement {
           endArrowhead:
               data['endArrowhead'] as bool? ??
               (shapeType == CanvasShapeType.arrow),
+          strokeColor: data['strokeColor'] == null
+              ? null
+              : Color((data['strokeColor'] as num).toInt()),
+          flipH: data['flipH'] as bool? ?? false,
+          flipV: data['flipV'] as bool? ?? false,
         );
       case 'text':
         return TextElement(
@@ -232,6 +237,69 @@ sealed class CanvasElement {
           title: data['title'] as String? ?? '',
           color: Color((data['color'] as num?)?.toInt() ?? 0xFF64748B),
           cornerRadius: (data['cornerRadius'] as num?)?.toDouble() ?? 12,
+          clipContents: data['clipContents'] as bool? ?? false,
+        );
+      case 'table':
+        final rows = ((data['rows'] as num?)?.toInt() ?? 3).clamp(1, 20);
+        final columns = ((data['columns'] as num?)?.toInt() ?? 3).clamp(1, 20);
+        final rawCells = data['cells'] as List<dynamic>? ?? const [];
+        final parsedCells = <TableCellData>[];
+        for (final item in rawCells) {
+          if (item is Map) {
+            parsedCells.add(
+              TableCellData.fromMap(Map<String, dynamic>.from(item)),
+            );
+          } else {
+            parsedCells.add(const TableCellData());
+          }
+        }
+        return TableElement(
+          id: id,
+          z: z,
+          hidden: data['hidden'] as bool? ?? false,
+          locked: data['locked'] as bool? ?? false,
+          opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          center: Offset(
+            (data['cx'] as num?)?.toDouble() ?? 0,
+            (data['cy'] as num?)?.toDouble() ?? 0,
+          ),
+          width: ((data['width'] as num?)?.toDouble() ?? 360)
+              .clamp(TableElement.minCellWidth * columns, 4000.0)
+              .toDouble(),
+          height: ((data['height'] as num?)?.toDouble() ?? 180)
+              .clamp(TableElement.minCellHeight * rows, 4000.0)
+              .toDouble(),
+          rows: rows,
+          columns: columns,
+          cells: TableElement.normalizeCells(parsedCells, rows, columns),
+          headerRow: data['headerRow'] as bool? ?? true,
+          borderColor: Color(
+            (data['borderColor'] as num?)?.toInt() ?? 0xFFCBD5E1,
+          ),
+          borderWidth:
+              ((data['borderWidth'] as num?)?.toDouble() ?? 1.5).clamp(0.5, 12),
+          cellPadding:
+              ((data['cellPadding'] as num?)?.toDouble() ?? 8.0).clamp(2, 32),
+          fontSize:
+              ((data['fontSize'] as num?)?.toDouble() ?? 13.0).clamp(8, 64),
+          textColor: Color(
+            (data['textColor'] as num?)?.toInt() ?? 0xFF0F172A,
+          ),
+          backgroundColor: Color(
+            (data['backgroundColor'] as num?)?.toInt() ?? 0xFFFFFFFF,
+          ),
+          headerBackgroundColor: Color(
+            (data['headerBackgroundColor'] as num?)?.toInt() ?? 0xFFF1F5F9,
+          ),
+          columnFractions: (data['columnFractions'] as List<dynamic>?)
+                  ?.map((v) => (v as num).toDouble())
+                  .toList(growable: false) ??
+              const [],
+          rowFractions: (data['rowFractions'] as List<dynamic>?)
+                  ?.map((v) => (v as num).toDouble())
+                  .toList(growable: false) ??
+              const [],
+          rotation: (data['rotation'] as num?)?.toDouble() ?? 0,
         );
       case 'layer':
         return LayerElement(
@@ -486,6 +554,7 @@ class ShapeElement extends CanvasElement {
   Color get resolvedFillColor => fillColor ?? color;
   Color get resolvedGradientStart => gradientStart ?? resolvedFillColor;
   Color get resolvedGradientEnd => gradientEnd ?? Colors.white;
+  Color get resolvedStrokeColor => strokeColor ?? color;
 
   final double rotation;
   final double borderRadius;
@@ -501,6 +570,14 @@ class ShapeElement extends CanvasElement {
   /// [endArrowhead] to true so they keep their head on read.
   final bool startArrowhead;
   final bool endArrowhead;
+
+  /// Optional outline color separate from [color] (F-10). When null, falls
+  /// back to [color] so legacy payloads render identically.
+  final Color? strokeColor;
+
+  /// Horizontal/vertical mirror applied around [center] (F-10).
+  final bool flipH;
+  final bool flipV;
 
   const ShapeElement({
     required super.id,
@@ -532,6 +609,9 @@ class ShapeElement extends CanvasElement {
     this.labelTextAlign = 'center',
     this.startArrowhead = false,
     this.endArrowhead = false,
+    this.strokeColor,
+    this.flipH = false,
+    this.flipV = false,
   });
 
   @override
@@ -548,6 +628,7 @@ class ShapeElement extends CanvasElement {
     'width': width,
     'height': height,
     'color': color.value,
+    if (strokeColor != null) 'strokeColor': strokeColor!.value,
     'strokeWidth': strokeWidth,
     'strokeOpacity': strokeOpacity,
     if (dashPattern != null) 'dashPattern': dashPattern,
@@ -566,6 +647,8 @@ class ShapeElement extends CanvasElement {
     'labelTextAlign': labelTextAlign,
     'startArrowhead': startArrowhead,
     'endArrowhead': endArrowhead,
+    if (flipH) 'flipH': flipH,
+    if (flipV) 'flipV': flipV,
   };
 
   @override
@@ -579,6 +662,7 @@ class ShapeElement extends CanvasElement {
           width == other.width &&
           height == other.height &&
           color == other.color &&
+          strokeColor == other.strokeColor &&
           strokeWidth == other.strokeWidth &&
           strokeOpacity == other.strokeOpacity &&
           _dashEquals(dashPattern, other.dashPattern) &&
@@ -595,7 +679,9 @@ class ShapeElement extends CanvasElement {
           labelFontWeight == other.labelFontWeight &&
           labelTextAlign == other.labelTextAlign &&
           startArrowhead == other.startArrowhead &&
-          endArrowhead == other.endArrowhead;
+          endArrowhead == other.endArrowhead &&
+          flipH == other.flipH &&
+          flipV == other.flipV;
 
   @override
   int get hashCode =>
@@ -606,6 +692,7 @@ class ShapeElement extends CanvasElement {
       width.hashCode ^
       height.hashCode ^
       color.hashCode ^
+      strokeColor.hashCode ^
       strokeWidth.hashCode ^
       strokeOpacity.hashCode ^
       Object.hashAll(dashPattern ?? const []) ^
@@ -623,7 +710,9 @@ class ShapeElement extends CanvasElement {
       labelFontWeight.hashCode ^
       labelTextAlign.hashCode ^
       startArrowhead.hashCode ^
-      endArrowhead.hashCode;
+      endArrowhead.hashCode ^
+      flipH.hashCode ^
+      flipV.hashCode;
 
   static bool _dashEquals(List<double>? a, List<double>? b) {
     if (a == null || b == null) return a == null && b == null;
@@ -1089,6 +1178,7 @@ class FrameElement extends CanvasElement {
   final String title;
   final Color color;
   final double cornerRadius;
+  final bool clipContents;
 
   static const double defaultWidth = 480;
   static const double defaultHeight = 320;
@@ -1106,6 +1196,7 @@ class FrameElement extends CanvasElement {
     this.title = '',
     this.color = const Color(0xFF64748B),
     this.cornerRadius = 12,
+    this.clipContents = false,
   });
 
   FrameElement copyWith({
@@ -1119,6 +1210,7 @@ class FrameElement extends CanvasElement {
     String? title,
     Color? color,
     double? cornerRadius,
+    bool? clipContents,
   }) => FrameElement(
     id: id,
     z: z ?? this.z,
@@ -1131,6 +1223,7 @@ class FrameElement extends CanvasElement {
     title: title ?? this.title,
     color: color ?? this.color,
     cornerRadius: cornerRadius ?? this.cornerRadius,
+    clipContents: clipContents ?? this.clipContents,
   );
 
   @override
@@ -1147,6 +1240,7 @@ class FrameElement extends CanvasElement {
     'title': title,
     'color': color.toARGB32(),
     'cornerRadius': cornerRadius,
+    if (clipContents) 'clipContents': clipContents,
   };
 
   @override
@@ -1159,7 +1253,8 @@ class FrameElement extends CanvasElement {
           height == other.height &&
           title == other.title &&
           color == other.color &&
-          cornerRadius == other.cornerRadius;
+          cornerRadius == other.cornerRadius &&
+          clipContents == other.clipContents;
 
   @override
   int get hashCode => Object.hash(
@@ -1170,6 +1265,329 @@ class FrameElement extends CanvasElement {
     title,
     color,
     cornerRadius,
+    clipContents,
+  );
+}
+
+/// Cell payload inside a [TableElement] (F-16).
+class TableCellData {
+  final String text;
+  final Color? backgroundColor;
+  final Color? textColor;
+  final int? fontWeight;
+  final String textAlign;
+
+  const TableCellData({
+    this.text = '',
+    this.backgroundColor,
+    this.textColor,
+    this.fontWeight,
+    this.textAlign = 'left',
+  });
+
+  TableCellData copyWith({
+    String? text,
+    Color? backgroundColor,
+    bool clearBackgroundColor = false,
+    Color? textColor,
+    bool clearTextColor = false,
+    int? fontWeight,
+    bool clearFontWeight = false,
+    String? textAlign,
+  }) => TableCellData(
+    text: text ?? this.text,
+    backgroundColor: clearBackgroundColor
+        ? null
+        : (backgroundColor ?? this.backgroundColor),
+    textColor: clearTextColor ? null : (textColor ?? this.textColor),
+    fontWeight: clearFontWeight ? null : (fontWeight ?? this.fontWeight),
+    textAlign: textAlign ?? this.textAlign,
+  );
+
+  Map<String, dynamic> toMap() => {
+    'text': text,
+    if (backgroundColor != null)
+      'backgroundColor': backgroundColor!.toARGB32(),
+    if (textColor != null) 'textColor': textColor!.toARGB32(),
+    if (fontWeight != null) 'fontWeight': fontWeight,
+    if (textAlign != 'left') 'textAlign': textAlign,
+  };
+
+  static TableCellData fromMap(Map<String, dynamic> map) {
+    final align = map['textAlign'] as String? ?? 'left';
+    return TableCellData(
+      text: map['text'] as String? ?? '',
+      backgroundColor: map['backgroundColor'] == null
+          ? null
+          : Color((map['backgroundColor'] as num).toInt()),
+      textColor: map['textColor'] == null
+          ? null
+          : Color((map['textColor'] as num).toInt()),
+      fontWeight: (map['fontWeight'] as num?)?.toInt(),
+      textAlign: const {'left', 'center', 'right'}.contains(align)
+          ? align
+          : 'left',
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TableCellData &&
+          text == other.text &&
+          backgroundColor == other.backgroundColor &&
+          textColor == other.textColor &&
+          fontWeight == other.fontWeight &&
+          textAlign == other.textAlign;
+
+  @override
+  int get hashCode =>
+      Object.hash(text, backgroundColor, textColor, fontWeight, textAlign);
+}
+
+/// A structured grid of editable cells with optional header row and resizable
+/// column/row fractions (F-16).
+class TableElement extends CanvasElement {
+  final Offset center;
+  final double width;
+  final double height;
+  final int rows;
+  final int columns;
+  final List<TableCellData> cells;
+  final bool headerRow;
+  final Color borderColor;
+  final double borderWidth;
+  final double cellPadding;
+  final double fontSize;
+  final Color textColor;
+  final Color backgroundColor;
+  final Color headerBackgroundColor;
+  final List<double> columnFractions;
+  final List<double> rowFractions;
+  final double rotation;
+
+  static const int maxRows = 20;
+  static const int maxColumns = 20;
+  static const int maxTotalCells = 200;
+  static const double minCellWidth = 28;
+  static const double minCellHeight = 20;
+
+  const TableElement({
+    required super.id,
+    required super.z,
+    super.hidden,
+    super.locked,
+    super.opacity,
+    required this.center,
+    this.width = 360,
+    this.height = 180,
+    this.rows = 3,
+    this.columns = 3,
+    this.cells = const [],
+    this.headerRow = true,
+    this.borderColor = const Color(0xFFCBD5E1),
+    this.borderWidth = 1.5,
+    this.cellPadding = 8.0,
+    this.fontSize = 13.0,
+    this.textColor = const Color(0xFF0F172A),
+    this.backgroundColor = const Color(0xFFFFFFFF),
+    this.headerBackgroundColor = const Color(0xFFF1F5F9),
+    this.columnFractions = const [],
+    this.rowFractions = const [],
+    this.rotation = 0,
+  });
+
+  static List<TableCellData> normalizeCells(
+    List<TableCellData> raw,
+    int rows,
+    int columns,
+  ) {
+    final target = (rows * columns).clamp(1, maxTotalCells);
+    if (raw.length == target) return List<TableCellData>.unmodifiable(raw);
+    if (raw.length > target) {
+      return List<TableCellData>.unmodifiable(raw.sublist(0, target));
+    }
+    return List<TableCellData>.unmodifiable([
+      ...raw,
+      for (var i = raw.length; i < target; i++) const TableCellData(),
+    ]);
+  }
+
+  static List<double> normalizeFractions(List<double> raw, int count) {
+    if (count <= 0) return const [];
+    if (raw.length != count) {
+      final uniform = 1.0 / count;
+      return List<double>.filled(count, uniform);
+    }
+    var sum = 0.0;
+    final clamped = <double>[];
+    for (final v in raw) {
+      final safe = (v.isFinite && v > 0.02) ? v : 0.02;
+      clamped.add(safe);
+      sum += safe;
+    }
+    if (sum <= 0) {
+      return List<double>.filled(count, 1.0 / count);
+    }
+    return clamped.map((v) => v / sum).toList(growable: false);
+  }
+
+  List<double> get resolvedColumnFractions =>
+      normalizeFractions(columnFractions, columns);
+
+  List<double> get resolvedRowFractions =>
+      normalizeFractions(rowFractions, rows);
+
+  TableCellData cellAt(int row, int col) {
+    if (row < 0 || row >= rows || col < 0 || col >= columns) {
+      return const TableCellData();
+    }
+    final idx = row * columns + col;
+    if (idx < 0 || idx >= cells.length) return const TableCellData();
+    return cells[idx];
+  }
+
+  TableElement copyWith({
+    int? z,
+    bool? hidden,
+    bool? locked,
+    double? opacity,
+    Offset? center,
+    double? width,
+    double? height,
+    int? rows,
+    int? columns,
+    List<TableCellData>? cells,
+    bool? headerRow,
+    Color? borderColor,
+    double? borderWidth,
+    double? cellPadding,
+    double? fontSize,
+    Color? textColor,
+    Color? backgroundColor,
+    Color? headerBackgroundColor,
+    List<double>? columnFractions,
+    List<double>? rowFractions,
+    double? rotation,
+  }) {
+    final nextRows = rows ?? this.rows;
+    final nextCols = columns ?? this.columns;
+    return TableElement(
+      id: id,
+      z: z ?? this.z,
+      hidden: hidden ?? this.hidden,
+      locked: locked ?? this.locked,
+      opacity: opacity ?? this.opacity,
+      center: center ?? this.center,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      rows: nextRows,
+      columns: nextCols,
+      cells: normalizeCells(cells ?? this.cells, nextRows, nextCols),
+      headerRow: headerRow ?? this.headerRow,
+      borderColor: borderColor ?? this.borderColor,
+      borderWidth: borderWidth ?? this.borderWidth,
+      cellPadding: cellPadding ?? this.cellPadding,
+      fontSize: fontSize ?? this.fontSize,
+      textColor: textColor ?? this.textColor,
+      backgroundColor: backgroundColor ?? this.backgroundColor,
+      headerBackgroundColor:
+          headerBackgroundColor ?? this.headerBackgroundColor,
+      columnFractions: columnFractions ?? this.columnFractions,
+      rowFractions: rowFractions ?? this.rowFractions,
+      rotation: rotation ?? this.rotation,
+    );
+  }
+
+  @override
+  Map<String, dynamic> toMap() => {
+    'type': 'table',
+    'z': z,
+    'hidden': hidden,
+    'locked': locked,
+    'opacity': opacity,
+    'cx': center.dx,
+    'cy': center.dy,
+    'width': width,
+    'height': height,
+    'rows': rows,
+    'columns': columns,
+    'cells': normalizeCells(cells, rows, columns)
+        .map((c) => c.toMap())
+        .toList(growable: false),
+    'headerRow': headerRow,
+    'borderColor': borderColor.toARGB32(),
+    'borderWidth': borderWidth,
+    'cellPadding': cellPadding,
+    'fontSize': fontSize,
+    'textColor': textColor.toARGB32(),
+    'backgroundColor': backgroundColor.toARGB32(),
+    'headerBackgroundColor': headerBackgroundColor.toARGB32(),
+    if (columnFractions.isNotEmpty) 'columnFractions': columnFractions,
+    if (rowFractions.isNotEmpty) 'rowFractions': rowFractions,
+    'rotation': rotation,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TableElement &&
+          super == other &&
+          center == other.center &&
+          width == other.width &&
+          height == other.height &&
+          rows == other.rows &&
+          columns == other.columns &&
+          headerRow == other.headerRow &&
+          borderColor == other.borderColor &&
+          borderWidth == other.borderWidth &&
+          cellPadding == other.cellPadding &&
+          fontSize == other.fontSize &&
+          textColor == other.textColor &&
+          backgroundColor == other.backgroundColor &&
+          headerBackgroundColor == other.headerBackgroundColor &&
+          rotation == other.rotation &&
+          _cellsEqual(cells, other.cells) &&
+          _fractionsEqual(
+            resolvedColumnFractions,
+            other.resolvedColumnFractions,
+          ) &&
+          _fractionsEqual(resolvedRowFractions, other.resolvedRowFractions);
+
+  static bool _cellsEqual(List<TableCellData> a, List<TableCellData> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  static bool _fractionsEqual(List<double> a, List<double> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if ((a[i] - b[i]).abs() > 1e-6) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    super.hashCode,
+    center,
+    width,
+    height,
+    rows,
+    columns,
+    headerRow,
+    borderColor,
+    borderWidth,
+    cellPadding,
+    fontSize,
+    textColor,
+    backgroundColor,
+    headerBackgroundColor,
+    rotation,
+    Object.hashAll(cells),
   );
 }
 

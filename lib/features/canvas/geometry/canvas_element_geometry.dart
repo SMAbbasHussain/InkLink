@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../models/brush_preset.dart';
 import '../models/canvas_element.dart';
+import '../../../domain/models/canvas/canvas_board_settings.dart';
 import '../../../domain/models/canvas/canvas_shape_type.dart';
 
 export '../../../domain/services/canvas/canvas_render_utils.dart';
@@ -255,6 +256,11 @@ Path buildShapePath(ShapeElement element) {
         ..moveTo(-hw, 0)
         ..lineTo(hw, 0);
   }
+  if (element.flipH || element.flipV) {
+    final sx = element.flipH ? -1.0 : 1.0;
+    final sy = element.flipV ? -1.0 : 1.0;
+    return path.transform(Matrix4.diagonal3Values(sx, sy, 1.0).storage);
+  }
   return path;
 }
 
@@ -364,7 +370,7 @@ void paintShapeElement(Canvas canvas, ShapeElement shape) {
     canvas.drawPath(path, paint);
   }
 
-  final strokeColor = shape.color.withValues(
+  final strokeColor = shape.resolvedStrokeColor.withValues(
     alpha: shape.strokeOpacity.clamp(0.0, 1.0),
   );
   if (shape.strokeWidth > 0) {
@@ -383,12 +389,19 @@ void paintShapeElement(Canvas canvas, ShapeElement shape) {
     final headPaint = Paint()
       ..color = strokeColor
       ..style = PaintingStyle.fill;
+    final endX = shape.flipH ? -hw : hw;
+    final endDir = shape.flipH ? math.pi : 0.0;
+    final startX = -endX;
+    final startDir = shape.flipH ? 0.0 : math.pi;
     if (shape.endArrowhead) {
-      canvas.drawPath(shapeArrowheadPath(Offset(hw, 0), 0, headLen), headPaint);
+      canvas.drawPath(
+        shapeArrowheadPath(Offset(endX, 0), endDir, headLen),
+        headPaint,
+      );
     }
     if (shape.startArrowhead) {
       canvas.drawPath(
-        shapeArrowheadPath(Offset(-hw, 0), math.pi, headLen),
+        shapeArrowheadPath(Offset(startX, 0), startDir, headLen),
         headPaint,
       );
     }
@@ -529,6 +542,108 @@ List<CanvasElement> elementsContainedByFrame(
     .where((element) => frameContainsElement(frame, element))
     .toList(growable: false);
 
+/// Returns the topmost clipping [FrameElement] whose bounds contain [element]'s
+/// center (and whose `z` is at or below [element]'s `z`), or `null` if none.
+FrameElement? enclosingClipFrame(
+  CanvasElement element,
+  List<FrameElement> clipFrames,
+) {
+  if (clipFrames.isEmpty ||
+      element is FrameElement ||
+      element is LayerElement) {
+    return null;
+  }
+  final bounds = elementBounds(element);
+  if (bounds == null) return null;
+  for (final frame in clipFrames.reversed) {
+    if (!frame.clipContents) continue;
+    if (frameRect(frame).contains(bounds.center)) {
+      return frame;
+    }
+  }
+  return null;
+}
+
+/// Paints the background paper pattern (dots, grid, lines, isometric) inside
+/// [worldRect] in world coordinates so live canvas and exports match.
+void paintBoardBackgroundPattern(
+  Canvas canvas,
+  Rect worldRect,
+  CanvasBoardSettings settings, {
+  double strokeScale = 1.0,
+}) {
+  if (settings.backgroundPattern == CanvasBackgroundPattern.none) return;
+  final step = settings.patternSpacing > 0 ? settings.patternSpacing : 32.0;
+  if (step * strokeScale < 4) return;
+  final isDark = settings.backgroundColor.computeLuminance() < 0.4;
+  final color = (isDark ? Colors.white : Colors.black).withValues(alpha: 0.1);
+  final paint = Paint()
+    ..color = color
+    ..strokeWidth = 1.0 / (strokeScale > 0 ? strokeScale : 1.0);
+  final firstX = (worldRect.left / step).floorToDouble() * step;
+  final firstY = (worldRect.top / step).floorToDouble() * step;
+
+  canvas.save();
+  canvas.clipRect(worldRect);
+  switch (settings.backgroundPattern) {
+    case CanvasBackgroundPattern.none:
+      break;
+    case CanvasBackgroundPattern.dots:
+      final dots = Paint()..color = color;
+      final radius = 1.3 / (strokeScale > 0 ? strokeScale : 1.0);
+      for (var x = firstX; x <= worldRect.right; x += step) {
+        for (var y = firstY; y <= worldRect.bottom; y += step) {
+          canvas.drawCircle(Offset(x, y), radius, dots);
+        }
+      }
+      break;
+    case CanvasBackgroundPattern.grid:
+      for (var x = firstX; x <= worldRect.right; x += step) {
+        canvas.drawLine(
+          Offset(x, worldRect.top),
+          Offset(x, worldRect.bottom),
+          paint,
+        );
+      }
+      for (var y = firstY; y <= worldRect.bottom; y += step) {
+        canvas.drawLine(
+          Offset(worldRect.left, y),
+          Offset(worldRect.right, y),
+          paint,
+        );
+      }
+      break;
+    case CanvasBackgroundPattern.lines:
+      for (var y = firstY; y <= worldRect.bottom; y += step) {
+        canvas.drawLine(
+          Offset(worldRect.left, y),
+          Offset(worldRect.right, y),
+          paint,
+        );
+      }
+      break;
+    case CanvasBackgroundPattern.isometric:
+      final isoStep = step * 1.5;
+      final h = worldRect.height;
+      final start = (worldRect.left - h) / isoStep;
+      final firstIso = start.floorToDouble() * isoStep;
+      for (var x = firstIso; x <= worldRect.right + h; x += isoStep) {
+        canvas.drawLine(
+          Offset(x, worldRect.top),
+          Offset(x + h, worldRect.bottom),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(x, worldRect.bottom),
+          Offset(x + h, worldRect.top),
+          paint,
+        );
+      }
+      break;
+  }
+  canvas.restore();
+}
+
 /// Paints a frame identically on the interactive canvas and in PNG/PDF
 /// export: a faint paper tint and a border. Frames carry no heading.
 void paintFrameElement(Canvas canvas, FrameElement frame) {
@@ -608,6 +723,11 @@ Rect? elementBounds(CanvasElement element, {double padding = 0}) {
       ).inflate(padding);
     case FrameElement e:
       return frameRect(e).inflate(1.5 + padding);
+    case TableElement e:
+      return rotatedRectBounds(
+        tableElementRect(e),
+        e.rotation,
+      ).inflate(e.borderWidth / 2 + padding);
     case ConnectorElement e:
       final points = connectorPolyline(
         e.startPoint,
@@ -1137,6 +1257,11 @@ bool elementContains(
       return rect
           .inflate(tolerance)
           .contains(rotatePoint(point, e.center, -e.rotation));
+    case TableElement e:
+      final rect = tableElementRect(e);
+      return rect
+          .inflate(tolerance + e.borderWidth / 2)
+          .contains(rotatePoint(point, e.center, -e.rotation));
   }
 }
 
@@ -1393,6 +1518,18 @@ Rect? elementsBounds(Iterable<CanvasElement> elements) {
                 height: base.height,
               ),
         0.0,
+      );
+    case TableElement e:
+      final base = tableElementRect(e);
+      return (
+        overrideCenter == null
+            ? base
+            : Rect.fromCenter(
+                center: overrideCenter,
+                width: base.width,
+                height: base.height,
+              ),
+        e.rotation,
       );
     case StrokeElement _:
     case ConnectorElement _:
@@ -1778,4 +1915,286 @@ void paintStickyNoteElement(Canvas canvas, StickyNoteElement note) {
     layout.painter.dispose();
   }
   canvas.restore();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F-16: Table geometry & shared renderer
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Unrotated bounding box of [table].
+Rect tableElementRect(TableElement table) => Rect.fromCenter(
+  center: table.center,
+  width: math.max(TableElement.minCellWidth * table.columns, table.width),
+  height: math.max(TableElement.minCellHeight * table.rows, table.height),
+);
+
+/// Cumulative column X coordinates from `rect.left` to `rect.right` (len = columns + 1).
+List<double> tableColumnOffsets(TableElement table, [Rect? rect]) {
+  final box = rect ?? tableElementRect(table);
+  final fracs = table.resolvedColumnFractions;
+  final xs = <double>[box.left];
+  var acc = 0.0;
+  for (var i = 0; i < fracs.length; i++) {
+    acc += fracs[i];
+    xs.add(i == fracs.length - 1 ? box.right : box.left + box.width * acc);
+  }
+  return xs;
+}
+
+/// Cumulative row Y coordinates from `rect.top` to `rect.bottom` (len = rows + 1).
+List<double> tableRowOffsets(TableElement table, [Rect? rect]) {
+  final box = rect ?? tableElementRect(table);
+  final fracs = table.resolvedRowFractions;
+  final ys = <double>[box.top];
+  var acc = 0.0;
+  for (var i = 0; i < fracs.length; i++) {
+    acc += fracs[i];
+    ys.add(i == fracs.length - 1 ? box.bottom : box.top + box.height * acc);
+  }
+  return ys;
+}
+
+/// Unrotated bounds of cell `(row, col)` inside [table].
+Rect tableCellRect(TableElement table, int row, int col) {
+  final rect = tableElementRect(table);
+  final xs = tableColumnOffsets(table, rect);
+  final ys = tableRowOffsets(table, rect);
+  final r = row.clamp(0, table.rows - 1);
+  final c = col.clamp(0, table.columns - 1);
+  return Rect.fromLTRB(xs[c], ys[r], xs[c + 1], ys[r + 1]);
+}
+
+/// Returns `(row, col)` if [point] falls inside [table], otherwise `null`.
+(int, int)? tableHitTestCell(TableElement table, Offset point) {
+  final local = rotatePoint(point, table.center, -table.rotation);
+  final rect = tableElementRect(table);
+  if (!rect.contains(local)) return null;
+  final xs = tableColumnOffsets(table, rect);
+  final ys = tableRowOffsets(table, rect);
+  var col = table.columns - 1;
+  for (var c = 0; c < table.columns; c++) {
+    if (local.dx <= xs[c + 1]) {
+      col = c;
+      break;
+    }
+  }
+  var row = table.rows - 1;
+  for (var r = 0; r < table.rows; r++) {
+    if (local.dy <= ys[r + 1]) {
+      row = r;
+      break;
+    }
+  }
+  return (row, col);
+}
+
+/// Renders a [TableElement] identically on canvas, PNG, and PDF.
+void paintTableElement(Canvas canvas, TableElement table) {
+  final rect = tableElementRect(table);
+  final xs = tableColumnOffsets(table, rect);
+  final ys = tableRowOffsets(table, rect);
+
+  canvas.save();
+  if (table.rotation != 0) {
+    canvas.translate(table.center.dx, table.center.dy);
+    canvas.rotate(table.rotation);
+    canvas.translate(-table.center.dx, -table.center.dy);
+  }
+
+  // Table background
+  canvas.drawRect(rect, Paint()..color = table.backgroundColor);
+
+  // Header row background
+  if (table.headerRow && ys.length >= 2) {
+    canvas.drawRect(
+      Rect.fromLTRB(rect.left, ys[0], rect.right, ys[1]),
+      Paint()..color = table.headerBackgroundColor,
+    );
+  }
+
+  // Per-cell backgrounds & text
+  for (var r = 0; r < table.rows; r++) {
+    for (var c = 0; c < table.columns; c++) {
+      final cell = table.cellAt(r, c);
+      final cellRect = Rect.fromLTRB(xs[c], ys[r], xs[c + 1], ys[r + 1]);
+      if (cell.backgroundColor != null) {
+        canvas.drawRect(cellRect, Paint()..color = cell.backgroundColor!);
+      }
+      if (cell.text.isEmpty) continue;
+      final pad = math.min(
+        table.cellPadding,
+        math.min(cellRect.width, cellRect.height) * 0.25,
+      );
+      final contentRect = cellRect.deflate(pad);
+      if (contentRect.width <= 1 || contentRect.height <= 1) continue;
+      final isHeader = table.headerRow && r == 0;
+      final weight = cell.fontWeight ?? (isHeader ? 700 : 400);
+      final layout = CanvasTextLayout.layout(
+        text: cell.text,
+        fontSize: table.fontSize,
+        fontWeight: weight,
+        textAlign: cell.textAlign,
+        lineHeight: 1.25,
+        maxWidth: contentRect.width,
+        color: cell.textColor ?? table.textColor,
+      );
+      layout.painter.layout(
+        minWidth: contentRect.width,
+        maxWidth: contentRect.width,
+      );
+      canvas.save();
+      canvas.clipRect(contentRect);
+      final dy = contentRect.top +
+          math.max(0.0, (contentRect.height - layout.painter.height) / 2);
+      layout.painter.paint(canvas, Offset(contentRect.left, dy));
+      canvas.restore();
+      layout.painter.dispose();
+    }
+  }
+
+  // Grid lines & outer border
+  final borderPaint = Paint()
+    ..color = table.borderColor
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = table.borderWidth;
+  for (var c = 1; c < table.columns; c++) {
+    canvas.drawLine(
+      Offset(xs[c], rect.top),
+      Offset(xs[c], rect.bottom),
+      borderPaint,
+    );
+  }
+  for (var r = 1; r < table.rows; r++) {
+    canvas.drawLine(
+      Offset(rect.left, ys[r]),
+      Offset(rect.right, ys[r]),
+      borderPaint,
+    );
+  }
+  canvas.drawRect(rect, borderPaint);
+  canvas.restore();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F-18: Symmetry & Snapping geometry helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Computes the mirrored/radial duplicate points for [point] according to
+/// [settings]. The returned list does NOT include [point] itself.
+List<Offset> symmetryMirroredCopies(
+  Offset point,
+  CanvasBoardSettings settings,
+) {
+  switch (settings.symmetryMode) {
+    case CanvasSymmetryMode.none:
+      return const [];
+    case CanvasSymmetryMode.vertical:
+      final cx = settings.symmetryCenter.dx;
+      return [Offset(2 * cx - point.dx, point.dy)];
+    case CanvasSymmetryMode.horizontal:
+      final cy = settings.symmetryCenter.dy;
+      return [Offset(point.dx, 2 * cy - point.dy)];
+    case CanvasSymmetryMode.radial:
+      final count = settings.symmetryCount.clamp(2, 16);
+      final center = settings.symmetryCenter;
+      final result = <Offset>[];
+      final stepAngle = (2 * math.pi) / count;
+      for (var i = 1; i < count; i++) {
+        result.add(rotatePoint(point, center, stepAngle * i));
+      }
+      return result;
+  }
+}
+
+/// Computes mirrored/radial copies of an entire polyline path according to
+/// [settings]. Does NOT include [points] itself.
+List<List<Offset>> symmetryMirroredPolylines(
+  List<Offset> points,
+  CanvasBoardSettings settings,
+) {
+  if (settings.symmetryMode == CanvasSymmetryMode.none || points.isEmpty) {
+    return const [];
+  }
+  if (settings.symmetryMode == CanvasSymmetryMode.radial) {
+    final count = settings.symmetryCount.clamp(2, 16);
+    final center = settings.symmetryCenter;
+    final stepAngle = (2 * math.pi) / count;
+    return [
+      for (var i = 1; i < count; i++)
+        [for (final p in points) rotatePoint(p, center, stepAngle * i)],
+    ];
+  }
+  final mirrored = <Offset>[
+    for (final p in points) ...symmetryMirroredCopies(p, settings),
+  ];
+  return [mirrored];
+}
+
+/// Snaps a dragged selection's [proposedBounds] to enabled grid intersections
+/// and ruler guides, returning the adjusted movement delta offset from the
+/// proposed position.
+Offset snapBoundsAdjustment(
+  Rect proposedBounds,
+  CanvasBoardSettings settings, {
+  double viewportScale = 1.0,
+}) {
+  if (!settings.snapEnabled) return Offset.zero;
+  final scale = viewportScale > 0.05 ? viewportScale : 1.0;
+  final threshold = settings.snapDistance / scale;
+  final grid = settings.patternSpacing > 0 ? settings.patternSpacing : 32.0;
+
+  double bestDx = 0;
+  var minAbsDx = threshold + 1;
+  final xCandidates = <double>[
+    proposedBounds.left,
+    proposedBounds.center.dx,
+    proposedBounds.right,
+  ];
+  // Snap X to guides first, then grid lines
+  for (final x in xCandidates) {
+    for (final guide in settings.guides) {
+      if (guide.axis != CanvasGuideAxis.vertical) continue;
+      final diff = guide.position - x;
+      if (diff.abs() <= threshold && diff.abs() < minAbsDx) {
+        minAbsDx = diff.abs();
+        bestDx = diff;
+      }
+    }
+    if (settings.backgroundPattern != CanvasBackgroundPattern.none) {
+      final snappedX = (x / grid).roundToDouble() * grid;
+      final diff = snappedX - x;
+      if (diff.abs() <= threshold && diff.abs() < minAbsDx) {
+        minAbsDx = diff.abs();
+        bestDx = diff;
+      }
+    }
+  }
+
+  double bestDy = 0;
+  var minAbsDy = threshold + 1;
+  final yCandidates = <double>[
+    proposedBounds.top,
+    proposedBounds.center.dy,
+    proposedBounds.bottom,
+  ];
+  for (final y in yCandidates) {
+    for (final guide in settings.guides) {
+      if (guide.axis != CanvasGuideAxis.horizontal) continue;
+      final diff = guide.position - y;
+      if (diff.abs() <= threshold && diff.abs() < minAbsDy) {
+        minAbsDy = diff.abs();
+        bestDy = diff;
+      }
+    }
+    if (settings.backgroundPattern != CanvasBackgroundPattern.none) {
+      final snappedY = (y / grid).roundToDouble() * grid;
+      final diff = snappedY - y;
+      if (diff.abs() <= threshold && diff.abs() < minAbsDy) {
+        minAbsDy = diff.abs();
+        bestDy = diff;
+      }
+    }
+  }
+
+  return Offset(bestDx, bestDy);
 }

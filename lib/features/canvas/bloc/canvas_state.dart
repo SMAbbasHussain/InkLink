@@ -116,7 +116,10 @@ class CanvasState {
   final String? historyPreviewRequestId;
   final bool historyPreviewShowsDesired;
   final bool isSelectingUndoRequestArea;
+  final bool isSelectingHistoryArea;
   final List<BoardActivityBlock> activityBlocks;
+  final bool hasMoreHistoryVersions;
+  final int? historyNextBeforeVersion;
   final List<UndoRequest> undoRequests;
   final RevertPlan? activeRevertPlan;
   final bool isHistoryLoading;
@@ -225,7 +228,10 @@ class CanvasState {
     this.historyPreviewCompare = false,
     this.historyPreviewOpVersions = const [],
     this.isSelectingUndoRequestArea = false,
+    this.isSelectingHistoryArea = false,
     this.activityBlocks = const [],
+    this.hasMoreHistoryVersions = false,
+    this.historyNextBeforeVersion,
     this.undoRequests = const [],
     this.activeRevertPlan,
     this.isHistoryLoading = false,
@@ -313,7 +319,10 @@ class CanvasState {
     bool? historyPreviewCompare,
     List<int>? historyPreviewOpVersions,
     bool? isSelectingUndoRequestArea,
+    bool? isSelectingHistoryArea,
     List<BoardActivityBlock>? activityBlocks,
+    bool? hasMoreHistoryVersions,
+    Object? historyNextBeforeVersion = _unset,
     List<UndoRequest>? undoRequests,
     Object? activeRevertPlan = _unset,
     bool? isHistoryLoading,
@@ -449,7 +458,14 @@ class CanvasState {
           historyPreviewOpVersions ?? this.historyPreviewOpVersions,
       isSelectingUndoRequestArea:
           isSelectingUndoRequestArea ?? this.isSelectingUndoRequestArea,
+      isSelectingHistoryArea:
+          isSelectingHistoryArea ?? this.isSelectingHistoryArea,
       activityBlocks: activityBlocks ?? this.activityBlocks,
+      hasMoreHistoryVersions:
+          hasMoreHistoryVersions ?? this.hasMoreHistoryVersions,
+      historyNextBeforeVersion: historyNextBeforeVersion == _unset
+          ? this.historyNextBeforeVersion
+          : historyNextBeforeVersion as int?,
       undoRequests: undoRequests ?? this.undoRequests,
       activeRevertPlan: activeRevertPlan == _unset
           ? this.activeRevertPlan
@@ -572,7 +588,10 @@ class CanvasState {
           historyPreviewCompare == other.historyPreviewCompare &&
           _listEquals(historyPreviewOpVersions, other.historyPreviewOpVersions) &&
           isSelectingUndoRequestArea == other.isSelectingUndoRequestArea &&
+          isSelectingHistoryArea == other.isSelectingHistoryArea &&
           activityBlocks == other.activityBlocks &&
+          hasMoreHistoryVersions == other.hasMoreHistoryVersions &&
+          historyNextBeforeVersion == other.historyNextBeforeVersion &&
           undoRequests == other.undoRequests &&
           activeRevertPlan == other.activeRevertPlan &&
           isHistoryLoading == other.isHistoryLoading &&
@@ -658,7 +677,10 @@ class CanvasState {
       historyPreviewCompare.hashCode ^
       Object.hashAll(historyPreviewOpVersions) ^
       isSelectingUndoRequestArea.hashCode ^
+      isSelectingHistoryArea.hashCode ^
       activityBlocks.hashCode ^
+      hasMoreHistoryVersions.hashCode ^
+      historyNextBeforeVersion.hashCode ^
       undoRequests.hashCode ^
       activeRevertPlan.hashCode ^
       isHistoryLoading.hashCode ^
@@ -718,17 +740,23 @@ class CanvasUndoConflict {
 class UndoRequestDraft {
   final List<String> elementIds;
   final UndoRequestArea? area;
+  final UndoRequestScopeMode scopeMode;
 
   const UndoRequestDraft({
     this.elementIds = const [],
     this.area,
+    this.scopeMode = UndoRequestScopeMode.myChanges,
   });
 
   /// Draft with [elementId] added, or removed when already in the scope.
   UndoRequestDraft withToggledElement(String elementId) {
     final next = List<String>.of(elementIds);
     if (!next.remove(elementId)) next.add(elementId);
-    return UndoRequestDraft(elementIds: next, area: area);
+    return UndoRequestDraft(
+      elementIds: next,
+      area: area,
+      scopeMode: scopeMode,
+    );
   }
 
   /// Draft with the member's drawn [area] and the scope the screen resolved
@@ -738,6 +766,14 @@ class UndoRequestDraft {
       UndoRequestDraft(
         elementIds: List<String>.unmodifiable(elementIds),
         area: area,
+        scopeMode: scopeMode,
+      );
+
+  UndoRequestDraft withScopeMode(UndoRequestScopeMode nextScopeMode) =>
+      UndoRequestDraft(
+        elementIds: elementIds,
+        area: area,
+        scopeMode: nextScopeMode,
       );
 
   @override
@@ -746,10 +782,12 @@ class UndoRequestDraft {
       other is UndoRequestDraft &&
           runtimeType == other.runtimeType &&
           _listEquals(elementIds, other.elementIds) &&
-          area == other.area;
+          area == other.area &&
+          scopeMode == other.scopeMode;
 
   @override
-  int get hashCode => Object.hash(area, Object.hashAll(elementIds));
+  int get hashCode =>
+      Object.hash(area, scopeMode, Object.hashAll(elementIds));
 }
 
 bool _listEquals<T>(List<T> a, List<T> b) {

@@ -607,6 +607,7 @@ void main() {
           ImageElement(id: 'i', z: 0, center: Offset.zero, imageBase64: ''),
           StickyNoteElement(id: 'sn', z: 0, center: Offset.zero),
           FrameElement(id: 'fr', z: 0, center: Offset.zero),
+          TableElement(id: 'tb', z: 0, center: Offset.zero),
           ConnectorElement(
             id: 'cn',
             z: 0,
@@ -623,6 +624,7 @@ void main() {
             ImageElement _ => 'image',
             StickyNoteElement _ => 'sticky_note',
             FrameElement _ => 'frame',
+            TableElement _ => 'table',
             ConnectorElement _ => 'connector',
             LayerElement _ => 'layer',
           },
@@ -637,6 +639,7 @@ void main() {
             'image',
             'sticky_note',
             'frame',
+            'table',
             'connector',
           ]),
         );

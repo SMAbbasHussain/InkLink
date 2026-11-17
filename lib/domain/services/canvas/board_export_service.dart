@@ -123,6 +123,7 @@ class BoardExportServiceImpl implements BoardExportService {
       elements: elements,
       options: options,
       selectedIds: selectedIds,
+      settings: settings,
     );
     final sanitizedTitle = sanitizeExportFileName(boardTitle);
     final rawSuffix = options.suffix?.trim();
@@ -145,6 +146,7 @@ class BoardExportServiceImpl implements BoardExportService {
           settings: settings,
           exportBounds: plan.bounds,
           transparentBackground: options.hasTransparentBackground,
+          includePattern: options.includePattern,
         );
         final file = File('${exportDir.path}/$fileBase.png');
         await file.writeAsBytes(pngBytes, flush: true);
@@ -157,6 +159,7 @@ class BoardExportServiceImpl implements BoardExportService {
           settings: settings,
           exportBounds: plan.bounds,
           transparentBackground: options.hasTransparentBackground,
+          includePattern: options.includePattern,
           scale: plan.scale,
         );
         final file = File('${exportDir.path}/$fileBase.pdf');
@@ -170,6 +173,7 @@ class BoardExportServiceImpl implements BoardExportService {
           settings: settings,
           exportBounds: plan.bounds,
           transparentBackground: options.hasTransparentBackground,
+          includePattern: options.includePattern,
         );
         final file = File('${exportDir.path}/$fileBase.svg');
         await file.writeAsString(svgString, flush: true);
@@ -185,6 +189,7 @@ class BoardExportServiceImpl implements BoardExportService {
     required List<CanvasElement> elements,
     required CanvasExportOptions options,
     Set<String> selectedIds = const {},
+    CanvasBoardSettings settings = const CanvasBoardSettings(),
   }) {
     // A hidden layer hides its members: use the shared paint order so export
     // crop bounds cannot include art the canvas does not show.
@@ -196,6 +201,7 @@ class BoardExportServiceImpl implements BoardExportService {
 
     List<CanvasElement> chosen;
     Rect bounds;
+    var addPadding = true;
     switch (options.scope) {
       case CanvasExportScope.board:
         chosen = elements.where(paintable).toList(growable: false);
@@ -251,9 +257,19 @@ class BoardExportServiceImpl implements BoardExportService {
         });
         chosen = [frame, ...contents];
         bounds = frameRect;
+      case CanvasExportScope.page:
+        bounds = Rect.fromCenter(
+          center: Offset.zero,
+          width: settings.pageWidth,
+          height: settings.pageHeight,
+        );
+        chosen = elements.where(paintable).toList(growable: false);
+        addPadding = false;
     }
 
-    final padded = bounds.inflate(CanvasExportOptions.boundsPadding);
+    final padded = addPadding
+        ? bounds.inflate(CanvasExportOptions.boundsPadding)
+        : bounds;
     if (padded.width < 1 || padded.height < 1) {
       throw const CanvasExportException('The export area is too small.');
     }
@@ -414,6 +430,7 @@ class BoardExportServiceImpl implements BoardExportService {
     CanvasBoardSettings settings = const CanvasBoardSettings(),
     Rect? exportBounds,
     bool transparentBackground = false,
+    bool includePattern = true,
   }) async {
     final elementMap = {for (final e in elements) e.id: e};
     final bounds = exportBounds ?? computeElementsBounds(elements);
@@ -476,10 +493,18 @@ class BoardExportServiceImpl implements BoardExportService {
       if (!transparentBackground) {
         final bgPaint = ui.Paint()..color = settings.backgroundColor;
         canvas.drawRect(bounds, bgPaint);
+        if (includePattern &&
+            settings.backgroundPattern != CanvasBackgroundPattern.none) {
+          paintBoardBackgroundPattern(canvas, bounds, settings);
+        }
       }
 
       final sorted = orderedElementsForPaint(elements);
       final effects = layerPaintEffects(elements);
+      final clipFrames = sorted
+          .whereType<FrameElement>()
+          .where((f) => !f.hidden && f.clipContents)
+          .toList(growable: false);
 
       for (final element in sorted) {
         if (element.hidden) continue;
@@ -490,15 +515,27 @@ class BoardExportServiceImpl implements BoardExportService {
             ? ui.BlendMode.srcOver
             : canvasBlendModeForName(layerEffect.blendMode);
         final effectiveOpacity = (opacity * layerOpacity).clamp(0.0, 1.0);
-        final bounds = elementBounds(element);
+        final elemBounds = elementBounds(element);
+        final clipFrame = enclosingClipFrame(element, clipFrames);
+        if (clipFrame != null) {
+          final fRect = frameRect(clipFrame);
+          final radius = math.min(
+            clipFrame.cornerRadius,
+            math.min(fRect.width, fRect.height) / 2,
+          );
+          canvas.save();
+          canvas.clipRRect(
+            RRect.fromRectAndRadius(fRect, Radius.circular(radius)),
+          );
+        }
         final useLayer =
-            bounds != null &&
+            elemBounds != null &&
             ((opacity < 1 && element is! StrokeElement) ||
                 (layerEffect != null &&
                     (layerOpacity < 1 || blendMode != ui.BlendMode.srcOver)));
         if (useLayer) {
           canvas.saveLayer(
-            bounds.inflate(8),
+            elemBounds.inflate(8),
             ui.Paint()
               ..blendMode = blendMode
               ..color = Color.fromRGBO(255, 255, 255, effectiveOpacity),
@@ -506,6 +543,7 @@ class BoardExportServiceImpl implements BoardExportService {
         }
         _paintElement(canvas, element, elementMap, decodedImages);
         if (useLayer) canvas.restore();
+        if (clipFrame != null) canvas.restore();
       }
 
       final picture = recorder.endRecording();
@@ -558,6 +596,9 @@ class BoardExportServiceImpl implements BoardExportService {
         break;
       case FrameElement frame:
         paintFrameElement(canvas, frame);
+        break;
+      case TableElement table:
+        paintTableElement(canvas, table);
         break;
       case LayerElement _:
         // Layers are organisational and never draw ink.
@@ -702,6 +743,7 @@ class BoardExportServiceImpl implements BoardExportService {
     CanvasBoardSettings settings = const CanvasBoardSettings(),
     Rect? exportBounds,
     bool transparentBackground = false,
+    bool includePattern = true,
     double scale = 2.0,
   }) async {
     final pdf = pw.Document(
@@ -717,6 +759,7 @@ class BoardExportServiceImpl implements BoardExportService {
       settings: settings,
       exportBounds: exportBounds,
       transparentBackground: transparentBackground,
+      includePattern: includePattern,
     );
     final pdfImage = pw.MemoryImage(pngBytes);
 
@@ -853,6 +896,7 @@ class BoardExportServiceImpl implements BoardExportService {
     CanvasBoardSettings settings = const CanvasBoardSettings(),
     Rect? exportBounds,
     bool transparentBackground = false,
+    bool includePattern = true,
   }) {
     final elementMap = {for (final e in elements) e.id: e};
     final bounds = exportBounds ?? computeElementsBounds(elements);
@@ -873,10 +917,63 @@ class BoardExportServiceImpl implements BoardExportService {
       if (el is ShapeElement &&
           el.isLinear &&
           (el.startArrowhead || el.endArrowhead)) {
-        arrowColors.add(_colorToHex(el.color));
+        arrowColors.add(_colorToHex(el.resolvedStrokeColor));
       }
     }
+    final sorted = orderedElementsForPaint(elements);
+    final clipFrames = sorted
+        .whereType<FrameElement>()
+        .where((f) => !f.hidden && f.clipContents)
+        .toList(growable: false);
     buffer.writeln('  <defs>');
+    if (!transparentBackground &&
+        includePattern &&
+        settings.backgroundPattern != CanvasBackgroundPattern.none) {
+      final step = settings.patternSpacing > 0 ? settings.patternSpacing : 32.0;
+      final isDark = settings.backgroundColor.computeLuminance() < 0.4;
+      final patColor = isDark ? '#FFFFFF' : '#000000';
+      if (settings.backgroundPattern == CanvasBackgroundPattern.isometric) {
+        final isoStep = step * 1.5;
+        buffer.writeln(
+          '    <pattern id="boardPattern" width="${_svgNumber(isoStep)}" height="${_svgNumber(isoStep)}" patternUnits="userSpaceOnUse" patternTransform="translate($offsetX $offsetY)">',
+        );
+        buffer.writeln(
+          '      <line x1="0" y1="0" x2="${_svgNumber(isoStep)}" y2="${_svgNumber(isoStep)}" stroke="$patColor" stroke-opacity="0.1" stroke-width="1" />',
+        );
+        buffer.writeln(
+          '      <line x1="0" y1="${_svgNumber(isoStep)}" x2="${_svgNumber(isoStep)}" y2="0" stroke="$patColor" stroke-opacity="0.1" stroke-width="1" />',
+        );
+        buffer.writeln('    </pattern>');
+      } else {
+        buffer.writeln(
+          '    <pattern id="boardPattern" width="${_svgNumber(step)}" height="${_svgNumber(step)}" patternUnits="userSpaceOnUse" patternTransform="translate($offsetX $offsetY)">',
+        );
+        switch (settings.backgroundPattern) {
+          case CanvasBackgroundPattern.dots:
+            buffer.writeln(
+              '      <circle cx="0" cy="0" r="1.3" fill="$patColor" fill-opacity="0.1" />',
+            );
+            break;
+          case CanvasBackgroundPattern.grid:
+            buffer.writeln(
+              '      <line x1="0" y1="0" x2="0" y2="${_svgNumber(step)}" stroke="$patColor" stroke-opacity="0.1" stroke-width="1" />',
+            );
+            buffer.writeln(
+              '      <line x1="0" y1="0" x2="${_svgNumber(step)}" y2="0" stroke="$patColor" stroke-opacity="0.1" stroke-width="1" />',
+            );
+            break;
+          case CanvasBackgroundPattern.lines:
+            buffer.writeln(
+              '      <line x1="0" y1="0" x2="${_svgNumber(step)}" y2="0" stroke="$patColor" stroke-opacity="0.1" stroke-width="1" />',
+            );
+            break;
+          case CanvasBackgroundPattern.none:
+          case CanvasBackgroundPattern.isometric:
+            break;
+        }
+        buffer.writeln('    </pattern>');
+      }
+    }
     if (elements.any(
       (element) =>
           element is StrokeElement &&
@@ -925,11 +1022,28 @@ class BoardExportServiceImpl implements BoardExportService {
       buffer.writeln(
         '  <rect width="100%" height="100%" fill="${_colorToHex(settings.backgroundColor)}" />',
       );
+      if (includePattern &&
+          settings.backgroundPattern != CanvasBackgroundPattern.none) {
+        buffer.writeln(
+          '  <rect width="100%" height="100%" fill="url(#boardPattern)" />',
+        );
+      }
     }
     buffer.writeln('  <!-- Canvas Elements -->');
     buffer.writeln('  <g transform="translate($offsetX, $offsetY)">');
+    for (final frame in clipFrames) {
+      final fRect = frameRect(frame);
+      final r = math.min(
+        frame.cornerRadius,
+        math.min(fRect.width, fRect.height) / 2,
+      );
+      final safeFrameId =
+          base64UrlEncode(utf8.encode(frame.id)).replaceAll('=', '');
+      buffer.writeln(
+        '    <clipPath id="frameclip_$safeFrameId"><rect x="${_svgNumber(fRect.left)}" y="${_svgNumber(fRect.top)}" width="${_svgNumber(fRect.width)}" height="${_svgNumber(fRect.height)}" rx="${_svgNumber(r)}" /></clipPath>',
+      );
+    }
 
-    final sorted = orderedElementsForPaint(elements);
     final effects = layerPaintEffects(elements);
 
     for (final element in sorted) {
@@ -943,13 +1057,26 @@ class BoardExportServiceImpl implements BoardExportService {
           : (element is StrokeElement
                 ? effect.opacity
                 : (opacity * effect.opacity).clamp(0.0, 1.0));
-      final wrapLayer = blended || (opacity < 1 && element is! StrokeElement);
+      final clipFrame = enclosingClipFrame(element, clipFrames);
+      final safeClipId = clipFrame == null
+          ? null
+          : base64UrlEncode(utf8.encode(clipFrame.id)).replaceAll('=', '');
+      final wrapLayer = blended ||
+          safeClipId != null ||
+          (opacity < 1 && element is! StrokeElement);
       if (wrapLayer) {
+        final opacityAttr =
+            (blended || (opacity < 1 && element is! StrokeElement))
+                ? ' opacity="${groupOpacity.toStringAsFixed(3)}"'
+                : '';
         final blendStyle = blended && effect.blendMode != 'normal'
             ? ' style="mix-blend-mode:${effect.blendMode}"'
             : '';
+        final clipAttr = safeClipId != null
+            ? ' clip-path="url(#frameclip_$safeClipId)"'
+            : '';
         buffer.writeln(
-          '  <g opacity="${groupOpacity.toStringAsFixed(3)}"$blendStyle>',
+          '  <g$opacityAttr$blendStyle$clipAttr>',
         );
       }
       _serializeSvgElement(buffer, element, elementMap);
@@ -988,6 +1115,9 @@ class BoardExportServiceImpl implements BoardExportService {
         break;
       case FrameElement frame:
         _serializeSvgFrame(buffer, frame);
+        break;
+      case TableElement table:
+        _serializeSvgTable(buffer, table);
         break;
       case LayerElement _:
         break;
@@ -1083,8 +1213,78 @@ class BoardExportServiceImpl implements BoardExportService {
     );
   }
 
+  void _serializeSvgTable(StringBuffer buffer, TableElement table) {
+    final rect = tableElementRect(table);
+    final xs = tableColumnOffsets(table, rect);
+    final ys = tableRowOffsets(table, rect);
+    final cx = table.center.dx;
+    final cy = table.center.dy;
+    final deg = table.rotation * 180 / math.pi;
+    final rotAttr = table.rotation != 0
+        ? ' transform="rotate(${_svgNumber(deg)} ${_svgNumber(cx)} ${_svgNumber(cy)})"'
+        : '';
+    buffer.writeln('    <g$rotAttr>');
+    buffer.writeln(
+      '      <rect x="${_svgNumber(rect.left)}" y="${_svgNumber(rect.top)}" width="${_svgNumber(rect.width)}" height="${_svgNumber(rect.height)}" fill="${_colorToHex(table.backgroundColor)}" />',
+    );
+    if (table.headerRow && ys.length >= 2) {
+      buffer.writeln(
+        '      <rect x="${_svgNumber(rect.left)}" y="${_svgNumber(ys[0])}" width="${_svgNumber(rect.width)}" height="${_svgNumber(ys[1] - ys[0])}" fill="${_colorToHex(table.headerBackgroundColor)}" />',
+      );
+    }
+    for (var r = 0; r < table.rows; r++) {
+      for (var c = 0; c < table.columns; c++) {
+        final cell = table.cellAt(r, c);
+        final cRect = Rect.fromLTRB(xs[c], ys[r], xs[c + 1], ys[r + 1]);
+        if (cell.backgroundColor != null) {
+          buffer.writeln(
+            '      <rect x="${_svgNumber(cRect.left)}" y="${_svgNumber(cRect.top)}" width="${_svgNumber(cRect.width)}" height="${_svgNumber(cRect.height)}" fill="${_colorToHex(cell.backgroundColor!)}" />',
+          );
+        }
+        if (cell.text.isEmpty) continue;
+        final isHeader = table.headerRow && r == 0;
+        final weight = cell.fontWeight ?? (isHeader ? 700 : 400);
+        final textHex = _colorToHex(cell.textColor ?? table.textColor);
+        final pad = math.min(
+          table.cellPadding,
+          math.min(cRect.width, cRect.height) * 0.25,
+        );
+        final anchor = switch (cell.textAlign) {
+          'center' => 'middle',
+          'right' => 'end',
+          _ => 'start',
+        };
+        final tx = switch (cell.textAlign) {
+          'center' => cRect.center.dx,
+          'right' => cRect.right - pad,
+          _ => cRect.left + pad,
+        };
+        final ty = cRect.center.dy;
+        buffer.writeln(
+          '      <text x="${_svgNumber(tx)}" y="${_svgNumber(ty)}" fill="$textHex" font-size="${_svgNumber(table.fontSize)}" font-weight="$weight" text-anchor="$anchor" dominant-baseline="central">${_escapeXml(cell.text)}</text>',
+        );
+      }
+    }
+    final borderHex = _colorToHex(table.borderColor);
+    final bw = _svgNumber(table.borderWidth);
+    for (var c = 1; c < table.columns; c++) {
+      buffer.writeln(
+        '      <line x1="${_svgNumber(xs[c])}" y1="${_svgNumber(rect.top)}" x2="${_svgNumber(xs[c])}" y2="${_svgNumber(rect.bottom)}" stroke="$borderHex" stroke-width="$bw" />',
+      );
+    }
+    for (var r = 1; r < table.rows; r++) {
+      buffer.writeln(
+        '      <line x1="${_svgNumber(rect.left)}" y1="${_svgNumber(ys[r])}" x2="${_svgNumber(rect.right)}" y2="${_svgNumber(ys[r])}" stroke="$borderHex" stroke-width="$bw" />',
+      );
+    }
+    buffer.writeln(
+      '      <rect x="${_svgNumber(rect.left)}" y="${_svgNumber(rect.top)}" width="${_svgNumber(rect.width)}" height="${_svgNumber(rect.height)}" fill="none" stroke="$borderHex" stroke-width="$bw" />',
+    );
+    buffer.writeln('    </g>');
+  }
+
   void _serializeSvgShape(StringBuffer buffer, ShapeElement shape) {
-    final colorHex = _colorToHex(shape.color);
+    final colorHex = _colorToHex(shape.resolvedStrokeColor);
     final rect = shapeElementRect(shape);
     final cx = shape.center.dx;
     final cy = shape.center.dy;
@@ -1095,6 +1295,10 @@ class BoardExportServiceImpl implements BoardExportService {
     final rotAttr = shape.rotation != 0
         ? ' transform="rotate($deg $cx $cy)"'
         : '';
+    final flipped = shape.flipH || shape.flipV;
+    final geomTransformAttr = flipped
+        ? ' transform="${shape.rotation != 0 ? 'rotate($deg $cx $cy) ' : ''}translate($cx $cy) scale(${shape.flipH ? -1 : 1} ${shape.flipV ? -1 : 1}) translate(${-cx} ${-cy})"'
+        : rotAttr;
     final fill = _svgShapeFill(buffer, shape);
     final strokeAttrs = _svgStrokeAttrs(shape, colorHex);
 
@@ -1107,7 +1311,7 @@ class BoardExportServiceImpl implements BoardExportService {
           ? ' marker-end="url(#$markerId)"'
           : '';
       buffer.writeln(
-        '    <line x1="${cx - hw}" y1="$cy" x2="${cx + hw}" y2="$cy"$strokeAttrs$startMarker$endMarker$rotAttr />',
+        '    <line x1="${cx - hw}" y1="$cy" x2="${cx + hw}" y2="$cy"$strokeAttrs$startMarker$endMarker$geomTransformAttr />',
       );
       _serializeSvgShapeLabel(buffer, shape, cx, cy, rotAttr);
       return;
@@ -1120,18 +1324,18 @@ class BoardExportServiceImpl implements BoardExportService {
         final y = cy - hh;
         final rx = shape.borderRadius;
         buffer.writeln(
-          '    <rect x="$x" y="$y" width="${rect.width}" height="${rect.height}" rx="$rx" fill="$fill"$strokeAttrs$rotAttr />',
+          '    <rect x="$x" y="$y" width="${rect.width}" height="${rect.height}" rx="$rx" fill="$fill"$strokeAttrs$geomTransformAttr />',
         );
         break;
       case CanvasShapeType.circle:
       case CanvasShapeType.ellipse:
         if ((rect.width - rect.height).abs() < 0.001) {
           buffer.writeln(
-            '    <circle cx="$cx" cy="$cy" r="$hw" fill="$fill"$strokeAttrs$rotAttr />',
+            '    <circle cx="$cx" cy="$cy" r="$hw" fill="$fill"$strokeAttrs$geomTransformAttr />',
           );
         } else {
           buffer.writeln(
-            '    <ellipse cx="$cx" cy="$cy" rx="$hw" ry="$hh" fill="$fill"$strokeAttrs$rotAttr />',
+            '    <ellipse cx="$cx" cy="$cy" rx="$hw" ry="$hh" fill="$fill"$strokeAttrs$geomTransformAttr />',
           );
         }
         break;
@@ -1139,37 +1343,39 @@ class BoardExportServiceImpl implements BoardExportService {
         final points =
             '$cx,${cy - hh} ${cx - hw},${cy + hh} ${cx + hw},${cy + hh}';
         buffer.writeln(
-          '    <polygon points="$points" fill="$fill"$strokeAttrs$rotAttr />',
+          '    <polygon points="$points" fill="$fill"$strokeAttrs$geomTransformAttr />',
         );
         break;
       case CanvasShapeType.diamond:
         final points =
             '$cx,${cy - hh} ${cx + hw},$cy $cx,${cy + hh} ${cx - hw},$cy';
         buffer.writeln(
-          '    <polygon points="$points" fill="$fill"$strokeAttrs$rotAttr />',
+          '    <polygon points="$points" fill="$fill"$strokeAttrs$geomTransformAttr />',
         );
         break;
       case CanvasShapeType.star:
         final points = _getStarPointsString(cx, cy, hw, hh);
         buffer.writeln(
-          '    <polygon points="$points" fill="$fill"$strokeAttrs$rotAttr />',
+          '    <polygon points="$points" fill="$fill"$strokeAttrs$geomTransformAttr />',
         );
         break;
       case CanvasShapeType.pentagon:
         final points = _getPolygonPointsString(5, cx, cy, hw, hh);
         buffer.writeln(
-          '    <polygon points="$points" fill="$fill"$strokeAttrs$rotAttr />',
+          '    <polygon points="$points" fill="$fill"$strokeAttrs$geomTransformAttr />',
         );
         break;
       case CanvasShapeType.hexagon:
         final points = _getPolygonPointsString(6, cx, cy, hw, hh);
         buffer.writeln(
-          '    <polygon points="$points" fill="$fill"$strokeAttrs$rotAttr />',
+          '    <polygon points="$points" fill="$fill"$strokeAttrs$geomTransformAttr />',
         );
         break;
       case CanvasShapeType.semicircle:
         final d = 'M $cx $cy L ${cx - hw} $cy A $hw $hh 0 0 1 ${cx + hw} $cy Z';
-        buffer.writeln('    <path d="$d" fill="$fill"$strokeAttrs$rotAttr />');
+        buffer.writeln(
+          '    <path d="$d" fill="$fill"$strokeAttrs$geomTransformAttr />',
+        );
         break;
       case CanvasShapeType.line:
       case CanvasShapeType.arrow:

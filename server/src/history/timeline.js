@@ -12,7 +12,7 @@
 // ops when it closes a block).
 const Y = require('yjs');
 const { reconstruct, loadOpsInRange } = require('./reconstruct');
-const { collectUserOps } = require('./revert');
+const { collectUserOps, replayTouches, elementOverlapsArea } = require('./revert');
 const { describeChange, summarizeOperation } = require('./describe');
 
 const DEFAULT_PAGE_SIZE = 100;
@@ -24,12 +24,36 @@ async function buildUserTimeline(boardId, targetUid, opts = {}, redis) {
     Math.min(MAX_PAGE_SIZE, Number(opts.limit) || DEFAULT_PAGE_SIZE),
   );
 
-  // Undo-request scope (D5): only the ops that touched these elements. The
-  // member picks an area or double-taps elements client-side; the resolved
-  // element ids are the scope for both the ops and the captured deltas.
-  const elementIds = Array.isArray(opts.elementIds)
+  // Undo-request / area-history scope (D5): only the ops that touched these
+  // elements (or elements inside opts.area).
+  const initialElementIds = Array.isArray(opts.elementIds)
     ? opts.elementIds.filter(id => typeof id === 'string' && id)
-    : null;
+    : [];
+  const hasArea = opts.area && typeof opts.area === 'object'
+    && Number(opts.area.width) > 0 && Number(opts.area.height) > 0;
+  let elementIds = initialElementIds.length ? [...initialElementIds] : null;
+
+  if (hasArea) {
+    const areaIds = new Set(initialElementIds);
+    try {
+      const touches = await replayTouches(boardId, redis, {
+        fromTime: opts.fromTime,
+        toTime: opts.toTime,
+      });
+      for (const [id, list] of touches.entries()) {
+        if (list.some(t => elementOverlapsArea(t.before, opts.area)
+            || elementOverlapsArea(t.after, opts.area))) {
+          areaIds.add(id);
+        }
+      }
+    } catch (_) {}
+    elementIds = areaIds.size ? [...areaIds] : (initialElementIds.length ? initialElementIds : null);
+  }
+
+  const effectiveTargetUid = opts.scopeMode === 'area_state'
+    ? null
+    : (typeof targetUid === 'string' && targetUid.length > 0 ? targetUid : null);
+
   // Evidence window (undo requests): replay only what happened AFTER this
   // version, and anchor the base exactly there so stop 0 is the requested
   // state rather than "just before the user's next op".
@@ -42,7 +66,7 @@ async function buildUserTimeline(boardId, targetUid, opts = {}, redis) {
   // Ascending by version (collectUserOps sorts).
   const all = await collectUserOps(
     boardId,
-    targetUid,
+    effectiveTargetUid,
     {
       fromTime: opts.fromTime,
       toTime: opts.toTime,
