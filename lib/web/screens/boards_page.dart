@@ -4,13 +4,10 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../domain/models/board.dart';
 import '../../domain/models/user_model.dart';
-import '../../ui/theme/ink_theme.dart';
-import '../../ui/theme/ink_tokens.dart';
-import '../../ui/theme/ink_type.dart';
-import '../../ui/widgets/ink_chip.dart';
-import '../../ui/widgets/ink_text_field.dart';
 import '../data/web_companion_repository.dart';
 import '../data/web_mappers.dart';
+import '../glass/glass_tokens.dart';
+import '../glass/glass_widgets.dart';
 import '../widgets/board_card.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
@@ -56,60 +53,52 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final ink = context.ink;
     final uid = _repo.currentUser?.uid;
     return ListView(
-      padding: const EdgeInsets.all(InkSpacing.s24),
+      padding: const EdgeInsets.fromLTRB(28, 28, 28, 40),
       children: [
         StreamBuilder<UserModel?>(
           stream: _profile,
-          builder: (context, snap) {
-            final first = firstNameOf(snap.data?.displayName ?? _repo.currentUser?.displayName);
-            return Semantics(
-              header: true,
-              child: Text(
-                first == null ? greetingFor(DateTime.now()) : '${greetingFor(DateTime.now())}, $first',
-                style: InkType.display(ink.ink),
-              ),
-            );
-          },
+          builder: (context, snap) => _Greeting(
+            firstName: firstNameOf(snap.data?.displayName ?? _repo.currentUser?.displayName),
+          ),
         ),
-        const SizedBox(height: InkSpacing.s4),
+        const SizedBox(height: 6),
         Text(
           'Everything you own or joined. Open a board on your phone to draw.',
-          style: InkType.body(ink.inkSecondary),
+          style: Glass.body(color: Glass.textMuted),
         ),
-        const SizedBox(height: InkSpacing.s16),
+        const SizedBox(height: 18),
         const _QuickStats(),
-        const SizedBox(height: InkSpacing.s24),
+        const SizedBox(height: 26),
         Wrap(
-          spacing: InkSpacing.s12,
-          runSpacing: InkSpacing.s12,
+          spacing: 12,
+          runSpacing: 12,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             SizedBox(
               width: 360,
-              child: InkTextField(
+              child: GlassSearchField(
                 controller: _search,
                 hintText: 'Search by title or tag',
-                leadingIcon: LucideIcons.search,
+                shortcutHint: '⌘K',
                 onChanged: (_) => setState(() {}),
               ),
             ),
-            for (final f in _BoardFilter.values)
-              InkChip(
-                label: switch (f) {
-                  _BoardFilter.all => 'All',
-                  _BoardFilter.owned => 'Owned',
-                  _BoardFilter.joined => 'Joined',
-                  _BoardFilter.archived => 'Archived',
-                },
-                selected: _filter == f,
-                onTap: () => setState(() => _filter = f),
-              ),
+            GlassSegmented<_BoardFilter>(
+              values: _BoardFilter.values,
+              selected: _filter,
+              labelOf: (f) => switch (f) {
+                _BoardFilter.all => 'All',
+                _BoardFilter.owned => 'Owned',
+                _BoardFilter.joined => 'Joined',
+                _BoardFilter.archived => 'Archived',
+              },
+              onChanged: (f) => setState(() => _filter = f),
+            ),
           ],
         ),
-        const SizedBox(height: InkSpacing.s20),
+        const SizedBox(height: 22),
         WebStreamList<Board>(
           stream: _boards,
           compactEmpty: false,
@@ -133,6 +122,42 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
           },
         ),
       ],
+    );
+  }
+}
+
+/// "Good evening, Fahad" with the name in a subtle gradient.
+class _Greeting extends StatelessWidget {
+  final String? firstName;
+  const _Greeting({required this.firstName});
+
+  @override
+  Widget build(BuildContext context) {
+    final greeting = greetingFor(DateTime.now());
+    return Semantics(
+      header: true,
+      label: firstName == null ? greeting : '$greeting, $firstName',
+      excludeSemantics: true,
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(text: firstName == null ? greeting : '$greeting, '),
+            if (firstName != null)
+              WidgetSpan(
+                alignment: PlaceholderAlignment.baseline,
+                baseline: TextBaseline.alphabetic,
+                child: ShaderMask(
+                  blendMode: BlendMode.srcIn,
+                  shaderCallback: (rect) => const LinearGradient(
+                    colors: [Color(0xFFE9E3FF), Color(0xFFB9A6FF), Color(0xFF8B9BFF)],
+                  ).createShader(rect),
+                  child: Text(firstName!, style: Glass.title()),
+                ),
+              ),
+          ],
+        ),
+        style: Glass.title(),
+      ),
     );
   }
 }
@@ -168,8 +193,8 @@ class _QuickStatsState extends State<_QuickStats> {
               final invites = (bi.data?.length ?? 0) + (wi.data?.length ?? 0);
               final friends = fr.data?.length;
               return Wrap(
-                spacing: InkSpacing.s12,
-                runSpacing: InkSpacing.s12,
+                spacing: 10,
+                runSpacing: 10,
                 children: [
                   _StatChip(
                     icon: LucideIcons.layoutGrid,
@@ -216,36 +241,44 @@ class _StatChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ink = context.ink;
-    final fg = highlight ? ink.accentText : ink.ink;
-    return Material(
-      color: highlight ? ink.accentSoft : ink.paper,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: highlight ? Colors.transparent : ink.glassStroke),
-      ),
+    const radius = BorderRadius.all(Radius.circular(999));
+    Widget chip = Material(
+      type: MaterialType.transparency,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: radius,
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          decoration: BoxDecoration(
+            color: highlight ? const Color(0x268B5CF6) : Glass.bg,
+            borderRadius: radius,
+            border: Border.all(color: highlight ? const Color(0x598B5CF6) : Glass.border),
+          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 16, color: highlight ? ink.accentText : ink.inkSecondary),
+              Icon(icon, size: 15, color: highlight ? Glass.accentText : Glass.textMuted),
               const SizedBox(width: 8),
-              Text(value?.toString() ?? '–', style: InkType.bodyStrong(fg)),
+              Text(
+                value?.toString() ?? '–',
+                style: Glass.strong(color: highlight ? Glass.accentText : Glass.text),
+              ),
               const SizedBox(width: 5),
-              Text(label, style: InkType.body(highlight ? fg : ink.inkSecondary)),
+              Text(
+                label,
+                style: Glass.body(color: highlight ? Glass.accentText : Glass.textSecondary),
+              ),
               if (onTap != null) ...[
                 const SizedBox(width: 6),
-                Icon(LucideIcons.chevronRight, size: 14, color: ink.inkMuted),
+                const Icon(LucideIcons.chevronRight, size: 14, color: Glass.textMuted),
               ],
             ],
           ),
         ),
       ),
     );
+    if (highlight) chip = GlassShimmerOnce(borderRadius: radius, child: chip);
+    return chip;
   }
 }
 
@@ -272,88 +305,96 @@ class _WebDiscoverPageState extends State<WebDiscoverPage> {
   @override
   Widget build(BuildContext context) {
     final uid = _repo.currentUser?.uid;
-    return ListView(
-      padding: const EdgeInsets.all(InkSpacing.s24),
-      children: [
-        WebPageHeader(
-          title: 'Discover',
-          subtitle: 'Public boards from the InkLink community.',
-          trailing: IconButton(
-            tooltip: 'Refresh',
-            icon: const Icon(LucideIcons.refreshCw),
-            onPressed: () => setState(() => _future = _repo.loadPublicBoards()),
-          ),
-        ),
-        FutureBuilder<List<Board>>(
-          future: _future,
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              return WebErrorBox(message: webErrorText(snapshot.error!));
-            }
-            if (!snapshot.hasData) {
-              return const Padding(
-                padding: EdgeInsets.all(InkSpacing.s32),
-                child: Center(child: CircularProgressIndicator()),
-              );
-            }
-            final boards = snapshot.data!;
-            final tags = topTags(boards.map((b) => b.tags));
-            final query = _search.text.trim().toLowerCase();
-            final visible = boards.where((b) {
-              if (_tag != null && !b.tags.contains(_tag)) return false;
-              if (query.isEmpty) return true;
-              return b.title.toLowerCase().contains(query) ||
-                  b.tags.any((t) => t.toLowerCase().contains(query));
-            }).toList();
-
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: InkSpacing.s8,
-                  runSpacing: InkSpacing.s12,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 320,
-                      child: InkTextField(
-                        controller: _search,
-                        hintText: 'Search public boards',
-                        leadingIcon: LucideIcons.search,
-                        onChanged: (_) => setState(() {}),
-                      ),
-                    ),
-                    InkChip(
-                      label: 'All',
-                      selected: _tag == null,
-                      onTap: () => setState(() => _tag = null),
-                    ),
-                    for (final t in tags)
-                      InkChip(
-                        label: '#$t',
-                        selected: _tag == t,
-                        onTap: () => setState(() => _tag = _tag == t ? null : t),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: InkSpacing.s20),
-                if (boards.isEmpty)
-                  const WebEmptyHint(icon: LucideIcons.compass, text: 'No public boards yet.')
-                else if (visible.isEmpty)
-                  const WebEmptyHint(
-                    icon: LucideIcons.searchX,
-                    text: 'No public boards match this search or tag.',
-                  )
-                else
-                  WebBoardGrid(
-                    boards: visible,
-                    currentUid: uid,
-                    onOpen: (b) => showOpenInAppDialog(context, b),
+    return FutureBuilder<List<Board>>(
+      future: _future,
+      builder: (context, snapshot) {
+        final loading = snapshot.connectionState != ConnectionState.done;
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(28, 28, 28, 40),
+          children: [
+            WebPageHeader(
+              title: 'Discover',
+              subtitle: 'Public boards from the InkLink community.',
+              trailing: GlassButton.icon(
+                icon: LucideIcons.refreshCw,
+                tooltip: 'Refresh',
+                spinIcon: loading,
+                onPressed: loading
+                    ? null
+                    : () => setState(() => _future = _repo.loadPublicBoards()),
+              ),
+            ),
+            if (snapshot.hasError)
+              WebErrorBox(message: webErrorText(snapshot.error!))
+            else if (!snapshot.hasData)
+              const Padding(
+                padding: EdgeInsets.all(32),
+                child: Center(
+                  child: SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Glass.accentText),
                   ),
-              ],
-            );
-          },
+                ),
+              )
+            else
+              _buildResults(snapshot.data!, uid),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildResults(List<Board> boards, String? uid) {
+    final tags = topTags(boards.map((b) => b.tags));
+    final query = _search.text.trim().toLowerCase();
+    final visible = boards.where((b) {
+      if (_tag != null && !b.tags.contains(_tag)) return false;
+      if (query.isEmpty) return true;
+      return b.title.toLowerCase().contains(query) ||
+          b.tags.any((t) => t.toLowerCase().contains(query));
+    }).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 10,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            SizedBox(
+              width: 320,
+              child: GlassSearchField(
+                controller: _search,
+                hintText: 'Search public boards',
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            const SizedBox(width: 4),
+            GlassChoicePill(label: 'All', selected: _tag == null, onTap: () => setState(() => _tag = null)),
+            for (final t in tags)
+              GlassChoicePill(
+                label: '#$t',
+                selected: _tag == t,
+                onTap: () => setState(() => _tag = _tag == t ? null : t),
+              ),
+          ],
         ),
+        const SizedBox(height: 22),
+        if (boards.isEmpty)
+          const WebEmptyHint(icon: LucideIcons.compass, text: 'No public boards yet.')
+        else if (visible.isEmpty)
+          const WebEmptyHint(
+            icon: LucideIcons.searchX,
+            text: 'No public boards match this search or tag.',
+          )
+        else
+          WebBoardGrid(
+            boards: visible,
+            currentUid: uid,
+            onOpen: (b) => showOpenInAppDialog(context, b),
+          ),
       ],
     );
   }

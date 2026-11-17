@@ -4,14 +4,13 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../domain/models/invitation/board_invitation.dart';
 import '../../domain/models/workspace.dart';
-import '../../ui/theme/ink_theme.dart';
-import '../../ui/theme/ink_tokens.dart';
-import '../../ui/theme/ink_type.dart';
 import '../../ui/widgets/ink_avatar.dart';
-import '../../ui/widgets/paper_card.dart';
 import '../data/web_companion_repository.dart';
 import '../data/web_mappers.dart';
+import '../glass/glass_tokens.dart';
+import '../glass/glass_widgets.dart';
 import '../widgets/web_widgets.dart';
+import 'home_shell.dart' show GlassAvatarRing;
 
 /// Pending board and workspace invites, accepted or declined through the
 /// same Cloud Functions as the mobile app.
@@ -24,15 +23,13 @@ class WebInvitesPage extends StatefulWidget {
 
 class _WebInvitesPageState extends State<WebInvitesPage> {
   late final _repo = context.read<WebCompanionRepository>();
-  late final Stream<List<BoardInvitation>> _boardInvites = _repo
-      .watchBoardInvites();
-  late final Stream<List<WorkspaceInvite>> _workspaceInvites = _repo
-      .watchWorkspaceInvites();
+  late final Stream<List<BoardInvitation>> _boardInvites = _repo.watchBoardInvites();
+  late final Stream<List<WorkspaceInvite>> _workspaceInvites = _repo.watchWorkspaceInvites();
 
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.all(InkSpacing.s24),
+      padding: const EdgeInsets.fromLTRB(28, 28, 28, 40),
       children: [
         WebReadableWidth(
           child: Column(
@@ -47,21 +44,24 @@ class _WebInvitesPageState extends State<WebInvitesPage> {
                 stream: _boardInvites,
                 emptyIcon: LucideIcons.mailOpen,
                 emptyText: 'No board invites',
+                emptySubtitle: 'When someone invites you to a board, it shows up here.',
                 builder: (context, invites) => Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    for (final i in invites)
-                      _InviteRow(
-                        key: ValueKey('b-${i.id}'),
-                        avatarId: i.fromUid,
-                        avatarUrl: i.senderPic,
-                        name: i.senderName,
-                        text:
-                            'invited you to "${i.boardTitle}" as ${i.targetRole}',
-                        time: i.timestamp,
-                        onAccept: () => _repo.acceptBoardInvite(i.id),
-                        onDecline: () => _repo.declineBoardInvite(i.id),
-                        acceptedMessage: 'You joined "${i.boardTitle}".',
+                    for (var i = 0; i < invites.length; i++)
+                      GlassEntrance(
+                        key: ValueKey('b-${invites[i].id}'),
+                        index: i,
+                        child: _InviteRow(
+                          avatarId: invites[i].fromUid,
+                          avatarUrl: invites[i].senderPic,
+                          name: invites[i].senderName,
+                          text: 'invited you to "${invites[i].boardTitle}" as ${invites[i].targetRole}',
+                          time: invites[i].timestamp,
+                          onAccept: () => _repo.acceptBoardInvite(invites[i].id),
+                          onDecline: () => _repo.declineBoardInvite(invites[i].id),
+                          acceptedMessage: 'You joined "${invites[i].boardTitle}".',
+                        ),
                       ),
                   ],
                 ),
@@ -71,21 +71,24 @@ class _WebInvitesPageState extends State<WebInvitesPage> {
                 stream: _workspaceInvites,
                 emptyIcon: LucideIcons.briefcase,
                 emptyText: 'No workspace invites',
+                emptySubtitle: 'Workspace invitations from your team appear here.',
                 builder: (context, invites) => Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    for (final i in invites)
-                      _InviteRow(
-                        key: ValueKey('w-${i.id}'),
-                        avatarId: i.fromUid,
-                        avatarUrl: i.senderPhotoUrl,
-                        name: i.senderName,
-                        text:
-                            'invited you to the workspace "${i.workspaceName}"',
-                        time: i.timestamp,
-                        onAccept: () => _repo.acceptWorkspaceInvite(i.id),
-                        onDecline: () => _repo.declineWorkspaceInvite(i.id),
-                        acceptedMessage: 'You joined "${i.workspaceName}".',
+                    for (var i = 0; i < invites.length; i++)
+                      GlassEntrance(
+                        key: ValueKey('w-${invites[i].id}'),
+                        index: i,
+                        child: _InviteRow(
+                          avatarId: invites[i].fromUid,
+                          avatarUrl: invites[i].senderPhotoUrl,
+                          name: invites[i].senderName,
+                          text: 'invited you to the workspace "${invites[i].workspaceName}"',
+                          time: invites[i].timestamp,
+                          onAccept: () => _repo.acceptWorkspaceInvite(invites[i].id),
+                          onDecline: () => _repo.declineWorkspaceInvite(invites[i].id),
+                          acceptedMessage: 'You joined "${invites[i].workspaceName}".',
+                        ),
                       ),
                   ],
                 ),
@@ -109,7 +112,6 @@ class _InviteRow extends StatelessWidget {
   final String acceptedMessage;
 
   const _InviteRow({
-    super.key,
     required this.avatarId,
     required this.avatarUrl,
     required this.name,
@@ -122,17 +124,13 @@ class _InviteRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ink = context.ink;
     final details = Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        InkAvatar(
-          id: avatarId,
-          imageUrl: avatarUrl,
-          initials: initialsOf(name),
-          size: 40,
+        GlassAvatarRing(
+          child: InkAvatar(id: avatarId, imageUrl: avatarUrl, initials: initialsOf(name), size: 38),
         ),
-        const SizedBox(width: InkSpacing.s12),
+        const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -140,16 +138,13 @@ class _InviteRow extends StatelessWidget {
               Text.rich(
                 TextSpan(
                   children: [
-                    TextSpan(
-                      text: '$name ',
-                      style: InkType.bodyStrong(ink.ink),
-                    ),
-                    TextSpan(text: text, style: InkType.body(ink.inkSecondary)),
+                    TextSpan(text: '$name ', style: Glass.strong()),
+                    TextSpan(text: text, style: Glass.body()),
                   ],
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(timeAgo(time), style: InkType.caption(ink.inkMuted)),
+              const SizedBox(height: 3),
+              Text(timeAgo(time), style: Glass.small()),
             ],
           ),
         ),
@@ -163,9 +158,9 @@ class _InviteRow extends StatelessWidget {
     );
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: InkSpacing.s12),
-      child: PaperCard(
-        padding: const EdgeInsets.all(InkSpacing.s16),
+      padding: const EdgeInsets.only(bottom: 12),
+      child: GlassPanel(
+        padding: const EdgeInsets.all(16),
         child: LayoutBuilder(
           builder: (context, constraints) {
             // Side by side when there is room; stacked on narrow screens.
@@ -173,7 +168,7 @@ class _InviteRow extends StatelessWidget {
               return Row(
                 children: [
                   Expanded(child: details),
-                  const SizedBox(width: InkSpacing.s12),
+                  const SizedBox(width: 12),
                   actions,
                 ],
               );
@@ -182,7 +177,7 @@ class _InviteRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 details,
-                const SizedBox(height: InkSpacing.s12),
+                const SizedBox(height: 12),
                 Align(alignment: Alignment.centerRight, child: actions),
               ],
             );

@@ -5,10 +5,9 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../domain/models/board.dart';
 import '../../ui/theme/ink_colors.dart';
-import '../../ui/theme/ink_theme.dart';
-import '../../ui/theme/ink_tokens.dart';
-import '../../ui/theme/ink_type.dart';
 import '../data/web_mappers.dart';
+import '../glass/glass_tokens.dart';
+import '../glass/glass_widgets.dart';
 
 /// Pastel "paper" colours for board covers (the sticky-note palette).
 const _coverColors = <Color>[
@@ -31,8 +30,10 @@ int _stableHash(String s) {
   return h;
 }
 
-/// A board as a little sheet of paper: a doodle cover in a colour unique to
-/// the board, then title, facts and tags. Lifts on hover; keyboard focusable.
+/// A board card: pastel doodle cover (with a soft vignette) over a dark
+/// fake-glass body. No backdrop blur (cards are many; blur is expensive).
+/// Hover: lifts 4px, border brightens, a spotlight follows the cursor and the
+/// cover zooms slightly. Keyboard focusable with a visible focus ring.
 class WebBoardCard extends StatefulWidget {
   final Board board;
 
@@ -53,155 +54,97 @@ class WebBoardCard extends StatefulWidget {
 
 class _WebBoardCardState extends State<WebBoardCard> {
   bool _hover = false;
+  bool _focus = false;
+  Offset? _pointer;
 
   @override
   Widget build(BuildContext context) {
-    final ink = context.ink;
     final board = widget.board;
     final hash = _stableHash(board.id);
     final cover = _coverColors[hash % _coverColors.length];
     final isPublic = board.visibility == 'public';
-    final lifted = _hover;
+    final reduce = Glass.reduceMotion(context);
+    final active = _hover || _focus;
+    const radius = BorderRadius.all(Radius.circular(Glass.r20));
 
     return Semantics(
       button: true,
-      label: '${board.title}, ${widget.roleLabel}, ${board.membersCount} '
+      label: '${board.title}, ${widget.roleLabel}, '
+          '${isPublic ? 'public' : 'private'}, ${board.membersCount} '
           '${board.membersCount == 1 ? 'member' : 'members'}, '
           'updated ${timeAgo(board.updatedAt)}',
       excludeSemantics: true,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: AnimatedSlide(
-          duration: const Duration(milliseconds: 160),
+        onExit: (_) => setState(() {
+          _hover = false;
+          _pointer = null;
+        }),
+        onHover: reduce ? null : (e) => setState(() => _pointer = e.localPosition),
+        child: AnimatedContainer(
+          duration: Glass.fast,
           curve: Curves.easeOut,
-          offset: lifted ? const Offset(0, -0.015) : Offset.zero,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            decoration: BoxDecoration(
-              color: ink.paper,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: lifted ? ink.accent.withValues(alpha: 0.55) : ink.glassStroke,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: lifted ? 0.22 : 0.10),
-                  blurRadius: lifted ? 24 : 10,
-                  offset: Offset(0, lifted ? 10 : 4),
-                ),
-              ],
+          transform: Matrix4.translationValues(0, active ? -4 : 0, 0),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0E0E15),
+            gradient: Glass.sheen,
+            borderRadius: radius,
+            border: Border.all(
+              color: _focus
+                  ? Glass.accentA
+                  : active
+                      ? Glass.borderBright
+                      : Glass.border,
+              width: _focus ? 1.6 : 1,
             ),
+            boxShadow: active ? Glass.shadowLifted : Glass.shadow,
+          ),
+          child: ClipRRect(
+            borderRadius: radius,
             child: Material(
               type: MaterialType.transparency,
               child: InkWell(
-                borderRadius: BorderRadius.circular(16),
                 onTap: widget.onTap,
-                onFocusChange: (f) => setState(() => _hover = f),
+                onFocusChange: (f) => setState(() => _focus = f),
                 child: Opacity(
                   opacity: board.isArchived ? 0.6 : 1,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    mainAxisSize: MainAxisSize.min,
+                  child: Stack(
                     children: [
-                      // Cover
-                      ClipRRect(
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-                        child: SizedBox(
-                          height: 104,
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              ColoredBox(color: cover),
-                              CustomPaint(painter: _DoodlePainter(seed: hash, color: cover)),
-                              Positioned(
-                                left: 12,
-                                top: 12,
-                                child: _CoverPill(
-                                  icon: isPublic ? LucideIcons.globe : LucideIcons.lock,
-                                  text: isPublic ? 'Public' : 'Private',
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _Cover(
+                            color: cover,
+                            seed: hash,
+                            zoomed: active && !reduce,
+                            isPublic: isPublic,
+                            roleLabel: board.isArchived ? 'Archived' : widget.roleLabel,
+                          ),
+                          _Body(board: board, active: active),
+                        ],
+                      ),
+                      // Spotlight that follows the cursor.
+                      if (_pointer != null && _hover)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: LayoutBuilder(
+                              builder: (context, c) => DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: RadialGradient(
+                                    center: Alignment(
+                                      (_pointer!.dx / c.maxWidth) * 2 - 1,
+                                      (_pointer!.dy / c.maxHeight) * 2 - 1,
+                                    ),
+                                    radius: 0.9,
+                                    colors: const [Color(0x1FFFFFFF), Color(0x00FFFFFF)],
+                                  ),
                                 ),
                               ),
-                              Positioned(
-                                right: 12,
-                                top: 12,
-                                child: _CoverPill(
-                                  icon: switch (widget.roleLabel) {
-                                    'Owner' => LucideIcons.crown,
-                                    'Member' => LucideIcons.userCheck,
-                                    _ => LucideIcons.eye,
-                                  },
-                                  text: board.isArchived ? 'Archived' : widget.roleLabel,
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
-                      ),
-                      // Body
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    board.title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: InkType.cardTitle(ink.ink),
-                                  ),
-                                ),
-                                AnimatedOpacity(
-                                  duration: const Duration(milliseconds: 160),
-                                  opacity: lifted ? 1 : 0,
-                                  child: Icon(LucideIcons.arrowUpRight,
-                                      size: 18, color: ink.accentText),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              children: [
-                                _Fact(
-                                  icon: LucideIcons.users,
-                                  text: '${board.membersCount}',
-                                ),
-                                const SizedBox(width: 14),
-                                Flexible(
-                                  child: _Fact(
-                                    icon: LucideIcons.clock,
-                                    text: timeAgo(board.updatedAt),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            if (board.tags.isNotEmpty) ...[
-                              const SizedBox(height: 12),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: [
-                                  for (final tag in board.tags.take(3))
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 9, vertical: 3),
-                                      decoration: BoxDecoration(
-                                        color: ink.accentSoft,
-                                        borderRadius: BorderRadius.circular(999),
-                                      ),
-                                      child: Text('#$tag',
-                                          style: InkType.caption(ink.accentText)),
-                                    ),
-                                ],
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
                     ],
                   ),
                 ),
@@ -214,6 +157,144 @@ class _WebBoardCardState extends State<WebBoardCard> {
   }
 }
 
+class _Cover extends StatelessWidget {
+  final Color color;
+  final int seed;
+  final bool zoomed;
+  final bool isPublic;
+  final String roleLabel;
+
+  const _Cover({
+    required this.color,
+    required this.seed,
+    required this.zoomed,
+    required this.isPublic,
+    required this.roleLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 116,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ClipRect(
+            child: AnimatedScale(
+              duration: Glass.ui,
+              curve: Curves.easeOutCubic,
+              scale: zoomed ? 1.03 : 1,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ColoredBox(color: color),
+                  CustomPaint(painter: _DoodlePainter(seed: seed, color: color)),
+                  // Soft inner vignette so the cover sits into the dark card.
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        radius: 1.1,
+                        colors: [Color(0x00000000), Color(0x40000000)],
+                        stops: [0.55, 1],
+                      ),
+                    ),
+                  ),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0x00000000), Color(0x33000000)],
+                        stops: [0.6, 1],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Positioned(
+            left: 12,
+            top: 12,
+            child: GlassPill(
+              frosted: true,
+              icon: isPublic ? LucideIcons.globe : LucideIcons.lock,
+              text: isPublic ? 'Public' : 'Private',
+            ),
+          ),
+          Positioned(
+            right: 12,
+            top: 12,
+            child: GlassPill(
+              frosted: true,
+              icon: switch (roleLabel) {
+                'Owner' => LucideIcons.crown,
+                'Member' => LucideIcons.userCheck,
+                'Archived' => LucideIcons.archive,
+                _ => LucideIcons.eye,
+              },
+              text: roleLabel,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Body extends StatelessWidget {
+  final Board board;
+  final bool active;
+  const _Body({required this.board, required this.active});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  board.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Glass.heading(size: 16),
+                ),
+              ),
+              AnimatedOpacity(
+                duration: Glass.fast,
+                opacity: active ? 1 : 0,
+                child: const Icon(LucideIcons.arrowUpRight, size: 18, color: Glass.accentText),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _Fact(icon: LucideIcons.users, text: '${board.membersCount}'),
+              const SizedBox(width: 14),
+              Flexible(child: _Fact(icon: LucideIcons.clock, text: timeAgo(board.updatedAt))),
+            ],
+          ),
+          if (board.tags.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final tag in board.tags.take(3)) GlassPill(text: '#$tag', accent: true),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _Fact extends StatelessWidget {
   final IconData icon;
   final String text;
@@ -221,44 +302,15 @@ class _Fact extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ink = context.ink;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 14, color: ink.inkMuted),
+        Icon(icon, size: 14, color: Glass.textMuted),
         const SizedBox(width: 5),
         Flexible(
-          child: Text(text,
-              overflow: TextOverflow.ellipsis, style: InkType.caption(ink.inkSecondary)),
+          child: Text(text, overflow: TextOverflow.ellipsis, style: Glass.small(color: Glass.textSecondary)),
         ),
       ],
-    );
-  }
-}
-
-/// White frosted label on the coloured cover (same in light and dark).
-class _CoverPill extends StatelessWidget {
-  final IconData icon;
-  final String text;
-  const _CoverPill({required this.icon, required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    const fg = InkColors.stickyInkDefault;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: fg),
-          const SizedBox(width: 4),
-          Text(text, style: InkType.caption(fg).copyWith(fontWeight: FontWeight.w600)),
-        ],
-      ),
     );
   }
 }
@@ -338,7 +390,7 @@ class _DoodlePainter extends CustomPainter {
   bool shouldRepaint(_DoodlePainter old) => old.seed != seed || old.color != color;
 }
 
-/// Responsive grid of board cards.
+/// Responsive grid of board cards with a staggered entrance (40 ms apart).
 class WebBoardGrid extends StatelessWidget {
   final List<Board> boards;
   final String? currentUid;
@@ -361,24 +413,28 @@ class WebBoardGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final columns = (constraints.maxWidth / 280).floor().clamp(1, 4);
-        const gap = InkSpacing.s20;
+        const gap = 20.0;
         final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
         return Wrap(
           spacing: gap,
           runSpacing: gap,
           children: [
-            for (final board in boards)
+            for (var i = 0; i < boards.length; i++)
               SizedBox(
+                key: ValueKey(boards[i].id),
                 width: width,
-                child: WebBoardCard(
-                  board: board,
-                  roleLabel: boardRoleLabel(
-                    ownerId: board.ownerId,
-                    memberIds: board.members,
-                    currentUid: currentUid,
-                    knownMember: allJoined,
+                child: GlassEntrance(
+                  index: i,
+                  child: WebBoardCard(
+                    board: boards[i],
+                    roleLabel: boardRoleLabel(
+                      ownerId: boards[i].ownerId,
+                      memberIds: boards[i].members,
+                      currentUid: currentUid,
+                      knownMember: allJoined,
+                    ),
+                    onTap: () => onOpen(boards[i]),
                   ),
-                  onTap: () => onOpen(board),
                 ),
               ),
           ],

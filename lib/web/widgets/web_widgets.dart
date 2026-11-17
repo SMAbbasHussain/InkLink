@@ -4,13 +4,13 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../domain/models/board.dart';
 import '../../ui/theme/ink_theme.dart';
-import '../../ui/theme/ink_tokens.dart';
 import '../../ui/theme/ink_type.dart';
-import '../../ui/widgets/empty_state.dart';
-import '../../ui/widgets/ink_button.dart';
 import '../data/web_mappers.dart';
+import '../glass/glass_tokens.dart';
+import '../glass/glass_widgets.dart';
 
-/// Shows a short message at the bottom of the page.
+/// Shows a short message at the bottom of the page (works in the glass
+/// shell and on the sign-in screen).
 void showWebMessage(
   BuildContext context,
   String message, {
@@ -23,8 +23,11 @@ void showWebMessage(
       SnackBar(
         behavior: SnackBarBehavior.floating,
         width: 420,
-        backgroundColor: isError ? ink.danger : ink.ink,
-        content: Text(message, style: InkType.body(ink.paper)),
+        backgroundColor: isError ? ink.danger : null,
+        content: Text(
+          message,
+          style: isError ? InkType.body(Colors.white) : Glass.body(color: Glass.text),
+        ),
       ),
     );
 }
@@ -36,24 +39,18 @@ String webErrorText(Object error) {
   return text.startsWith('Exception: ') ? text.substring(11) : text;
 }
 
-/// Page title row used at the top of every section.
+/// Page title (40px, tight tracking) with an optional subtitle and action.
 class WebPageHeader extends StatelessWidget {
   final String title;
   final String? subtitle;
   final Widget? trailing;
 
-  const WebPageHeader({
-    super.key,
-    required this.title,
-    this.subtitle,
-    this.trailing,
-  });
+  const WebPageHeader({super.key, required this.title, this.subtitle, this.trailing});
 
   @override
   Widget build(BuildContext context) {
-    final ink = context.ink;
     return Padding(
-      padding: const EdgeInsets.only(bottom: InkSpacing.s16),
+      padding: const EdgeInsets.only(bottom: 20),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -61,10 +58,10 @@ class WebPageHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: InkType.headline(ink.ink)),
+                Semantics(header: true, child: Text(title, style: Glass.title())),
                 if (subtitle != null) ...[
-                  const SizedBox(height: InkSpacing.s4),
-                  Text(subtitle!, style: InkType.body(ink.inkSecondary)),
+                  const SizedBox(height: 6),
+                  Text(subtitle!, style: Glass.body(color: Glass.textMuted)),
                 ],
               ],
             ),
@@ -85,70 +82,34 @@ class WebReadableWidth extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Align(
-    alignment: Alignment.topLeft,
-    child: ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: maxWidth),
-      child: child,
-    ),
-  );
+        alignment: Alignment.topLeft,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          child: child,
+        ),
+      );
 }
 
-/// Compact "nothing here" line, so empty sections don't push real content
-/// out of view.
+/// "Nothing here" state: a centered glass panel with an icon in a
+/// gradient-ringed circle.
 class WebEmptyHint extends StatelessWidget {
   final IconData icon;
   final String text;
   final String? subtitle;
-  const WebEmptyHint({
-    super.key,
-    required this.icon,
-    required this.text,
-    this.subtitle,
-  });
+  const WebEmptyHint({super.key, required this.icon, required this.text, this.subtitle});
 
   @override
-  Widget build(BuildContext context) {
-    final ink = context.ink;
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: InkSpacing.s16,
-        vertical: InkSpacing.s12,
-      ),
-      decoration: BoxDecoration(
-        color: ink.paper.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: ink.glassStroke),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: ink.inkMuted),
-          const SizedBox(width: InkSpacing.s12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(text, style: InkType.body(ink.inkSecondary)),
-                if (subtitle != null)
-                  Text(subtitle!, style: InkType.caption(ink.inkMuted)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      GlassEmptyState(icon: icon, title: text, subtitle: subtitle);
 }
 
-/// Small section label inside a page.
+/// Section label: uppercase with letter-spacing and a gradient divider.
 class WebSectionLabel extends StatelessWidget {
   final String text;
   const WebSectionLabel(this.text, {super.key});
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: InkSpacing.s16, bottom: InkSpacing.s8),
-    child: Text(text.toUpperCase(), style: InkType.label(context.ink.inkMuted)),
-  );
+  Widget build(BuildContext context) => GlassSectionHeader(text);
 }
 
 /// Builds a live list with loading, error and empty states.
@@ -159,8 +120,8 @@ class WebStreamList<T> extends StatelessWidget {
   final String emptyText;
   final String? emptySubtitle;
 
-  /// Sections inside a page use a one-line hint; a page that is entirely
-  /// this list can use the large sticky-note empty state instead.
+  /// Kept for compatibility: both sizes now use the glass empty state, with
+  /// more breathing room when the whole page is this list.
   final bool compactEmpty;
 
   const WebStreamList({
@@ -183,26 +144,21 @@ class WebStreamList<T> extends StatelessWidget {
         }
         if (!snapshot.hasData) {
           return const Padding(
-            padding: EdgeInsets.all(InkSpacing.s32),
-            child: Center(child: CircularProgressIndicator()),
+            padding: EdgeInsets.all(32),
+            child: Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Glass.accentText),
+              ),
+            ),
           );
         }
         final items = snapshot.data!;
         if (items.isEmpty) {
-          if (compactEmpty) {
-            return WebEmptyHint(
-              icon: emptyIcon,
-              text: emptyText,
-              subtitle: emptySubtitle,
-            );
-          }
           return Padding(
-            padding: const EdgeInsets.symmetric(vertical: InkSpacing.s24),
-            child: EmptyState(
-              icon: emptyIcon,
-              text: emptyText,
-              subtitle: emptySubtitle,
-            ),
+            padding: EdgeInsets.symmetric(vertical: compactEmpty ? 4 : 32),
+            child: GlassEmptyState(icon: emptyIcon, title: emptyText, subtitle: emptySubtitle),
           );
         }
         return builder(context, items);
@@ -217,14 +173,14 @@ class WebErrorBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ink = context.ink;
-    return Padding(
-      padding: const EdgeInsets.all(InkSpacing.s16),
+    return GlassPanel(
+      padding: const EdgeInsets.all(14),
+      borderColor: Glass.danger.withValues(alpha: 0.35),
       child: Row(
         children: [
-          Icon(LucideIcons.triangleAlert, color: ink.danger, size: 18),
-          const SizedBox(width: InkSpacing.s8),
-          Expanded(child: Text(message, style: InkType.body(ink.danger))),
+          const Icon(LucideIcons.triangleAlert, color: Glass.danger, size: 18),
+          const SizedBox(width: 10),
+          Expanded(child: Text(message, style: Glass.body(color: Glass.danger))),
         ],
       ),
     );
@@ -233,78 +189,84 @@ class WebErrorBox extends StatelessWidget {
 
 /// Details for a board, with links that open it in the phone app.
 Future<void> showOpenInAppDialog(BuildContext context, Board board) {
-  final ink = context.ink;
   final link = boardAppLink(board.id);
   return showDialog<void>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
-      backgroundColor: ink.paper,
-      title: Text(board.title, style: InkType.title(ink.ink)),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Drawing and editing happen in the InkLink mobile app. '
-              'Open this link on your phone to jump straight into the board.',
-              style: InkType.body(ink.inkSecondary),
-            ),
-            const SizedBox(height: InkSpacing.s16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: ink.field,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: ink.glassStroke),
+    barrierColor: const Color(0x99000000),
+    builder: (dialogContext) => Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: GlassPanel(
+          blur: true,
+          radius: Glass.r20,
+          shadow: Glass.shadowLifted,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(board.title, style: Glass.heading(size: 22)),
+              const SizedBox(height: 8),
+              Text(
+                'Drawing and editing happen in the InkLink mobile app. '
+                'Open this link on your phone to jump straight into the board.',
+                style: Glass.body(),
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: SelectableText(link, style: InkType.body(ink.ink)),
-                  ),
-                  IconButton(
-                    tooltip: 'Copy link',
-                    icon: Icon(
-                      LucideIcons.copy,
-                      size: 18,
-                      color: ink.inkSecondary,
+              const SizedBox(height: 16),
+              GlassPanel(
+                strong: true,
+                radius: 12,
+                padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+                child: Row(
+                  children: [
+                    Expanded(child: SelectableText(link, style: Glass.body(color: Glass.text))),
+                    GlassButton.icon(
+                      icon: LucideIcons.copy,
+                      tooltip: 'Copy link',
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(text: link));
+                        if (dialogContext.mounted) showWebMessage(dialogContext, 'Link copied');
+                      },
                     ),
-                    onPressed: () async {
-                      await Clipboard.setData(ClipboardData(text: link));
-                      if (dialogContext.mounted) {
-                        showWebMessage(dialogContext, 'Link copied');
-                      }
-                    },
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  GlassPill(
+                    icon: LucideIcons.users,
+                    text: '${board.membersCount} ${board.membersCount == 1 ? 'member' : 'members'}',
                   ),
+                  GlassPill(
+                    icon: board.visibility == 'public' ? LucideIcons.globe : LucideIcons.lock,
+                    text: board.visibility == 'public' ? 'Public' : 'Private',
+                  ),
+                  if (board.isArchived) const GlassPill(icon: LucideIcons.archive, text: 'Archived'),
                 ],
               ),
-            ),
-            const SizedBox(height: InkSpacing.s12),
-            Text(
-              '${board.membersCount} ${board.membersCount == 1 ? 'member' : 'members'}'
-              ' · ${board.visibility == 'public' ? 'Public' : 'Private'}'
-              '${board.isArchived ? ' · Archived' : ''}',
-              style: InkType.caption(ink.inkMuted),
-            ),
-          ],
+              const SizedBox(height: 20),
+              Align(
+                alignment: Alignment.centerRight,
+                child: GlassButton.ghost(
+                  label: 'Close',
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-      actions: [
-        InkButton(
-          label: 'Close',
-          expand: false,
-          compact: true,
-          variant: InkButtonVariant.secondary,
-          onPressed: () => Navigator.of(dialogContext).pop(),
-        ),
-      ],
     ),
   );
 }
 
-/// Accept / Decline pair used by invites and friend requests.
+/// Accept (gradient, glows on hover) / Decline (ghost glass) pair used by
+/// invites and friend requests.
 class WebAcceptDecline extends StatefulWidget {
   final Future<void> Function() onAccept;
   final Future<void> Function() onDecline;
@@ -343,24 +305,15 @@ class _WebAcceptDeclineState extends State<WebAcceptDecline> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        InkButton(
+        GlassButton.ghost(
           label: 'Decline',
-          expand: false,
-          compact: true,
-          variant: InkButtonVariant.secondary,
-          onPressed: _busy
-              ? null
-              : () => _run(widget.onDecline, widget.declinedMessage),
+          onPressed: _busy ? null : () => _run(widget.onDecline, widget.declinedMessage),
         ),
-        const SizedBox(width: InkSpacing.s8),
-        InkButton(
+        const SizedBox(width: 8),
+        GlassButton.primary(
           label: 'Accept',
-          expand: false,
-          compact: true,
-          isLoading: _busy,
-          onPressed: _busy
-              ? null
-              : () => _run(widget.onAccept, widget.acceptedMessage),
+          loading: _busy,
+          onPressed: _busy ? null : () => _run(widget.onAccept, widget.acceptedMessage),
         ),
       ],
     );
