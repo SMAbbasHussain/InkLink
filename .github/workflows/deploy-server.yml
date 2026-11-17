@@ -1,0 +1,42 @@
+name: Deploy Server to EC2
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'server/**'
+      - '.github/workflows/deploy-server.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-server-ec2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Fetch and reset deploy checkout
+        run: |
+          sudo -H -u inklink git -C /opt/inklink/app fetch --depth=1 origin main
+          sudo -H -u inklink git -C /opt/inklink/app reset --hard origin/main
+
+      - name: Install server production dependencies
+        run: |
+          sudo -H -u inklink bash -lc 'cd /opt/inklink/app/server && npm ci --omit=dev'
+
+      - name: Restart inklink service and verify health
+        run: |
+          sudo systemctl restart inklink
+          sudo systemctl is-active --quiet inklink
+          for i in $(seq 1 10); do
+            if curl -fsS http://127.0.0.1:3000/health; then
+              echo ""
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Health check failed after restart"
+          exit 1
