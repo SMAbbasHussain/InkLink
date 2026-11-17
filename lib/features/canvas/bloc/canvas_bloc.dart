@@ -17,6 +17,7 @@ import '../../../domain/models/history/board_operation.dart';
 import '../../../domain/models/history/history_scrub.dart';
 import '../../../domain/models/history/revert_plan.dart';
 import '../../../domain/models/history/undo_request.dart';
+import '../../../domain/models/history/user_timeline.dart';
 import '../../../domain/services/history/board_history_service.dart';
 import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/board_chat_service.dart';
@@ -7305,7 +7306,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               baseStateBytes: timeline.baseStateBytes,
               stepDeltas: [
                 Uint8List(0),
-                ...timeline.steps.map((step) => step.deltaBytes),
+                ..._alignedStepDeltas(timeline),
               ],
               targetUid: scopeMode == UndoRequestScopeMode.areaState
                   ? null
@@ -7479,7 +7480,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         baseStateBytes: timeline.baseStateBytes,
         stepDeltas: [
           Uint8List(0),
-          ...timeline.steps.map((step) => step.deltaBytes),
+          ..._alignedStepDeltas(timeline),
         ],
         targetUid: null,
         elementIds: event.elementIds,
@@ -7625,7 +7626,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         baseStateBytes: timeline.baseStateBytes,
         stepDeltas: [
           Uint8List(0),
-          ...timeline.steps.map((step) => step.deltaBytes),
+          ..._alignedStepDeltas(timeline),
         ],
         targetUid: isAreaState ? null : state.currentUserId,
         elementIds: scopeIds,
@@ -8016,7 +8017,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       final scrub = HistoryScrub(
         stops: timeline.ops,
         baseStateBytes: timeline.baseStateBytes,
-        stepDeltas: [for (final step in timeline.steps) step.deltaBytes],
+        stepDeltas: _alignedStepDeltas(timeline),
         targetUid: event.targetUid,
         hasMore: timeline.hasMore,
         nextBeforeVersion: timeline.nextBeforeVersion,
@@ -8036,6 +8037,21 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
   }
 
+  /// Aligns `timeline.steps` 1:1 with `timeline.ops` by version, falling back
+  /// to positional index or an empty delta when the server omitted a step.
+  List<Uint8List> _alignedStepDeltas(UserTimeline timeline) {
+    final byVersion = <int, Uint8List>{
+      for (final step in timeline.steps) step.version: step.deltaBytes,
+    };
+    return [
+      for (var i = 0; i < timeline.ops.length; i++)
+        byVersion[timeline.ops[i].version] ??
+            (i < timeline.steps.length
+                ? timeline.steps[i].deltaBytes
+                : Uint8List(0)),
+    ];
+  }
+
   Future<HistoryScrub> _computeScrubWithDiffs(HistoryScrub scrub) async {
     if (scrub.stops.isEmpty) return scrub;
     final stepElements = <List<CanvasElement>>[];
@@ -8044,7 +8060,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       adapter.applyUpdate(scrub.baseStateBytes, origin: 'remote');
     }
     for (var i = 0; i < scrub.stops.length; i++) {
-      final delta = scrub.stepDeltas[i];
+      final delta = scrub.deltaAt(i);
       if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
       stepElements.add(
         _rebuildElementsFromCrdtState(adapter.materializeElements()),
@@ -8190,7 +8206,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final index =
         (startIndex ?? enrichedScrub.lastIndex).clamp(0, enrichedScrub.lastIndex);
     for (var i = 0; i <= index; i++) {
-      final delta = enrichedScrub.stepDeltas[i];
+      final delta = enrichedScrub.deltaAt(i);
       if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
     }
     _historyScrubAdapter = adapter;
@@ -8238,7 +8254,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (index == state.historyScrubIndex) return;
     if (index > state.historyScrubIndex) {
       for (var i = state.historyScrubIndex + 1; i <= index; i++) {
-        final delta = scrub.stepDeltas[i];
+        final delta = scrub.deltaAt(i);
         if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
       }
     } else {
@@ -8247,7 +8263,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         rebuilt.applyUpdate(scrub.baseStateBytes, origin: 'remote');
       }
       for (var i = 0; i <= index; i++) {
-        final delta = scrub.stepDeltas[i];
+        final delta = scrub.deltaAt(i);
         if (delta.isNotEmpty) rebuilt.applyUpdate(delta, origin: 'remote');
       }
       _historyScrubAdapter = rebuilt;
@@ -8303,7 +8319,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           stops: [...timeline.ops, ...scrub.stops],
           baseStateBytes: timeline.baseStateBytes,
           stepDeltas: [
-            ...timeline.steps.map((step) => step.deltaBytes),
+            ..._alignedStepDeltas(timeline),
             ...scrub.stepDeltas,
           ],
           targetUid: scrub.targetUid,

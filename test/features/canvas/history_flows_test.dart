@@ -693,5 +693,73 @@ void main() {
 
       await bloc.close();
     });
+
+    test('undo request scrub handles mismatched timeline ops and steps without RangeError', () async {
+      final bloc = buildBloc();
+      _setRole(bloc, Board.roleEditor);
+      await _settle();
+
+      final baseAdapter = await CanvasCrdtAdapter.create();
+      final step1Bytes = baseAdapter.upsertElement('e-1', {
+        'type': 'shape',
+        'shapeType': 'square',
+        'cx': 40.0,
+        'cy': 40.0,
+        'size': 30.0,
+        'strokeWidth': 2.0,
+        'color': 0xFF000000,
+      });
+      final step3Bytes = baseAdapter.upsertElement('e-2', {
+        'type': 'shape',
+        'shapeType': 'circle',
+        'cx': 80.0,
+        'cy': 80.0,
+        'size': 30.0,
+        'strokeWidth': 2.0,
+        'color': 0xFF000000,
+      });
+
+      // Simulate server returning 3 ops but only 2 steps (stepDeltas length 3
+      // before fix -> RangeError(index 3 in 0..2)).
+      history.timeline = UserTimeline(
+        ops: const [
+          BoardOperation(version: 1, summary: 'Added e-1'),
+          BoardOperation(version: 2, summary: 'Missing step op'),
+          BoardOperation(version: 3, summary: 'Added e-2'),
+        ],
+        baseVersion: 0,
+        baseStateBytes: Uint8List(0),
+        steps: [
+          TimelineStep(version: 1, deltaBytes: step1Bytes),
+          TimelineStep(version: 3, deltaBytes: step3Bytes),
+        ],
+      );
+
+      bloc.add(const CanvasUndoRequestDraftStarted(preselectedIds: ['e-1']));
+      await _settle();
+
+      bloc.add(const CanvasUndoRequestPreviewRequested());
+      await _settle(120);
+
+      expect(bloc.state.isViewingHistory, isTrue);
+      expect(bloc.state.historyScrub, isNotNull);
+      expect(bloc.state.historyScrub!.stops.length, 4);
+      expect(bloc.state.historyScrub!.stepDeltas.length, 4);
+
+      // Scrub to the last stop (index 3) and back to 0 without RangeError.
+      bloc.add(const CanvasHistoryScrubMoved(3));
+      await _settle(80);
+      expect(bloc.state.historyScrubIndex, 3);
+
+      bloc.add(const CanvasHistoryScrubMoved(0));
+      await _settle(80);
+      expect(bloc.state.historyScrubIndex, 0);
+
+      bloc.add(const CanvasUndoRequestSubmitRequested('undo mismatched'));
+      await _settle(80);
+      expect(history.lastSubmittedTargetVersion, 0);
+
+      await bloc.close();
+    });
   });
 }

@@ -88,6 +88,11 @@ class HistoryScrub {
   BoardOperation stopAt(int index) =>
       stops[index.clamp(0, stops.length - 1)];
 
+  Uint8List deltaAt(int index) {
+    if (index < 0 || index >= stepDeltas.length) return Uint8List(0);
+    return stepDeltas[index];
+  }
+
   HistoryScrubDiff? diffAt(int index) {
     if (stepDiffs.isEmpty) return null;
     return stepDiffs[index.clamp(0, stepDiffs.length - 1)];

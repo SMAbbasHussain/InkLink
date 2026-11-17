@@ -280,3 +280,20 @@ test('area timeline with scopeMode area_state collects all users ops within the 
   assert.deepEqual(timeline.ops.map((op) => op.version), [1, 3], 'includes both A and B ops inside the area, skips v2 outside the area');
   assert.deepEqual(timeline.steps.map((s) => s.version), [1, 3]);
 });
+
+test('user timeline keeps steps aligned 1:1 with ops when an op lacks payload or fails to decode', async () => {
+  const d = new Y.Doc();
+  const m = d.getMap('elements');
+  const p1 = captureUpdate(d, () => m.set('a', { id: 'a', type: 'rect', x: 1 }));
+  const p3 = captureUpdate(d, () => m.set('b', { id: 'b', type: 'rect', x: 2 }));
+  const entries = [
+    { version: 1, updateId: 'u1', sourceClientId: 'A', elementId: 'a', payloadBase64: p1, timestamp: NOW },
+    { version: 2, updateId: 'u2', sourceClientId: 'A', elementId: 'a', payloadBase64: '', timestamp: NOW },
+    { version: 3, updateId: 'u3', sourceClientId: 'A', elementId: 'b', payloadBase64: p3, timestamp: NOW },
+  ];
+
+  const timeline = await buildUserTimeline('board-1', 'A', {}, redisWith(entries));
+  assert.deepEqual(timeline.ops.map((op) => op.version), [1, 2, 3]);
+  assert.deepEqual(timeline.steps.map((s) => s.version), [1, 2, 3]);
+  assert.equal(timeline.steps[1].stateUpdate, '');
+});

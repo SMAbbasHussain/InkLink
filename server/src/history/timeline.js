@@ -119,30 +119,39 @@ async function buildUserTimeline(boardId, targetUid, opts = {}, redis) {
     lastVersion,
     redis,
   );
-  const steps = [];
+  const stepsByVersion = new Map();
   let vector = Y.encodeStateVector(doc); // state at baseVersion
 
   for (const op of rangeOps) {
-    if (!op.payloadBase64) continue;
     const isStop = stopVersions.has(op.version);
+    if (!op.payloadBase64) {
+      if (isStop) {
+        stepsByVersion.set(op.version, { version: op.version, stateUpdate: '' });
+      }
+      continue;
+    }
     let before = null;
     if (isStop && needsLabel.has(op.version)) before = elements.toJSON();
+    let applied = false;
     try {
       Y.applyUpdate(doc, Buffer.from(op.payloadBase64, 'base64'));
+      applied = true;
     } catch (_) {
-      continue;
+      applied = false;
     }
     if (!isStop) continue;
 
     // Delta relative to the previous stop (or the base): applying base +
     // steps[0..i] reproduces the board exactly as it was at this version.
-    steps.push({
+    stepsByVersion.set(op.version, {
       version: op.version,
-      stateUpdate: toBase64(Y.encodeStateAsUpdate(doc, vector)),
+      stateUpdate: applied ? toBase64(Y.encodeStateAsUpdate(doc, vector)) : '',
     });
-    vector = Y.encodeStateVector(doc);
+    if (applied) {
+      vector = Y.encodeStateVector(doc);
+    }
 
-    if (needsLabel.has(op.version)) {
+    if (applied && needsLabel.has(op.version)) {
       const after = elements.toJSON();
       const changes = [];
       for (const key of Object.keys(after)) {
@@ -166,6 +175,12 @@ async function buildUserTimeline(boardId, targetUid, opts = {}, redis) {
       }
     }
   }
+
+  // Guarantee 1:1 alignment between returned ops and steps so client scrubbers
+  // never index past the end of `steps`.
+  const steps = page.map(
+    (op) => stepsByVersion.get(op.version) || { version: op.version, stateUpdate: '' },
+  );
 
   return {
     ops: page,
