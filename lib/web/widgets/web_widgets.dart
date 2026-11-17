@@ -12,7 +12,11 @@ import '../../ui/widgets/paper_card.dart';
 import '../data/web_mappers.dart';
 
 /// Shows a short message at the bottom of the page.
-void showWebMessage(BuildContext context, String message, {bool isError = false}) {
+void showWebMessage(
+  BuildContext context,
+  String message, {
+  bool isError = false,
+}) {
   final ink = context.ink;
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
@@ -39,7 +43,12 @@ class WebPageHeader extends StatelessWidget {
   final String? subtitle;
   final Widget? trailing;
 
-  const WebPageHeader({super.key, required this.title, this.subtitle, this.trailing});
+  const WebPageHeader({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.trailing,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -68,6 +77,69 @@ class WebPageHeader extends StatelessWidget {
   }
 }
 
+/// Keeps lists and forms at a readable width, aligned with the page title,
+/// instead of stretching across very wide screens.
+class WebReadableWidth extends StatelessWidget {
+  final double maxWidth;
+  final Widget child;
+  const WebReadableWidth({super.key, this.maxWidth = 760, required this.child});
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.topLeft,
+    child: ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: child,
+    ),
+  );
+}
+
+/// Compact "nothing here" line, so empty sections don't push real content
+/// out of view.
+class WebEmptyHint extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  final String? subtitle;
+  const WebEmptyHint({
+    super.key,
+    required this.icon,
+    required this.text,
+    this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = context.ink;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: InkSpacing.s16,
+        vertical: InkSpacing.s12,
+      ),
+      decoration: BoxDecoration(
+        color: ink.paper.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: ink.glassStroke),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: ink.inkMuted),
+          const SizedBox(width: InkSpacing.s12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(text, style: InkType.body(ink.inkSecondary)),
+                if (subtitle != null)
+                  Text(subtitle!, style: InkType.caption(ink.inkMuted)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Small section label inside a page.
 class WebSectionLabel extends StatelessWidget {
   final String text;
@@ -75,9 +147,9 @@ class WebSectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(top: InkSpacing.s16, bottom: InkSpacing.s8),
-        child: Text(text.toUpperCase(), style: InkType.label(context.ink.inkMuted)),
-      );
+    padding: const EdgeInsets.only(top: InkSpacing.s16, bottom: InkSpacing.s8),
+    child: Text(text.toUpperCase(), style: InkType.label(context.ink.inkMuted)),
+  );
 }
 
 /// Builds a live list with loading, error and empty states.
@@ -88,6 +160,10 @@ class WebStreamList<T> extends StatelessWidget {
   final String emptyText;
   final String? emptySubtitle;
 
+  /// Sections inside a page use a one-line hint; a page that is entirely
+  /// this list can use the large sticky-note empty state instead.
+  final bool compactEmpty;
+
   const WebStreamList({
     super.key,
     required this.stream,
@@ -95,6 +171,7 @@ class WebStreamList<T> extends StatelessWidget {
     required this.emptyIcon,
     required this.emptyText,
     this.emptySubtitle,
+    this.compactEmpty = true,
   });
 
   @override
@@ -113,9 +190,20 @@ class WebStreamList<T> extends StatelessWidget {
         }
         final items = snapshot.data!;
         if (items.isEmpty) {
+          if (compactEmpty) {
+            return WebEmptyHint(
+              icon: emptyIcon,
+              text: emptyText,
+              subtitle: emptySubtitle,
+            );
+          }
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: InkSpacing.s24),
-            child: EmptyState(icon: emptyIcon, text: emptyText, subtitle: emptySubtitle),
+            child: EmptyState(
+              icon: emptyIcon,
+              text: emptyText,
+              subtitle: emptySubtitle,
+            ),
           );
         }
         return builder(context, items);
@@ -147,13 +235,15 @@ class WebErrorBox extends StatelessWidget {
 /// One board in a grid: title, tags, members and visibility.
 class WebBoardTile extends StatelessWidget {
   final Board board;
-  final bool isOwner;
+
+  /// "Owner", "Member" or "Public" (see [boardRoleLabel]).
+  final String roleLabel;
   final VoidCallback onTap;
 
   const WebBoardTile({
     super.key,
     required this.board,
-    required this.isOwner,
+    required this.roleLabel,
     required this.onTap,
   });
 
@@ -165,8 +255,8 @@ class WebBoardTile extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
         onTap: onTap,
+        // No tilt here: in a grid, tilted cards read as a rendering glitch.
         child: PaperCard(
-          tiltId: board.id,
           padding: const EdgeInsets.all(InkSpacing.s16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -175,7 +265,9 @@ class WebBoardTile extends StatelessWidget {
               Row(
                 children: [
                   Icon(
-                    board.visibility == 'public' ? LucideIcons.globe : LucideIcons.lock,
+                    board.visibility == 'public'
+                        ? LucideIcons.globe
+                        : LucideIcons.lock,
                     size: 16,
                     color: ink.inkMuted,
                   ),
@@ -192,7 +284,7 @@ class WebBoardTile extends StatelessWidget {
               ),
               const SizedBox(height: InkSpacing.s8),
               Text(
-                '${isOwner ? 'Owner' : 'Member'} · ${board.membersCount} '
+                '$roleLabel · ${board.membersCount} '
                 '${board.membersCount == 1 ? 'member' : 'members'} · '
                 'updated ${timeAgo(board.updatedAt)}',
                 style: InkType.caption(ink.inkSecondary),
@@ -205,12 +297,18 @@ class WebBoardTile extends StatelessWidget {
                   children: [
                     for (final tag in board.tags.take(4))
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: ink.accentSoft,
                           borderRadius: BorderRadius.circular(999),
                         ),
-                        child: Text('#$tag', style: InkType.caption(ink.accentText)),
+                        child: Text(
+                          '#$tag',
+                          style: InkType.caption(ink.accentText),
+                        ),
                       ),
                   ],
                 ),
@@ -229,11 +327,16 @@ class WebBoardGrid extends StatelessWidget {
   final String? currentUid;
   final ValueChanged<Board> onOpen;
 
+  /// True for the user's own board list, where every board is owned or
+  /// joined. False for public boards, which the user may not belong to.
+  final bool allJoined;
+
   const WebBoardGrid({
     super.key,
     required this.boards,
     required this.currentUid,
     required this.onOpen,
+    this.allJoined = false,
   });
 
   @override
@@ -252,7 +355,12 @@ class WebBoardGrid extends StatelessWidget {
                 width: width,
                 child: WebBoardTile(
                   board: board,
-                  isOwner: board.ownerId == currentUid,
+                  roleLabel: boardRoleLabel(
+                    ownerId: board.ownerId,
+                    memberIds: board.members,
+                    currentUid: currentUid,
+                    knownMember: allJoined,
+                  ),
                   onTap: () => onOpen(board),
                 ),
               ),
@@ -293,10 +401,16 @@ Future<void> showOpenInAppDialog(BuildContext context, Board board) {
               ),
               child: Row(
                 children: [
-                  Expanded(child: SelectableText(link, style: InkType.body(ink.ink))),
+                  Expanded(
+                    child: SelectableText(link, style: InkType.body(ink.ink)),
+                  ),
                   IconButton(
                     tooltip: 'Copy link',
-                    icon: Icon(LucideIcons.copy, size: 18, color: ink.inkSecondary),
+                    icon: Icon(
+                      LucideIcons.copy,
+                      size: 18,
+                      color: ink.inkSecondary,
+                    ),
                     onPressed: () async {
                       await Clipboard.setData(ClipboardData(text: link));
                       if (dialogContext.mounted) {
@@ -374,7 +488,9 @@ class _WebAcceptDeclineState extends State<WebAcceptDecline> {
           expand: false,
           compact: true,
           variant: InkButtonVariant.secondary,
-          onPressed: _busy ? null : () => _run(widget.onDecline, widget.declinedMessage),
+          onPressed: _busy
+              ? null
+              : () => _run(widget.onDecline, widget.declinedMessage),
         ),
         const SizedBox(width: InkSpacing.s8),
         InkButton(
@@ -382,7 +498,9 @@ class _WebAcceptDeclineState extends State<WebAcceptDecline> {
           expand: false,
           compact: true,
           isLoading: _busy,
-          onPressed: _busy ? null : () => _run(widget.onAccept, widget.acceptedMessage),
+          onPressed: _busy
+              ? null
+              : () => _run(widget.onAccept, widget.acceptedMessage),
         ),
       ],
     );

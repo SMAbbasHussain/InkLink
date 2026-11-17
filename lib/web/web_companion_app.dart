@@ -59,8 +59,9 @@ class _WebAuthGate extends StatelessWidget {
         builder: (context, snapshot) {
           final user = repo.currentUser ?? snapshot.data;
           if (user == null) return const WebSignInScreen();
-          final usesPassword =
-              user.providerData.any((p) => p.providerId == 'password');
+          final usesPassword = user.providerData.any(
+            (p) => p.providerId == 'password',
+          );
           if (usesPassword && !user.emailVerified) {
             return WebVerifyEmailScreen(email: user.email ?? 'your email');
           }

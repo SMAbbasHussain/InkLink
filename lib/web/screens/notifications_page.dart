@@ -23,7 +23,8 @@ class WebNotificationsPage extends StatefulWidget {
 
 class _WebNotificationsPageState extends State<WebNotificationsPage> {
   late final _repo = context.read<WebCompanionRepository>();
-  late final Stream<List<InAppNotification>> _stream = _repo.watchNotifications();
+  late final Stream<List<InAppNotification>> _stream = _repo
+      .watchNotifications();
 
   Future<void> _delete(InAppNotification n) async {
     try {
@@ -45,41 +46,88 @@ class _WebNotificationsPageState extends State<WebNotificationsPage> {
         ),
         WebStreamList<InAppNotification>(
           stream: _stream,
+          compactEmpty: false,
           emptyIcon: LucideIcons.bell,
           emptyText: "You're all caught up",
-          builder: (context, items) => PaperCard(
-            padding: const EdgeInsets.symmetric(vertical: InkSpacing.s8),
-            child: Column(
-              children: [
-                for (final n in items)
-                  ListTile(
-                    key: ValueKey(n.id),
-                    leading: InkAvatar(
-                      id: n.senderUid ?? n.id,
-                      imageUrl: n.senderPhotoUrl,
-                      initials: initialsOf(n.senderDisplayName ?? n.title),
-                      size: 36,
+          builder: (context, items) => WebReadableWidth(
+            child: PaperCard(
+              padding: const EdgeInsets.symmetric(vertical: InkSpacing.s8),
+              child: Column(
+                children: [
+                  for (final n in items)
+                    ListTile(
+                      key: ValueKey(n.id),
+                      leading: _NotificationAvatar(notification: n),
+                      title: Text(
+                        n.title,
+                        style: n.read
+                            ? InkType.body(ink.ink)
+                            : InkType.bodyStrong(ink.ink),
+                      ),
+                      subtitle: Text(
+                        [
+                          if (n.body != null && n.body!.isNotEmpty) n.body!,
+                          timeAgo(n.timestamp),
+                        ].join(' · '),
+                        style: InkType.caption(ink.inkMuted),
+                      ),
+                      trailing: IconButton(
+                        tooltip: 'Remove',
+                        icon: Icon(
+                          LucideIcons.x,
+                          size: 18,
+                          color: ink.inkMuted,
+                        ),
+                        onPressed: () => _delete(n),
+                      ),
                     ),
-                    title: Text(
-                      n.title,
-                      style: n.read ? InkType.body(ink.ink) : InkType.bodyStrong(ink.ink),
-                    ),
-                    subtitle: Text(
-                      [if (n.body != null && n.body!.isNotEmpty) n.body!, timeAgo(n.timestamp)]
-                          .join(' · '),
-                      style: InkType.caption(ink.inkMuted),
-                    ),
-                    trailing: IconButton(
-                      tooltip: 'Remove',
-                      icon: Icon(LucideIcons.x, size: 18, color: ink.inkMuted),
-                      onPressed: () => _delete(n),
-                    ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Sender photo or initials when the sender is known; otherwise an icon for
+/// the kind of notification (never initials guessed from the title).
+class _NotificationAvatar extends StatelessWidget {
+  final InAppNotification notification;
+  const _NotificationAvatar({required this.notification});
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = context.ink;
+    final name = notification.senderDisplayName?.trim() ?? '';
+    final photo = notification.senderPhotoUrl?.trim() ?? '';
+    if (name.isNotEmpty || photo.isNotEmpty) {
+      return InkAvatar(
+        id: notification.senderUid ?? notification.id,
+        imageUrl: photo.isEmpty ? null : photo,
+        initials: initialsOf(name.isEmpty ? null : name),
+        size: 36,
+      );
+    }
+    final icon = switch (notificationKindOf(notification.type)) {
+      NotificationKind.invite => LucideIcons.mailOpen,
+      NotificationKind.friend => LucideIcons.users,
+      NotificationKind.mention => LucideIcons.atSign,
+      NotificationKind.access => LucideIcons.keyRound,
+      NotificationKind.board => LucideIcons.layoutGrid,
+      NotificationKind.other => LucideIcons.bell,
+    };
+    return ExcludeSemantics(
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: ink.accentSoft,
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, size: 18, color: ink.accentText),
+      ),
     );
   }
 }

@@ -20,8 +20,9 @@ class WebBoardsPage extends StatefulWidget {
 }
 
 class _WebBoardsPageState extends State<WebBoardsPage> {
-  late final Stream<List<Board>> _boards =
-      context.read<WebCompanionRepository>().watchMyBoards();
+  late final Stream<List<Board>> _boards = context
+      .read<WebCompanionRepository>()
+      .watchMyBoards();
   final _search = TextEditingController();
   _BoardFilter _filter = _BoardFilter.all;
 
@@ -55,7 +56,8 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
       children: [
         const WebPageHeader(
           title: 'Your boards',
-          subtitle: 'Everything you own or joined. Open a board on your phone to draw.',
+          subtitle:
+              'Everything you own or joined. Open a board on your phone to draw.',
         ),
         InkTextField(
           controller: _search,
@@ -83,17 +85,22 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
         const SizedBox(height: InkSpacing.s16),
         WebStreamList<Board>(
           stream: _boards,
+          compactEmpty: false,
           emptyIcon: LucideIcons.layoutGrid,
           emptyText: 'No boards yet',
-          emptySubtitle: 'Create a board in the InkLink mobile app and it will show up here.',
+          emptySubtitle:
+              'Create a board in the InkLink mobile app and it will show up here.',
           builder: (context, boards) {
             final visible = _apply(boards, uid);
             if (visible.isEmpty) {
-              return const WebErrorBoxless(text: 'No boards match this filter.');
+              return const WebErrorBoxless(
+                text: 'No boards match this filter.',
+              );
             }
             return WebBoardGrid(
               boards: visible,
               currentUid: uid,
+              allJoined: true,
               onOpen: (b) => showOpenInAppDialog(context, b),
             );
           },
@@ -112,8 +119,9 @@ class WebDiscoverPage extends StatefulWidget {
 }
 
 class _WebDiscoverPageState extends State<WebDiscoverPage> {
-  late Future<List<Board>> _future =
-      context.read<WebCompanionRepository>().loadPublicBoards();
+  late Future<List<Board>> _future = context
+      .read<WebCompanionRepository>()
+      .loadPublicBoards();
 
   @override
   Widget build(BuildContext context) {
@@ -128,7 +136,9 @@ class _WebDiscoverPageState extends State<WebDiscoverPage> {
             tooltip: 'Refresh',
             icon: const Icon(LucideIcons.refreshCw),
             onPressed: () => setState(() {
-              _future = context.read<WebCompanionRepository>().loadPublicBoards();
+              _future = context
+                  .read<WebCompanionRepository>()
+                  .loadPublicBoards();
             }),
           ),
         ),
@@ -167,7 +177,7 @@ class WebErrorBoxless extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: InkSpacing.s24),
-        child: Center(child: Text(text)),
-      );
+    padding: const EdgeInsets.symmetric(vertical: InkSpacing.s24),
+    child: Center(child: Text(text)),
+  );
 }

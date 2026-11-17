@@ -15,7 +15,9 @@ class UserBoardIndex {
 
   /// Mirrors the mobile dashboard: `boardId` (or the doc id) and
   /// `relation` ('owned' or anything else = joined).
-  factory UserBoardIndex.fromDocs(Iterable<MapEntry<String, Map<String, dynamic>>> docs) {
+  factory UserBoardIndex.fromDocs(
+    Iterable<MapEntry<String, Map<String, dynamic>>> docs,
+  ) {
     final owned = <String>{};
     final joined = <String>{};
     for (final doc in docs) {
@@ -52,6 +54,19 @@ String boardSchemeLink(String boardId) => 'inklink://board/$boardId';
 bool isFeedNotification(Map<String, dynamic> data) =>
     data['type'] != 'chat_message';
 
+/// Cloud Functions save a notification's sender as `fromUid` / `senderName` /
+/// `senderPic`, but the shared `InAppNotification.fromMap` reads
+/// `senderUid` / `senderDisplayName` / `senderPhotoUrl`. Fill the latter from
+/// the former (without overwriting) so the web shows who sent it. The shared
+/// model is left unchanged.
+Map<String, dynamic> withNotificationSenderFields(Map<String, dynamic> data) {
+  final out = Map<String, dynamic>.from(data);
+  out['senderUid'] ??= data['fromUid'];
+  out['senderDisplayName'] ??= data['senderName'];
+  out['senderPhotoUrl'] ??= data['senderPic'];
+  return out;
+}
+
 /// Initials for an avatar, e.g. "Fahad Basraa" -> "FB".
 String initialsOf(String? name) {
   final parts = (name ?? '')
@@ -61,7 +76,46 @@ String initialsOf(String? name) {
       .toList();
   if (parts.isEmpty) return '?';
   if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
-  return (parts.first.substring(0, 1) + parts.last.substring(0, 1)).toUpperCase();
+  return (parts.first.substring(0, 1) + parts.last.substring(0, 1))
+      .toUpperCase();
+}
+
+/// Label shown on a board card: "Owner", "Member" or "Public".
+///
+/// [knownMember] is true for the user's own board list (every board there is
+/// owned or joined). For public boards, membership comes from `members`.
+String boardRoleLabel({
+  required String ownerId,
+  required List<String> memberIds,
+  required String? currentUid,
+  bool knownMember = false,
+}) {
+  if (currentUid != null && ownerId == currentUid) return 'Owner';
+  if (knownMember || (currentUid != null && memberIds.contains(currentUid))) {
+    return 'Member';
+  }
+  return 'Public';
+}
+
+/// What a notification avatar shows when the sender's name is missing.
+enum NotificationKind { invite, friend, mention, access, board, other }
+
+NotificationKind notificationKindOf(String type) {
+  if (type.contains('invite')) return NotificationKind.invite;
+  if (type.startsWith('friend')) return NotificationKind.friend;
+  if (type == 'mention' || type.contains('comment')) {
+    return NotificationKind.mention;
+  }
+  if (type.contains('access') ||
+      type.contains('edit_request') ||
+      type == 'role_updated' ||
+      type == 'member_removed') {
+    return NotificationKind.access;
+  }
+  if (type.startsWith('board') || type.contains('undo')) {
+    return NotificationKind.board;
+  }
+  return NotificationKind.other;
 }
 
 /// Validation for the profile form, matching the mobile limits loosely.

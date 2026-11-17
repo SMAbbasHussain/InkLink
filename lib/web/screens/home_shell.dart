@@ -40,7 +40,11 @@ class _WebHomeShellState extends State<WebHomeShell> {
     _Section('Discover', LucideIcons.compass, (_) => const WebDiscoverPage()),
     _Section('Invites', LucideIcons.mailOpen, (_) => const WebInvitesPage()),
     _Section('Friends', LucideIcons.users, (_) => const WebFriendsPage()),
-    _Section('Notifications', LucideIcons.bell, (_) => const WebNotificationsPage()),
+    _Section(
+      'Notifications',
+      LucideIcons.bell,
+      (_) => const WebNotificationsPage(),
+    ),
     _Section('Profile', LucideIcons.user, (_) => const WebProfilePage()),
   ];
 
@@ -78,7 +82,10 @@ class _WebHomeShellState extends State<WebHomeShell> {
             ),
           ],
         ),
-        actions: const [_AccountMenu(), SizedBox(width: InkSpacing.s12)],
+        actions: const [
+          _AccountMenu(),
+          SizedBox(width: InkSpacing.s12),
+        ],
       ),
       body: Row(
         children: [
@@ -99,7 +106,10 @@ class _WebHomeShellState extends State<WebHomeShell> {
                 onDestinationSelected: (i) => setState(() => _index = i),
                 destinations: [
                   for (final s in _sections)
-                    NavigationRailDestination(icon: Icon(s.icon), label: Text(s.label)),
+                    NavigationRailDestination(
+                      icon: Icon(s.icon),
+                      label: Text(s.label),
+                    ),
                 ],
               ),
             ),
@@ -123,7 +133,8 @@ class _WebHomeShellState extends State<WebHomeShell> {
               indicatorColor: ink.accentSoft,
               selectedIndex: _index,
               onDestinationSelected: (i) => setState(() => _index = i),
-              labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
+              labelBehavior:
+                  NavigationDestinationLabelBehavior.onlyShowSelected,
               destinations: [
                 for (final s in _sections)
                   NavigationDestination(icon: Icon(s.icon), label: s.label),
@@ -144,7 +155,8 @@ class _AccountMenu extends StatelessWidget {
       stream: repo.watchMyProfile(),
       builder: (context, snapshot) {
         final profile = snapshot.data;
-        final name = profile?.displayName ?? repo.currentUser?.displayName ?? 'You';
+        final name =
+            profile?.displayName ?? repo.currentUser?.displayName ?? 'You';
         return PopupMenuButton<String>(
           tooltip: 'Account',
           onSelected: (value) {
@@ -158,11 +170,13 @@ class _AccountMenu extends StatelessWidget {
             const PopupMenuDivider(),
             PopupMenuItem<String>(
               value: 'signout',
-              child: Row(children: [
-                Icon(LucideIcons.logOut, size: 18, color: ink.danger),
-                const SizedBox(width: InkSpacing.s8),
-                Text('Sign out', style: InkType.body(ink.danger)),
-              ]),
+              child: Row(
+                children: [
+                  Icon(LucideIcons.logOut, size: 18, color: ink.danger),
+                  const SizedBox(width: InkSpacing.s8),
+                  Text('Sign out', style: InkType.body(ink.danger)),
+                ],
+              ),
             ),
           ],
           child: InkAvatar(

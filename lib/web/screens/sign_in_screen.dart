@@ -68,7 +68,10 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
 
   Future<void> _forgotPassword() async {
     if (_email.text.trim().isEmpty) {
-      setState(() => _error = 'Enter your email above, then select "Forgot password?".');
+      setState(
+        () =>
+            _error = 'Enter your email above, then select "Forgot password?".',
+      );
       return;
     }
     await _run(() async {
@@ -123,7 +126,11 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(
-              InkSpacing.s16, 0, InkSpacing.s16, InkSpacing.s24),
+              InkSpacing.s16,
+              0,
+              InkSpacing.s16,
+              InkSpacing.s24,
+            ),
             child: _buildFormCard(context),
           ),
         ],
@@ -135,7 +142,11 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
     final ink = context.ink;
     return Container(
       padding: const EdgeInsets.fromLTRB(
-          InkSpacing.s24, InkSpacing.s24, InkSpacing.s24, InkSpacing.s20),
+        InkSpacing.s24,
+        InkSpacing.s24,
+        InkSpacing.s24,
+        InkSpacing.s20,
+      ),
       decoration: BoxDecoration(
         color: ink.paper,
         borderRadius: BorderRadius.circular(InkRadii.dialog),
@@ -151,8 +162,11 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
             const SizedBox(height: InkSpacing.s16),
             Semantics(
               header: true,
-              child: Text('Welcome back',
-                  textAlign: TextAlign.center, style: InkType.display(ink.ink)),
+              child: Text(
+                'Welcome back',
+                textAlign: TextAlign.center,
+                style: InkType.display(ink.ink),
+              ),
             ),
             const SizedBox(height: InkSpacing.s8),
             Text(
@@ -194,7 +208,10 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
               child: TextButton(
                 onPressed: _busy ? null : _forgotPassword,
                 style: TextButton.styleFrom(minimumSize: const Size(48, 44)),
-                child: Text('Forgot password?', style: InkType.bodyStrong(ink.accentText)),
+                child: Text(
+                  'Forgot password?',
+                  style: InkType.bodyStrong(ink.accentText),
+                ),
               ),
             ),
             if (_error != null) ...[
@@ -208,9 +225,18 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
                   ),
                   child: Row(
                     children: [
-                      Icon(LucideIcons.circleAlert, size: 18, color: ink.danger),
+                      Icon(
+                        LucideIcons.circleAlert,
+                        size: 18,
+                        color: ink.danger,
+                      ),
                       const SizedBox(width: InkSpacing.s8),
-                      Expanded(child: Text(_error!, style: InkType.caption(ink.danger))),
+                      Expanded(
+                        child: Text(
+                          _error!,
+                          style: InkType.caption(ink.danger),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -352,15 +378,15 @@ class _OrDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Row(
-        children: [
-          Expanded(child: Divider(color: color)),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text('or', style: InkType.caption(textColor)),
-          ),
-          Expanded(child: Divider(color: color)),
-        ],
-      );
+    children: [
+      Expanded(child: Divider(color: color)),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Text('or', style: InkType.caption(textColor)),
+      ),
+      Expanded(child: Divider(color: color)),
+    ],
+  );
 }
 
 /// The app-icon tile used on the mobile login, rebuilt for the web.
@@ -413,13 +439,18 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
   Future<void> _check() async {
     setState(() => _busy = true);
     try {
-      final verified = await context.read<WebCompanionRepository>().reloadEmailVerified();
+      final verified = await context
+          .read<WebCompanionRepository>()
+          .reloadEmailVerified();
       if (!mounted) return;
       if (verified) {
         // Rebuild the gate with the refreshed user.
         context.read<WebAuthRefresh>().refresh();
       } else {
-        showWebMessage(context, 'Not verified yet. Check your inbox and spam folder.');
+        showWebMessage(
+          context,
+          'Not verified yet. Check your inbox and spam folder.',
+        );
       }
     } catch (e) {
       if (mounted) showWebMessage(context, webErrorText(e), isError: true);
@@ -431,7 +462,9 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
   Future<void> _resend() async {
     try {
       await context.read<WebCompanionRepository>().resendVerificationEmail();
-      if (mounted) showWebMessage(context, 'Verification email sent to ${widget.email}.');
+      if (mounted) {
+        showWebMessage(context, 'Verification email sent to ${widget.email}.');
+      }
     } catch (e) {
       if (mounted) showWebMessage(context, webErrorText(e), isError: true);
     }
@@ -464,8 +497,11 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
                     const SizedBox(height: InkSpacing.s12),
                     Semantics(
                       header: true,
-                      child: Text('Verify your email',
-                          textAlign: TextAlign.center, style: InkType.title(ink.ink)),
+                      child: Text(
+                        'Verify your email',
+                        textAlign: TextAlign.center,
+                        style: InkType.title(ink.ink),
+                      ),
                     ),
                     const SizedBox(height: InkSpacing.s8),
                     Text(
@@ -486,9 +522,12 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
                       onPressed: _busy ? null : _resend,
                     ),
                     TextButton(
-                      onPressed: () => context.read<WebCompanionRepository>().signOut(),
-                      child: Text('Use a different account',
-                          style: InkType.bodyStrong(ink.inkMuted)),
+                      onPressed: () =>
+                          context.read<WebCompanionRepository>().signOut(),
+                      child: Text(
+                        'Use a different account',
+                        style: InkType.bodyStrong(ink.inkMuted),
+                      ),
                     ),
                   ],
                 ),

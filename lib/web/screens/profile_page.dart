@@ -81,7 +81,9 @@ class _WebProfilePageState extends State<WebProfilePage> {
         StreamBuilder<UserModel?>(
           stream: _profile,
           builder: (context, snapshot) {
-            if (snapshot.hasError) return WebErrorBox(message: webErrorText(snapshot.error!));
+            if (snapshot.hasError) {
+              return WebErrorBox(message: webErrorText(snapshot.error!));
+            }
             final profile = snapshot.data;
             if (profile == null) {
               return const Padding(
@@ -89,8 +91,8 @@ class _WebProfilePageState extends State<WebProfilePage> {
                 child: Center(child: CircularProgressIndicator()),
               );
             }
-            return ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
+            return WebReadableWidth(
+              maxWidth: 560,
               child: PaperCard(
                 padding: const EdgeInsets.all(InkSpacing.s24),
                 child: Column(
@@ -109,8 +111,14 @@ class _WebProfilePageState extends State<WebProfilePage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(profile.displayName, style: InkType.title(ink.ink)),
-                              Text(profile.email, style: InkType.caption(ink.inkMuted)),
+                              Text(
+                                profile.displayName,
+                                style: InkType.title(ink.ink),
+                              ),
+                              Text(
+                                profile.email,
+                                style: InkType.caption(ink.inkMuted),
+                              ),
                             ],
                           ),
                         ),
@@ -127,16 +135,26 @@ class _WebProfilePageState extends State<WebProfilePage> {
                       Text('Bio', style: InkType.label(ink.inkMuted)),
                       const SizedBox(height: InkSpacing.s4),
                       Text(
-                        (profile.bio ?? '').trim().isEmpty ? 'No bio yet.' : profile.bio!,
+                        (profile.bio ?? '').trim().isEmpty
+                            ? 'No bio yet.'
+                            : profile.bio!,
                         style: InkType.body(ink.ink),
                       ),
                       const SizedBox(height: InkSpacing.s24),
-                      InkButton(
-                        label: 'Edit profile',
-                        expand: false,
-                        variant: InkButtonVariant.secondary,
-                        icon: Icon(LucideIcons.pencil, size: 16, color: ink.ink),
-                        onPressed: () => _startEditing(profile),
+                      // The theme gives buttons an infinite minimum width,
+                      // so size them explicitly here.
+                      SizedBox(
+                        width: 180,
+                        child: InkButton(
+                          label: 'Edit profile',
+                          variant: InkButtonVariant.secondary,
+                          icon: Icon(
+                            LucideIcons.pencil,
+                            size: 16,
+                            color: ink.ink,
+                          ),
+                          onPressed: () => _startEditing(profile),
+                        ),
                       ),
                     ] else ...[
                       InkTextField(
@@ -156,18 +174,24 @@ class _WebProfilePageState extends State<WebProfilePage> {
                       const SizedBox(height: InkSpacing.s16),
                       Row(
                         children: [
-                          InkButton(
-                            label: 'Cancel',
-                            expand: false,
-                            variant: InkButtonVariant.secondary,
-                            onPressed: _saving ? null : () => setState(() => _editing = false),
+                          SizedBox(
+                            width: 120,
+                            child: InkButton(
+                              label: 'Cancel',
+                              variant: InkButtonVariant.secondary,
+                              onPressed: _saving
+                                  ? null
+                                  : () => setState(() => _editing = false),
+                            ),
                           ),
                           const SizedBox(width: InkSpacing.s12),
-                          InkButton(
-                            label: 'Save',
-                            expand: false,
-                            isLoading: _saving,
-                            onPressed: _saving ? null : _save,
+                          SizedBox(
+                            width: 120,
+                            child: InkButton(
+                              label: 'Save',
+                              isLoading: _saving,
+                              onPressed: _saving ? null : _save,
+                            ),
                           ),
                         ],
                       ),

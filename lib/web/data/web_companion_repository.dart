@@ -63,7 +63,8 @@ class WebCompanionRepository {
       await _auth.getInstance().signInWithPopup(GoogleAuthProvider());
       await _requireExistingAccount();
     } on FirebaseAuthException catch (e) {
-      if (e.code == 'popup-closed-by-user' || e.code == 'cancelled-popup-request') {
+      if (e.code == 'popup-closed-by-user' ||
+          e.code == 'cancelled-popup-request') {
         return;
       }
       throw _authMessage(e);
@@ -75,7 +76,10 @@ class WebCompanionRepository {
   Future<void> _requireExistingAccount() async {
     final uid = _uid;
     if (uid == null) return;
-    final doc = await _firestore.collection(FirestorePaths.users).doc(uid).get();
+    final doc = await _firestore
+        .collection(FirestorePaths.users)
+        .doc(uid)
+        .get();
     if (!doc.exists) {
       await signOut();
       throw 'No InkLink account found. Please create your account in the InkLink mobile app first.';
@@ -110,11 +114,17 @@ class WebCompanionRepository {
         .collection(FirestorePaths.users)
         .doc(uid)
         .snapshots()
-        .map((doc) => doc.exists ? UserModel.fromFirestore(doc.data()!, uid) : null);
+        .map(
+          (doc) =>
+              doc.exists ? UserModel.fromFirestore(doc.data()!, uid) : null,
+        );
   }
 
   /// Same fields the mobile profile editor writes.
-  Future<void> updateProfile({required String name, required String bio}) async {
+  Future<void> updateProfile({
+    required String name,
+    required String bio,
+  }) async {
     final uid = _uid;
     if (uid == null) throw 'Please sign in again.';
     final trimmedName = name.trim();
@@ -142,11 +152,14 @@ class WebCompanionRepository {
           );
           final boards = await _fetchBoards(index.all.toList());
           return boards
-              .map((b) => b.copyWith(
-                    currentUserRole: index.owned.contains(b.id) || b.ownerId == uid
-                        ? 'owner'
-                        : b.currentUserRole,
-                  ))
+              .map(
+                (b) => b.copyWith(
+                  currentUserRole:
+                      index.owned.contains(b.id) || b.ownerId == uid
+                      ? 'owner'
+                      : b.currentUserRole,
+                ),
+              )
               .toList()
             ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
         });
@@ -190,11 +203,18 @@ class WebCompanionRepository {
         .where(FirestorePaths.toUid, isEqualTo: uid)
         .where(FirestorePaths.status, isEqualTo: 'pending')
         .snapshots()
-        .map((s) => s.docs
-            .map((d) => BoardInvitation.fromMap(d.data(), d.id))
-            .where((i) => i.expiresAt == null || i.expiresAt!.isAfter(DateTime.now()))
-            .toList()
-          ..sort((a, b) => b.timestamp.compareTo(a.timestamp)));
+        .map(
+          (s) =>
+              s.docs
+                  .map((d) => BoardInvitation.fromMap(d.data(), d.id))
+                  .where(
+                    (i) =>
+                        i.expiresAt == null ||
+                        i.expiresAt!.isAfter(DateTime.now()),
+                  )
+                  .toList()
+                ..sort((a, b) => b.timestamp.compareTo(a.timestamp)),
+        );
   }
 
   Stream<List<WorkspaceInvite>> watchWorkspaceInvites() {
@@ -205,23 +225,28 @@ class WebCompanionRepository {
         .where(FirestorePaths.toUid, isEqualTo: uid)
         .where(FirestorePaths.status, isEqualTo: 'pending')
         .snapshots()
-        .map((s) => s.docs.map((d) {
-              final data = d.data();
-              return WorkspaceInvite(
-                id: d.id,
-                workspaceId: (data[FirestorePaths.workspaceId] as String?) ?? '',
-                fromUid: (data[FirestorePaths.fromUid] as String?) ?? '',
-                toUid: (data[FirestorePaths.toUid] as String?) ?? '',
-                senderName: (data[FirestorePaths.senderName] as String?) ??
-                    (data[FirestorePaths.fromUid] as String?) ??
-                    'InkLink User',
-                senderPhotoUrl: data[FirestorePaths.senderPic] as String?,
-                workspaceName: (data[FirestorePaths.name] as String?) ?? 'Workspace',
-                status: (data[FirestorePaths.status] as String?) ?? 'pending',
-                timestamp: (data[FirestorePaths.timestamp] as Timestamp?)?.toDate() ??
-                    DateTime.now(),
-              );
-            }).toList());
+        .map(
+          (s) => s.docs.map((d) {
+            final data = d.data();
+            return WorkspaceInvite(
+              id: d.id,
+              workspaceId: (data[FirestorePaths.workspaceId] as String?) ?? '',
+              fromUid: (data[FirestorePaths.fromUid] as String?) ?? '',
+              toUid: (data[FirestorePaths.toUid] as String?) ?? '',
+              senderName:
+                  (data[FirestorePaths.senderName] as String?) ??
+                  (data[FirestorePaths.fromUid] as String?) ??
+                  'InkLink User',
+              senderPhotoUrl: data[FirestorePaths.senderPic] as String?,
+              workspaceName:
+                  (data[FirestorePaths.name] as String?) ?? 'Workspace',
+              status: (data[FirestorePaths.status] as String?) ?? 'pending',
+              timestamp:
+                  (data[FirestorePaths.timestamp] as Timestamp?)?.toDate() ??
+                  DateTime.now(),
+            );
+          }).toList(),
+        );
   }
 
   Future<void> acceptBoardInvite(String inviteId) =>
@@ -246,8 +271,11 @@ class WebCompanionRepository {
         .where(FirestorePaths.toUid, isEqualTo: uid)
         .where(FirestorePaths.status, isEqualTo: 'pending')
         .snapshots()
-        .map((s) => s.docs.map((d) => FriendRequest.fromMap(d.data(), d.id)).toList()
-          ..sort((a, b) => b.timestamp.compareTo(a.timestamp)));
+        .map(
+          (s) =>
+              s.docs.map((d) => FriendRequest.fromMap(d.data(), d.id)).toList()
+                ..sort((a, b) => b.timestamp.compareTo(a.timestamp)),
+        );
   }
 
   Stream<List<Friend>> watchFriends() {
@@ -273,8 +301,11 @@ class WebCompanionRepository {
               friends.add(Friend.fromMap(doc.data(), doc.id));
             }
           }
-          friends.sort((a, b) =>
-              a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
+          friends.sort(
+            (a, b) => a.displayName.toLowerCase().compareTo(
+              b.displayName.toLowerCase(),
+            ),
+          );
           return friends;
         });
   }
@@ -297,10 +328,17 @@ class WebCompanionRepository {
         .orderBy('timestamp', descending: true)
         .limit(100)
         .snapshots()
-        .map((s) => s.docs
-            .where((d) => isFeedNotification(d.data()))
-            .map((d) => InAppNotification.fromMap(d.data(), d.id))
-            .toList());
+        .map(
+          (s) => s.docs
+              .where((d) => isFeedNotification(d.data()))
+              .map(
+                (d) => InAppNotification.fromMap(
+                  withNotificationSenderFields(d.data()),
+                  d.id,
+                ),
+              )
+              .toList(),
+        );
   }
 
   Future<void> deleteNotification(String notificationId) async {
@@ -321,7 +359,8 @@ class WebCompanionRepository {
       final result = await _functions.httpsCallable(name).call(data);
       final body = result.data;
       if (body is Map && body['success'] == false) {
-        throw (body['message'] as String?) ?? 'That did not work. Please try again.';
+        throw (body['message'] as String?) ??
+            'That did not work. Please try again.';
       }
     } on FirebaseFunctionsException catch (e) {
       throw e.message ?? 'That did not work. Please try again.';
