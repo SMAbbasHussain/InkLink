@@ -412,12 +412,24 @@ function resolveProviderName(env = process.env) {
   return token.length > 0 ? 'cloudflare' : 'mock';
 }
 
+/**
+ * Cloudflare account for Workers AI. CLOUDFLARE_AI_ACCOUNT_ID (optional,
+ * not a secret, e.g. in functions/.env) lets the AI run on a different
+ * Cloudflare account than R2 storage; when unset, the R2 account
+ * (CLOUDFLARE_ACCOUNT_ID) is used for both. CLOUDFLARE_AI_API_TOKEN must
+ * belong to whichever account is used here.
+ */
+function resolveAiAccountId(env = process.env) {
+  const aiAccount = String(env.CLOUDFLARE_AI_ACCOUNT_ID || '').trim();
+  return aiAccount || String(env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+}
+
 function getProvider(env = process.env) {
   if (resolveProviderName(env) === 'mock') {
     return createMockProvider();
   }
   return createCloudflareProvider({
-    accountId: String(env.CLOUDFLARE_ACCOUNT_ID || '').trim(),
+    accountId: resolveAiAccountId(env),
     apiToken: String(env.CLOUDFLARE_AI_API_TOKEN || '').trim(),
   });
 }
@@ -436,5 +448,6 @@ module.exports = {
   createMockProvider,
   createCloudflareProvider,
   resolveProviderName,
+  resolveAiAccountId,
   getProvider,
 };

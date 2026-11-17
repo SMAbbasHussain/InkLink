@@ -30,11 +30,24 @@ Key points:
 
 ## 2. Create the Cloudflare token
 
-1. Sign in at <https://dash.cloudflare.com>. Use the **same account** that owns the R2 bucket, because the functions reuse the existing `CLOUDFLARE_ACCOUNT_ID` secret.
+1. Sign in at <https://dash.cloudflare.com>. By default use the **same account** that owns the R2 bucket, because the functions reuse the existing `CLOUDFLARE_ACCOUNT_ID` secret. To run the AI on a **different** Cloudflare account (for example a developer's own free account), see "Using a different Cloudflare account for the AI" below.
 2. **Account ID:** open the account home (or **Workers & Pages**). The Account ID is shown in the right-hand sidebar. You only need it if `CLOUDFLARE_ACCOUNT_ID` is not already set as a Functions secret.
 3. **Token:** go to **My Profile → API Tokens → Create Token**. Use the **Workers AI** template, or a custom token with the account permissions **Workers AI - Read** and **Workers AI - Edit**. Limit it to this one account.
 4. Copy the token once. Do not put it in `.env`, `.env.example`, the app, or git.
 5. FLUX models are covered by Black Forest Labs' terms (<https://bfl.ai/legal/terms-of-service>). Read them before shipping.
+
+### Using a different Cloudflare account for the AI
+
+Images are always stored in the team's R2 bucket (`CLOUDFLARE_ACCOUNT_ID`). Only the AI calls can move to another account:
+
+1. In that other account, create the Workers AI token (step 3 above) and copy its **Account ID**.
+2. Put the Account ID in `functions/.env` (it is not a secret; this file is git-ignored and is read at deploy time):
+   ```
+   CLOUDFLARE_AI_ACCOUNT_ID=<the other account's ID>
+   ```
+3. Store **that account's** token as `CLOUDFLARE_AI_API_TOKEN` (section 3) and deploy.
+
+When `CLOUDFLARE_AI_ACCOUNT_ID` is unset, the AI uses `CLOUDFLARE_ACCOUNT_ID`. Because `functions/.env` is git-ignored, **every later deploy must be made from a machine that has this line**, or the AI falls back to the team account and the token is rejected. AI usage and costs go to the other account, and AI stops working if that account or token is removed. Switch to a team-owned account and token before relying on it long-term.
 
 ## 3. Deploy
 
