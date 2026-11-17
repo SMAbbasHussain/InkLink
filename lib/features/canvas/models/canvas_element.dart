@@ -191,6 +191,9 @@ sealed class CanvasElement {
           contrast: (data['contrast'] as num?)?.toDouble() ?? 0,
           saturation: (data['saturation'] as num?)?.toDouble() ?? 0,
           isReference: data['isReference'] as bool? ?? false,
+          imageUrl: ImageElement.optionalString(data['imageUrl']),
+          aiPrompt: ImageElement.optionalString(data['aiPrompt']),
+          generationId: ImageElement.optionalString(data['generationId']),
         );
       case 'sticky_note':
         return StickyNoteElement(
@@ -873,6 +876,17 @@ class ImageElement extends CanvasElement {
   /// Tracing reference: drawn faded and locked when enabled.
   final bool isReference;
 
+  /// Optional: full-size image URL (AI images). When set, the image is loaded
+  /// from this URL and [imageBase64] holds only a small thumbnail, which older
+  /// app versions display instead. Null for ordinary inline images.
+  final String? imageUrl;
+
+  /// Optional: the prompt that produced an AI image.
+  final String? aiPrompt;
+
+  /// Optional: server id of the AI generation.
+  final String? generationId;
+
   static const Rect fullCrop = Rect.fromLTRB(0, 0, 1, 1);
   static const double defaultBorderRadius = 8;
   static const Color defaultBorderColor = Color(0xFF0F172A);
@@ -899,9 +913,29 @@ class ImageElement extends CanvasElement {
     this.contrast = 0,
     this.saturation = 0,
     this.isReference = false,
+    this.imageUrl,
+    this.aiPrompt,
+    this.generationId,
   });
 
   bool get hasFilters => brightness != 0 || contrast != 0 || saturation != 0;
+
+  /// True when this image was produced by AI and is stored by URL.
+  bool get isAiImage => imageUrl != null;
+
+  /// Map keys of the optional AI fields, in the order they are written.
+  static const List<String> aiFieldKeys = [
+    'imageUrl',
+    'aiPrompt',
+    'generationId',
+  ];
+
+  /// Reads an optional string field. Anything that is not a non-empty string
+  /// (missing, null, wrong type) is treated as "not set".
+  static String? optionalString(Object? value) {
+    if (value is! String) return null;
+    return value.trim().isEmpty ? null : value;
+  }
 
   ImageElement copyWith({
     int? z,
@@ -923,6 +957,9 @@ class ImageElement extends CanvasElement {
     double? contrast,
     double? saturation,
     bool? isReference,
+    String? imageUrl,
+    String? aiPrompt,
+    String? generationId,
   }) {
     return ImageElement(
       id: id,
@@ -945,6 +982,9 @@ class ImageElement extends CanvasElement {
       contrast: contrast ?? this.contrast,
       saturation: saturation ?? this.saturation,
       isReference: isReference ?? this.isReference,
+      imageUrl: imageUrl ?? this.imageUrl,
+      aiPrompt: aiPrompt ?? this.aiPrompt,
+      generationId: generationId ?? this.generationId,
     );
   }
 
@@ -974,6 +1014,11 @@ class ImageElement extends CanvasElement {
     'contrast': contrast,
     'saturation': saturation,
     'isReference': isReference,
+    // Written only when set, so ordinary images serialise exactly as
+    // they did before these fields existed.
+    if (imageUrl != null) 'imageUrl': imageUrl,
+    if (aiPrompt != null) 'aiPrompt': aiPrompt,
+    if (generationId != null) 'generationId': generationId,
   };
 
   @override
@@ -995,7 +1040,10 @@ class ImageElement extends CanvasElement {
           brightness == other.brightness &&
           contrast == other.contrast &&
           saturation == other.saturation &&
-          isReference == other.isReference;
+          isReference == other.isReference &&
+          imageUrl == other.imageUrl &&
+          aiPrompt == other.aiPrompt &&
+          generationId == other.generationId;
 
   @override
   int get hashCode =>
@@ -1016,6 +1064,9 @@ class ImageElement extends CanvasElement {
         contrast,
         saturation,
         isReference,
+        imageUrl,
+        aiPrompt,
+        generationId,
       );
 }
 

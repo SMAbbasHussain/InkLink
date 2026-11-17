@@ -16,6 +16,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../core/utils/ai_feature_flag.dart';
 import '../../../core/utils/app_snackbar.dart';
 
 import '../../../domain/models/board.dart';
@@ -38,6 +39,7 @@ import '../../dashboard/bloc/dashboard_bloc.dart';
 import '../../dashboard/view/board_settings_route.dart';
 import '../../dashboard/view/board_edit_requests_screen.dart';
 import '../../notifications/bloc/notifications_bloc.dart';
+import '../bloc/ai_image_bloc.dart';
 import '../bloc/canvas_bloc.dart';
 import '../../../core/utils/canvas_color_preferences.dart';
 import '../geometry/canvas_color_sampling.dart';
@@ -49,6 +51,7 @@ import '../geometry/stroke_input.dart';
 import '../models/board_template.dart';
 import '../models/brush_preset.dart';
 import '../models/canvas_tool_mode.dart';
+import 'ai_repaint_screen.dart';
 import 'media_editor_screen.dart';
 import 'trays/ai_tray.dart';
 import 'trays/brush_tray.dart';
@@ -64,6 +67,7 @@ import 'widgets/undo_request_sheet.dart';
 import 'chat/board_chat_drawer.dart';
 import 'trays/comments_tray.dart';
 import 'voice/voice_call_hud.dart';
+import 'widgets/ai_image_widgets.dart';
 import 'widgets/canvas_minimap.dart';
 import 'widgets/canvas_search_sheet.dart';
 import 'widgets/canvas_selection_style_sheet.dart';
@@ -169,6 +173,14 @@ class _CanvasScreenState extends State<CanvasScreen>
   final Map<String, String> _decodedUiImageKeys = <String, String>{};
   final Set<String> _pendingDecodeImageIds = <String>{};
   late final CanvasBloc _canvasBloc;
+  // AI images. The bloc is optional so the screen still works without it.
+  AiImageBloc? _aiImageBloc;
+  StreamSubscription<AiImageState>? _aiImageSub;
+  bool _aiImageEnabled = false;
+  String _aiAspectRatio = kAiAspectRatios.first;
+  int _lastAiCompletionSequence = 0;
+  int _lastAiFailureSequence = 0;
+  final Set<String> _requestedAiImageUrls = <String>{};
   Timer? _shapeEditDebounceTimer;
   final Map<String, dynamic> _pendingShapeEdits = <String, dynamic>{};
   final Map<String, TextEditingController> _shapeLabelControllers =
@@ -258,6 +270,9 @@ class _CanvasScreenState extends State<CanvasScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _canvasBloc = context.read<CanvasBloc>();
+    _aiImageBloc = context.read<AiImageBloc?>();
+    _aiImageEnabled = _aiImageBloc != null && isAiImageEnabled();
+    _aiImageSub = _aiImageBloc?.stream.listen(_onAiImageState);
     _maybeShowTrayTipsOverlay();
     _loadColorPreferences();
     _loadCanvasPreferences();
@@ -1234,6 +1249,250 @@ class _CanvasScreenState extends State<CanvasScreen>
     AppSnackBar.showMessage(context, 'AI image generation is coming soon.');
   }
 
+  // ──────────────────────────────────────────────
+  // AI images
+  // ──────────────────────────────────────────────
+
+  bool _canUseAi(CanvasState state) =>
+      state.currentUserRole != Board.roleViewer;
+
+  void _generateAiImage() {
+    final bloc = _aiImageBloc;
+    final prompt = _aiPromptController.text.trim();
+    if (bloc == null || !isValidAiPrompt(prompt)) return;
+    if (!_canUseAi(_canvasBloc.state)) return;
+
+    // Centre of what the user is looking at, in canvas coordinates.
+    final center = _toWorld(
+      Offset(_lastCanvasSize.width / 2, _lastCanvasSize.height / 2),
+    );
+    final size = aiCanvasSizeForAspectRatio(_aiAspectRatio);
+    bloc.add(
+      AiImageGenerateRequested(
+        boardId: widget.boardId,
+        prompt: prompt,
+        aspectRatio: _aiAspectRatio,
+        center: center,
+        width: size.width,
+        height: size.height,
+      ),
+    );
+    _aiPromptController.clear();
+    // Close the tray so the placeholder is visible.
+    if (_canvasBloc.state.activeTray == 'ai') {
+      _toggleTray('ai');
+    }
+  }
+
+  /// Applies finished AI requests to the board and shows failures once.
+  void _onAiImageState(AiImageState aiState) {
+    if (!mounted) return;
+
+    final completion = aiState.lastCompletion;
+    if (completion != null && completion.sequence > _lastAiCompletionSequence) {
+      _lastAiCompletionSequence = completion.sequence;
+      final result = completion.result;
+      final placeholder = completion.placeholder;
+      if (placeholder != null) {
+        // Follow the real image's aspect ratio (the fallback model is square).
+        final ratio = result.width / result.height;
+        final longest = math.max(placeholder.width, placeholder.height);
+        final width = ratio >= 1 ? longest : longest * ratio;
+        final height = ratio >= 1 ? longest / ratio : longest;
+        _canvasBloc.add(
+          CanvasAddAiImageElement(
+            imageUrl: result.imageUrl,
+            thumbnailBase64: result.thumbnailBase64,
+            center: placeholder.center,
+            width: width,
+            height: height,
+            aiPrompt: completion.prompt,
+            generationId: result.generationId,
+          ),
+        );
+      } else if (completion.elementId != null) {
+        _canvasBloc.add(
+          CanvasReplaceImageSource(
+            elementId: completion.elementId!,
+            imageUrl: result.imageUrl,
+            thumbnailBase64: result.thumbnailBase64,
+            sourceWidth: result.width,
+            sourceHeight: result.height,
+            aiPrompt: completion.prompt,
+            generationId: result.generationId,
+          ),
+        );
+      }
+    }
+
+    final failure = aiState.lastFailure;
+    if (failure != null && failure.sequence > _lastAiFailureSequence) {
+      _lastAiFailureSequence = failure.sequence;
+      AppSnackBar.showError(
+        context,
+        AppErrorFormatter.cleanMessage(
+          failure.message,
+          fallback: 'The AI image request failed. Please try again.',
+        ),
+      );
+    }
+
+    // Placeholders, busy overlays and downloaded images all need a repaint.
+    setState(() {});
+  }
+
+  ImageElement? _selectedAiImage(CanvasState state) {
+    final id = state.selectedShapeId;
+    if (id == null) return null;
+    for (final element in state.elements) {
+      if (element.id == id && element is ImageElement && element.isAiImage) {
+        return element;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _editSelectedImageWithAi(ImageElement image) async {
+    final bloc = _aiImageBloc;
+    final url = image.imageUrl;
+    if (bloc == null || url == null) return;
+    final prompt = await showAiPromptDialog(
+      context,
+      title: 'Edit with AI',
+      hintText: 'Describe the change, for example "make it night time"',
+    );
+    if (prompt == null || !mounted) return;
+    bloc.add(
+      AiImageEditRequested(
+        boardId: widget.boardId,
+        elementId: image.id,
+        sourceImageUrl: url,
+        prompt: prompt,
+      ),
+    );
+  }
+
+  Future<void> _repaintSelectedImageArea(ImageElement image) async {
+    final bloc = _aiImageBloc;
+    final url = image.imageUrl;
+    if (bloc == null || url == null) return;
+    final bytes = bloc.state.imageBytes[url];
+    if (bytes == null) {
+      AppSnackBar.showMessage(
+        context,
+        'The image is still loading. Try again in a moment.',
+      );
+      return;
+    }
+    final result = await Navigator.of(context).push<AiRepaintResult>(
+      MaterialPageRoute(builder: (_) => AiRepaintScreen(imageBytes: bytes)),
+    );
+    if (result == null || !mounted) return;
+    bloc.add(
+      AiImageInpaintRequested(
+        boardId: widget.boardId,
+        elementId: image.id,
+        sourceImageUrl: url,
+        maskPng: result.maskPng,
+        prompt: result.prompt,
+      ),
+    );
+  }
+
+  void _regenerateSelectedImage(ImageElement image) {
+    final bloc = _aiImageBloc;
+    final prompt = image.aiPrompt;
+    if (bloc == null) return;
+    if (prompt == null || !isValidAiPrompt(prompt)) {
+      AppSnackBar.showMessage(
+        context,
+        'This image has no saved prompt to regenerate from.',
+      );
+      return;
+    }
+    bloc.add(
+      AiImageRegenerateRequested(
+        boardId: widget.boardId,
+        elementId: image.id,
+        prompt: prompt,
+        aspectRatio: aiNearestAspectRatio(image.width, image.height),
+      ),
+    );
+  }
+
+  /// Local-only loading boxes for images being generated, plus a dimmed
+  /// spinner over images that are being edited.
+  List<Widget> _buildAiImageOverlays(CanvasState state) {
+    final aiState = _aiImageBloc?.state;
+    if (aiState == null) return const <Widget>[];
+    final widgets = <Widget>[];
+
+    Widget positioned(Offset center, double width, double height, Widget child) {
+      final topLeft = _toScreen(
+        Offset(center.dx - width / 2, center.dy - height / 2),
+      );
+      return Positioned(
+        left: topLeft.dx,
+        top: topLeft.dy,
+        width: width * _viewportScale,
+        height: height * _viewportScale,
+        child: IgnorePointer(child: child),
+      );
+    }
+
+    for (final placeholder in aiState.placeholders) {
+      widgets.add(
+        positioned(
+          placeholder.center,
+          placeholder.width,
+          placeholder.height,
+          AiImagePlaceholderBox(prompt: placeholder.prompt),
+        ),
+      );
+    }
+    if (aiState.busyElementIds.isNotEmpty) {
+      for (final element in state.elements) {
+        if (element is ImageElement &&
+            aiState.busyElementIds.contains(element.id)) {
+          widgets.add(
+            positioned(
+              element.center,
+              element.width,
+              element.height,
+              const AiImageBusyOverlay(),
+            ),
+          );
+        }
+      }
+    }
+    return widgets;
+  }
+
+  /// Action bar under the selected AI image. Hidden while it is dragged.
+  Widget _buildAiImageActionBar(CanvasState state) {
+    final image = _selectedAiImage(state);
+    if (!_aiImageEnabled || image == null || _isEditingShape) {
+      return const SizedBox.shrink();
+    }
+    final anchor = _toScreen(
+      Offset(image.center.dx, image.center.dy + image.height / 2),
+    );
+    return Positioned(
+      left: anchor.dx,
+      top: anchor.dy + 28,
+      child: FractionalTranslation(
+        translation: const Offset(-0.5, 0),
+        child: AiImageActionBar(
+          canEdit: _canUseAi(state),
+          isBusy: _aiImageBloc?.state.busyElementIds.contains(image.id) ?? false,
+          onEditWithAi: () => _editSelectedImageWithAi(image),
+          onRepaintArea: () => _repaintSelectedImageArea(image),
+          onRegenerate: () => _regenerateSelectedImage(image),
+        ),
+      ),
+    );
+  }
+
   Future<void> _uploadImageToCanvas([
     ImageSource? directSource,
     String? replaceElementId,
@@ -1461,8 +1720,22 @@ class _CanvasScreenState extends State<CanvasScreen>
 
     for (final element in activeImages) {
       final base64Str = element.imageBase64;
-      if (base64Str.isEmpty) continue;
-      final key = '${base64Str.length}:${base64Str.hashCode}';
+      // URL images (AI): draw the full image once it is downloaded; until
+      // then (or if the download fails) the inline thumbnail is drawn through
+      // the unchanged path below.
+      Uint8List? urlBytes;
+      final imageUrl = element.imageUrl;
+      final aiImageBloc = _aiImageBloc;
+      if (imageUrl != null && aiImageBloc != null) {
+        urlBytes = aiImageBloc.state.imageBytes[imageUrl];
+        if (urlBytes == null && _requestedAiImageUrls.add(imageUrl)) {
+          aiImageBloc.add(AiImageBytesRequested(imageUrl));
+        }
+      }
+      if (base64Str.isEmpty && urlBytes == null) continue;
+      final key = urlBytes != null
+          ? 'url:$imageUrl'
+          : '${base64Str.length}:${base64Str.hashCode}';
       if (_decodedUiImages.containsKey(element.id) &&
           _decodedUiImageKeys[element.id] == key) {
         continue;
@@ -1471,15 +1744,25 @@ class _CanvasScreenState extends State<CanvasScreen>
         continue;
       }
       _pendingDecodeImageIds.add(element.id);
-      _decodeUiImage(element.id, base64Str, key);
+      _decodeUiImage(element.id, base64Str, key, urlBytes: urlBytes);
     }
   }
 
-  Future<void> _decodeUiImage(String id, String base64Str, String key) async {
+  Future<void> _decodeUiImage(
+    String id,
+    String base64Str,
+    String key, {
+    Uint8List? urlBytes,
+  }) async {
     try {
-      final cleanBase64 = base64Str.trim().replaceAll(RegExp(r'\s+'), '');
-      if (!RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(cleanBase64)) return;
-      final bytes = base64Decode(cleanBase64);
+      final Uint8List bytes;
+      if (urlBytes != null) {
+        bytes = urlBytes;
+      } else {
+        final cleanBase64 = base64Str.trim().replaceAll(RegExp(r'\s+'), '');
+        if (!RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(cleanBase64)) return;
+        bytes = base64Decode(cleanBase64);
+      }
       final codec = await ui.instantiateImageCodec(bytes);
       ui.FrameInfo frame;
       try {
@@ -4918,6 +5201,8 @@ class _CanvasScreenState extends State<CanvasScreen>
                           if (!state.isViewingHistory) _buildLassoOverlay(),
                           if (!state.isViewingHistory)
                             ..._buildPinnedCommentPins(state),
+                          if (!state.isViewingHistory)
+                            ..._buildAiImageOverlays(state),
 
                           if (!state.isViewingHistory)
                             _buildEdgeTriggers(state, isDark),
@@ -4955,6 +5240,9 @@ class _CanvasScreenState extends State<CanvasScreen>
                             _buildSelectionOutline(state, mappedElements),
                           if (!state.isViewingHistory)
                             _buildGroupTransformOverlay(state),
+                          if (!state.isViewingHistory &&
+                              state.selectedShapeId != null)
+                            _buildAiImageActionBar(state),
                           if (!state.isViewingHistory && !editingElement)
                             _buildAllTrays(state),
                           if (!state.isViewingHistory)
@@ -10188,6 +10476,17 @@ class _CanvasScreenState extends State<CanvasScreen>
           onGenerateImage: _onGenerateImagePlaceholder,
           recentImages: _recentImages,
           onClose: () => _toggleTray('ai'),
+          // Null when AI_IMAGE_ENABLED is off: the tray keeps the old stub.
+          generation: _aiImageEnabled
+              ? AiTrayGeneration(
+                  canEdit: _canUseAi(state),
+                  isGenerating: _aiImageBloc?.state.isGenerating ?? false,
+                  aspectRatio: _aiAspectRatio,
+                  onAspectRatioChanged: (ratio) =>
+                      setState(() => _aiAspectRatio = ratio),
+                  onGenerate: _generateAiImage,
+                )
+              : null,
         ),
         ToolsTray(
           isOpen: state.activeTray == 'tools',
@@ -11270,6 +11569,7 @@ class _CanvasScreenState extends State<CanvasScreen>
     _decodedUiImages.clear();
     _decodedUiImageKeys.clear();
     _pendingDecodeImageIds.clear();
+    _aiImageSub?.cancel();
     _canvasBloc.close();
     _aiPromptController.dispose();
     super.dispose();

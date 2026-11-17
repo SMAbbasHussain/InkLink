@@ -17,6 +17,12 @@ const mySecrets = [
     'CLOUDFLARE_R2_HISTORY_BUCKET',
 ];
 
+// AI image functions (src/ai/*) additionally get the Workers AI token and
+// their own runtime options. No other function receives this secret.
+const aiSecrets = [...mySecrets, 'CLOUDFLARE_AI_API_TOKEN'];
+const isAiFunctionFile = (filePath) =>
+    filePath.replace(/\\/g, '/').startsWith('src/ai/');
+
 /**
  * Dynamically load and export all Cloud Functions from src/ directory
  * Supports nested folders: src/auth/login.js -> exports.auth_login
@@ -56,7 +62,14 @@ apiFiles.forEach(filePath => {
 
         // Create the Cloud Function with proper error handling
         exports[functionName] = onCall(
-            {
+            isAiFunctionFile(filePath)
+                ? {
+                    secrets: aiSecrets,
+                    region: FIREBASE_REGION,
+                    timeoutSeconds: 120,
+                    memory: '1GiB', // sharp image processing
+                }
+                : {
                 secrets: mySecrets,
                 region: FIREBASE_REGION,
                 timeoutSeconds: 540, // 9 minutes - Firebase default

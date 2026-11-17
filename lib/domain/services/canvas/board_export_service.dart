@@ -18,6 +18,7 @@ import 'package:flutter/material.dart'
         TextStyle;
 import 'package:flutter/services.dart'
     show MissingPluginException, PlatformException;
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -62,7 +63,62 @@ abstract class BoardExportService {
 }
 
 class BoardExportServiceImpl implements BoardExportService {
-  const BoardExportServiceImpl();
+  /// Downloads the bytes of a URL image (AI images). Defaults to a plain
+  /// HTTP GET; tests pass their own.
+  final Future<Uint8List> Function(Uri url)? imageDownloader;
+
+  const BoardExportServiceImpl({this.imageDownloader});
+
+  /// AI images are stored by URL with only a small thumbnail inline. For an
+  /// export, each one is swapped for an in-memory copy that carries the full
+  /// image inline, so the unchanged render pipeline below draws it at full
+  /// quality. If a download fails, the thumbnail is exported instead.
+  ///
+  /// Boards without URL images get the SAME list back, untouched.
+  Future<List<CanvasElement>> resolveExportElements(
+    List<CanvasElement> elements,
+  ) async {
+    if (!elements.any((e) => e is ImageElement && e.imageUrl != null)) {
+      return elements;
+    }
+    final download = imageDownloader ?? _downloadImageBytes;
+    final cache = <String, String?>{};
+    final resolved = <CanvasElement>[];
+    for (final element in elements) {
+      final url = element is ImageElement ? element.imageUrl : null;
+      if (element is! ImageElement || url == null) {
+        resolved.add(element);
+        continue;
+      }
+      if (!cache.containsKey(url)) {
+        try {
+          final uri = Uri.parse(url);
+          if (!uri.isScheme('https') && !uri.isScheme('http')) {
+            throw const FormatException('Unsupported image address.');
+          }
+          final bytes = await download(uri);
+          cache[url] = bytes.isEmpty ? null : base64Encode(bytes);
+        } catch (_) {
+          cache[url] = null;
+        }
+      }
+      final fullBase64 = cache[url];
+      resolved.add(
+        fullBase64 == null
+            ? element
+            : element.copyWith(imageBase64: fullBase64),
+      );
+    }
+    return resolved;
+  }
+
+  static Future<Uint8List> _downloadImageBytes(Uri url) async {
+    final response = await http.get(url).timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) {
+      throw HttpException('Image download failed (${response.statusCode}).');
+    }
+    return response.bodyBytes;
+  }
 
   @override
   Future<File> exportBoard({
@@ -71,6 +127,7 @@ class BoardExportServiceImpl implements BoardExportService {
     required BoardExportFormat format,
     CanvasBoardSettings settings = const CanvasBoardSettings(),
   }) async {
+    elements = await resolveExportElements(elements);
     final sanitizedTitle = _sanitizeFileName(boardTitle);
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final randomPart = math.Random()
