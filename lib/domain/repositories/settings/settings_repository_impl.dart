@@ -2,14 +2,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/database/local_database_service.dart';
 import '../../../core/utils/board_preview_preferences.dart';
+import '../../../core/utils/canvas_toolbar_preferences.dart';
 import '../../../core/utils/notification_preferences.dart';
 import '../../../core/utils/tray_tips_preferences.dart';
+import '../../models/canvas/canvas_toolbar_action.dart';
 import 'settings_repository.dart';
 
 class SettingsRepositoryImpl implements SettingsRepository {
   final LocalDatabaseService _localDatabaseService;
   final TrayTipsPreferences _trayTipsPreferences;
   final BoardPreviewPreferences _boardPreviewPreferences;
+  final CanvasToolbarPreferences _canvasToolbarPreferences;
   final NotificationPreferences _notificationPreferences;
 
   SettingsRepositoryImpl({
@@ -18,6 +21,7 @@ class SettingsRepositoryImpl implements SettingsRepository {
   }) : _localDatabaseService = localDatabaseService,
        _trayTipsPreferences = TrayTipsPreferences(prefs: sharedPreferences),
        _boardPreviewPreferences = BoardPreviewPreferences(prefs: sharedPreferences),
+       _canvasToolbarPreferences = CanvasToolbarPreferences(prefs: sharedPreferences),
        _notificationPreferences = NotificationPreferences(prefs: sharedPreferences);
 
   @override
@@ -48,6 +52,16 @@ class SettingsRepositoryImpl implements SettingsRepository {
   @override
   Future<void> setBoardPreviewCompressionEnabled(bool enabled) {
     return _boardPreviewPreferences.setCompressionEnabled(enabled);
+  }
+
+  @override
+  Future<List<CanvasToolbarAction>> getBottomBarActions() {
+    return _canvasToolbarPreferences.getBottomBarActions();
+  }
+
+  @override
+  Future<void> setBottomBarActions(List<CanvasToolbarAction> actions) {
+    return _canvasToolbarPreferences.setBottomBarActions(actions);
   }
 
   @override

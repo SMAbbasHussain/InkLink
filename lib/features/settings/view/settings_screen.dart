@@ -8,6 +8,7 @@ import 'package:inklink/features/auth/bloc/auth_state.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/bottom_bar_customizer_sheet.dart';
 import '../../../ui/widgets/ink_avatar.dart';
 import '../../../ui/widgets/ink_button.dart';
 import '../../../ui/widgets/ink_chip.dart';
@@ -189,6 +190,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   SettingsBoardPreviewCompressionToggled(value),
                                 );
                               },
+                            ),
+                          ),
+                          Divider(height: 1, color: tokens.glassStroke),
+                          InkWell(
+                            onTap: () async {
+                              HapticFeedback.lightImpact();
+                              final bloc = context.read<SettingsBloc>();
+                              final updated = await showBottomBarCustomizerSheet(
+                                context,
+                                initialActions: settingsState.bottomBarActions,
+                              );
+                              if (updated != null && context.mounted) {
+                                bloc.add(
+                                  SettingsBottomBarActionsChanged(updated),
+                                );
+                              }
+                            },
+                            child: _row(
+                              tokens,
+                              icon: LucideIcons.layoutGrid,
+                              title: 'Default Bottom Bar',
+                              subtitle:
+                                  '${settingsState.bottomBarActions.length} tools pinned • '
+                                  '${settingsState.bottomBarActions.map((a) => a.shortLabel).join(', ')}',
+                              trailing: Icon(
+                                LucideIcons.chevronRight,
+                                size: 18,
+                                color: tokens.inkMuted,
+                              ),
                             ),
                           ),
                         ],

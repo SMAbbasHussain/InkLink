@@ -10,11 +10,14 @@ import 'package:uuid/uuid.dart';
 import '../../../core/crdt/canvas_crdt_adapter.dart';
 import '../../../core/database/collections/local_crdt_update.dart';
 import '../../../domain/models/board.dart';
+import '../../../domain/models/canvas/canvas_board_settings.dart';
+import '../../../domain/models/canvas/canvas_export_options.dart';
 import '../../../domain/models/history/board_activity_block.dart';
 import '../../../domain/models/history/board_operation.dart';
 import '../../../domain/models/history/history_scrub.dart';
 import '../../../domain/models/history/revert_plan.dart';
 import '../../../domain/models/history/undo_request.dart';
+import '../../../domain/models/history/user_timeline.dart';
 import '../../../domain/services/history/board_history_service.dart';
 import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/board_chat_service.dart';
@@ -23,9 +26,15 @@ import '../../../domain/services/canvas/board_export_service.dart';
 import '../../../domain/services/canvas/canvas_service.dart';
 import '../../../domain/services/voice/voice_service.dart';
 import '../../../core/utils/app_error_formatter.dart';
+import '../geometry/canvas_element_geometry.dart';
+import '../geometry/canvas_selection_transform.dart';
+import '../geometry/quick_shape.dart';
+import '../geometry/stroke_input.dart';
 import '../models/board_chat_message.dart';
+import '../models/brush_preset.dart';
 import '../models/canvas_comment.dart';
 import '../models/canvas_element.dart';
+import '../models/canvas_selection_mode.dart';
 import '../models/canvas_tool_mode.dart';
 import '../models/voice_participant.dart';
 import '../view/trays/canvas_shape_type.dart';
@@ -35,11 +44,20 @@ export '../../../domain/services/canvas/board_export_service.dart';
 export '../models/board_chat_message.dart';
 export '../models/canvas_comment.dart';
 export '../models/canvas_element.dart';
+export '../models/canvas_selection_mode.dart';
 export '../models/voice_participant.dart';
 export 'canvas_state.dart';
 
 part 'canvas_event.dart';
 part 'canvas_helpers.dart';
+
+/// One element write inside a batched CRDT transaction.
+typedef _CrdtWrite = ({
+  String action,
+  String type,
+  String objectId,
+  Map<String, dynamic> data,
+});
 
 class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final CanvasService? _canvasService;
@@ -55,6 +73,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   CanvasDocAdapter? _historyScrubAdapter;
 
   final Uuid _uuid = const Uuid();
+
+  /// In-app clipboard of serialized elements (not the OS clipboard).
+  final List<({String id, Map<String, dynamic> data})> _clipboard = [];
+  double _pasteOffset = 16;
   final math.Random _random = math.Random();
   static const Duration _previewPublishThrottle = Duration(milliseconds: 32);
 
@@ -74,12 +96,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   Timer? _liveTailDebounceTimer;
   CanvasDocAdapter? _crdtAdapter;
   List<CanvasElement>? _cachedCrdtElements;
+  List<CanvasElement> _committedElements = const <CanvasElement>[];
   Future<void>? _crdtInitFuture;
   Timer? _boardUnavailableTimer;
   final Set<String> _appliedCrdtUpdateIds = <String>{};
   final Map<String, CanvasElement> _remotePreviewElements =
       <String, CanvasElement>{};
   final Set<String> _remotePreviewDeletedIds = <String>{};
+  final Map<String, DateTime> _remotePreviewDeletedAt = <String, DateTime>{};
   /// When each remote preview arrived. Previews are transient overlays: without
   /// an expiry a peer's in-flight drag (or a preview that never got a matching
   /// committed update) masks the element's real state on this device forever.
@@ -103,11 +127,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   /// (§7.2).
   final Map<String, Map<String, dynamic>?> _myRedoTarget =
       <String, Map<String, dynamic>?>{};
-  final Map<String, String> _lastShapeUpdateId =
-      <String, String>{};
+  final Map<String, String> _lastShapeUpdateId = <String, String>{};
   final Map<String, _QueuedPreviewPublish> _pendingPreviewPublishes =
       <String, _QueuedPreviewPublish>{};
   String? _activeStrokeId;
+  StrokeStabilizer? _strokeStabilizer;
+  final Stopwatch _strokeClock = Stopwatch();
   String? _activeShapeDrawingId;
   _EraserSession? _eraserSession;
   final Map<String, RemoteEraserCursor> _remoteEraserCursors =
@@ -127,18 +152,26 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     BoardCommentsService? boardCommentsService,
     BoardChatService? boardChatService,
     VoiceService? voiceService,
+    CanvasDocAdapter? crdtAdapter,
     BoardHistoryService? historyService,
     String currentUserId = '',
     String boardId = '',
   }) : _canvasService = canvasService,
        _boardService = boardService,
-       _boardExportService = boardExportService ?? const BoardExportServiceImpl(),
+       _boardExportService =
+           boardExportService ?? const BoardExportServiceImpl(),
        _boardCommentsService = boardCommentsService,
        _boardChatService = boardChatService,
        _voiceService = voiceService,
+       _crdtAdapter = crdtAdapter,
        _historyService = historyService,
        _boardId = boardId,
        super(CanvasInitial(currentUserId: currentUserId)) {
+    if (crdtAdapter != null) {
+      for (final entry in crdtAdapter.materializeElements().entries) {
+        _myCommittedPayload[entry.key] = _deepCopyPayload(entry.value);
+      }
+    }
     on<CanvasRenameBoardRequested>(_onCanvasRenameBoardRequested);
     on<CanvasBoardTitleUpdated>(_onCanvasBoardTitleUpdated);
     on<CanvasBoardUnavailable>(_onCanvasBoardUnavailable);
@@ -148,15 +181,35 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasStartStroke>(_onStartStroke);
     on<CanvasAppendStroke>(_onAppendStroke);
     on<CanvasEndStroke>(_onEndStroke);
+    on<CanvasCancelStroke>(_onCancelStroke);
+    on<CanvasSetFingerDrawing>(_onSetFingerDrawing);
+    on<CanvasSetQuickShapeEnabled>(_onSetQuickShapeEnabled);
+    on<CanvasCommitQuickShape>(_onCommitQuickShape);
     on<CanvasAddShape>(_onAddShape);
     on<CanvasAddAiText>(_onAddAiText);
+    on<CanvasAddText>(_onAddText);
+    on<CanvasUpdateText>(_onUpdateText);
     on<CanvasAddImageElement>(_onAddImageElement);
     on<CanvasAddAiImageElement>(_onAddAiImageElement);
     on<CanvasReplaceImageSource>(_onReplaceImageSource);
     on<CanvasPreviewImageElement>(_onPreviewImageElement);
     on<CanvasUpdateImageElement>(_onUpdateImageElement);
+    on<CanvasUpdateImageStyle>(_onUpdateImageStyle);
+    on<CanvasReplaceImageElement>(_onReplaceImageElement);
     on<CanvasAddStickyNote>(_onAddStickyNote);
     on<CanvasUpdateStickyNote>(_onUpdateStickyNote);
+    on<CanvasConvertStickyNote>(_onConvertStickyNote);
+    on<CanvasAddFrame>(_onAddFrame);
+    on<CanvasUpdateFrame>(_onUpdateFrame);
+    on<CanvasDeleteFrame>(_onDeleteFrame);
+    on<CanvasAddTable>(_onAddTable);
+    on<CanvasUpdateTableCell>(_onUpdateTableCell);
+    on<CanvasUpdateTableStyle>(_onUpdateTableStyle);
+    on<CanvasSetBoardSettings>(_onSetBoardSettings);
+    on<CanvasAddGuide>(_onAddGuide);
+    on<CanvasMoveGuide>(_onMoveGuide);
+    on<CanvasRemoveGuide>(_onRemoveGuide);
+    on<CanvasImportElements>(_onImportElements);
     on<CanvasAddConnector>(_onAddConnector);
     on<CanvasUpdateConnector>(_onUpdateConnector);
     on<CanvasRewireConnector>(_onRewireConnector);
@@ -168,18 +221,57 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasUpdateStrokeWidth>(_onUpdateStrokeWidth);
     on<CanvasUpdateBrushOpacity>(_onUpdateBrushOpacity);
     on<CanvasUpdateBrushType>(_onUpdateBrushType);
+    on<CanvasApplyBrushPreset>(_onApplyBrushPreset);
+    on<CanvasUpdateStylusPressure>(_onUpdateStylusPressure);
+    on<CanvasUpdateStabilizer>(_onUpdateStabilizer);
     on<CanvasUpdateEraserScope>(_onUpdateEraserScope);
     on<CanvasSelectShape>(_onSelectShape);
+    on<CanvasSelectElements>(_onSelectElements);
+    on<CanvasSelectInRect>(_onSelectInRect);
+    on<CanvasSelectInLasso>(_onSelectInLasso);
+    on<CanvasScaleSelection>(_onScaleSelection);
+    on<CanvasRotateSelection>(_onRotateSelection);
+    on<CanvasSetSelectionMode>(_onSetSelectionMode);
+    on<CanvasTranslateSelection>(_onTranslateSelection);
+    on<CanvasAlignSelection>(_onAlignSelection);
+    on<CanvasArrangeSelection>(_onArrangeSelection);
+    on<CanvasDuplicateElements>(_onDuplicateElements);
+    on<CanvasDeleteElements>(_onDeleteElements);
+    on<CanvasCopySelection>(_onCopySelection);
+    on<CanvasPasteSelection>(_onPasteSelection);
+    on<CanvasSetElementVisibility>(_onSetElementVisibility);
+    on<CanvasSetElementLocked>(_onSetElementLocked);
+    on<CanvasSetElementOpacity>(_onSetElementOpacity);
+    on<CanvasReorderElement>(_onReorderElement);
+    on<CanvasMoveElementToLayer>(_onMoveElementToLayer);
+    on<CanvasReorderLayer>(_onReorderLayer);
+    on<CanvasUpdateLayerBlendMode>(_onUpdateLayerBlendMode);
+    on<CanvasAddLayer>(_onAddLayer);
+    on<CanvasRenameLayer>(_onRenameLayer);
+    on<CanvasDeleteLayer>(_onDeleteLayer);
+    on<CanvasSetActiveLayer>(_onSetActiveLayer);
     on<CanvasPreviewMoveSelectedShape>(_onPreviewMoveSelectedShape);
     on<CanvasMoveSelectedShape>(_onMoveSelectedShape);
     on<CanvasPreviewResizeSelectedShape>(_onPreviewResizeSelectedShape);
     on<CanvasResizeSelectedShape>(_onResizeSelectedShape);
     on<CanvasPreviewRotateSelectedShape>(_onPreviewRotateSelectedShape);
     on<CanvasToggleSelectedShapeFill>(_onToggleSelectedShapeFill);
+    on<CanvasUpdateShapeFill>(_onUpdateShapeFill);
     on<CanvasUpdateSelectedShapeColor>(_onUpdateSelectedShapeColor);
+    on<CanvasUpdateSelectedShapeStrokeColor>(
+      _onUpdateSelectedShapeStrokeColor,
+    );
+    on<CanvasFlipSelectedShape>(_onFlipSelectedShape);
     on<CanvasUpdateSelectedShapeBorderRadius>(
       _onUpdateSelectedShapeBorderRadius,
     );
+    on<CanvasUpdateSelectedShapeStrokeWidth>(_onUpdateSelectedShapeStrokeWidth);
+    on<CanvasUpdateSelectedShapeStrokeOpacity>(
+      _onUpdateSelectedShapeStrokeOpacity,
+    );
+    on<CanvasUpdateSelectedShapeDash>(_onUpdateSelectedShapeDash);
+    on<CanvasUpdateSelectedShapeLabel>(_onUpdateSelectedShapeLabel);
+    on<CanvasUpdateSelectedShapeArrowheads>(_onUpdateSelectedShapeArrowheads);
     on<CanvasRotateSelectedShape>(_onRotateSelectedShape);
     on<CanvasCommitPendingShapeEdits>(_onCommitPendingShapeEdits);
     on<CanvasPreviewPendingShapeEdits>(_onPreviewPendingShapeEdits);
@@ -187,10 +279,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasShowTrayTips>(_onShowTrayTips);
     on<CanvasDismissTrayTips>(_onDismissTrayTips);
     on<CanvasMoveSelectedStroke>(_onMoveSelectedStroke);
+    on<CanvasFillStroke>(_onFillStroke);
+    on<CanvasClearStrokeFill>(_onClearStrokeFill);
+    on<CanvasUpdateSelectionStyle>(_onUpdateSelectionStyle);
+    on<CanvasMoveSelectionToLayer>(_onMoveSelectionToLayer);
+    on<CanvasRetrySync>(_onRetrySync);
     on<CanvasUpdateSelectedStrokeColor>(_onUpdateSelectedStrokeColor);
     on<CanvasUpdateSelectedStrokeWidth>(_onUpdateSelectedStrokeWidth);
     on<CanvasUpdateSelectedStrokeOpacity>(_onUpdateSelectedStrokeOpacity);
     on<CanvasUpdateSelectedStrokeBrushType>(_onUpdateSelectedStrokeBrushType);
+    on<CanvasCommitSelectedStrokeEdits>(_onCommitSelectedStrokeEdits);
     on<CanvasSaveBoardPreviewRequested>(_onSaveBoardPreviewRequested);
     on<CanvasBoardMembersUpdated>(_onBoardMembersUpdated);
     on<CanvasMemberSearchQueryChanged>(_onMemberSearchQueryChanged);
@@ -225,6 +323,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasToggleVoiceMuteRequested>(_onCanvasToggleVoiceMuteRequested);
     on<CanvasVoiceSpeakingChanged>(_onCanvasVoiceSpeakingChanged);
     on<CanvasHistoryFeedRequested>(_onHistoryFeedRequested);
+    on<CanvasHistoryLoadOlderVersionsRequested>(
+      _onHistoryLoadOlderVersionsRequested,
+    );
     on<CanvasHistoryFeedUpdated>(_onHistoryFeedUpdated);
     on<CanvasHistoryLiveTailUpdated>(_onHistoryLiveTailUpdated);
     on<CanvasHistoryPreviewRequested>(_onHistoryPreviewRequested);
@@ -255,9 +356,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasToggleUndoRequestAreaSelection>(
       _onToggleUndoRequestAreaSelection,
     );
+    on<CanvasToggleOwnerAreaHistorySelection>(
+      _onToggleOwnerAreaHistorySelection,
+    );
+    on<CanvasHistoryAreaScrubRequested>(_onHistoryAreaScrubRequested);
     on<CanvasUndoRequestsUpdated>(_onUndoRequestsUpdated);
     on<CanvasUndoConflictDismissed>(_onUndoConflictDismissed);
     on<CanvasUndoRequestDraftStarted>(_onUndoRequestDraftStarted);
+    on<CanvasUndoRequestDraftScopeModeChanged>(
+      _onUndoRequestDraftScopeModeChanged,
+    );
     on<CanvasUndoRequestDraftElementToggled>(_onUndoRequestDraftElementToggled);
     on<CanvasUndoRequestDraftAreaSet>(_onUndoRequestDraftAreaSet);
     on<CanvasUndoRequestDraftCleared>(_onUndoRequestDraftCleared);
@@ -290,7 +398,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       await boardService.renameBoard(_boardId, event.newName);
       emit(state.copyWith(error: null));
     } catch (e) {
-      emit(state.copyWith(error: 'Failed to rename board: ${AppErrorFormatter.cleanMessage(e)}'));
+      emit(
+        state.copyWith(
+          error: 'Failed to rename board: ${AppErrorFormatter.cleanMessage(e)}',
+        ),
+      );
     }
   }
 
@@ -319,13 +431,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       transitionInfo = 'Board has been unarchived. Editing is enabled.';
     }
 
-    emit(state.copyWith(
-      boardTitle: event.title,
-      currentUserRole: event.currentUserRole,
-      isArchived: event.isArchived,
-      currentStroke: event.isArchived ? const [] : null,
-      infoMessage: transitionInfo,
-    ));
+    emit(
+      state.copyWith(
+        boardTitle: event.title,
+        currentUserRole: event.currentUserRole,
+        isArchived: event.isArchived,
+        currentStroke: event.isArchived ? const [] : null,
+        infoMessage: transitionInfo,
+      ),
+    );
   }
 
   void _onCanvasBoardUnavailable(
@@ -350,7 +464,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _boardUnavailableTimer = null;
     _liveTailDebounceTimer?.cancel();
     _liveTailDebounceTimer = null;
-    emit(state.copyWith(isLoading: true, error: null));
+    emit(
+      state.copyWith(
+        isLoading: true,
+        error: null,
+        syncStatus: _canSync ? CanvasSyncStatus.syncing : CanvasSyncStatus.idle,
+        syncMessage: null,
+      ),
+    );
     try {
       if (isClosed) return;
       _startBoardMetadataListener();
@@ -361,17 +482,32 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       _startCommunicationListeners(event.boardId);
       _refreshFromCrdtAdapter(emit);
       if (!isClosed) {
-        emit(state.copyWith(isLoading: false, error: null));
+        emit(
+          state.copyWith(
+            isLoading: false,
+            error: null,
+            syncStatus: _canSync
+                ? CanvasSyncStatus.saved
+                : CanvasSyncStatus.idle,
+            syncMessage: null,
+          ),
+        );
       }
     } catch (e) {
       if (!isClosed) {
-        emit(state.copyWith(
-          isLoading: false,
-          error: AppErrorFormatter.cleanMessage(
-            e,
-            fallback: 'Failed to load canvas.',
+        emit(
+          state.copyWith(
+            isLoading: false,
+            error: AppErrorFormatter.cleanMessage(
+              e,
+              fallback: 'Failed to load canvas.',
+            ),
+            syncStatus: _canSync
+                ? CanvasSyncStatus.offline
+                : CanvasSyncStatus.idle,
+            syncMessage: 'Could not reach the board service.',
           ),
-        ));
+        );
       }
     }
   }
@@ -400,15 +536,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     if (canvasService == null || _boardId.isEmpty) return;
     try {
-      final remoteUpdates =
-          await canvasService.listenToCrdtUpdates(_boardId).first;
+      final remoteUpdates = await canvasService
+          .listenToCrdtUpdates(_boardId)
+          .first;
       for (final update in remoteUpdates) {
         if (update.elementId != null && !update.isDeleted) {
           _lastShapeUpdateId[update.elementId!] = update.updateId;
         }
       }
-    } catch (_) {
-    }
+    } catch (_) {}
   }
 
   // ──────────────────────────────────────────────
@@ -419,32 +555,26 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (isClosed || _crdtUpdatesSub != null || !_canSync) return;
     final canvasService = _canvasService;
     if (canvasService == null) return;
-    _crdtUpdatesSub = canvasService
-        .listenToCrdtUpdates(_boardId)
-        .listen(
-          (updates) {
-            if (!isClosed) {
-              add(CanvasApplyRemoteUpdate(updates));
-            }
-          },
-          onError: (_) {},
-        );
+    _crdtUpdatesSub = canvasService.listenToCrdtUpdates(_boardId).listen((
+      updates,
+    ) {
+      if (!isClosed) {
+        add(CanvasApplyRemoteUpdate(updates));
+      }
+    }, onError: (_) {});
   }
 
   void _startPreviewUpdatesListener() {
     if (isClosed || _previewUpdatesSub != null || !_canSync) return;
     final canvasService = _canvasService;
     if (canvasService == null) return;
-    _previewUpdatesSub = canvasService
-        .listenToCanvasPreviews(_boardId)
-        .listen(
-          (previews) {
-            if (!isClosed) {
-              add(CanvasApplyRemotePreview(previews));
-            }
-          },
-          onError: (_) {},
-        );
+    _previewUpdatesSub = canvasService.listenToCanvasPreviews(_boardId).listen((
+      previews,
+    ) {
+      if (!isClosed) {
+        add(CanvasApplyRemotePreview(previews));
+      }
+    }, onError: (_) {});
   }
 
   void _startBoardMetadataListener() {
@@ -452,28 +582,27 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     if (canvasService == null || _boardId.isEmpty) return;
     _boardMetaSub?.cancel();
-    _boardMetaSub = canvasService.watchBoardById(_boardId).listen(
-      (board) {
-        if (isClosed) return;
-        if (board == null) {
-          if (!_hasSeenBoardMetadata) return;
-          _scheduleBoardUnavailableCheck();
-          return;
-        }
-        _boardUnavailableTimer?.cancel();
-        _boardUnavailableTimer = null;
-        _hasSeenBoardMetadata = true;
-        _canvasService?.setBoardSingleUserStatus(board.members.length <= 1);
-        if (!isClosed) {
-          add(CanvasBoardTitleUpdated(
+    _boardMetaSub = canvasService.watchBoardById(_boardId).listen((board) {
+      if (isClosed) return;
+      if (board == null) {
+        if (!_hasSeenBoardMetadata) return;
+        _scheduleBoardUnavailableCheck();
+        return;
+      }
+      _boardUnavailableTimer?.cancel();
+      _boardUnavailableTimer = null;
+      _hasSeenBoardMetadata = true;
+      _canvasService?.setBoardSingleUserStatus(board.members.length <= 1);
+      if (!isClosed) {
+        add(
+          CanvasBoardTitleUpdated(
             board.title,
             currentUserRole: board.currentUserRole,
             isArchived: board.isArchived,
-          ));
-        }
-      },
-      onError: (_) {},
-    );
+          ),
+        );
+      }
+    }, onError: (_) {});
     _startBoardMembersListener();
   }
 
@@ -482,16 +611,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final boardService = _boardService;
     if (boardService == null || _boardId.isEmpty) return;
     _membersSub?.cancel();
-    _membersSub = boardService
-        .getBoardMembers(_boardId)
-        .listen(
-          (members) {
-            if (!isClosed) {
-              add(CanvasBoardMembersUpdated(members));
-            }
-          },
-          onError: (_) {},
-        );
+    _membersSub = boardService.getBoardMembers(_boardId).listen((members) {
+      if (!isClosed) {
+        add(CanvasBoardMembersUpdated(members));
+      }
+    }, onError: (_) {});
   }
 
   void _scheduleBoardUnavailableCheck() {
@@ -504,12 +628,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         try {
           await canvasService.ensureBoardCached(_boardId);
         } catch (_) {}
-        final latestBoard =
-            await canvasService.watchBoardById(_boardId).first;
+        final latestBoard = await canvasService.watchBoardById(_boardId).first;
         if (latestBoard != null || isClosed) return;
-        add(CanvasBoardUnavailable(
-          'This board is no longer available. Returning to the home screen.',
-        ));
+        add(
+          CanvasBoardUnavailable(
+            'This board is no longer available. Returning to the home screen.',
+          ),
+        );
       },
     );
   }
@@ -553,6 +678,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         _remotePreviewClearsBoard = false;
         _remotePreviewElements.clear();
         _remotePreviewDeletedIds.clear();
+        _remotePreviewDeletedAt.clear();
+        _remotePreviewReceivedAt.clear();
       } catch (_) {
         _appliedCrdtUpdateIds.add(snapshot.updateId);
       }
@@ -560,6 +687,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
     // Then apply remaining deltas in order
     for (final update in regularUpdates) {
+      if (update.elementId != null) {
+        _forgetPreviews(update.elementId!);
+      }
+      if (update.affectedElementIds != null) {
+        for (final id in update.affectedElementIds!) {
+          _forgetPreviews(id);
+        }
+      }
       if (update.isDeleted) {
         _appliedCrdtUpdateIds.add(update.updateId);
         continue;
@@ -604,9 +739,20 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         if (update.elementId != null) {
           _forgetPreviews(update.elementId!);
         }
+        if (update.affectedElementIds != null) {
+          for (final id in update.affectedElementIds!) {
+            _forgetPreviews(id);
+          }
+        }
         _appliedCrdtUpdateIds.add(update.updateId);
       } catch (_) {
         _appliedCrdtUpdateIds.add(update.updateId);
+      }
+    }
+    if (_remotePreviewDeletedIds.isNotEmpty) {
+      final materialized = adapter.materializeElements();
+      for (final id in materialized.keys) {
+        _forgetPreviews(id);
       }
     }
     _refreshFromCrdtAdapter(emit);
@@ -629,8 +775,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         continue;
       }
       try {
-        final decoded =
-            jsonDecode(utf8.decode(base64Decode(preview.payloadBase64)));
+        final decoded = jsonDecode(
+          utf8.decode(base64Decode(preview.payloadBase64)),
+        );
         if (decoded is! Map<String, dynamic>) continue;
         final action = (decoded['action'] as String?) ?? 'upsert';
         final type = (decoded['type'] as String?) ?? 'shape';
@@ -639,6 +786,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           _remotePreviewClearsBoard = true;
           _remotePreviewElements.clear();
           _remotePreviewDeletedIds.clear();
+          _remotePreviewDeletedAt.clear();
+          _remotePreviewReceivedAt.clear();
           continue;
         }
         _remotePreviewClearsBoard = false;
@@ -664,15 +813,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         }
         if (action == 'delete') {
           _remotePreviewDeletedIds.add(elementId);
+          _remotePreviewDeletedAt[elementId] = DateTime.now();
           _remotePreviewElements.remove(elementId);
           _remotePreviewReceivedAt.remove(elementId);
           continue;
         }
         _remotePreviewDeletedIds.remove(elementId);
+        _remotePreviewDeletedAt.remove(elementId);
         if (type == 'image') {
           final incomingBase64 = decoded['imageBase64'] as String?;
           if (incomingBase64 == null || incomingBase64.isEmpty) {
-            final existing = _remotePreviewElements[elementId] ??
+            final existing =
+                _remotePreviewElements[elementId] ??
                 state.elements.where((e) => e.id == elementId).firstOrNull ??
                 _cachedCrdtElements
                     ?.where((e) => e.id == elementId)
@@ -694,8 +846,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             }
           }
         }
-        _remotePreviewElements[preview.elementId!] =
-            CanvasElement.fromMap(elementId, decoded);
+        _remotePreviewElements[preview.elementId!] = CanvasElement.fromMap(
+          elementId,
+          decoded,
+        );
         _remotePreviewReceivedAt[preview.elementId!] = DateTime.now();
       } catch (_) {}
     }
@@ -716,7 +870,34 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _cancelPendingPreview(objectId);
     // Our own edit wins over any overlay still being shown for this element.
     _forgetPreviews(objectId);
-    if (!_canSync) return;
+    // Any new local transaction invalidates the undo manager's redo stack.
+    if (state.infoMessageRedoable) {
+      emit(state.copyWith(infoMessage: null, infoMessageRedoable: false));
+    }
+    final activeLayer = action == 'create' && type != 'layer'
+        ? _activeLayerFor(state)
+        : null;
+    final joinActiveLayer =
+        activeLayer != null && !activeLayer.elementIds.contains(objectId);
+    if (!_canSync) {
+      if (joinActiveLayer) {
+        final updatedLayer = LayerElement(
+          id: activeLayer.id,
+          z: activeLayer.z,
+          name: activeLayer.name,
+          hidden: activeLayer.hidden,
+          locked: activeLayer.locked,
+          opacity: activeLayer.opacity,
+          blendMode: activeLayer.blendMode,
+          elementIds: [...activeLayer.elementIds, objectId],
+        );
+        final next = state.elements
+            .map((e) => e.id == updatedLayer.id ? updatedLayer : e)
+            .toList(growable: false);
+        emit(state.copyWith(elements: next));
+      }
+      return;
+    }
     await _ensureCrdtReady();
     final adapter = _crdtAdapter;
     if (adapter == null) return;
@@ -735,7 +916,21 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     } else {
       final payload = <String, dynamic>{'type': type, ...data};
       _myCommittedPayload[objectId] = _deepCopyPayload(payload);
-      update = adapter.upsertElement(objectId, payload, origin: 'local');
+      if (joinActiveLayer) {
+        final layerPayload = <String, dynamic>{
+          ...activeLayer.toMap(),
+          'elementIds': [...activeLayer.elementIds, objectId],
+        };
+        _myCommittedPayload[activeLayer.id] = _deepCopyPayload(layerPayload);
+        // Joining the active layer is part of the same transaction so undo
+        // removes the element and its membership together.
+        update = adapter.applyBatch([
+          (id: objectId, payload: payload),
+          (id: activeLayer.id, payload: layerPayload),
+        ], origin: 'local');
+      } else {
+        update = adapter.upsertElement(objectId, payload, origin: 'local');
+      }
     }
     _refreshFromCrdtAdapter(emit);
     if (update.isEmpty) {
@@ -757,13 +952,103 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final actionHint = action == 'delete'
         ? (type == 'board' ? 'clear' : 'delete')
         : 'upsert';
-    final publishedUpdateId = await _publishCrdtUpdate(
-      update,
-      elementId: elementId,
-      action: actionHint,
+    emit(
+      state.copyWith(syncStatus: CanvasSyncStatus.syncing, syncMessage: null),
     );
-    if (publishedUpdateId != null) {
-      _lastShapeUpdateId[objectId] = publishedUpdateId;
+    try {
+      final publishedUpdateId = await _publishCrdtUpdate(
+        update,
+        elementId: elementId,
+        action: actionHint,
+      );
+      if (publishedUpdateId != null) {
+        _lastShapeUpdateId[objectId] = publishedUpdateId;
+      }
+      emit(
+        state.copyWith(syncStatus: CanvasSyncStatus.saved, syncMessage: null),
+      );
+    } catch (_) {
+      emit(
+        state.copyWith(
+          syncStatus: CanvasSyncStatus.offline,
+          syncMessage:
+              'Offline. Your changes are saved on this device and will sync when the connection returns.',
+        ),
+      );
+    }
+  }
+
+  /// Persists several element writes as one CRDT transaction so a group
+  /// gesture becomes a single undo/redo step and a single network update.
+  Future<void> _saveCrdtBatch(
+    List<_CrdtWrite> writes,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (writes.isEmpty) return;
+    for (final write in writes) {
+      _cancelPendingPreview(write.objectId);
+      _forgetPreviews(write.objectId);
+    }
+    // Any new local transaction invalidates the undo manager's redo stack.
+    if (state.infoMessageRedoable) {
+      emit(state.copyWith(infoMessage: null, infoMessageRedoable: false));
+    }
+    if (!_canSync) return;
+    await _ensureCrdtReady();
+    final adapter = _crdtAdapter;
+    if (adapter == null) return;
+
+    final batchChanges = <({String id, Map<String, dynamic>? payload})>[];
+    for (final write in writes) {
+      if (write.action == 'delete') {
+        _myCommittedPayload[write.objectId] = null;
+        batchChanges.add((id: write.objectId, payload: null));
+      } else {
+        final payload = <String, dynamic>{'type': write.type, ...write.data};
+        _myCommittedPayload[write.objectId] = _deepCopyPayload(payload);
+        batchChanges.add((id: write.objectId, payload: payload));
+      }
+    }
+
+    final update = adapter.applyBatch(batchChanges, origin: 'local');
+    _refreshFromCrdtAdapter(emit);
+    if (update.isEmpty) return;
+
+    for (final write in writes) {
+      final previewData = (write.type == 'image' && write.action == 'update')
+          ? (Map<String, dynamic>.from(write.data)..remove('imageBase64'))
+          : write.data;
+      await _publishOperationPreview(
+        action: write.action,
+        type: write.type,
+        objectId: write.objectId,
+        data: previewData,
+      );
+    }
+    emit(
+      state.copyWith(syncStatus: CanvasSyncStatus.syncing, syncMessage: null),
+    );
+    try {
+      final updateId = await _publishCrdtUpdate(
+        update,
+        elementId: writes.length == 1 ? writes.single.objectId : null,
+      );
+      if (updateId != null) {
+        for (final write in writes) {
+          _lastShapeUpdateId[write.objectId] = updateId;
+        }
+      }
+      emit(
+        state.copyWith(syncStatus: CanvasSyncStatus.saved, syncMessage: null),
+      );
+    } catch (_) {
+      emit(
+        state.copyWith(
+          syncStatus: CanvasSyncStatus.offline,
+          syncMessage:
+              'Offline. Your changes are saved on this device and will sync when the connection returns.',
+        ),
+      );
     }
   }
 
@@ -824,13 +1109,21 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         );
       }
       rebuilt = _cachedCrdtElements!;
+      _committedElements = rebuilt;
     } else {
-      rebuilt = state.elements;
+      rebuilt = _committedElements.isNotEmpty
+          ? _committedElements
+          : state.elements;
     }
     // A collaborator update can rebuild the board in the middle of an erase
     // gesture; re-apply the live erase so already-erased ink does not pop back.
     final withErase = _applyActiveEraserOverlay(rebuilt);
-    emit(state.copyWith(elements: _composeElementsWithPreviews(withErase)));
+    emit(
+      state.copyWith(
+        elements: _composeElementsWithPreviews(withErase),
+        boardSettings: _boardSettings,
+      ),
+    );
   }
 
   List<CanvasElement> _composeElementsWithPreviews(
@@ -839,7 +1132,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (_remotePreviewClearsBoard) return const <CanvasElement>[];
     _pruneExpiredPreviews();
     if (_remotePreviewElements.isEmpty && _remotePreviewDeletedIds.isEmpty) {
-      return committedElements;
+      return List<CanvasElement>.unmodifiable(committedElements);
     }
     final byId = <String, CanvasElement>{
       for (final element in committedElements)
@@ -853,19 +1146,29 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       if (a.z != b.z) return a.z.compareTo(b.z);
       return a.id.compareTo(b.id);
     });
-    return composed;
+    return List<CanvasElement>.unmodifiable(composed);
   }
 
   void _pruneExpiredPreviews() {
-    if (_remotePreviewElements.isEmpty) return;
     final now = DateTime.now();
-    _remotePreviewElements.removeWhere((id, _) {
-      final receivedAt = _remotePreviewReceivedAt[id];
-      final expired = receivedAt != null &&
-          now.difference(receivedAt) > _remotePreviewTtl;
-      if (expired) _remotePreviewReceivedAt.remove(id);
-      return expired;
-    });
+    if (_remotePreviewElements.isNotEmpty) {
+      _remotePreviewElements.removeWhere((id, _) {
+        final receivedAt = _remotePreviewReceivedAt[id];
+        final expired = receivedAt != null &&
+            now.difference(receivedAt) > _remotePreviewTtl;
+        if (expired) _remotePreviewReceivedAt.remove(id);
+        return expired;
+      });
+    }
+    if (_remotePreviewDeletedIds.isNotEmpty) {
+      _remotePreviewDeletedIds.removeWhere((id) {
+        final deletedAt = _remotePreviewDeletedAt[id];
+        final expired = deletedAt == null ||
+            now.difference(deletedAt) > _remotePreviewTtl;
+        if (expired) _remotePreviewDeletedAt.remove(id);
+        return expired;
+      });
+    }
   }
 
   /// Drop every preview overlay for [elementId]. Called as soon as this device
@@ -875,6 +1178,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _remotePreviewElements.remove(elementId);
     _remotePreviewDeletedIds.remove(elementId);
     _remotePreviewReceivedAt.remove(elementId);
+    _remotePreviewDeletedAt.remove(elementId);
   }
 
   /// Payload of the element as committed to the CRDT document.
@@ -957,157 +1261,361 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     for (final entry in elementsById.entries) {
       final id = entry.key;
       final payload = entry.value;
-      final type = payload['type'] as String?;
-      if (type == 'stroke') {
-        final z = _readElementOrder(
-          elementId: id,
-          payload: payload,
-          currentOrder: currentOrder,
-          fallbackOrder: maxExistingOrder + rebuilt.length,
-        );
-        final pointMaps = (payload['points'] as List?) ?? const [];
-        final points = pointMaps
-            .whereType<Map>()
-            .map((p) => Offset(
+      // A single malformed or previously-serialized element must not blank
+      // the entire board. Skip it and keep every readable sibling.
+      try {
+        final type = payload['type'] as String?;
+        if (type == CanvasBoardSettings.crdtType) {
+          // Board settings are not rendered elements; keep them out of the
+          // element list and merge them into the state on refresh.
+          _boardSettings = CanvasBoardSettings.fromMap(payload);
+          continue;
+        }
+        if (type == 'stroke') {
+          final z = _readElementOrder(
+            elementId: id,
+            payload: payload,
+            currentOrder: currentOrder,
+            fallbackOrder: maxExistingOrder + rebuilt.length,
+          );
+          final pointMaps = (payload['points'] as List?) ?? const [];
+          final points = pointMaps
+              .whereType<Map>()
+              .map(
+                (p) => Offset(
                   (p['x'] as num?)?.toDouble() ?? 0.0,
                   (p['y'] as num?)?.toDouble() ?? 0.0,
-                ))
-            .toList(growable: false);
-        rebuilt.add(StrokeElement(
-          id: id,
-          z: z,
-          color: Color((payload['color'] as num?)?.toInt() ?? Colors.black.value),
-          strokeWidth: (payload['strokeWidth'] as num?)?.toDouble() ?? 5.0,
-          opacity: (payload['opacity'] as num?)?.toDouble() ?? 1.0,
-          brushType: (payload['brushType'] as String?) ?? 'solid',
-          points: points,
-        ));
-        continue;
-      }
-      if (type == 'shape') {
-        final z = _readElementOrder(
-          elementId: id,
-          payload: payload,
-          currentOrder: currentOrder,
-          fallbackOrder: maxExistingOrder + rebuilt.length,
-        );
-        final shapeName =
-            (payload['shapeType'] as String?) ?? CanvasShapeType.square.name;
-        final shapeType = CanvasShapeType.values.firstWhere(
-          (s) => s.name == shapeName,
-          orElse: () => CanvasShapeType.square,
-        );
-        rebuilt.add(ShapeElement(
-          id: id,
-          z: z,
-          shapeType: shapeType,
-          center: Offset(
-            (payload['cx'] as num?)?.toDouble() ?? 0.0,
-            (payload['cy'] as num?)?.toDouble() ?? 0.0,
-          ),
-          size: (payload['size'] as num?)?.toDouble() ?? 64.0,
-          color: Color((payload['color'] as num?)?.toInt() ?? Colors.black.value),
-          strokeWidth: (payload['strokeWidth'] as num?)?.toDouble() ?? 3.0,
-          isFilled: _parseBool(payload['isFilled']),
-          rotation: (payload['rotation'] as num?)?.toDouble() ?? 0.0,
-          borderRadius: (payload['borderRadius'] as num?)?.toDouble() ?? 0.0,
-        ));
-        continue;
-      }
-      if (type == 'text') {
-        final z = _readElementOrder(
-          elementId: id,
-          payload: payload,
-          currentOrder: currentOrder,
-          fallbackOrder: maxExistingOrder + rebuilt.length,
-        );
-        rebuilt.add(TextElement(
-          id: id,
-          z: z,
-          text: (payload['text'] as String?) ?? '',
-          center: Offset(
-            (payload['cx'] as num?)?.toDouble() ?? 0.0,
-            (payload['cy'] as num?)?.toDouble() ?? 0.0,
-          ),
-          color: Color((payload['color'] as num?)?.toInt() ?? Colors.black.value),
-          width: (payload['width'] as num?)?.toDouble() ?? 0.0,
-          height: (payload['height'] as num?)?.toDouble() ?? 0.0,
-        ));
-        continue;
-      }
-      if (type == 'image') {
-        final z = _readElementOrder(
-          elementId: id,
-          payload: payload,
-          currentOrder: currentOrder,
-          fallbackOrder: maxExistingOrder + rebuilt.length,
-        );
-        rebuilt.add(ImageElement(
-          id: id,
-          z: z,
-          center: Offset(
-            (payload['cx'] as num?)?.toDouble() ?? 0.0,
-            (payload['cy'] as num?)?.toDouble() ?? 0.0,
-          ),
-          width: (payload['width'] as num?)?.toDouble() ?? 220.0,
-          height: (payload['height'] as num?)?.toDouble() ?? 160.0,
-          imageBase64: (payload['imageBase64'] as String?) ?? '',
-          imageUrl: ImageElement.optionalString(payload['imageUrl']),
-          aiPrompt: ImageElement.optionalString(payload['aiPrompt']),
-          generationId: ImageElement.optionalString(payload['generationId']),
-        ));
-        continue;
-      }
-      if (type == 'sticky_note') {
-        final z = _readElementOrder(
-          elementId: id,
-          payload: payload,
-          currentOrder: currentOrder,
-          fallbackOrder: maxExistingOrder + rebuilt.length,
-        );
-        rebuilt.add(StickyNoteElement(
-          id: id,
-          z: z,
-          center: Offset(
-            (payload['cx'] as num?)?.toDouble() ?? 0.0,
-            (payload['cy'] as num?)?.toDouble() ?? 0.0,
-          ),
-          width: (payload['width'] as num?)?.toDouble() ?? 160.0,
-          height: (payload['height'] as num?)?.toDouble() ?? 160.0,
-          text: (payload['text'] as String?) ?? '',
-          color: Color((payload['color'] as num?)?.toInt() ?? 0xFFFFF9A6),
-          rotation: (payload['rotation'] as num?)?.toDouble() ?? 0.0,
-        ));
-        continue;
-      }
-      if (type == 'connector') {
-        final z = _readElementOrder(
-          elementId: id,
-          payload: payload,
-          currentOrder: currentOrder,
-          fallbackOrder: maxExistingOrder + rebuilt.length,
-        );
-        rebuilt.add(ConnectorElement(
-          id: id,
-          z: z,
-          startElementId: payload['startElementId'] as String?,
-          startPoint: Offset(
-            (payload['sx'] as num?)?.toDouble() ?? 0.0,
-            (payload['sy'] as num?)?.toDouble() ?? 0.0,
-          ),
-          startAnchor: (payload['startAnchor'] as String?) ?? 'center',
-          endElementId: payload['endElementId'] as String?,
-          endPoint: Offset(
-            (payload['ex'] as num?)?.toDouble() ?? 0.0,
-            (payload['ey'] as num?)?.toDouble() ?? 0.0,
-          ),
-          endAnchor: (payload['endAnchor'] as String?) ?? 'center',
-          lineStyle: (payload['lineStyle'] as String?) ?? 'straight',
-          color: Color((payload['color'] as num?)?.toInt() ?? Colors.black.value),
-          strokeWidth: (payload['strokeWidth'] as num?)?.toDouble() ?? 2.5,
-          hasArrowhead: _parseBool(payload['hasArrowhead'] ?? true),
-        ));
-        continue;
+                ),
+              )
+              .toList(growable: false);
+          rebuilt.add(
+            StrokeElement(
+              id: id,
+              z: z,
+              hidden: _parseBool(payload['hidden']),
+              locked: _parseBool(payload['locked']),
+              color: Color(
+                (payload['color'] as num?)?.toInt() ?? Colors.black.value,
+              ),
+              strokeWidth: (payload['strokeWidth'] as num?)?.toDouble() ?? 5.0,
+              opacity: (payload['opacity'] as num?)?.toDouble() ?? 1.0,
+              brushType: (payload['brushType'] as String?) ?? 'solid',
+              brushId:
+                  (payload['brushId'] as String?) ??
+                  (payload['brushType'] as String?) ??
+                  'solid',
+              points: points,
+              pressures:
+                  (payload['pressures'] as List?)
+                      ?.map((p) => (p as num).toDouble())
+                      .toList(growable: false) ??
+                  const [],
+              spacing: (payload['spacing'] as num?)?.toDouble() ?? 0.25,
+              textureSeed: (payload['textureSeed'] as num?)?.toInt() ?? 0,
+              fillColor: payload['fillColor'] == null
+                  ? null
+                  : Color((payload['fillColor'] as num).toInt()),
+            ),
+          );
+          continue;
+        }
+        if (type == 'shape') {
+          final z = _readElementOrder(
+            elementId: id,
+            payload: payload,
+            currentOrder: currentOrder,
+            fallbackOrder: maxExistingOrder + rebuilt.length,
+          );
+          final shapeName =
+              (payload['shapeType'] as String?) ?? CanvasShapeType.square.name;
+          final shapeType = CanvasShapeType.values.firstWhere(
+            (s) => s.name == shapeName,
+            orElse: () => CanvasShapeType.square,
+          );
+          final legacyFilled = _parseBool(payload['isFilled']);
+          final rawFillMode = payload['fillMode'] as String?;
+          final fillMode =
+              rawFillMode != null &&
+                  const {
+                    'none',
+                    'solid',
+                    'linear',
+                    'radial',
+                  }.contains(rawFillMode)
+              ? rawFillMode
+              : (legacyFilled ? 'solid' : 'none');
+          rebuilt.add(
+            ShapeElement(
+              id: id,
+              z: z,
+              hidden: _parseBool(payload['hidden']),
+              locked: _parseBool(payload['locked']),
+              shapeType: shapeType,
+              center: Offset(
+                (payload['cx'] as num?)?.toDouble() ?? 0.0,
+                (payload['cy'] as num?)?.toDouble() ?? 0.0,
+              ),
+              size: (payload['size'] as num?)?.toDouble() ?? 64.0,
+              width: (payload['width'] as num?)?.toDouble() ?? 0.0,
+              height: (payload['height'] as num?)?.toDouble() ?? 0.0,
+              color: Color(
+                (payload['color'] as num?)?.toInt() ?? Colors.black.value,
+              ),
+              strokeColor: payload['strokeColor'] == null
+                  ? null
+                  : Color((payload['strokeColor'] as num).toInt()),
+              strokeWidth: (payload['strokeWidth'] as num?)?.toDouble() ?? 3.0,
+              strokeOpacity:
+                  (payload['strokeOpacity'] as num?)?.toDouble() ?? 1.0,
+              dashPattern: (payload['dashPattern'] as List?)
+                  ?.map((e) => (e as num).toDouble())
+                  .toList(),
+              isFilled: fillMode != 'none',
+              fillMode: fillMode,
+              fillColor: payload['fillColor'] == null
+                  ? null
+                  : Color((payload['fillColor'] as num).toInt()),
+              gradientStart: payload['gradientStart'] == null
+                  ? null
+                  : Color((payload['gradientStart'] as num).toInt()),
+              gradientEnd: payload['gradientEnd'] == null
+                  ? null
+                  : Color((payload['gradientEnd'] as num).toInt()),
+              gradientAngle:
+                  (payload['gradientAngle'] as num?)?.toDouble() ?? 0.0,
+              rotation: (payload['rotation'] as num?)?.toDouble() ?? 0.0,
+              borderRadius:
+                  (payload['borderRadius'] as num?)?.toDouble() ?? 0.0,
+              opacity: (payload['opacity'] as num?)?.toDouble() ?? 1.0,
+              label: (payload['label'] as String?) ?? '',
+              labelColor: payload['labelColor'] == null
+                  ? null
+                  : Color((payload['labelColor'] as num).toInt()),
+              labelFontSize:
+                  (payload['labelFontSize'] as num?)?.toDouble() ?? 14.0,
+              labelFontWeight:
+                  (payload['labelFontWeight'] as num?)?.toInt() ?? 600,
+              labelTextAlign:
+                  (payload['labelTextAlign'] as String?) ?? 'center',
+              startArrowhead: _parseBool(payload['startArrowhead']),
+              endArrowhead: payload['endArrowhead'] == null
+                  ? shapeType == CanvasShapeType.arrow
+                  : _parseBool(payload['endArrowhead']),
+              flipH: _parseBool(payload['flipH']),
+              flipV: _parseBool(payload['flipV']),
+            ),
+          );
+          continue;
+        }
+        if (type == 'text') {
+          final z = _readElementOrder(
+            elementId: id,
+            payload: payload,
+            currentOrder: currentOrder,
+            fallbackOrder: maxExistingOrder + rebuilt.length,
+          );
+          rebuilt.add(
+            TextElement(
+              id: id,
+              z: z,
+              hidden: _parseBool(payload['hidden']),
+              locked: _parseBool(payload['locked']),
+              text: (payload['text'] as String?) ?? '',
+              center: Offset(
+                (payload['cx'] as num?)?.toDouble() ?? 0.0,
+                (payload['cy'] as num?)?.toDouble() ?? 0.0,
+              ),
+              color: Color(
+                (payload['color'] as num?)?.toInt() ?? Colors.black.value,
+              ),
+              width: (payload['width'] as num?)?.toDouble() ?? 0.0,
+              height: (payload['height'] as num?)?.toDouble() ?? 0.0,
+              fontSize: (payload['fontSize'] as num?)?.toDouble() ?? 16.0,
+              fontWeight: (payload['fontWeight'] as num?)?.toInt() ?? 600,
+              fontFamily: payload['fontFamily'] as String?,
+              textAlign: (payload['textAlign'] as String?) ?? 'left',
+              lineHeight: (payload['lineHeight'] as num?)?.toDouble() ?? 1.2,
+              rotation: (payload['rotation'] as num?)?.toDouble() ?? 0.0,
+              maxLines: (payload['maxLines'] as num?)?.toInt() ?? 0,
+              autoSize: _parseBool(payload['autoSize']),
+              backgroundColor: payload['backgroundColor'] == null
+                  ? null
+                  : Color((payload['backgroundColor'] as num).toInt()),
+              padding: (payload['padding'] as num?)?.toDouble() ?? 4.0,
+              opacity: (payload['opacity'] as num?)?.toDouble() ?? 1.0,
+            ),
+          );
+          continue;
+        }
+        if (type == 'image') {
+          final z = _readElementOrder(
+            elementId: id,
+            payload: payload,
+            currentOrder: currentOrder,
+            fallbackOrder: maxExistingOrder + rebuilt.length,
+          );
+          final parsed =
+              CanvasElement.fromMap(id, {
+                    ...payload,
+                    'type': 'image',
+                    'z': z,
+                    'cx': (payload['cx'] as num?)?.toDouble() ?? 0.0,
+                    'cy': (payload['cy'] as num?)?.toDouble() ?? 0.0,
+                    'width': (payload['width'] as num?)?.toDouble() ?? 220.0,
+                    'height': (payload['height'] as num?)?.toDouble() ?? 160.0,
+                    'hidden': _parseBool(payload['hidden']),
+                    'locked': _parseBool(payload['locked']),
+                    'flipped': _parseBool(payload['flipped']),
+                    'flipV': _parseBool(payload['flipV']),
+                    'isReference': _parseBool(payload['isReference']),
+                  })
+                  as ImageElement;
+          rebuilt.add(parsed);
+          continue;
+        }
+        if (type == 'sticky_note') {
+          final z = _readElementOrder(
+            elementId: id,
+            payload: payload,
+            currentOrder: currentOrder,
+            fallbackOrder: maxExistingOrder + rebuilt.length,
+          );
+          rebuilt.add(
+            CanvasElement.fromMap(id, {
+              ...payload,
+              'type': 'sticky_note',
+              'z': z,
+              'cx': payload['cx'] ?? 0.0,
+              'cy': payload['cy'] ?? 0.0,
+            }),
+          );
+          continue;
+        }
+        if (type == 'connector') {
+          final z = _readElementOrder(
+            elementId: id,
+            payload: payload,
+            currentOrder: currentOrder,
+            fallbackOrder: maxExistingOrder + rebuilt.length,
+          );
+          rebuilt.add(
+            ConnectorElement(
+              id: id,
+              z: z,
+              hidden: _parseBool(payload['hidden']),
+              locked: _parseBool(payload['locked']),
+              startElementId: payload['startElementId'] as String?,
+              startPoint: Offset(
+                (payload['sx'] as num?)?.toDouble() ?? 0.0,
+                (payload['sy'] as num?)?.toDouble() ?? 0.0,
+              ),
+              startAnchor: (payload['startAnchor'] as String?) ?? 'center',
+              endElementId: payload['endElementId'] as String?,
+              endPoint: Offset(
+                (payload['ex'] as num?)?.toDouble() ?? 0.0,
+                (payload['ey'] as num?)?.toDouble() ?? 0.0,
+              ),
+              endAnchor: (payload['endAnchor'] as String?) ?? 'center',
+              lineStyle: (payload['lineStyle'] as String?) ?? 'straight',
+              color: Color(
+                (payload['color'] as num?)?.toInt() ?? Colors.black.value,
+              ),
+              strokeWidth: (payload['strokeWidth'] as num?)?.toDouble() ?? 2.5,
+              hasArrowhead: _parseBool(
+                payload['endArrowhead'] ?? payload['hasArrowhead'] ?? true,
+              ),
+              startArrowhead: _parseBool(payload['startArrowhead']),
+              cornerRadius: (payload['cornerRadius'] as num?)?.toDouble() ?? 0,
+              dashPattern: (payload['dashPattern'] as List<dynamic>?)
+                  ?.map((d) => (d as num).toDouble())
+                  .toList(growable: false),
+              label: (payload['label'] as String?) ?? '',
+              labelColor: payload['labelColor'] == null
+                  ? null
+                  : Color((payload['labelColor'] as num).toInt()),
+              labelFontSize:
+                  (payload['labelFontSize'] as num?)?.toDouble() ?? 14,
+              opacity: (payload['opacity'] as num?)?.toDouble() ?? 1.0,
+            ),
+          );
+          continue;
+        }
+        if (type == 'frame') {
+          final z = _readElementOrder(
+            elementId: id,
+            payload: payload,
+            currentOrder: currentOrder,
+            fallbackOrder: maxExistingOrder + rebuilt.length,
+          );
+          rebuilt.add(
+            FrameElement(
+              id: id,
+              z: z,
+              hidden: _parseBool(payload['hidden']),
+              locked: _parseBool(payload['locked']),
+              opacity: (payload['opacity'] as num?)?.toDouble() ?? 1.0,
+              center: Offset(
+                (payload['cx'] as num?)?.toDouble() ?? 0.0,
+                (payload['cy'] as num?)?.toDouble() ?? 0.0,
+              ),
+              width:
+                  (payload['width'] as num?)?.toDouble() ??
+                  FrameElement.defaultWidth,
+              height:
+                  (payload['height'] as num?)?.toDouble() ??
+                  FrameElement.defaultHeight,
+              title: (payload['title'] as String?) ?? '',
+              color: Color((payload['color'] as num?)?.toInt() ?? 0xFF64748B),
+              cornerRadius: (payload['cornerRadius'] as num?)?.toDouble() ?? 12,
+              clipContents: _parseBool(payload['clipContents']),
+            ),
+          );
+          continue;
+        }
+        if (type == 'table') {
+          final z = _readElementOrder(
+            elementId: id,
+            payload: payload,
+            currentOrder: currentOrder,
+            fallbackOrder: maxExistingOrder + rebuilt.length,
+          );
+          rebuilt.add(
+            CanvasElement.fromMap(id, {
+              ...payload,
+              'type': 'table',
+              'z': z,
+              'hidden': _parseBool(payload['hidden']),
+              'locked': _parseBool(payload['locked']),
+              'headerRow': payload['headerRow'] == null
+                  ? true
+                  : _parseBool(payload['headerRow']),
+            }),
+          );
+          continue;
+        }
+        if (type == 'layer') {
+          // Layers are structure, but they must survive a CRDT rebuild or the
+          // whole layers panel empties on the first remote update.
+          rebuilt.add(
+            LayerElement(
+              id: id,
+              z: (payload['z'] as num?)?.toInt() ?? 0,
+              hidden: _parseBool(payload['hidden']),
+              locked: _parseBool(payload['locked']),
+              opacity: (payload['opacity'] as num?)?.toDouble() ?? 1.0,
+              name: (payload['name'] as String?) ?? 'Layer',
+              blendMode: (payload['blendMode'] as String?) ?? 'normal',
+              elementIds:
+                  (payload['elementIds'] as List?)?.whereType<String>().toList(
+                    growable: false,
+                  ) ??
+                  const <String>[],
+            ),
+          );
+          continue;
+        }
+      } catch (error) {
+        debugPrint('Skipped unreadable canvas element $id: $error');
       }
     }
     rebuilt.sort((a, b) {
@@ -1125,6 +1633,28 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     return maxZ + 1;
   }
 
+  /// Frames paint behind existing art so wrapping a board never covers it.
+  int _lowestZIndex() {
+    var minZ = 0;
+    for (final element in state.elements) {
+      if (element.z < minZ) minZ = element.z;
+    }
+    return minZ - 1;
+  }
+
+  /// Gesture behaviour follows the active tool, never the stroke style.
+  bool get _isErasing => state.currentToolMode == CanvasToolMode.eraser;
+
+  /// The tool a brush style implies when it is picked from the brush tray.
+  CanvasToolMode _toolModeForBrush(String brushType) {
+    if (brushType == 'eraser') return CanvasToolMode.eraser;
+    if (brushType == 'highlighter') return CanvasToolMode.highlight;
+    final mode = state.currentToolMode;
+    return mode == CanvasToolMode.eraser || mode == CanvasToolMode.highlight
+        ? CanvasToolMode.doodle
+        : mode;
+  }
+
   String _elementType(CanvasElement element) {
     return switch (element) {
       StrokeElement() => 'stroke',
@@ -1132,7 +1662,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       TextElement() => 'text',
       ImageElement() => 'image',
       StickyNoteElement() => 'sticky_note',
+      FrameElement() => 'frame',
+      TableElement() => 'table',
       ConnectorElement() => 'connector',
+      LayerElement() => 'layer',
     };
   }
 
@@ -1142,13 +1675,32 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
   void _onStartStroke(CanvasStartStroke event, Emitter<CanvasState> emit) {
     if (!_ensureCanEditWithOptions(emit, clearStroke: true)) return;
-    if (state.brushType == 'eraser') {
+    if (_isErasing) {
       _beginEraserStroke(event.point);
-      emit(state.copyWith(currentStroke: [event.point]));
+      emit(
+        state.copyWith(
+          currentStroke: [event.point],
+          currentStrokePressures: [event.pressure],
+          currentStrokeTilts: [event.tilt],
+        ),
+      );
       return;
     }
     _activeStrokeId = _uuid.v4();
-    emit(state.copyWith(currentStroke: [event.point]));
+    _strokeClock
+      ..reset()
+      ..start();
+    _strokeStabilizer = StrokeStabilizer(strength: state.stabilizerStrength)
+      ..add(event.point, elapsed: Duration.zero);
+    emit(
+      state.copyWith(
+        currentStroke: [event.point],
+        currentStrokePressures: [
+          state.stylusPressureEnabled ? event.pressure : 1.0,
+        ],
+        currentStrokeTilts: [event.tilt],
+      ),
+    );
   }
 
   Future<void> _onAppendStroke(
@@ -1156,9 +1708,35 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     if (!_ensureCanEditWithOptions(emit, clearStroke: true)) return;
-    final updated = List<Offset>.from(state.currentStroke)..add(event.point);
-    emit(state.copyWith(currentStroke: updated));
-    if (state.brushType == 'eraser') {
+    if (state.currentStroke.isEmpty) return;
+    final points = _isErasing
+        ? [event.point]
+        : _strokeStabilizer!.add(event.point, elapsed: _strokeClock.elapsed);
+    final updated = List<Offset>.from(state.currentStroke)..addAll(points);
+    final pressure = state.stylusPressureEnabled ? event.pressure : 1.0;
+    final updatedPressures = List<double>.from(state.currentStrokePressures)
+      ..addAll([
+        if (points.length == 2) state.currentStrokePressures.last,
+        pressure,
+      ]);
+    final updatedTilts = List<double>.from(state.currentStrokeTilts);
+    if (updatedTilts.length != state.currentStroke.length) {
+      updatedTilts
+        ..clear()
+        ..addAll(List<double>.filled(state.currentStroke.length, 0));
+    }
+    updatedTilts.addAll([
+      if (points.length == 2 && updatedTilts.isNotEmpty) updatedTilts.last,
+      event.tilt,
+    ]);
+    emit(
+      state.copyWith(
+        currentStroke: updated,
+        currentStrokePressures: updatedPressures,
+        currentStrokeTilts: updatedTilts,
+      ),
+    );
+    if (_isErasing) {
       await _extendEraserStroke(updated, emit);
       return;
     }
@@ -1172,6 +1750,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       'strokeWidth': state.strokeWidth,
       'opacity': state.brushOpacity,
       'brushType': state.brushType,
+      'brushId': state.brushType,
+      'pressures': updatedPressures,
+      'tilts': updatedTilts,
       'points': updated
           .map((p) => {'x': p.dx, 'y': p.dy})
           .toList(growable: false),
@@ -1184,35 +1765,207 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     if (!_ensureCanEditWithOptions(emit, clearStroke: true)) return;
-    if (state.brushType == 'eraser' || _eraserSession != null) {
+    if (_isErasing || _eraserSession != null) {
       await _finishEraserStroke(emit, event.smoothedPoints);
       return;
     }
-    final usePoints = event.smoothedPoints ?? state.currentStroke;
+    final stabilizer = _strokeStabilizer;
+    final finalPoints = stabilizer?.finish() ?? const <Offset>[];
+    _strokeStabilizer = null;
+    _strokeClock.stop();
+    var usePoints = List<Offset>.of(event.smoothedPoints ?? state.currentStroke)
+      ..addAll(finalPoints);
+    if (event.smoothAfterDrawing &&
+        (stabilizer == null || stabilizer.strength == 0)) {
+      usePoints = smoothStrokePoints(usePoints);
+    }
     if (usePoints.length < 2) {
-      emit(state.copyWith(currentStroke: const []));
+      _activeStrokeId = null;
+      emit(
+        state.copyWith(
+          currentStroke: const [],
+          currentStrokePressures: const [],
+          currentStrokeTilts: const [],
+        ),
+      );
       return;
     }
+    var usePressures = state.stylusPressureEnabled
+        ? event.pressures ?? state.currentStrokePressures
+        : List<double>.filled(usePoints.length, 1.0);
+    if (usePressures.length != usePoints.length) {
+      if (usePressures.isEmpty) {
+        usePressures = List<double>.filled(usePoints.length, 1.0);
+      } else if (usePressures.length < usePoints.length) {
+        final lastP = usePressures.last;
+        usePressures = [
+          ...usePressures,
+          ...List<double>.filled(usePoints.length - usePressures.length, lastP),
+        ];
+      } else {
+        usePressures = usePressures.sublist(0, usePoints.length);
+      }
+    }
+    var useTilts = event.tilts ?? state.currentStrokeTilts;
+    if (useTilts.length != usePoints.length) {
+      if (useTilts.isEmpty) {
+        useTilts = List<double>.filled(usePoints.length, 0);
+      } else if (useTilts.length < usePoints.length) {
+        final lastTilt = useTilts.last;
+        useTilts = [
+          ...useTilts,
+          ...List<double>.filled(usePoints.length - useTilts.length, lastTilt),
+        ];
+      } else {
+        useTilts = useTilts.sublist(0, usePoints.length);
+      }
+    }
     final strokeId = _activeStrokeId ?? _uuid.v4();
+    final preset = brushPresetFor(state.brushType);
+    final baseZ = _nextZIndex();
+    final textureSeed = DateTime.now().microsecondsSinceEpoch & 0x7FFFFFFF;
     final stroke = StrokeElement(
       id: strokeId,
-      z: _nextZIndex(),
+      z: baseZ,
       color: state.selectedColor,
       strokeWidth: state.strokeWidth,
       opacity: state.brushOpacity,
       brushType: state.brushType,
+      brushId: state.brushType,
       points: usePoints,
+      pressures: usePressures,
+      tilts: useTilts,
+      spacing: preset.spacing,
+      textureSeed: textureSeed,
     );
-    final nextElements = List<CanvasElement>.from(state.elements)..add(stroke);
-    emit(state.copyWith(elements: nextElements, currentStroke: const []));
+
+    final mirroredPolylines = symmetryMirroredPolylines(
+      usePoints,
+      _boardSettings,
+    );
+    final createdStrokes = <StrokeElement>[
+      stroke,
+      for (var i = 0; i < mirroredPolylines.length; i++)
+        StrokeElement(
+          id: _uuid.v4(),
+          z: baseZ + i + 1,
+          color: state.selectedColor,
+          strokeWidth: state.strokeWidth,
+          opacity: state.brushOpacity,
+          brushType: state.brushType,
+          brushId: state.brushType,
+          points: mirroredPolylines[i],
+          pressures: usePressures,
+          tilts: useTilts,
+          spacing: preset.spacing,
+          textureSeed: textureSeed + i + 1,
+        ),
+    ];
+
+    final nextElements = List<CanvasElement>.from(state.elements)
+      ..addAll(createdStrokes);
+    _committedElements = nextElements;
+    emit(
+      state.copyWith(
+        elements: nextElements,
+        currentStroke: const [],
+        currentStrokePressures: const [],
+        currentStrokeTilts: const [],
+      ),
+    );
     _activeStrokeId = null;
+    if (createdStrokes.length == 1) {
+      await _saveCrdtOperation(
+        action: 'create',
+        type: _elementType(stroke),
+        objectId: strokeId,
+        data: stroke.toMap(),
+        emit: emit,
+      );
+    } else {
+      await _saveCrdtBatch([
+        for (final s in createdStrokes)
+          (
+            action: 'create',
+            type: _elementType(s),
+            objectId: s.id,
+            data: s.toMap(),
+          ),
+      ], emit);
+    }
+  }
+
+  void _onCancelStroke(CanvasCancelStroke event, Emitter<CanvasState> emit) {
+    _activeStrokeId = null;
+    _strokeStabilizer = null;
+    _eraserSession = null;
+    _strokeClock.stop();
+    emit(
+      state.copyWith(
+        currentStroke: const [],
+        currentStrokePressures: const [],
+        currentStrokeTilts: const [],
+      ),
+    );
+  }
+
+  void _onSetFingerDrawing(
+    CanvasSetFingerDrawing event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(fingerDrawingEnabled: event.enabled));
+  }
+
+  void _onSetQuickShapeEnabled(
+    CanvasSetQuickShapeEnabled event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (!_ensureCanEdit(emit)) return;
+    emit(state.copyWith(quickShapeEnabled: event.enabled));
+  }
+
+  Future<void> _onCommitQuickShape(
+    CanvasCommitQuickShape event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final match = event.match;
+    final id = _activeStrokeId ?? _uuid.v4();
+    _activeStrokeId = null;
+    _strokeStabilizer = null;
+    _strokeClock.stop();
+    final shape = ShapeElement(
+      id: id,
+      z: _nextZIndex(),
+      shapeType: match.shapeType,
+      center: match.center,
+      size: math.max(match.width, match.height),
+      width: match.width,
+      height: match.height,
+      color: state.selectedColor,
+      strokeWidth: state.strokeWidth,
+      opacity: state.brushOpacity,
+      rotation: match.rotation,
+    );
+    final next = List<CanvasElement>.from(state.elements)..add(shape);
+    emit(
+      state.copyWith(
+        elements: next,
+        currentStroke: const [],
+        currentStrokePressures: const [],
+        currentStrokeTilts: const [],
+        selectedShapeId: shape.id,
+        selectedIds: {shape.id},
+      ),
+    );
     await _saveCrdtOperation(
       action: 'create',
-      type: _elementType(stroke),
-      objectId: strokeId,
-      data: stroke.toMap(),
+      type: 'shape',
+      objectId: shape.id,
+      data: shape.toMap(),
       emit: emit,
     );
+    _announceUndoable(emit, 'Snapped to ${match.shapeType.name}');
   }
 
   // ──────────────────────────────────────────────
@@ -1224,29 +1977,79 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     if (!_ensureCanEdit(emit)) return;
-    final shapeId = _uuid.v4();
-    final shape = ShapeElement(
-      id: shapeId,
+    await _commitNewShape(
+      _newShape(
+        id: _uuid.v4(),
+        shapeType: event.shapeType,
+        center: event.center,
+        size: 64.0,
+      ),
+      emit,
+    );
+  }
+
+  /// Every shape-creation path builds its element here so defaults, z and
+  /// payload fields cannot drift between the gesture and programmatic paths.
+  ShapeElement _newShape({
+    required String id,
+    required CanvasShapeType shapeType,
+    required Offset center,
+    required double size,
+    double rotation = 0,
+    double width = 0,
+    double height = 0,
+  }) {
+    final effectiveSize = (width > 0 || height > 0)
+        ? math.max(width, height)
+        : size;
+    return ShapeElement(
+      id: id,
       z: _nextZIndex(),
-      shapeType: event.shapeType,
-      center: event.center,
-      size: 64.0,
+      shapeType: shapeType,
+      center: center,
+      size: effectiveSize,
+      width: width,
+      height: height,
       color: state.selectedColor,
       strokeWidth: 3.0,
       isFilled: false,
+      rotation: rotation,
+      endArrowhead: shapeType == CanvasShapeType.arrow,
     );
+  }
+
+  /// Adds [shape], selects it and persists it as one CRDT create.
+  /// [resetDrawState] also leaves shape-draw mode, as the drag gesture does.
+  Future<void> _commitNewShape(
+    ShapeElement shape,
+    Emitter<CanvasState> emit, {
+    bool resetDrawState = false,
+  }) async {
     final nextElements = List<CanvasElement>.from(state.elements)..add(shape);
-    emit(state.copyWith(
+    _committedElements = nextElements;
+    var next = state.copyWith(
       elements: nextElements,
       activeTray: null,
-      selectedShapeId: shapeId,
-      selectedShapeIsFilled: false,
-      selectedShapeBorderRadius: 0.0,
-    ));
+      selectedShapeId: shape.id,
+      selectedIds: <String>{shape.id},
+      selectedShapeRotation: shape.rotation,
+      selectedShapeIsFilled: shape.isFilled,
+      selectedShapeBorderRadius: shape.borderRadius,
+    );
+    if (resetDrawState) {
+      next = next.copyWith(
+        isDrawingShape: false,
+        shapeDrawStart: null,
+        shapeDrawCurrent: null,
+        currentToolMode: CanvasToolMode.doodle,
+        pendingShapeType: null,
+      );
+    }
+    emit(next);
     await _saveCrdtOperation(
       action: 'create',
       type: _elementType(shape),
-      objectId: shapeId,
+      objectId: shape.id,
       data: shape.toMap(),
       emit: emit,
     );
@@ -1256,23 +2059,50 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasAddAiText event,
     Emitter<CanvasState> emit,
   ) async {
-    if (!_ensureCanEdit(emit)) return;
-    final prompt = event.prompt.trim();
-    if (prompt.isEmpty) return;
-    final textId = _uuid.v4();
-    final measured = measureTextElementBounds(prompt);
-    final textElement = TextElement(
-      id: textId,
-      z: _nextZIndex(),
-      text: prompt,
-      center: event.position,
-      color: state.selectedColor,
-      width: measured.width,
-      height: measured.height,
+    // The AI tray only inserts text today; route it through the single text
+    // creation path so defaults, measurement and CRDT writes cannot drift.
+    await _onAddText(
+      CanvasAddText(
+        topLeft: event.position,
+        text: event.prompt,
+        color: state.selectedColor,
+      ),
+      emit,
     );
-    final nextElements =
-        List<CanvasElement>.from(state.elements)..add(textElement);
-    emit(state.copyWith(elements: nextElements, activeTray: null));
+  }
+
+  Future<void> _onAddText(
+    CanvasAddText event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final text = event.text.trim();
+    if (text.isEmpty) return;
+    final textId = _uuid.v4();
+    final textElement = _measureText(
+      TextElement(
+        id: textId,
+        z: _nextZIndex(),
+        text: event.text,
+        center: event.topLeft,
+        color: event.color,
+        fontSize: event.fontSize,
+        fontWeight: event.fontWeight,
+        textAlign: event.textAlign,
+        rotation: event.rotation,
+      ),
+    );
+    final nextElements = List<CanvasElement>.from(state.elements)
+      ..add(textElement);
+    emit(
+      state.copyWith(
+        elements: nextElements,
+        activeTray: null,
+        selectedShapeId: textId,
+        selectedIds: <String>{textId},
+        selectedShapeRotation: textElement.rotation,
+      ),
+    );
     await _saveCrdtOperation(
       action: 'create',
       type: _elementType(textElement),
@@ -1282,22 +2112,141 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
   }
 
+  /// Rewrites the measured width/height from the element's real text style.
+  TextElement _measureText(TextElement element) {
+    final layout = CanvasTextLayout.forElement(element);
+    return TextElement(
+      id: element.id,
+      z: element.z,
+      hidden: element.hidden,
+      locked: element.locked,
+      opacity: element.opacity,
+      text: element.text,
+      center: element.center,
+      color: element.color,
+      width: layout.size.width,
+      height: layout.size.height,
+      fontSize: element.fontSize,
+      fontWeight: element.fontWeight,
+      fontFamily: element.fontFamily,
+      textAlign: element.textAlign,
+      lineHeight: element.lineHeight,
+      rotation: element.rotation,
+      maxLines: element.maxLines,
+      autoSize: element.autoSize,
+      backgroundColor: element.backgroundColor,
+      padding: element.padding,
+    );
+  }
+
+  Future<void> _onUpdateText(
+    CanvasUpdateText event,
+    Emitter<CanvasState> emit, {
+    String? infoMessage,
+  }) async {
+    if (!_ensureCanEdit(emit)) return;
+    final existing = _findElement(event.elementId);
+    if (existing is! TextElement || existing.locked) return;
+    final nextText = event.text ?? existing.text;
+    if (nextText.trim().isEmpty) {
+      // Never leave an invisible text object behind.
+      await _onDeleteElement(CanvasDeleteElement(event.elementId), emit);
+      return;
+    }
+    final needsMeasure =
+        event.text != null ||
+        event.fontSize != null ||
+        event.fontWeight != null ||
+        event.fontFamily != null ||
+        event.textAlign != null ||
+        event.lineHeight != null ||
+        event.maxLines != null ||
+        event.width != null ||
+        event.autoSize == true;
+    var updated = TextElement(
+      id: existing.id,
+      z: existing.z,
+      hidden: existing.hidden,
+      locked: existing.locked,
+      opacity: existing.opacity,
+      text: nextText,
+      center: event.topLeft ?? existing.center,
+      color: event.color ?? existing.color,
+      width: event.width ?? existing.width,
+      height: event.height ?? existing.height,
+      fontSize: event.fontSize ?? existing.fontSize,
+      fontWeight: event.fontWeight ?? existing.fontWeight,
+      fontFamily: event.fontFamily ?? existing.fontFamily,
+      textAlign: event.textAlign ?? existing.textAlign,
+      lineHeight: event.lineHeight ?? existing.lineHeight,
+      rotation: event.rotation ?? existing.rotation,
+      maxLines: event.maxLines ?? existing.maxLines,
+      autoSize: event.autoSize ?? existing.autoSize,
+      backgroundColor: event.backgroundColor ?? existing.backgroundColor,
+      padding: existing.padding,
+    );
+    if (needsMeasure) updated = _measureText(updated);
+    if (updated == existing) return;
+    final next = state.elements
+        .map((e) => e.id == updated.id ? updated : e)
+        .toList();
+    next.sort((a, b) {
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
+    emit(state.copyWith(elements: next));
+    await _saveCrdtOperation(
+      action: 'update',
+      type: _elementType(updated),
+      objectId: updated.id,
+      data: updated.toMap(),
+      emit: emit,
+    );
+    await _syncAttachedConnectors(updated, emit);
+    if (infoMessage != null) {
+      _announceUndoable(emit, infoMessage);
+    }
+  }
+
+  CanvasElement? _findElement(String elementId) {
+    for (final element in state.elements) {
+      if (element.id == elementId) return element;
+    }
+    return null;
+  }
+
   Future<void> _onAddImageElement(
     CanvasAddImageElement event,
     Emitter<CanvasState> emit,
   ) async {
     if (!_ensureCanEdit(emit)) return;
     final imageId = _uuid.v4();
-    final imageElement = ImageElement(
-      id: imageId,
-      z: _nextZIndex(),
-      center: event.center,
-      width: event.width.clamp(80.0, 720.0),
-      height: event.height.clamp(80.0, 720.0),
-      imageBase64: base64Encode(event.imageBytes),
-    );
-    final nextElements =
-        List<CanvasElement>.from(state.elements)..add(imageElement);
+    final style = event.style;
+    var z = _nextZIndex();
+    if (style?.isReference == true) {
+      final activeLayer = _activeLayerFor(state);
+      final band = canvasPaintOrder(
+        state.elements,
+      ).bands.firstWhere((band) => band.layer?.id == activeLayer?.id);
+      if (band.elements.isNotEmpty) {
+        z = band.elements.map((element) => element.z).reduce(math.min) - 1;
+      }
+    }
+    final imageElement =
+        CanvasElement.fromMap(imageId, {
+              ...?style?.toMap(),
+              'type': 'image',
+              'z': z,
+              'cx': event.center.dx,
+              'cy': event.center.dy,
+              'width': event.width.clamp(1.0, 720.0),
+              'height': event.height.clamp(1.0, 720.0),
+              'locked': style?.isReference == true,
+              'imageBase64': base64Encode(event.imageBytes),
+            })
+            as ImageElement;
+    final nextElements = List<CanvasElement>.from(state.elements)
+      ..add(imageElement);
     emit(state.copyWith(elements: nextElements, activeTray: null));
     await _saveCrdtOperation(
       action: 'create',
@@ -1322,54 +2271,130 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     if (target == null) return;
     final oldElement = target as ImageElement;
+    if (oldElement.locked) return;
     final newCx = event.center.dx;
     final newCy = event.center.dy;
-    final newW = event.width.clamp(80.0, 720.0);
-    final newH = event.height.clamp(80.0, 720.0);
-    final unchanged = (newCx - oldElement.center.dx).abs() < 0.1 &&
+    final newW = event.width.clamp(1.0, 720.0);
+    final newH = event.height.clamp(1.0, 720.0);
+    final unchanged =
+        (newCx - oldElement.center.dx).abs() < 0.1 &&
         (newCy - oldElement.center.dy).abs() < 0.1 &&
         (newW - oldElement.width).abs() < 0.1 &&
         (newH - oldElement.height).abs() < 0.1;
     if (unchanged) return;
-    final moved = (newCx - oldElement.center.dx).abs() >= 0.1 ||
-        (newCy - oldElement.center.dy).abs() >= 0.1;
-    final newZ = moved ? _nextZIndex() : oldElement.z;
-    final next = state.elements
-        .map((e) => e.id == event.elementId
-            ? ImageElement(
-                id: e.id,
-                z: newZ,
-                center: Offset(newCx, newCy),
-                width: newW,
-                height: newH,
-                imageBase64: (e as ImageElement).imageBase64,
-                imageUrl: e.imageUrl,
-                aiPrompt: e.aiPrompt,
-                generationId: e.generationId,
-              )
-            : e)
-        .toList();
-    next.sort((a, b) {
-      if (a.z != b.z) return a.z.compareTo(b.z);
-      return a.id.compareTo(b.id);
-    });
-    emit(state.copyWith(elements: next));
-    final updateData = <String, dynamic>{
-      'type': 'image',
-      'z': newZ,
-      'cx': newCx,
-      'cy': newCy,
-      'width': newW,
-      'height': newH,
-      'imageBase64': oldElement.imageBase64,
-    };
-    _carryAiImageFields(updateData, oldElement);
-    await _saveCrdtOperation(
-      action: 'update',
-      type: 'image',
-      objectId: event.elementId,
-      data: updateData,
-      emit: emit,
+    final updated = oldElement.copyWith(
+      center: Offset(newCx, newCy),
+      width: newW,
+      height: newH,
+    );
+    await _updateElementMeta(
+      event.elementId,
+      updated.toMap()..remove('imageBase64'),
+      emit,
+      syncConnectors: true,
+    );
+  }
+
+  Future<void> _onReplaceImageElement(
+    CanvasReplaceImageElement event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final existing = _findElement(event.elementId);
+    if (existing is! ImageElement ||
+        existing.locked ||
+        event.imageBytes.isEmpty) {
+      return;
+    }
+    final fields =
+        (event.style ?? existing.copyWith(crop: ImageElement.fullCrop)).toMap()
+          ..remove('cx')
+          ..remove('cy')
+          ..remove('width')
+          ..remove('height')
+          ..remove('z')
+          ..['imageBase64'] = base64Encode(event.imageBytes)
+          ..['locked'] = event.style?.isReference == true;
+    if (event.style?.isReference == true) {
+      final siblings = canvasPaintOrder(
+        state.elements,
+      ).bandFor(existing.id)?.elements.where((e) => e.id != existing.id);
+      if (siblings != null && siblings.isNotEmpty) {
+        final lowest = siblings.map((e) => e.z).reduce(math.min);
+        if (lowest <= existing.z) fields['z'] = lowest - 1;
+      }
+    }
+    await _updateElementMeta(
+      event.elementId,
+      fields,
+      emit,
+      syncConnectors: true,
+    );
+  }
+
+  Future<void> _onUpdateImageStyle(
+    CanvasUpdateImageStyle event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final existing = _findElement(event.elementId);
+    if (existing is! ImageElement) return;
+    final releasingReference =
+        event.isReference == false && existing.isReference;
+    if (existing.locked && !releasingReference) return;
+
+    var image = existing;
+    if (existing.locked) {
+      image = image.copyWith(isReference: false, locked: false);
+    } else {
+      if (event.flipH != null) image = image.copyWith(flipped: event.flipH);
+      if (event.flipV != null) image = image.copyWith(flipV: event.flipV);
+      if (event.quarterTurns % 4 != 0) {
+        image = image.copyWith(
+          rotation: _normalizeRotation(
+            image.rotation + event.quarterTurns * math.pi / 2,
+          ),
+        );
+      }
+      if (event.resetCrop) {
+        image = applyImageCrop(image, ImageElement.fullCrop);
+      } else if (event.crop != null) {
+        image = applyImageCrop(image, event.crop!);
+      }
+      if (event.resetFilters) {
+        image = image.copyWith(brightness: 0, contrast: 0, saturation: 0);
+      }
+      image = image.copyWith(
+        borderRadius: event.borderRadius?.clamp(0.0, 360.0),
+        borderWidth: event.borderWidth?.clamp(0.0, 32.0),
+        borderColor: event.borderColor,
+        brightness: event.brightness?.clamp(-1.0, 1.0),
+        contrast: event.contrast?.clamp(-1.0, 1.0),
+        saturation: event.saturation?.clamp(-1.0, 1.0),
+        opacity: event.opacity?.clamp(0.0, 1.0),
+      );
+      if (event.isReference != null) {
+        image = image.copyWith(
+          isReference: event.isReference,
+          locked: event.isReference! ? true : null,
+        );
+        if (event.isReference! && !existing.isReference) {
+          final band = canvasPaintOrder(state.elements).bandFor(image.id);
+          final others = band?.elements.where((e) => e.id != image.id);
+          if (others != null && others.isNotEmpty) {
+            final lowest = others.map((e) => e.z).reduce(math.min);
+            if (lowest <= image.z) image = image.copyWith(z: lowest - 1);
+          }
+        }
+      }
+    }
+    if (image == existing) return;
+    final fields = image.toMap()..remove('imageBase64');
+    await _updateElementMeta(
+      event.elementId,
+      fields,
+      emit,
+      syncConnectors: true,
     );
   }
 
@@ -1455,10 +2480,24 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final replaced = ImageElement(
       id: oldElement.id,
       z: oldElement.z,
+      hidden: oldElement.hidden,
+      locked: oldElement.locked,
+      opacity: oldElement.opacity,
       center: oldElement.center,
       width: size.width,
       height: size.height,
       imageBase64: event.thumbnailBase64,
+      rotation: oldElement.rotation,
+      flipped: oldElement.flipped,
+      flipV: oldElement.flipV,
+      crop: ImageElement.fullCrop,
+      borderRadius: oldElement.borderRadius,
+      borderWidth: oldElement.borderWidth,
+      borderColor: oldElement.borderColor,
+      brightness: oldElement.brightness,
+      contrast: oldElement.contrast,
+      saturation: oldElement.saturation,
+      isReference: oldElement.isReference,
       imageUrl: event.imageUrl,
       aiPrompt: ImageElement.optionalString(event.aiPrompt) ?? oldElement.aiPrompt,
       generationId: ImageElement.optionalString(event.generationId),
@@ -1484,15 +2523,19 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     if (canvasService == null || _boardId.isEmpty) return;
     if (!_ensureCanEdit(emit)) return;
-    final payload = {
-      'type': 'image',
-      'action': 'upsert',
-      'elementId': event.elementId,
-      'cx': event.center.dx,
-      'cy': event.center.dy,
-      'width': event.width.clamp(80.0, 720.0),
-      'height': event.height.clamp(80.0, 720.0),
-    };
+    final existing = _findElement(event.elementId);
+    if (existing is! ImageElement || existing.locked) return;
+    final payload = Map<String, dynamic>.from(existing.toMap())
+      ..remove('imageBase64')
+      ..addAll({
+        'type': 'image',
+        'action': 'upsert',
+        'elementId': event.elementId,
+        'cx': event.center.dx,
+        'cy': event.center.dy,
+        'width': event.width.clamp(1.0, 720.0),
+        'height': event.height.clamp(1.0, 720.0),
+      });
     await _publishSelectedShapePreview(event.elementId, payload);
   }
 
@@ -1502,21 +2545,34 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     if (!_ensureCanEdit(emit)) return;
     final noteId = _uuid.v4();
-    final note = StickyNoteElement(
-      id: noteId,
-      z: _nextZIndex(),
-      center: event.center,
-      width: event.width,
-      height: event.height,
-      text: event.text,
-      color: event.color,
+    final note = fitStickyNoteHeight(
+      StickyNoteElement(
+        id: noteId,
+        z: _nextZIndex(),
+        center: event.center,
+        width: event.width.clamp(80.0, 480.0),
+        height: event.height.clamp(80.0, 480.0),
+        text: event.text,
+        color: event.color,
+        fontSize: event.fontSize.clamp(8.0, 72.0),
+        fontWeight: event.fontWeight.clamp(100, 900),
+        textColor: event.textColor,
+        textAlign: const ['left', 'center', 'right'].contains(event.textAlign)
+            ? event.textAlign
+            : 'left',
+        autoSize: event.autoSize,
+        authorUid: _canvasService?.currentClientId,
+      ),
     );
     final nextElements = List<CanvasElement>.from(state.elements)..add(note);
-    emit(state.copyWith(
-      elements: nextElements,
-      activeTray: null,
-      selectedShapeId: noteId,
-    ));
+    emit(
+      state.copyWith(
+        elements: nextElements,
+        activeTray: null,
+        selectedShapeId: noteId,
+        selectedIds: <String>{noteId},
+      ),
+    );
     await _saveCrdtOperation(
       action: 'create',
       type: _elementType(note),
@@ -1526,40 +2582,578 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
   }
 
+  Future<void> _onConvertStickyNote(
+    CanvasConvertStickyNote event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final note = _findElement(event.elementId);
+    if (note is! StickyNoteElement || note.locked) return;
+    final CanvasElement converted = event.toShape
+        ? ShapeElement(
+            id: note.id,
+            z: note.z,
+            center: note.center,
+            hidden: note.hidden,
+            opacity: note.opacity,
+            shapeType: CanvasShapeType.rectangle,
+            size: math.max(note.width, note.height),
+            width: note.width,
+            height: note.height,
+            color: note.color,
+            rotation: note.rotation,
+            isFilled: true,
+            fillMode: 'solid',
+            borderRadius: 8,
+            strokeWidth: 0,
+            label: note.text,
+            labelFontSize: note.fontSize,
+            labelFontWeight: note.fontWeight,
+            labelColor: note.textColor,
+            labelTextAlign: note.textAlign,
+          )
+        : TextElement(
+            id: note.id,
+            z: note.z,
+            center: note.center - Offset(note.width / 2, note.height / 2),
+            hidden: note.hidden,
+            opacity: note.opacity,
+            text: note.text,
+            width: note.width,
+            height: note.height,
+            color: note.textColor,
+            rotation: note.rotation,
+            fontSize: note.fontSize,
+            fontWeight: note.fontWeight,
+            textAlign: note.textAlign,
+            lineHeight: 1.4,
+          );
+    await _updateElementMeta(
+      note.id,
+      converted.toMap(),
+      emit,
+      syncConnectors: true,
+    );
+    _emitSelection({note.id}, emit);
+    _announceUndoable(emit, _singleActionMessage('Converted'));
+  }
+
   Future<void> _onUpdateStickyNote(
     CanvasUpdateStickyNote event,
     Emitter<CanvasState> emit,
   ) async {
     if (!_ensureCanEdit(emit)) return;
-    final target =
-        state.elements.where((e) => e.id == event.elementId).firstOrNull;
-    if (target == null || target is! StickyNoteElement) return;
+    final target = state.elements
+        .where((e) => e.id == event.elementId)
+        .firstOrNull;
+    if (target == null || target is! StickyNoteElement || target.locked) return;
 
-    final newZ = event.center != null ? _nextZIndex() : target.z;
-    final updated = StickyNoteElement(
-      id: target.id,
-      z: newZ,
-      center: event.center ?? target.center,
-      width: target.width,
-      height: target.height,
-      text: event.text ?? target.text,
-      color: event.color ?? target.color,
-      rotation: target.rotation,
+    final updated = fitStickyNoteHeight(
+      target.copyWith(
+        center: event.center,
+        width: event.width?.clamp(40.0, 480.0),
+        height: event.height?.clamp(40.0, 480.0),
+        text: event.text,
+        color: event.color,
+        fontSize: event.fontSize?.clamp(8.0, 72.0),
+        fontWeight: event.fontWeight?.clamp(100, 900),
+        textColor: event.textColor,
+        textAlign: const ['left', 'center', 'right'].contains(event.textAlign)
+            ? event.textAlign
+            : null,
+        autoSize:
+            event.autoSize ?? (event.height != null ? false : target.autoSize),
+      ),
     );
-    final nextElements =
-        state.elements.map((e) => e.id == target.id ? updated : e).toList();
-    nextElements.sort((a, b) {
-      if (a.z != b.z) return a.z.compareTo(b.z);
-      return a.id.compareTo(b.id);
-    });
-    emit(state.copyWith(elements: nextElements));
+    if (updated == target) return;
+    await _updateElementMeta(
+      updated.id,
+      updated.toMap(),
+      emit,
+      syncConnectors: true,
+    );
+    if (event.width != null || event.height != null) {
+      _announceUndoable(emit, _singleActionMessage('Resized'));
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // Template import
+  // ──────────────────────────────────────────────
+
+  Future<void> _onImportElements(
+    CanvasImportElements event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    if (event.payloads.isEmpty) return;
+
+    final parsed = <({String placeholder, CanvasElement element})>[];
+    final placeholders = <String>{};
+    try {
+      for (var i = 0; i < event.payloads.length; i++) {
+        final raw = Map<String, dynamic>.from(event.payloads[i]);
+        final placeholder = (raw.remove('id') as String?) ?? 'import_$i';
+        if (!placeholders.add(placeholder)) {
+          throw ArgumentError('Duplicate template id: $placeholder');
+        }
+        raw.remove('z');
+        parsed.add((
+          placeholder: placeholder,
+          element: CanvasElement.fromMap(placeholder, raw),
+        ));
+      }
+    } catch (_) {
+      // All-or-nothing: a malformed template must not leave a partial board.
+      emit(
+        state.copyWith(
+          infoMessage: 'This template contains an unsupported element.',
+        ),
+      );
+      return;
+    }
+
+    final ids = {for (final entry in parsed) entry.placeholder: _uuid.v4()};
+    final frameZ = _lowestZIndex();
+    var nextZ = _nextZIndex();
+    final imported = <CanvasElement>[];
+    final writes = <_CrdtWrite>[];
+
+    for (final entry in parsed) {
+      final data = _translatedPayload(entry.element, event.offset);
+      data['z'] = entry.element is FrameElement ? frameZ : nextZ++;
+      if (entry.element is ConnectorElement) {
+        for (final key in const ['startElementId', 'endElementId']) {
+          final target = data[key];
+          if (target is! String) continue;
+          final mapped = ids[target];
+          if (mapped == null) {
+            data.remove(key);
+          } else {
+            data[key] = mapped;
+          }
+        }
+      }
+      final element = CanvasElement.fromMap(ids[entry.placeholder]!, data);
+      imported.add(element);
+      writes.add((
+        action: 'create',
+        type: _elementType(element),
+        objectId: element.id,
+        data: element.toMap(),
+      ));
+    }
+
+    final next = [...state.elements, ...imported]..sort(_compareByZ);
+    emit(
+      state.copyWith(
+        elements: next,
+        selectedIds: imported.map((element) => element.id).toSet(),
+        selectedShapeId: imported.first.id,
+        activeTray: null,
+      ),
+    );
+    await _saveCrdtBatch(writes, emit);
+    _announceUndoable(emit, _groupActionMessage('Imported', imported.length));
+  }
+
+  // ──────────────────────────────────────────────
+  // Board settings
+  // ──────────────────────────────────────────────
+
+  Future<void> _onSetBoardSettings(
+    CanvasSetBoardSettings event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    if (event.settings == _boardSettings) return;
+    _boardSettings = event.settings;
+    emit(state.copyWith(boardSettings: event.settings));
     await _saveCrdtOperation(
       action: 'update',
-      type: _elementType(updated),
+      type: CanvasBoardSettings.crdtType,
+      objectId: CanvasBoardSettings.crdtId,
+      data: event.settings.toMap(),
+      emit: emit,
+    );
+  }
+
+  Future<void> _onAddGuide(
+    CanvasAddGuide event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final guide = CanvasGuide(
+      id: _uuid.v4(),
+      axis: event.axis,
+      position: event.position,
+    );
+    final updated = _boardSettings.copyWith(
+      guides: [..._boardSettings.guides, guide],
+    );
+    await _onSetBoardSettings(CanvasSetBoardSettings(updated), emit);
+  }
+
+  Future<void> _onMoveGuide(
+    CanvasMoveGuide event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    var changed = false;
+    final nextGuides = <CanvasGuide>[
+      for (final g in _boardSettings.guides)
+        if (g.id == event.guideId)
+          (() {
+            changed = true;
+            return g.copyWith(position: event.position);
+          })()
+        else
+          g,
+    ];
+    if (!changed) return;
+    await _onSetBoardSettings(
+      CanvasSetBoardSettings(_boardSettings.copyWith(guides: nextGuides)),
+      emit,
+    );
+  }
+
+  Future<void> _onRemoveGuide(
+    CanvasRemoveGuide event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final nextGuides = _boardSettings.guides
+        .where((g) => g.id != event.guideId)
+        .toList(growable: false);
+    if (nextGuides.length == _boardSettings.guides.length) return;
+    await _onSetBoardSettings(
+      CanvasSetBoardSettings(_boardSettings.copyWith(guides: nextGuides)),
+      emit,
+    );
+  }
+
+  // ──────────────────────────────────────────────
+  // Frame operations
+  // ──────────────────────────────────────────────
+
+  Future<void> _onAddFrame(
+    CanvasAddFrame event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final id = _uuid.v4();
+    final frame = FrameElement(
+      id: id,
+      z: _lowestZIndex(),
+      center: event.center,
+      width: event.width.clamp(120.0, 4000.0),
+      height: event.height.clamp(80.0, 4000.0),
+      title: event.title,
+      color: event.color,
+    );
+    final next = <CanvasElement>[...state.elements, frame]..sort(_compareByZ);
+    emit(
+      state.copyWith(
+        elements: next,
+        activeTray: null,
+        selectedShapeId: id,
+        selectedIds: <String>{id},
+      ),
+    );
+    await _saveCrdtOperation(
+      action: 'create',
+      type: 'frame',
+      objectId: id,
+      data: frame.toMap(),
+      emit: emit,
+    );
+  }
+
+  Future<void> _onUpdateFrame(
+    CanvasUpdateFrame event,
+    Emitter<CanvasState> emit, {
+    String verb = 'Updated',
+  }) async {
+    if (!_ensureCanEdit(emit)) return;
+    final target = state.elements
+        .where((element) => element.id == event.elementId)
+        .firstOrNull;
+    if (target is! FrameElement || target.locked) return;
+    final updated = target.copyWith(
+      title: event.title,
+      color: event.color,
+      center: event.center,
+      width: event.width?.clamp(120.0, 4000.0),
+      height: event.height?.clamp(80.0, 4000.0),
+      clipContents: event.clipContents,
+    );
+    if (updated == target) return;
+    final next =
+        state.elements
+            .map((element) => element.id == updated.id ? updated : element)
+            .toList()
+          ..sort(_compareByZ);
+    emit(state.copyWith(elements: next));
+    await _saveCrdtOperation(
+      action: 'update',
+      type: 'frame',
       objectId: updated.id,
       data: updated.toMap(),
       emit: emit,
     );
+    _announceUndoable(emit, _singleActionMessage(verb));
+  }
+
+  Future<void> _onDeleteFrame(
+    CanvasDeleteFrame event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final frame = state.elements
+        .whereType<FrameElement>()
+        .where((e) => e.id == event.frameId)
+        .firstOrNull;
+    if (frame == null || frame.locked) return;
+    final idsToDelete = <String>{frame.id};
+    if (event.deleteContents) {
+      for (final child in elementsContainedByFrame(frame, state.elements)) {
+        if (!child.locked) idsToDelete.add(child.id);
+      }
+    }
+    await _deleteElementsByIds(
+      idsToDelete,
+      emit,
+      messageForCount: (count) => count <= 1
+          ? 'Deleted frame · Undo to revert'
+          : _groupActionMessage('Deleted frame &', count - 1),
+    );
+  }
+
+  /// Moves only the frame. Art is never captured by geometric containment:
+  /// an element that happens to sit inside a section stays where the user put
+  /// it when the section is dragged away.
+  Future<void> _moveFrame(
+    FrameElement frame,
+    Offset center,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (center == frame.center) return;
+    final updatedFrame = frame.copyWith(center: center);
+    final next =
+        state.elements
+            .map((element) => element.id == frame.id ? updatedFrame : element)
+            .toList()
+          ..sort(_compareByZ);
+    emit(state.copyWith(elements: next));
+    await _saveCrdtOperation(
+      action: 'update',
+      type: 'frame',
+      objectId: frame.id,
+      data: updatedFrame.toMap(),
+      emit: emit,
+    );
+    _announceUndoable(emit, _singleActionMessage('Moved'));
+  }
+
+  // ──────────────────────────────────────────────
+  // Table operations (F-16)
+  // ──────────────────────────────────────────────
+
+  Future<void> _onAddTable(
+    CanvasAddTable event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final rows = event.rows.clamp(1, TableElement.maxRows);
+    final maxCols = (TableElement.maxTotalCells ~/ rows).clamp(
+      1,
+      TableElement.maxColumns,
+    );
+    final cols = event.columns.clamp(1, maxCols);
+    final id = _uuid.v4();
+    final table = TableElement(
+      id: id,
+      z: _nextZIndex(),
+      center: event.center,
+      width: event.width
+          .clamp(TableElement.minCellWidth * cols, 4000.0)
+          .toDouble(),
+      height: event.height
+          .clamp(TableElement.minCellHeight * rows, 4000.0)
+          .toDouble(),
+      rows: rows,
+      columns: cols,
+      cells: TableElement.normalizeCells(const [], rows, cols),
+      headerRow: event.headerRow,
+    );
+    final next = <CanvasElement>[...state.elements, table]..sort(_compareByZ);
+    emit(
+      state.copyWith(
+        elements: next,
+        activeTray: null,
+        selectedShapeId: id,
+        selectedIds: <String>{id},
+      ),
+    );
+    await _saveCrdtOperation(
+      action: 'create',
+      type: 'table',
+      objectId: id,
+      data: table.toMap(),
+      emit: emit,
+    );
+  }
+
+  Future<void> _onUpdateTableCell(
+    CanvasUpdateTableCell event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final table = state.elements
+        .whereType<TableElement>()
+        .where((e) => e.id == event.tableId)
+        .firstOrNull;
+    if (table == null || table.locked) return;
+    if (event.row < 0 ||
+        event.row >= table.rows ||
+        event.column < 0 ||
+        event.column >= table.columns) {
+      return;
+    }
+    final nextCells = List<TableCellData>.from(
+      TableElement.normalizeCells(table.cells, table.rows, table.columns),
+    );
+    final idx = event.row * table.columns + event.column;
+    final prev = nextCells[idx];
+    final nextCell = prev.copyWith(
+      text: event.text,
+      backgroundColor: event.backgroundColor,
+      clearBackgroundColor: event.clearBackgroundColor,
+      textColor: event.textColor,
+      clearTextColor: event.clearTextColor,
+      fontWeight: event.fontWeight,
+      textAlign: event.textAlign,
+    );
+    if (nextCell == prev) return;
+    nextCells[idx] = nextCell;
+    final updated = table.copyWith(cells: nextCells);
+    await _updateElementMeta(
+      table.id,
+      updated.toMap(),
+      emit,
+    );
+    _announceUndoable(emit, _singleActionMessage('Updated cell'));
+  }
+
+  Future<void> _onUpdateTableStyle(
+    CanvasUpdateTableStyle event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final table = state.elements
+        .whereType<TableElement>()
+        .where((e) => e.id == event.tableId)
+        .firstOrNull;
+    if (table == null || table.locked) return;
+
+    var rows = table.rows;
+    var cols = table.columns;
+    var cells = List<TableCellData>.from(
+      TableElement.normalizeCells(table.cells, rows, cols),
+    );
+    var colFractions = List<double>.from(table.resolvedColumnFractions);
+    var rowFractions = List<double>.from(table.resolvedRowFractions);
+    var width = table.width;
+    var height = table.height;
+
+    if (event.insertRowAt != null &&
+        rows < TableElement.maxRows &&
+        (rows + 1) * cols <= TableElement.maxTotalCells) {
+      final at = event.insertRowAt!.clamp(0, rows);
+      final inserted = List<TableCellData>.filled(cols, const TableCellData());
+      cells.insertAll(at * cols, inserted);
+      final newRowH = height / rows;
+      height = (height + newRowH).clamp(
+        TableElement.minCellHeight * (rows + 1),
+        4000.0,
+      );
+      rowFractions.insert(at, 1.0 / (rows + 1));
+      rows += 1;
+    } else if (event.removeRowAt != null && rows > 1) {
+      final at = event.removeRowAt!.clamp(0, rows - 1);
+      cells.removeRange(at * cols, at * cols + cols);
+      final removedFrac = rowFractions.removeAt(at);
+      height = (height * (1.0 - removedFrac)).clamp(
+        TableElement.minCellHeight * (rows - 1),
+        4000.0,
+      );
+      rows -= 1;
+    }
+
+    if (event.insertColumnAt != null &&
+        cols < TableElement.maxColumns &&
+        rows * (cols + 1) <= TableElement.maxTotalCells) {
+      final at = event.insertColumnAt!.clamp(0, cols);
+      for (var r = rows - 1; r >= 0; r--) {
+        cells.insert(r * cols + at, const TableCellData());
+      }
+      final newColW = width / cols;
+      width = (width + newColW).clamp(
+        TableElement.minCellWidth * (cols + 1),
+        4000.0,
+      );
+      colFractions.insert(at, 1.0 / (cols + 1));
+      cols += 1;
+    } else if (event.removeColumnAt != null && cols > 1) {
+      final at = event.removeColumnAt!.clamp(0, cols - 1);
+      for (var r = rows - 1; r >= 0; r--) {
+        cells.removeAt(r * cols + at);
+      }
+      final removedFrac = colFractions.removeAt(at);
+      width = (width * (1.0 - removedFrac)).clamp(
+        TableElement.minCellWidth * (cols - 1),
+        4000.0,
+      );
+      cols -= 1;
+    }
+
+    if (event.columnFractions != null) {
+      colFractions = List<double>.from(event.columnFractions!);
+    }
+    if (event.rowFractions != null) {
+      rowFractions = List<double>.from(event.rowFractions!);
+    }
+    if (event.width != null) {
+      width = event.width!.clamp(TableElement.minCellWidth * cols, 4000.0);
+    }
+    if (event.height != null) {
+      height = event.height!.clamp(TableElement.minCellHeight * rows, 4000.0);
+    }
+
+    final updated = table.copyWith(
+      rows: rows,
+      columns: cols,
+      cells: cells,
+      width: width,
+      height: height,
+      headerRow: event.headerRow,
+      borderColor: event.borderColor,
+      borderWidth: event.borderWidth?.clamp(0.5, 12.0),
+      fontSize: event.fontSize?.clamp(8.0, 64.0),
+      textColor: event.textColor,
+      backgroundColor: event.backgroundColor,
+      headerBackgroundColor: event.headerBackgroundColor,
+      columnFractions: TableElement.normalizeFractions(colFractions, cols),
+      rowFractions: TableElement.normalizeFractions(rowFractions, rows),
+    );
+    if (updated == table) return;
+    await _updateElementMeta(
+      table.id,
+      updated.toMap(),
+      emit,
+      syncConnectors: true,
+    );
+    _announceUndoable(emit, _singleActionMessage('Updated table'));
   }
 
   Future<void> _onAddConnector(
@@ -1582,12 +3176,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       strokeWidth: event.strokeWidth,
       hasArrowhead: event.hasArrowhead,
     );
-    final nextElements = List<CanvasElement>.from(state.elements)..add(connector);
-    emit(state.copyWith(
-      elements: nextElements,
-      activeTray: null,
-      selectedShapeId: connectorId,
-    ));
+    final nextElements = List<CanvasElement>.from(state.elements)
+      ..add(connector);
+    emit(
+      state.copyWith(
+        elements: nextElements,
+        activeTray: null,
+        selectedShapeId: connectorId,
+        selectedIds: <String>{connectorId},
+      ),
+    );
     await _saveCrdtOperation(
       action: 'create',
       type: _elementType(connector),
@@ -1602,26 +3200,52 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     if (!_ensureCanEdit(emit)) return;
-    final target =
-        state.elements.where((e) => e.id == event.elementId).firstOrNull;
-    if (target == null || target is! ConnectorElement) return;
+    final target = state.elements
+        .where((e) => e.id == event.elementId)
+        .firstOrNull;
+    if (target == null || target is! ConnectorElement || target.locked) return;
 
+    const lineStyles = {'straight', 'curved', 'orthogonal'};
+    final requestedStyle = event.lineStyle;
+    final dash = event.dashPattern;
     final updated = ConnectorElement(
       id: target.id,
       z: target.z,
+      hidden: target.hidden,
+      locked: target.locked,
+      opacity: target.opacity,
       startElementId: target.startElementId,
       startPoint: target.startPoint,
       startAnchor: target.startAnchor,
       endElementId: target.endElementId,
       endPoint: target.endPoint,
       endAnchor: target.endAnchor,
-      lineStyle: event.lineStyle ?? target.lineStyle,
+      lineStyle: requestedStyle != null && lineStyles.contains(requestedStyle)
+          ? requestedStyle
+          : target.lineStyle,
       color: event.color ?? target.color,
-      strokeWidth: event.strokeWidth ?? target.strokeWidth,
-      hasArrowhead: event.hasArrowhead ?? target.hasArrowhead,
+      strokeWidth: event.strokeWidth?.clamp(0.5, 32.0) ?? target.strokeWidth,
+      hasArrowhead:
+          event.endArrowhead ?? event.hasArrowhead ?? target.hasArrowhead,
+      startArrowhead: event.startArrowhead ?? target.startArrowhead,
+      cornerRadius:
+          event.cornerRadius?.clamp(0.0, 120.0) ?? target.cornerRadius,
+      dashPattern: dash == null
+          ? target.dashPattern
+          : dash.isEmpty
+          ? null
+          : [for (final length in dash) length.clamp(0.5, 200.0)],
+      label: event.label ?? target.label,
+      labelColor: event.clearLabelColor
+          ? null
+          : event.labelColor ?? target.labelColor,
+      labelFontSize:
+          event.labelFontSize?.clamp(6.0, 96.0) ?? target.labelFontSize,
     );
-    final nextElements =
-        state.elements.map((e) => e.id == target.id ? updated : e).toList();
+    if (updated == target) return;
+    final nextElements = state.elements
+        .map((e) => e.id == target.id ? updated : e)
+        .toList();
     nextElements.sort((a, b) {
       if (a.z != b.z) return a.z.compareTo(b.z);
       return a.id.compareTo(b.id);
@@ -1634,6 +3258,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       data: updated.toMap(),
       emit: emit,
     );
+    _announceUndoable(emit, _singleActionMessage('Updated'));
   }
 
   Future<void> _onRewireConnector(
@@ -1648,12 +3273,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         break;
       }
     }
-    if (connector == null) return;
+    if (connector == null || connector.locked) return;
 
     // Linking both ends to the same element collapses the connector into a
     // zero-length line, so ignore that drop.
-    final otherEndId =
-        event.isStart ? connector.endElementId : connector.startElementId;
+    final otherEndId = event.isStart
+        ? connector.endElementId
+        : connector.startElementId;
     if (event.targetElementId != null && event.targetElementId == otherEndId) {
       return;
     }
@@ -1663,21 +3289,33 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final updated = ConnectorElement(
       id: connector.id,
       z: connector.z,
-      startElementId:
-          event.isStart ? event.targetElementId : connector.startElementId,
+      hidden: connector.hidden,
+      locked: connector.locked,
+      opacity: connector.opacity,
+      startElementId: event.isStart
+          ? event.targetElementId
+          : connector.startElementId,
       startPoint: event.isStart ? event.point : connector.startPoint,
       startAnchor: event.isStart ? anchor : connector.startAnchor,
-      endElementId:
-          event.isStart ? connector.endElementId : event.targetElementId,
+      endElementId: event.isStart
+          ? connector.endElementId
+          : event.targetElementId,
       endPoint: event.isStart ? connector.endPoint : event.point,
       endAnchor: event.isStart ? connector.endAnchor : anchor,
       lineStyle: connector.lineStyle,
       color: connector.color,
       strokeWidth: connector.strokeWidth,
       hasArrowhead: connector.hasArrowhead,
+      startArrowhead: connector.startArrowhead,
+      cornerRadius: connector.cornerRadius,
+      dashPattern: connector.dashPattern,
+      label: connector.label,
+      labelColor: connector.labelColor,
+      labelFontSize: connector.labelFontSize,
     );
-    final nextElements =
-        state.elements.map((e) => e.id == updated.id ? updated : e).toList();
+    final nextElements = state.elements
+        .map((e) => e.id == updated.id ? updated : e)
+        .toList();
     nextElements.sort((a, b) {
       if (a.z != b.z) return a.z.compareTo(b.z);
       return a.id.compareTo(b.id);
@@ -1852,6 +3490,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (peeked != null) _refreshCommitRecords(peeked);
     emit(state.copyWith(activeTray: null));
     await _publishCrdtUpdate(update);
+    // The undo manager is the authority: only offer Redo while it can
+    // actually replay the step we just undid.
+    final canRedo = adapter.canRedo;
+    emit(
+      state.copyWith(
+        infoMessage: canRedo ? 'Undone · Redo to reapply' : 'Undone',
+        infoMessageUndoable: false,
+        infoMessageRedoable: canRedo,
+      ),
+    );
   }
 
   Future<void> _onRedo(CanvasRedo event, Emitter<CanvasState> emit) async {
@@ -1891,6 +3539,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     emit(state.copyWith(activeTray: null));
     await _publishCrdtUpdate(update);
+    emit(
+      state.copyWith(
+        infoMessage: 'Redone',
+        infoMessageUndoable: false,
+        infoMessageRedoable: false,
+      ),
+    );
   }
 
   Future<void> _onClearAll(
@@ -1899,9 +3554,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     if (!_ensureCanEdit(emit)) return;
     if (_currentUserRole != Board.roleOwner) {
-      emit(state.copyWith(
-        error: 'Only the board owner can clear the canvas.',
-      ));
+      emit(state.copyWith(error: 'Only the board owner can clear the canvas.'));
       return;
     }
     if (state.elements.isEmpty) return;
@@ -1919,22 +3572,113 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasDeleteElement event,
     Emitter<CanvasState> emit,
   ) async {
-    if (!_ensureCanEdit(emit)) return;
-    final nextElements = state.elements
-        .where((e) => e.id != event.elementId)
-        .toList(growable: false);
-    emit(state.copyWith(
-      elements: nextElements,
-      selectedShapeId:
-          state.selectedShapeId == event.elementId ? null : state.selectedShapeId,
-    ));
-    await _saveCrdtOperation(
-      action: 'delete',
-      type: 'element',
-      objectId: event.elementId,
-      data: const {},
-      emit: emit,
+    await _deleteElementsByIds(
+      <String>{event.elementId},
+      emit,
+      messageForCount: (_) => _singleActionMessage('Deleted'),
     );
+  }
+
+  Future<void> _deleteElementsByIds(
+    Set<String> candidateIds,
+    Emitter<CanvasState> emit, {
+    required String Function(int count) messageForCount,
+  }) async {
+    if (!_ensureCanEdit(emit)) return;
+    final existingIds = state.elements.map((element) => element.id).toSet();
+    final lockedIds = {
+      for (final element in state.elements)
+        if (element.locked) element.id,
+    };
+    final ids = candidateIds
+        .where(existingIds.contains)
+        .where((id) => !lockedIds.contains(id))
+        .toSet();
+    if (ids.isEmpty) return;
+
+    // Deleting a shape must not leave connectors pointing at a ghost: detach
+    // the affected ends to their stored free points, and prune layer lists.
+    final elementUpdates =
+        <String, ({String type, Map<String, dynamic> data})>{};
+    for (final element in state.elements) {
+      if (element is ConnectorElement) {
+        final startRemoved =
+            element.startElementId != null &&
+            ids.contains(element.startElementId);
+        final endRemoved =
+            element.endElementId != null && ids.contains(element.endElementId);
+        if (!startRemoved && !endRemoved) continue;
+        final data = Map<String, dynamic>.from(element.toMap());
+        if (startRemoved) {
+          data.remove('startElementId');
+          data['startAnchor'] = 'center';
+        }
+        if (endRemoved) {
+          data.remove('endElementId');
+          data['endAnchor'] = 'center';
+        }
+        elementUpdates[element.id] = (type: 'connector', data: data);
+      } else if (element is LayerElement && !ids.contains(element.id)) {
+        final filtered = element.elementIds
+            .where((id) => !ids.contains(id))
+            .toList(growable: false);
+        if (filtered.length != element.elementIds.length) {
+          final data = Map<String, dynamic>.from(element.toMap())
+            ..['elementIds'] = filtered;
+          elementUpdates[element.id] = (type: 'layer', data: data);
+        }
+      }
+    }
+
+    final remaining = <CanvasElement>[];
+    for (final element in state.elements) {
+      if (ids.contains(element.id)) continue;
+      final update = elementUpdates[element.id];
+      remaining.add(
+        update == null
+            ? element
+            : CanvasElement.fromMap(element.id, update.data),
+      );
+    }
+    final remainingIds = state.selectedIds
+        .where((id) => !ids.contains(id))
+        .toSet();
+    emit(
+      state.copyWith(
+        elements: remaining,
+        selectedShapeId: ids.contains(state.selectedShapeId)
+            ? null
+            : state.selectedShapeId,
+        selectedIds: remainingIds,
+      ),
+    );
+    if (ids.length == 1 && elementUpdates.isEmpty) {
+      await _saveCrdtOperation(
+        action: 'delete',
+        type: 'element',
+        objectId: ids.first,
+        data: const <String, dynamic>{},
+        emit: emit,
+      );
+    } else {
+      await _saveCrdtBatch([
+        for (final id in ids)
+          (
+            action: 'delete',
+            type: 'element',
+            objectId: id,
+            data: const <String, dynamic>{},
+          ),
+        for (final entry in elementUpdates.entries)
+          (
+            action: 'update',
+            type: entry.value.type,
+            objectId: entry.key,
+            data: entry.value.data,
+          ),
+      ], emit);
+    }
+    _announceUndoable(emit, messageForCount(ids.length));
   }
 
   // ──────────────────────────────────────────────
@@ -1963,7 +3707,41 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasUpdateBrushType event,
     Emitter<CanvasState> emit,
   ) {
-    emit(state.copyWith(brushType: event.brushType));
+    if (event.brushType == 'marker') {
+      // The marker preset starts at its own width and opacity; the sliders
+      // remain free to adjust it afterwards.
+      final preset = brushPresetFor(event.brushType);
+      emit(
+        state.copyWith(
+          brushType: event.brushType,
+          strokeWidth: preset.defaultWidth,
+          brushOpacity: preset.defaultOpacity,
+          currentToolMode: _toolModeForBrush(event.brushType),
+        ),
+      );
+      return;
+    }
+    emit(
+      state.copyWith(
+        brushType: event.brushType,
+        currentToolMode: _toolModeForBrush(event.brushType),
+      ),
+    );
+  }
+
+  void _onApplyBrushPreset(
+    CanvasApplyBrushPreset event,
+    Emitter<CanvasState> emit,
+  ) {
+    final preset = brushPresetFor(event.presetId);
+    emit(
+      state.copyWith(
+        brushType: preset.id,
+        strokeWidth: preset.defaultWidth,
+        brushOpacity: preset.defaultOpacity,
+        currentToolMode: _toolModeForBrush(preset.id),
+      ),
+    );
   }
 
   void _onUpdateEraserScope(
@@ -1973,22 +3751,67 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(eraserEraseEverything: event.eraseEverything));
   }
 
+  void _onUpdateStylusPressure(
+    CanvasUpdateStylusPressure event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(stylusPressureEnabled: event.enabled));
+  }
+
+  void _onUpdateStabilizer(
+    CanvasUpdateStabilizer event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (!event.strength.isFinite) return;
+    emit(
+      state.copyWith(
+        stabilizerStrength: event.strength.clamp(0.0, maxStabilizerStrength),
+      ),
+    );
+  }
+
   // ──────────────────────────────────────────────
   // Tool mode & shape draw
   // ──────────────────────────────────────────────
 
-  void _onSetToolMode(
-    CanvasSetToolMode event,
-    Emitter<CanvasState> emit,
-  ) {
-    emit(state.copyWith(
-      currentToolMode: event.mode,
-      pendingShapeType: event.shapeType,
-      isDrawingShape: false,
-      shapeDrawStart: null,
-      shapeDrawCurrent: null,
-      activeTray: event.keepTray ? state.activeTray : null,
-    ));
+  void _onSetToolMode(CanvasSetToolMode event, Emitter<CanvasState> emit) {
+    // Tapping the active tool again closes its options tray without resetting
+    // in-progress state.
+    if (state.currentToolMode == event.mode &&
+        event.shapeType == null &&
+        !event.keepTray) {
+      emit(state.copyWith(activeTray: null));
+      return;
+    }
+    // `currentToolMode` is the single source of truth for gestures; brushType
+    // only describes how a committed stroke is painted.
+    final nextBrushType = switch (event.mode) {
+      CanvasToolMode.eraser => 'eraser',
+      CanvasToolMode.highlight => 'highlighter',
+      CanvasToolMode.doodle =>
+        (state.brushType == 'eraser' || state.brushType == 'highlighter')
+            ? 'solid'
+            : state.brushType,
+      _ => state.brushType,
+    };
+    emit(
+      state.copyWith(
+        currentToolMode: event.mode,
+        pendingShapeType: event.shapeType,
+        isDrawingShape: false,
+        shapeDrawStart: null,
+        shapeDrawCurrent: null,
+        brushType: nextBrushType,
+        // Drawing tools start from a clean slate; Select keeps the selection.
+        selectedShapeId: event.mode == CanvasToolMode.select
+            ? state.selectedShapeId
+            : null,
+        selectedIds: event.mode == CanvasToolMode.select
+            ? state.selectedIds
+            : const <String>{},
+        activeTray: event.keepTray ? state.activeTray : null,
+      ),
+    );
   }
 
   void _onStartShapeDraw(
@@ -1996,7 +3819,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     if (!_ensureCanEdit(emit)) return;
-    final isArrow = state.currentToolMode == CanvasToolMode.arrow ||
+    final isArrow =
+        state.currentToolMode == CanvasToolMode.arrow ||
         (state.currentToolMode == CanvasToolMode.shape &&
             state.pendingShapeType == CanvasShapeType.arrow);
     if (state.currentToolMode != CanvasToolMode.shape && !isArrow) return;
@@ -2004,12 +3828,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         state.pendingShapeType ?? (isArrow ? CanvasShapeType.arrow : null);
     if (shapeType == null) return;
     _activeShapeDrawingId = _uuid.v4();
-    emit(state.copyWith(
-      isDrawingShape: true,
-      pendingShapeType: shapeType,
-      shapeDrawStart: event.point,
-      shapeDrawCurrent: event.point,
-    ));
+    emit(
+      state.copyWith(
+        isDrawingShape: true,
+        pendingShapeType: shapeType,
+        shapeDrawStart: event.point,
+        shapeDrawCurrent: event.point,
+      ),
+    );
   }
 
   Future<void> _onUpdateShapeDraw(
@@ -2027,7 +3853,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
     final start = state.shapeDrawStart;
     final current = event.point;
-    final shapeType = state.pendingShapeType ??
+    final shapeType =
+        state.pendingShapeType ??
         (state.currentToolMode == CanvasToolMode.arrow
             ? CanvasShapeType.arrow
             : null);
@@ -2044,20 +3871,19 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       current: current,
     );
 
+    // The preview carries exactly the payload the commit will write.
     final previewData = <String, dynamic>{
+      ..._newShape(
+        id: shapeId,
+        shapeType: shapeType,
+        center: geom.center,
+        size: geom.size,
+        rotation: geom.rotation,
+        width: geom.width,
+        height: geom.height,
+      ).toMap(),
       'action': 'upsert',
-      'type': 'shape',
       'elementId': shapeId,
-      'shapeType': shapeType.name,
-      'cx': geom.center.dx,
-      'cy': geom.center.dy,
-      'size': geom.size,
-      'color': state.selectedColor.value,
-      'strokeWidth': 3.0,
-      'isFilled': false,
-      'rotation': geom.rotation,
-      'borderRadius': 0.0,
-      'z': _nextZIndex(),
     };
     await _publishSelectedShapePreview(shapeId, previewData);
   }
@@ -2075,7 +3901,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (!state.isDrawingShape) return;
     final start = state.shapeDrawStart;
     final current = state.shapeDrawCurrent;
-    final shapeType = state.pendingShapeType ??
+    final shapeType =
+        state.pendingShapeType ??
         (state.currentToolMode == CanvasToolMode.arrow
             ? CanvasShapeType.arrow
             : null);
@@ -2098,37 +3925,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _activeShapeDrawingId = null;
     _pendingPreviewPublishes.remove(shapeId)?.timer?.cancel();
 
-    final shape = ShapeElement(
-      id: shapeId,
-      z: _nextZIndex(),
-      shapeType: shapeType,
-      center: geom.center,
-      size: geom.size,
-      color: state.selectedColor,
-      strokeWidth: 3.0,
-      isFilled: false,
-      rotation: geom.rotation,
-    );
-    final nextElements = List<CanvasElement>.from(state.elements)..add(shape);
-    emit(state.copyWith(
-      elements: nextElements,
-      activeTray: null,
-      selectedShapeId: shapeId,
-      selectedShapeRotation: geom.rotation,
-      selectedShapeIsFilled: false,
-      selectedShapeBorderRadius: 0.0,
-      isDrawingShape: false,
-      shapeDrawStart: null,
-      shapeDrawCurrent: null,
-      currentToolMode: CanvasToolMode.doodle,
-      pendingShapeType: null,
-    ));
-    await _saveCrdtOperation(
-      action: 'create',
-      type: _elementType(shape),
-      objectId: shapeId,
-      data: shape.toMap(),
-      emit: emit,
+    await _commitNewShape(
+      _newShape(
+        id: shapeId,
+        shapeType: shapeType,
+        center: geom.center,
+        size: geom.size,
+        rotation: geom.rotation,
+        width: geom.width,
+        height: geom.height,
+      ),
+      emit,
+      resetDrawState: true,
     );
   }
 
@@ -2146,13 +3954,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         'elementId': shapeId,
       });
     }
-    emit(state.copyWith(
-      currentToolMode: CanvasToolMode.doodle,
-      pendingShapeType: null,
-      isDrawingShape: false,
-      shapeDrawStart: null,
-      shapeDrawCurrent: null,
-    ));
+    emit(
+      state.copyWith(
+        currentToolMode: CanvasToolMode.doodle,
+        pendingShapeType: null,
+        isDrawingShape: false,
+        shapeDrawStart: null,
+        shapeDrawCurrent: null,
+      ),
+    );
   }
 
   // ──────────────────────────────────────────────
@@ -2160,39 +3970,1324 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   // ──────────────────────────────────────────────
 
   void _onSelectShape(CanvasSelectShape event, Emitter<CanvasState> emit) {
-    if (event.shapeId == null) {
-      emit(state.copyWith(selectedShapeId: null));
-      return;
-    }
-    CanvasElement? selected;
+    _emitSelection(
+      event.shapeId == null ? const <String>{} : <String>{event.shapeId!},
+      emit,
+    );
+  }
+
+  void _onSelectElements(
+    CanvasSelectElements event,
+    Emitter<CanvasState> emit,
+  ) {
+    _emitSelection(event.ids, emit);
+  }
+
+  void _onSelectInRect(CanvasSelectInRect event, Emitter<CanvasState> emit) {
+    final ids = event.additive
+        ? Set<String>.from(state.selectedIds)
+        : <String>{};
     for (final element in state.elements) {
-      if (element.id == event.shapeId) {
-        selected = element;
+      if (element.hidden || element.locked) continue;
+      final bounds = elementBounds(element);
+      if (bounds != null && bounds.overlaps(event.rect)) {
+        ids.add(element.id);
+      }
+    }
+    _emitSelection(ids, emit);
+  }
+
+  /// Sets the selection (primary + full set) and refreshes the per-type
+  /// inspector fields for the primary element.
+  void _emitSelection(Set<String> ids, Emitter<CanvasState> emit) {
+    final ordered = <String>[];
+    CanvasElement? primary;
+    for (final element in state.elements) {
+      if (!ids.contains(element.id)) continue;
+      // Hidden and locked elements are not selectable from the canvas.
+      if (element.hidden || element.locked) continue;
+      ordered.add(element.id);
+      primary ??= element;
+    }
+    final shape = primary is ShapeElement ? primary : null;
+    final text = primary is TextElement ? primary : null;
+    final sticky = primary is StickyNoteElement ? primary : null;
+    final table = primary is TableElement ? primary : null;
+    final stroke = primary is StrokeElement ? primary : null;
+    emit(
+      state.copyWith(
+        selectedShapeId: ordered.isEmpty ? null : ordered.first,
+        selectedIds: ordered.toSet(),
+        selectedShapeIsFilled: shape?.isFilled ?? false,
+        selectedShapeBorderRadius: shape?.borderRadius ?? 0.0,
+        selectedShapeRotation:
+            shape?.rotation ??
+            text?.rotation ??
+            sticky?.rotation ??
+            table?.rotation ??
+            0.0,
+        selectedStrokeColor: stroke?.color.value ?? state.selectedStrokeColor,
+        selectedStrokeWidth: stroke?.strokeWidth ?? state.selectedStrokeWidth,
+        selectedStrokeOpacity: stroke?.opacity ?? state.selectedStrokeOpacity,
+        selectedStrokeBrushType:
+            stroke?.brushType ?? state.selectedStrokeBrushType,
+      ),
+    );
+  }
+
+  void _onSetSelectionMode(
+    CanvasSetSelectionMode event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (state.selectionMode == event.mode) return;
+    emit(state.copyWith(selectionMode: event.mode));
+  }
+
+  void _onSelectInLasso(CanvasSelectInLasso event, Emitter<CanvasState> emit) {
+    if (event.points.length < 3) return;
+    final path = Path()..addPolygon(event.points, true);
+    final ids = event.additive
+        ? Set<String>.from(state.selectedIds)
+        : <String>{};
+    for (final element in state.elements) {
+      if (element.hidden || element.locked) continue;
+      final elementBox = elementBounds(element);
+      if (elementBox == null) continue;
+      final centreInside = path.contains(elementBox.center);
+      final fullyInside =
+          path.contains(elementBox.topLeft) &&
+          path.contains(elementBox.topRight) &&
+          path.contains(elementBox.bottomLeft) &&
+          path.contains(elementBox.bottomRight);
+      if (centreInside || fullyInside) ids.add(element.id);
+    }
+    _emitSelection(ids, emit);
+  }
+
+  Future<void> _onTranslateSelection(
+    CanvasTranslateSelection event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    if (state.selectedIds.isEmpty || event.delta == Offset.zero) return;
+    final count = state.selectedIds.length;
+    await _applySelectionDeltas({
+      for (final id in state.selectedIds) id: event.delta,
+    }, emit);
+    emit(
+      state.copyWith(
+        infoMessage: _groupActionMessage('Moved', count),
+        infoMessageUndoable: true,
+      ),
+    );
+  }
+
+  Future<void> _onScaleSelection(
+    CanvasScaleSelection event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final source = event.sourceBounds;
+    final target = event.targetBounds;
+    if (source.width.abs() < 0.01 || source.height.abs() < 0.01) return;
+    if (source.width == target.width && source.height == target.height) return;
+
+    final updatedById = <String, CanvasElement>{};
+    final writes = <_CrdtWrite>[];
+    for (final element in state.elements) {
+      if (!state.selectedIds.contains(element.id) || element.locked) continue;
+      final data = scaleElementPayload(element, source, target);
+      updatedById[element.id] = CanvasElement.fromMap(element.id, data);
+      writes.add((
+        action: 'update',
+        type: _elementType(element),
+        objectId: element.id,
+        data: data,
+      ));
+    }
+    if (writes.isEmpty) return;
+    final next =
+        state.elements
+            .map((element) => updatedById[element.id] ?? element)
+            .toList()
+          ..sort(_compareByZ);
+    emit(state.copyWith(elements: next));
+    await _saveCrdtBatch(writes, emit);
+    emit(
+      state.copyWith(
+        infoMessage: _groupActionMessage('Resized', writes.length),
+        infoMessageUndoable: true,
+      ),
+    );
+  }
+
+  Future<void> _onRotateSelection(
+    CanvasRotateSelection event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    if (event.radians.abs() < 0.001) return;
+
+    final updatedById = <String, CanvasElement>{};
+    final writes = <_CrdtWrite>[];
+    for (final element in state.elements) {
+      if (!state.selectedIds.contains(element.id) || element.locked) continue;
+      final data = rotateElementPayload(element, event.pivot, event.radians);
+      updatedById[element.id] = CanvasElement.fromMap(element.id, data);
+      writes.add((
+        action: 'update',
+        type: _elementType(element),
+        objectId: element.id,
+        data: data,
+      ));
+    }
+    if (writes.isEmpty) return;
+    final next =
+        state.elements
+            .map((element) => updatedById[element.id] ?? element)
+            .toList()
+          ..sort(_compareByZ);
+    emit(state.copyWith(elements: next));
+    await _saveCrdtBatch(writes, emit);
+    emit(
+      state.copyWith(
+        infoMessage: _groupActionMessage('Rotated', writes.length),
+        infoMessageUndoable: true,
+      ),
+    );
+  }
+
+  Future<void> _onAlignSelection(
+    CanvasAlignSelection event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final bounds = <String, Rect>{};
+    for (final element in state.elements) {
+      if (!state.selectedIds.contains(element.id)) continue;
+      final elementRect = elementBounds(element);
+      if (elementRect != null) bounds[element.id] = elementRect;
+    }
+    if (bounds.length < 2) return;
+    var union = bounds.values.first;
+    for (final rect in bounds.values.skip(1)) {
+      union = union.expandToInclude(rect);
+    }
+    final deltas = <String, Offset>{};
+    if (event.alignment == CanvasSelectionAlignment.distributeHorizontal) {
+      _distributeSelectionDeltas(bounds, horizontal: true, out: deltas);
+    } else if (event.alignment == CanvasSelectionAlignment.distributeVertical) {
+      _distributeSelectionDeltas(bounds, horizontal: false, out: deltas);
+    } else {
+      for (final entry in bounds.entries) {
+        final rect = entry.value;
+        deltas[entry.key] = switch (event.alignment) {
+          CanvasSelectionAlignment.left => Offset(union.left - rect.left, 0),
+          CanvasSelectionAlignment.centerX => Offset(
+            union.center.dx - rect.center.dx,
+            0,
+          ),
+          CanvasSelectionAlignment.right => Offset(union.right - rect.right, 0),
+          CanvasSelectionAlignment.top => Offset(0, union.top - rect.top),
+          CanvasSelectionAlignment.centerY => Offset(
+            0,
+            union.center.dy - rect.center.dy,
+          ),
+          CanvasSelectionAlignment.bottom => Offset(
+            0,
+            union.bottom - rect.bottom,
+          ),
+          _ => Offset.zero,
+        };
+      }
+    }
+    await _applySelectionDeltas(deltas, emit);
+    final distributed =
+        event.alignment == CanvasSelectionAlignment.distributeHorizontal ||
+        event.alignment == CanvasSelectionAlignment.distributeVertical;
+    emit(
+      state.copyWith(
+        infoMessage: _groupActionMessage(
+          distributed ? 'Distributed' : 'Aligned',
+          bounds.length,
+        ),
+        infoMessageUndoable: true,
+      ),
+    );
+  }
+
+  void _distributeSelectionDeltas(
+    Map<String, Rect> bounds, {
+    required bool horizontal,
+    required Map<String, Offset> out,
+  }) {
+    if (bounds.length < 3) return;
+    final entries = bounds.entries.toList()
+      ..sort(
+        (a, b) => horizontal
+            ? a.value.center.dx.compareTo(b.value.center.dx)
+            : a.value.center.dy.compareTo(b.value.center.dy),
+      );
+    final first = horizontal
+        ? entries.first.value.center.dx
+        : entries.first.value.center.dy;
+    final last = horizontal
+        ? entries.last.value.center.dx
+        : entries.last.value.center.dy;
+    final step = (last - first) / (entries.length - 1);
+    for (var i = 1; i < entries.length - 1; i++) {
+      final entry = entries[i];
+      final target = first + step * i;
+      final current = horizontal
+          ? entry.value.center.dx
+          : entry.value.center.dy;
+      out[entry.key] = horizontal
+          ? Offset(target - current, 0)
+          : Offset(0, target - current);
+    }
+  }
+
+  Future<void> _onArrangeSelection(
+    CanvasArrangeSelection event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final nodes = <CanvasElement>[];
+    final bounds = <String, Rect>{};
+    for (final element in state.elements) {
+      if (!state.selectedIds.contains(element.id)) continue;
+      if (element.locked || element is LayerElement || element is ConnectorElement) {
+        continue;
+      }
+      final rect = elementBounds(element);
+      if (rect == null) continue;
+      nodes.add(element);
+      bounds[element.id] = rect;
+    }
+    if (nodes.length < 2) return;
+
+    final nodeIds = bounds.keys.toSet();
+    final spacing = event.spacing.clamp(8.0, 240.0);
+
+    var union = bounds.values.first;
+    for (final r in bounds.values.skip(1)) {
+      union = union.expandToInclude(r);
+    }
+
+    // Build directed graph from selected connectors attached at both ends.
+    final outgoing = <String, List<String>>{for (final id in nodeIds) id: []};
+    final inDegree = <String, int>{for (final id in nodeIds) id: 0};
+    for (final element in state.elements) {
+      if (element is! ConnectorElement) continue;
+      if (!state.selectedIds.contains(element.id)) continue;
+      final s = element.startElementId;
+      final e = element.endElementId;
+      if (s == null || e == null || s == e) continue;
+      if (!nodeIds.contains(s) || !nodeIds.contains(e)) continue;
+      if (!outgoing[s]!.contains(e)) {
+        outgoing[s]!.add(e);
+        inDegree[e] = (inDegree[e] ?? 0) + 1;
+      }
+    }
+
+    final targetTopLeft = <String, Offset>{};
+    final byPos = List<String>.from(nodeIds)
+      ..sort((a, b) {
+        final ra = bounds[a]!;
+        final rb = bounds[b]!;
+        final cmpX = ra.left.compareTo(rb.left);
+        return cmpX != 0 ? cmpX : ra.top.compareTo(rb.top);
+      });
+
+    switch (event.mode) {
+      case CanvasArrangeMode.row:
+        var x = union.left;
+        for (final id in byPos) {
+          final r = bounds[id]!;
+          targetTopLeft[id] = Offset(x, union.center.dy - r.height / 2);
+          x += r.width + spacing;
+        }
+      case CanvasArrangeMode.column:
+        final byY = List<String>.from(nodeIds)
+          ..sort((a, b) => bounds[a]!.top.compareTo(bounds[b]!.top));
+        var y = union.top;
+        for (final id in byY) {
+          final r = bounds[id]!;
+          targetTopLeft[id] = Offset(union.center.dx - r.width / 2, y);
+          y += r.height + spacing;
+        }
+      case CanvasArrangeMode.grid:
+        final gridOrder = List<String>.from(nodeIds)
+          ..sort((a, b) {
+            final ra = bounds[a]!;
+            final rb = bounds[b]!;
+            final cmpY = ra.top.compareTo(rb.top);
+            return cmpY != 0 ? cmpY : ra.left.compareTo(rb.left);
+          });
+        final cols = math.max(1, math.sqrt(gridOrder.length).ceil());
+        var curY = union.top;
+        for (var i = 0; i < gridOrder.length; i += cols) {
+          final rowEnd = math.min(i + cols, gridOrder.length);
+          var curX = union.left;
+          var rowHeight = 0.0;
+          for (var j = i; j < rowEnd; j++) {
+            final r = bounds[gridOrder[j]]!;
+            if (r.height > rowHeight) rowHeight = r.height;
+          }
+          for (var j = i; j < rowEnd; j++) {
+            final id = gridOrder[j];
+            final r = bounds[id]!;
+            targetTopLeft[id] = Offset(
+              curX,
+              curY + (rowHeight - r.height) / 2,
+            );
+            curX += r.width + spacing;
+          }
+          curY += rowHeight + spacing;
+        }
+      case CanvasArrangeMode.tree:
+        final visited = <String>{};
+        final treeChildren = <String, List<String>>{
+          for (final id in nodeIds) id: [],
+        };
+        final depthOf = <String, int>{};
+        final roots = <String>[];
+
+        String pickRoot() {
+          if (event.rootId != null &&
+              nodeIds.contains(event.rootId) &&
+              !visited.contains(event.rootId)) {
+            return event.rootId!;
+          }
+          final remaining = nodeIds.where((id) => !visited.contains(id)).toList()
+            ..sort((a, b) {
+              final zeroInA = (inDegree[a] ?? 0) == 0 ? 0 : 1;
+              final zeroInB = (inDegree[b] ?? 0) == 0 ? 0 : 1;
+              if (zeroInA != zeroInB) return zeroInA - zeroInB;
+              final outCmp =
+                  (outgoing[b]?.length ?? 0).compareTo(outgoing[a]?.length ?? 0);
+              if (outCmp != 0) return outCmp;
+              final cmpX = bounds[a]!.left.compareTo(bounds[b]!.left);
+              return cmpX != 0
+                  ? cmpX
+                  : bounds[a]!.top.compareTo(bounds[b]!.top);
+            });
+          return remaining.first;
+        }
+
+        while (visited.length < nodeIds.length) {
+          final root = pickRoot();
+          roots.add(root);
+          visited.add(root);
+          depthOf[root] = 0;
+          final queue = <String>[root];
+          while (queue.isNotEmpty) {
+            final cur = queue.removeAt(0);
+            final kids = List<String>.from(outgoing[cur] ?? const [])
+              ..sort((a, b) => bounds[a]!.top.compareTo(bounds[b]!.top));
+            for (final next in kids) {
+              if (visited.add(next)) {
+                treeChildren[cur]!.add(next);
+                depthOf[next] = (depthOf[cur] ?? 0) + 1;
+                queue.add(next);
+              }
+            }
+          }
+        }
+
+        final colWidth = <int, double>{};
+        for (final id in nodeIds) {
+          final d = depthOf[id] ?? 0;
+          final w = bounds[id]!.width;
+          if (w > (colWidth[d] ?? 0)) colWidth[d] = w;
+        }
+        final colX = <int, double>{};
+        final maxDepth = colWidth.keys.fold(0, math.max);
+        var xCursor = union.left;
+        for (var d = 0; d <= maxDepth; d++) {
+          colX[d] = xCursor;
+          xCursor += (colWidth[d] ?? 0) + spacing;
+        }
+
+        final subtreeH = <String, double>{};
+        double measureSubtree(String id) {
+          final kids = treeChildren[id]!;
+          final selfH = bounds[id]!.height;
+          if (kids.isEmpty) {
+            subtreeH[id] = selfH;
+            return selfH;
+          }
+          var total = 0.0;
+          for (var i = 0; i < kids.length; i++) {
+            total += measureSubtree(kids[i]);
+            if (i + 1 < kids.length) total += spacing;
+          }
+          final h = math.max(selfH, total);
+          subtreeH[id] = h;
+          return h;
+        }
+
+        void layoutSubtree(String id, double topY) {
+          final kids = treeChildren[id]!;
+          final d = depthOf[id] ?? 0;
+          final rect = bounds[id]!;
+          final subH = subtreeH[id] ?? rect.height;
+          targetTopLeft[id] = Offset(
+            colX[d]!,
+            topY + (subH - rect.height) / 2,
+          );
+          if (kids.isEmpty) return;
+          var childrenTotal = 0.0;
+          for (var i = 0; i < kids.length; i++) {
+            childrenTotal += subtreeH[kids[i]]!;
+            if (i + 1 < kids.length) childrenTotal += spacing;
+          }
+          var childY = topY + (subH - childrenTotal) / 2;
+          for (final kid in kids) {
+            layoutSubtree(kid, childY);
+            childY += subtreeH[kid]! + spacing;
+          }
+        }
+
+        var rootY = union.top;
+        for (final root in roots) {
+          final h = measureSubtree(root);
+          layoutSubtree(root, rootY);
+          rootY += h + spacing;
+        }
+      case CanvasArrangeMode.flow:
+        // Topological layers (Kahn), falling back to left-to-right order on cycles.
+        final remainingIn = Map<String, int>.from(inDegree);
+        final layerOf = <String, int>{};
+        final ready = <String>[
+          for (final id in byPos)
+            if ((remainingIn[id] ?? 0) == 0) id,
+        ];
+        final order = <String>[];
+        while (order.length < nodeIds.length) {
+          if (ready.isEmpty) {
+            for (final id in byPos) {
+              if (!order.contains(id)) {
+                ready.add(id);
+                break;
+              }
+            }
+          }
+          final cur = ready.removeAt(0);
+          if (order.contains(cur)) continue;
+          order.add(cur);
+          final curLayer = layerOf[cur] ?? 0;
+          for (final nxt in outgoing[cur] ?? const []) {
+            if (!order.contains(nxt)) {
+              final nextLayer = curLayer + 1;
+              if (nextLayer > (layerOf[nxt] ?? 0)) {
+                layerOf[nxt] = nextLayer;
+              }
+              remainingIn[nxt] = (remainingIn[nxt] ?? 1) - 1;
+              if (remainingIn[nxt]! <= 0 && !ready.contains(nxt)) {
+                ready.add(nxt);
+              }
+            }
+          }
+        }
+        final colGroups = <int, List<String>>{};
+        for (final id in order) {
+          final l = layerOf[id] ?? 0;
+          colGroups.putIfAbsent(l, () => []).add(id);
+        }
+        final layers = colGroups.keys.toList()..sort();
+        var xCursor = union.left;
+        for (final layer in layers) {
+          final items = colGroups[layer]!
+            ..sort((a, b) => bounds[a]!.top.compareTo(bounds[b]!.top));
+          final colW = items.map((id) => bounds[id]!.width).reduce(math.max);
+          final totalH = items.fold<double>(
+            0,
+            (sum, id) => sum + bounds[id]!.height,
+          ) + spacing * (items.length - 1);
+          var yCursor = union.center.dy - totalH / 2;
+          for (final id in items) {
+            final r = bounds[id]!;
+            targetTopLeft[id] = Offset(xCursor + (colW - r.width) / 2, yCursor);
+            yCursor += r.height + spacing;
+          }
+          xCursor += colW + spacing;
+        }
+    }
+
+    final deltas = <String, Offset>{
+      for (final id in nodeIds)
+        if (targetTopLeft[id] != null)
+          id: targetTopLeft[id]! - bounds[id]!.topLeft,
+    };
+
+    // Translate nodes and keep attached connectors pinned in a single CRDT batch.
+    final updatedById = <String, CanvasElement>{};
+    for (final node in nodes) {
+      final d = deltas[node.id];
+      if (d == null || (d.dx.abs() < 0.01 && d.dy.abs() < 0.01)) continue;
+      final data = _translatedPayload(node, d);
+      updatedById[node.id] = CanvasElement.fromMap(node.id, data);
+    }
+    if (updatedById.isEmpty) return;
+
+    final elementById = <String, CanvasElement>{
+      for (final el in state.elements) el.id: updatedById[el.id] ?? el,
+    };
+    for (final el in state.elements) {
+      if (el is! ConnectorElement) continue;
+      final startMoved =
+          el.startElementId != null && updatedById.containsKey(el.startElementId);
+      final endMoved =
+          el.endElementId != null && updatedById.containsKey(el.endElementId);
+      if (!startMoved && !endMoved) continue;
+      final (newStart, newEnd) = resolveConnectorEndpoints(el, elementById);
+      final data = Map<String, dynamic>.from(el.toMap())
+        ..['sx'] = newStart.dx
+        ..['sy'] = newStart.dy
+        ..['ex'] = newEnd.dx
+        ..['ey'] = newEnd.dy;
+      updatedById[el.id] = CanvasElement.fromMap(el.id, data);
+    }
+
+    final next = state.elements
+        .map((el) => updatedById[el.id] ?? el)
+        .toList(growable: false);
+    emit(state.copyWith(elements: next));
+    await _saveCrdtBatch([
+      for (final el in updatedById.values)
+        (
+          action: 'update',
+          type: _elementType(el),
+          objectId: el.id,
+          data: el.toMap(),
+        ),
+    ], emit);
+    _announceUndoable(
+      emit,
+      _groupActionMessage('Arranged', nodes.length),
+    );
+  }
+
+  Future<void> _onDuplicateElements(
+    CanvasDuplicateElements event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    // Duplicating a frame duplicates what it visually contains, and the
+    // existing connector remap keeps links between the clones internal.
+    final requested = <String>{...event.ids};
+    for (final frame in state.elements.whereType<FrameElement>()) {
+      if (!requested.contains(frame.id)) continue;
+      for (final element in elementsContainedByFrame(frame, state.elements)) {
+        requested.add(element.id);
+      }
+    }
+    final originals = state.elements
+        .where((element) => requested.contains(element.id))
+        .toList();
+    if (originals.isEmpty) return;
+    final idMap = <String, String>{
+      for (final element in originals) element.id: _uuid.v4(),
+    };
+    var nextZ = _nextZIndex();
+    // A cloned frame must sit behind its clones, not above the original art.
+    final frameCloneZ = _lowestZIndex();
+    final clones = <CanvasElement>[];
+    for (final element in originals) {
+      final data = _translatedPayload(element, const Offset(16, 16));
+      data['z'] = element is FrameElement ? frameCloneZ : nextZ++;
+      if (element is ConnectorElement) {
+        final startId = element.startElementId;
+        final endId = element.endElementId;
+        if (startId != null && idMap.containsKey(startId)) {
+          data['startElementId'] = idMap[startId];
+        }
+        if (endId != null && idMap.containsKey(endId)) {
+          data['endElementId'] = idMap[endId];
+        }
+      }
+      clones.add(CanvasElement.fromMap(idMap[element.id]!, data));
+    }
+    final next = <CanvasElement>[...state.elements, ...clones];
+    next.sort((a, b) {
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
+    emit(
+      state.copyWith(
+        elements: next,
+        selectedShapeId: clones.first.id,
+        selectedIds: clones.map((element) => element.id).toSet(),
+      ),
+    );
+    await _saveCrdtBatch([
+      for (final clone in clones)
+        (
+          action: 'create',
+          type: _elementType(clone),
+          objectId: clone.id,
+          data: clone.toMap(),
+        ),
+    ], emit);
+    emit(
+      state.copyWith(
+        infoMessage: _groupActionMessage('Duplicated', clones.length),
+        infoMessageUndoable: true,
+      ),
+    );
+  }
+
+  Future<void> _onDeleteElements(
+    CanvasDeleteElements event,
+    Emitter<CanvasState> emit,
+  ) async {
+    await _deleteElementsByIds(
+      event.ids,
+      emit,
+      messageForCount: (count) => _groupActionMessage('Deleted', count),
+    );
+  }
+
+  void _onCopySelection(CanvasCopySelection event, Emitter<CanvasState> emit) {
+    final ids = state.selectedIds.isNotEmpty
+        ? state.selectedIds
+        : (state.selectedShapeId != null
+              ? <String>{state.selectedShapeId!}
+              : const <String>{});
+    if (ids.isEmpty) return;
+    // Copying a frame copies what it contains, so paste behaves like
+    // duplicate instead of producing an empty section.
+    final requested = <String>{...ids};
+    for (final frame in state.elements.whereType<FrameElement>()) {
+      if (!ids.contains(frame.id)) continue;
+      for (final element in elementsContainedByFrame(frame, state.elements)) {
+        requested.add(element.id);
+      }
+    }
+    final copied = state.elements
+        .where(
+          (element) =>
+              requested.contains(element.id) &&
+              !element.hidden &&
+              !element.locked,
+        )
+        .toList();
+    if (copied.isEmpty) return;
+    _clipboard
+      ..clear()
+      ..addAll([
+        for (final element in copied)
+          (id: element.id, data: Map<String, dynamic>.from(element.toMap())),
+      ]);
+    _pasteOffset = 16;
+    emit(state.copyWith(hasClipboard: true));
+  }
+
+  Future<void> _onPasteSelection(
+    CanvasPasteSelection event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    if (_clipboard.isEmpty) return;
+
+    final existingIds = state.elements.map((element) => element.id).toSet();
+    final idMap = {for (final entry in _clipboard) entry.id: _uuid.v4()};
+    final delta = Offset(_pasteOffset, _pasteOffset);
+    _pasteOffset += 16;
+    var nextZ = _nextZIndex();
+    // Pasted frames stay behind the art instead of covering it.
+    final framePasteZ = _lowestZIndex();
+    final pasted = <CanvasElement>[];
+
+    for (final entry in _clipboard) {
+      final source = CanvasElement.fromMap(entry.id, entry.data);
+      final data = _translatedPayload(source, delta);
+      data['z'] = source is FrameElement ? framePasteZ : nextZ++;
+      if (source is ConnectorElement) {
+        // Internal links follow the pasted clones; external links survive only
+        // if the target element still exists, otherwise the end is detached.
+        final startId = source.startElementId;
+        if (startId != null) {
+          final cloneId = idMap[startId];
+          if (cloneId != null) {
+            data['startElementId'] = cloneId;
+          } else if (!existingIds.contains(startId)) {
+            data.remove('startElementId');
+            data['sx'] = ((data['sx'] as num?)?.toDouble() ?? 0) + delta.dx;
+            data['sy'] = ((data['sy'] as num?)?.toDouble() ?? 0) + delta.dy;
+          }
+        }
+        final endId = source.endElementId;
+        if (endId != null) {
+          final cloneId = idMap[endId];
+          if (cloneId != null) {
+            data['endElementId'] = cloneId;
+          } else if (!existingIds.contains(endId)) {
+            data.remove('endElementId');
+            data['ex'] = ((data['ex'] as num?)?.toDouble() ?? 0) + delta.dx;
+            data['ey'] = ((data['ey'] as num?)?.toDouble() ?? 0) + delta.dy;
+          }
+        }
+      }
+      pasted.add(CanvasElement.fromMap(idMap[entry.id]!, data));
+    }
+
+    final next = <CanvasElement>[...state.elements, ...pasted]
+      ..sort(_compareByZ);
+    emit(
+      state.copyWith(
+        elements: next,
+        selectedShapeId: pasted.first.id,
+        selectedIds: pasted.map((element) => element.id).toSet(),
+      ),
+    );
+    await _saveCrdtBatch([
+      for (final element in pasted)
+        (
+          action: 'create',
+          type: _elementType(element),
+          objectId: element.id,
+          data: element.toMap(),
+        ),
+    ], emit);
+    emit(
+      state.copyWith(
+        infoMessage: _groupActionMessage('Pasted', pasted.length),
+        infoMessageUndoable: true,
+      ),
+    );
+  }
+
+  Future<void> _onSetElementVisibility(
+    CanvasSetElementVisibility event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _updateElementMeta(event.elementId, {
+      'hidden': !event.visible,
+    }, emit);
+  }
+
+  Future<void> _onSetElementLocked(
+    CanvasSetElementLocked event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _updateElementMeta(event.elementId, {'locked': event.locked}, emit);
+  }
+
+  Future<void> _onSetElementOpacity(
+    CanvasSetElementOpacity event,
+    Emitter<CanvasState> emit,
+  ) {
+    return _updateElementMeta(event.elementId, {
+      'opacity': event.opacity.clamp(0.0, 1.0),
+    }, emit);
+  }
+
+  Future<void> _onReorderElement(
+    CanvasReorderElement event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    // Reorder inside the element's own band. Layers decide the band; z only
+    // orders siblings within that band, so a global list would let a drag
+    // push an element out of its layer.
+    final order = canvasPaintOrder(state.elements);
+    final band = order.bandFor(event.elementId);
+    if (band == null) return;
+    final sorted = List<CanvasElement>.from(band.elements);
+    final index = sorted.indexWhere((element) => element.id == event.elementId);
+    if (index < 0) return;
+    if (sorted[index].locked) return;
+    final target = event.newIndex.clamp(0, sorted.length - 1);
+    if (target == index) return;
+    sorted.insert(target, sorted.removeAt(index));
+
+    final updated = <CanvasElement>[];
+    final payloads = <String, Map<String, dynamic>>{};
+    final types = <String, String>{};
+    for (var i = 0; i < sorted.length; i++) {
+      final element = sorted[i];
+      if (element.z == i) {
+        updated.add(element);
+        continue;
+      }
+      final data = Map<String, dynamic>.from(element.toMap())..['z'] = i;
+      updated.add(CanvasElement.fromMap(element.id, data));
+      payloads[element.id] = data;
+      types[element.id] = _elementType(element);
+    }
+    final byId = {for (final element in updated) element.id: element};
+    emit(
+      state.copyWith(
+        elements: [
+          for (final element in state.elements) byId[element.id] ?? element,
+        ],
+      ),
+    );
+    // Reordering rewrites several z values; keep it one undo step.
+    await _saveCrdtBatch([
+      for (final entry in payloads.entries)
+        (
+          action: 'update',
+          type: types[entry.key]!,
+          objectId: entry.key,
+          data: entry.value,
+        ),
+    ], emit);
+  }
+
+  Future<void> _onMoveElementToLayer(
+    CanvasMoveElementToLayer event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    CanvasElement? element;
+    for (final candidate in state.elements) {
+      if (candidate.id == event.elementId) {
+        element = candidate;
         break;
       }
     }
-    if (selected == null) {
-      emit(state.copyWith(selectedShapeId: null));
+    if (element == null || element is LayerElement) return;
+
+    LayerElement? targetLayer;
+    if (event.layerId != null) {
+      for (final candidate in state.elements.whereType<LayerElement>()) {
+        if (candidate.id == event.layerId) {
+          targetLayer = candidate;
+          break;
+        }
+      }
+      if (targetLayer == null) return;
+    }
+
+    final changedLayers = <LayerElement>[];
+    final payloads = <String, Map<String, dynamic>>{};
+    for (final layer in state.elements.whereType<LayerElement>()) {
+      final isTarget = layer.id == event.layerId;
+      final contains = layer.elementIds.contains(event.elementId);
+      if (isTarget && contains) {
+        // Already in the destination; membership order has no meaning, so
+        // moving within the same section is a no-op.
+        continue;
+      }
+      if (!isTarget && !contains) continue;
+      final nextIds = <String>[
+        for (final id in layer.elementIds)
+          if (id != event.elementId) id,
+        if (isTarget) event.elementId,
+      ];
+      final updated = LayerElement(
+        id: layer.id,
+        z: layer.z,
+        hidden: layer.hidden,
+        locked: layer.locked,
+        opacity: layer.opacity,
+        name: layer.name,
+        blendMode: layer.blendMode,
+        elementIds: nextIds,
+      );
+      changedLayers.add(updated);
+      payloads[updated.id] = updated.toMap();
+    }
+    if (changedLayers.isEmpty) return;
+
+    final byId = {for (final layer in changedLayers) layer.id: layer};
+    emit(
+      state.copyWith(
+        elements: [
+          for (final element in state.elements) byId[element.id] ?? element,
+        ],
+      ),
+    );
+    // Membership lives on the layers only; the element payload is untouched.
+    await _saveCrdtBatch([
+      for (final entry in payloads.entries)
+        (
+          action: 'update',
+          type: 'layer',
+          objectId: entry.key,
+          data: entry.value,
+        ),
+    ], emit);
+    final label = targetLayer?.name ?? 'Default';
+    _announceUndoable(emit, 'Moved to $label · Undo to revert');
+  }
+
+  Future<void> _onReorderLayer(
+    CanvasReorderLayer event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final layers = state.elements.whereType<LayerElement>().toList()
+      ..sort(_compareByZ);
+    final index = layers.indexWhere((layer) => layer.id == event.layerId);
+    if (index < 0) return;
+    final target = event.newIndex.clamp(0, layers.length - 1);
+    if (target == index) return;
+    layers.insert(target, layers.removeAt(index));
+
+    final updatedLayers = <LayerElement>[];
+    final payloads = <String, Map<String, dynamic>>{};
+    for (var i = 0; i < layers.length; i++) {
+      final layer = layers[i];
+      if (layer.z == i) {
+        updatedLayers.add(layer);
+        continue;
+      }
+      final data = Map<String, dynamic>.from(layer.toMap())..['z'] = i;
+      updatedLayers.add(CanvasElement.fromMap(layer.id, data) as LayerElement);
+      payloads[layer.id] = data;
+    }
+    final byId = {for (final layer in updatedLayers) layer.id: layer};
+    emit(
+      state.copyWith(
+        elements: [
+          for (final element in state.elements) byId[element.id] ?? element,
+        ],
+      ),
+    );
+    // All layer z rewrites belong to one undo step.
+    await _saveCrdtBatch([
+      for (final entry in payloads.entries)
+        (
+          action: 'update',
+          type: 'layer',
+          objectId: entry.key,
+          data: entry.value,
+        ),
+    ], emit);
+  }
+
+  LayerElement? _activeLayerFor(CanvasState snapshot) {
+    final activeId = snapshot.activeLayerId;
+    if (activeId == null) return null;
+    for (final element in snapshot.elements) {
+      if (element is LayerElement && element.id == activeId) return element;
+    }
+    return null;
+  }
+
+  Future<void> _onUpdateLayerBlendMode(
+    CanvasUpdateLayerBlendMode event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final layer = state.elements
+        .whereType<LayerElement>()
+        .where((layer) => layer.id == event.layerId)
+        .firstOrNull;
+    if (layer == null || layer.blendMode == event.blendMode) return;
+    final updated = LayerElement(
+      id: layer.id,
+      z: layer.z,
+      hidden: layer.hidden,
+      locked: layer.locked,
+      opacity: layer.opacity,
+      name: layer.name,
+      blendMode: event.blendMode,
+      elementIds: layer.elementIds,
+    );
+    emit(
+      state.copyWith(
+        elements: state.elements
+            .map((e) => e.id == updated.id ? updated : e)
+            .toList(growable: false),
+      ),
+    );
+    await _saveCrdtOperation(
+      action: 'update',
+      type: 'layer',
+      objectId: updated.id,
+      data: updated.toMap(),
+      emit: emit,
+    );
+    _announceUndoable(emit, 'Layer blend updated');
+  }
+
+  Future<void> _onAddLayer(
+    CanvasAddLayer event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final name = event.name.trim().isEmpty ? 'Layer' : event.name.trim();
+    final layer = LayerElement(id: _uuid.v4(), z: _nextZIndex(), name: name);
+    emit(
+      state.copyWith(
+        elements: [...state.elements, layer],
+        activeLayerId: layer.id,
+        infoMessage: 'Added $name · new elements go here',
+        infoMessageUndoable: false,
+      ),
+    );
+    await _saveCrdtOperation(
+      action: 'create',
+      type: 'layer',
+      objectId: layer.id,
+      data: layer.toMap(),
+      emit: emit,
+    );
+  }
+
+  Future<void> _onRenameLayer(
+    CanvasRenameLayer event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final name = event.name.trim();
+    if (name.isEmpty) return;
+    final existing = state.elements
+        .whereType<LayerElement>()
+        .where((layer) => layer.id == event.layerId)
+        .firstOrNull;
+    if (existing == null || existing.name == name) return;
+    final renamed = LayerElement(
+      id: existing.id,
+      z: existing.z,
+      hidden: existing.hidden,
+      locked: existing.locked,
+      opacity: existing.opacity,
+      name: name,
+      blendMode: existing.blendMode,
+      elementIds: existing.elementIds,
+    );
+    emit(
+      state.copyWith(
+        elements: [
+          for (final element in state.elements)
+            element.id == existing.id ? renamed : element,
+        ],
+      ),
+    );
+    await _saveCrdtOperation(
+      action: 'update',
+      type: 'layer',
+      objectId: renamed.id,
+      data: renamed.toMap(),
+      emit: emit,
+    );
+  }
+
+  Future<void> _onDeleteLayer(
+    CanvasDeleteLayer event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final exists = state.elements.whereType<LayerElement>().any(
+      (layer) => layer.id == event.layerId,
+    );
+    if (!exists) return;
+    emit(
+      state.copyWith(
+        elements: state.elements
+            .where((element) => element.id != event.layerId)
+            .toList(growable: false),
+        activeLayerId: state.activeLayerId == event.layerId
+            ? null
+            : state.activeLayerId,
+        infoMessage: 'Layer removed · its elements stay on the board',
+        infoMessageUndoable: false,
+      ),
+    );
+    await _saveCrdtOperation(
+      action: 'delete',
+      type: 'layer',
+      objectId: event.layerId,
+      data: const <String, dynamic>{},
+      emit: emit,
+    );
+  }
+
+  void _onSetActiveLayer(
+    CanvasSetActiveLayer event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (event.layerId != null &&
+        !state.elements.whereType<LayerElement>().any(
+          (layer) => layer.id == event.layerId,
+        )) {
       return;
     }
-    if (selected is StrokeElement) {
-      emit(state.copyWith(
-        selectedShapeId: event.shapeId,
-        selectedStrokeColor: selected.color.value,
-        selectedStrokeWidth: selected.strokeWidth,
-        selectedStrokeOpacity: selected.opacity,
-        selectedStrokeBrushType: selected.brushType,
-      ));
-    } else if (selected is ShapeElement) {
-      emit(state.copyWith(
-        selectedShapeId: event.shapeId,
-        selectedShapeIsFilled: selected.isFilled,
-        selectedShapeBorderRadius: selected.borderRadius,
-        selectedShapeRotation: selected.rotation,
-      ));
-    } else {
-      emit(state.copyWith(selectedShapeId: event.shapeId));
+    emit(state.copyWith(activeLayerId: event.layerId));
+  }
+
+  /// Short confirmation shown in a snackbar after a multi-element action.
+  String _groupActionMessage(String verb, int count) =>
+      '$verb $count ${count == 1 ? 'element' : 'elements'} · Undo to revert';
+
+  /// Short confirmation shown in a snackbar after a single-element action.
+  String _singleActionMessage(String verb) => '$verb element · Undo to revert';
+
+  /// Posts an undoable snackbar message after [emit] has the final state.
+  void _announceUndoable(Emitter<CanvasState> emit, String message) {
+    emit(
+      state.copyWith(
+        infoMessage: message,
+        infoMessageUndoable: true,
+        infoMessageRedoable: false,
+      ),
+    );
+  }
+
+  static int _compareByZ(CanvasElement a, CanvasElement b) {
+    if (a.z != b.z) return a.z.compareTo(b.z);
+    return a.id.compareTo(b.id);
+  }
+
+  /// Rewrites one element's payload fields (layer visibility/lock/opacity)
+  /// and persists the result. Hidden or locked elements drop out of the
+  /// selection so canvas gestures cannot touch them.
+  Future<void> _updateElementMeta(
+    String elementId,
+    Map<String, dynamic> fields,
+    Emitter<CanvasState> emit, {
+    bool syncConnectors = false,
+  }) async {
+    if (!_ensureCanEdit(emit)) return;
+    final index = state.elements.indexWhere((e) => e.id == elementId);
+    if (index < 0) return;
+    final element = state.elements[index];
+    final data = Map<String, dynamic>.from(element.toMap())..addAll(fields);
+    final updated = CanvasElement.fromMap(elementId, data);
+    final attached = syncConnectors
+        ? _attachedConnectorUpdates(updated)
+        : <String, ConnectorElement>{};
+    final next = [
+      for (final candidate in state.elements)
+        candidate.id == elementId
+            ? updated
+            : attached[candidate.id] ?? candidate,
+    ]..sort(_compareByZ);
+    final dropFromSelection = updated.hidden || updated.locked;
+    final remainingIds = dropFromSelection
+        ? (Set<String>.from(state.selectedIds)..remove(elementId))
+        : state.selectedIds;
+    // If the dropped element was the primary, promote the next survivor so
+    // single-element panels keep working with the remaining selection.
+    String? nextPrimary = state.selectedShapeId;
+    if (nextPrimary == null || !remainingIds.contains(nextPrimary)) {
+      nextPrimary = null;
+      for (final candidate in next) {
+        if (remainingIds.contains(candidate.id)) {
+          nextPrimary = candidate.id;
+          break;
+        }
+      }
     }
+    emit(
+      state.copyWith(
+        elements: next,
+        selectedShapeId: nextPrimary,
+        selectedIds: remainingIds,
+      ),
+    );
+    await _saveCrdtBatch([
+      (
+        action: 'update',
+        type: _elementType(updated),
+        objectId: elementId,
+        data: updated.toMap(),
+      ),
+      for (final connector in attached.values)
+        (
+          action: 'update',
+          type: 'connector',
+          objectId: connector.id,
+          data: connector.toMap(),
+        ),
+    ], emit);
+  }
+
+  /// Applies a per-element world-space translation and persists only the
+  /// elements that actually move.
+  Future<void> _applySelectionDeltas(
+    Map<String, Offset> deltas,
+    Emitter<CanvasState> emit,
+  ) async {
+    final updatedById = <String, CanvasElement>{};
+    final payloads = <String, Map<String, dynamic>>{};
+    final types = <String, String>{};
+    for (final element in state.elements) {
+      if (element.locked) continue;
+      final delta = deltas[element.id];
+      if (delta == null || delta == Offset.zero) continue;
+      final data = _translatedPayload(element, delta);
+      updatedById[element.id] = CanvasElement.fromMap(element.id, data);
+      payloads[element.id] = data;
+      types[element.id] = _elementType(element);
+    }
+    if (updatedById.isEmpty) return;
+    final elementById = <String, CanvasElement>{
+      for (final el in state.elements) el.id: updatedById[el.id] ?? el,
+    };
+    for (final el in state.elements) {
+      if (el is! ConnectorElement || updatedById.containsKey(el.id)) continue;
+      final sMoved =
+          el.startElementId != null && updatedById.containsKey(el.startElementId);
+      final eMoved =
+          el.endElementId != null && updatedById.containsKey(el.endElementId);
+      if (!sMoved && !eMoved) continue;
+      final (newStart, newEnd) = resolveConnectorEndpoints(el, elementById);
+      if ((newStart - el.startPoint).distance < 0.01 &&
+          (newEnd - el.endPoint).distance < 0.01) {
+        continue;
+      }
+      final data = Map<String, dynamic>.from(el.toMap())
+        ..['sx'] = newStart.dx
+        ..['sy'] = newStart.dy
+        ..['ex'] = newEnd.dx
+        ..['ey'] = newEnd.dy;
+      updatedById[el.id] = CanvasElement.fromMap(el.id, data);
+      payloads[el.id] = data;
+      types[el.id] = 'connector';
+    }
+    final next = state.elements
+        .map((element) => updatedById[element.id] ?? element)
+        .toList();
+    next.sort((a, b) {
+      if (a.z != b.z) return a.z.compareTo(b.z);
+      return a.id.compareTo(b.id);
+    });
+    emit(state.copyWith(elements: next));
+    await _saveCrdtBatch([
+      for (final entry in updatedById.entries)
+        (
+          action: 'update',
+          type: types[entry.key]!,
+          objectId: entry.key,
+          data: payloads[entry.key]!,
+        ),
+    ], emit);
+  }
+
+  /// Returns a payload translated by [delta]. Attached connector ends stay
+  /// pinned to their element; only free ends (and centres) move.
+  Map<String, dynamic> _translatedPayload(CanvasElement element, Offset delta) {
+    final data = Map<String, dynamic>.from(element.toMap());
+    if (element is StrokeElement) {
+      data['points'] = element.points
+          .map(
+            (point) => <String, double>{
+              'x': point.dx + delta.dx,
+              'y': point.dy + delta.dy,
+            },
+          )
+          .toList(growable: false);
+    } else if (element is ConnectorElement) {
+      if (element.startElementId == null) {
+        data['sx'] = element.startPoint.dx + delta.dx;
+        data['sy'] = element.startPoint.dy + delta.dy;
+      }
+      if (element.endElementId == null) {
+        data['ex'] = element.endPoint.dx + delta.dx;
+        data['ey'] = element.endPoint.dy + delta.dy;
+      }
+    } else {
+      data['cx'] = ((data['cx'] as num?)?.toDouble() ?? 0) + delta.dx;
+      data['cy'] = ((data['cy'] as num?)?.toDouble() ?? 0) + delta.dy;
+    }
+    return data;
   }
 
   CanvasElement? _selectedShape() {
@@ -2213,8 +5308,30 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final shape = _selectedShape();
-    if (shape == null || !_ensureCanEdit(emit)) return;
-    final nextZ = _nextZIndex();
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
+    if (shape is FrameElement) {
+      await _moveFrame(shape, event.center, emit);
+      return;
+    }
+    if (shape is TableElement) {
+      if (shape.center == event.center) return;
+      await _updateElementMeta(
+        shape.id,
+        {'cx': event.center.dx, 'cy': event.center.dy},
+        emit,
+        syncConnectors: true,
+      );
+      _announceUndoable(emit, _singleActionMessage('Moved'));
+      return;
+    }
+    if (shape is TextElement) {
+      await _onUpdateText(
+        CanvasUpdateText(elementId: shape.id, topLeft: event.center),
+        emit,
+        infoMessage: _singleActionMessage('Moved'),
+      );
+      return;
+    }
     if (shape is ConnectorElement) {
       // A connector has no geometry of its own: translate only the ends that
       // are not pinned to an element so attached ends stay attached.
@@ -2226,7 +5343,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       if (delta == Offset.zero) return;
       final updated = ConnectorElement(
         id: shape.id,
-        z: nextZ,
+        z: shape.z,
+        hidden: shape.hidden,
+        locked: shape.locked,
+        opacity: shape.opacity,
         startElementId: shape.startElementId,
         startPoint: shape.startElementId == null
             ? shape.startPoint + delta
@@ -2242,8 +5362,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         strokeWidth: shape.strokeWidth,
         hasArrowhead: shape.hasArrowhead,
       );
-      final next =
-          state.elements.map((e) => e.id == updated.id ? updated : e).toList();
+      final next = state.elements
+          .map((e) => e.id == updated.id ? updated : e)
+          .toList();
       next.sort((a, b) {
         if (a.z != b.z) return a.z.compareTo(b.z);
         return a.id.compareTo(b.id);
@@ -2256,13 +5377,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         data: updated.toMap(),
         emit: emit,
       );
+      _announceUndoable(emit, _singleActionMessage('Moved'));
       return;
     }
     final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['cx'] = event.center.dx
-      ..['cy'] = event.center.dy
-      ..['z'] = nextZ;
-    await _updateShape(shape.id, data, emit);
+      ..['cy'] = event.center.dy;
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Moved'));
+    }
   }
 
   Future<void> _onRotateSelectedShape(
@@ -2270,12 +5394,34 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final shape = _selectedShape();
-    if (shape == null || !_ensureCanEdit(emit)) return;
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
     final normalized = _normalizeRotation(event.rotation);
-    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
-      ..['rotation'] = normalized;
     emit(state.copyWith(selectedShapeRotation: normalized));
-    await _updateShape(shape.id, data, emit);
+    if (shape is TextElement) {
+      await _onUpdateText(
+        CanvasUpdateText(elementId: shape.id, rotation: normalized),
+        emit,
+        infoMessage: _singleActionMessage('Rotated'),
+      );
+      return;
+    }
+    if (shape is TableElement) {
+      await _updateElementMeta(
+        shape.id,
+        {'rotation': normalized},
+        emit,
+        syncConnectors: true,
+      );
+      _announceUndoable(emit, _singleActionMessage('Rotated'));
+      return;
+    }
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(shape.id) ?? shape.toMap(),
+    )..['rotation'] = normalized;
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Rotated'));
+    }
   }
 
   Future<void> _onResizeSelectedShape(
@@ -2283,18 +5429,88 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final shape = _selectedShape();
-    if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
-      ..['size'] = event.size.clamp(24.0, 320.0);
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
     if (shape is StickyNoteElement) {
-      // Sticky notes are drawn from width/height; `size` is only used by the
-      // slider/resize gesture. Without this the note never changes size.
-      final width = (event.width ?? event.size).clamp(40.0, 480.0).toDouble();
-      final height = (event.height ?? event.size).clamp(40.0, 480.0).toDouble();
-      data['width'] = width;
-      data['height'] = height;
+      final newW = (event.width > 0 ? event.width : event.size).clamp(
+        40.0,
+        480.0,
+      );
+      final ratio = shape.width > 0 ? shape.height / shape.width : 1.0;
+      final newH = (event.height > 0 ? event.height : newW * ratio).clamp(
+        40.0,
+        480.0,
+      );
+      await _onUpdateStickyNote(
+        CanvasUpdateStickyNote(
+          elementId: shape.id,
+          width: newW,
+          height: newH,
+          autoSize: false,
+        ),
+        emit,
+      );
+      return;
     }
-    await _updateShape(shape.id, data, emit);
+    if (shape is FrameElement) {
+      final width = (event.width > 0 ? event.width : event.size)
+          .clamp(120.0, 4000.0)
+          .toDouble();
+      final ratio = shape.width > 0 ? shape.height / shape.width : 1.0;
+      final height = (event.height > 0 ? event.height : width * ratio)
+          .clamp(80.0, 4000.0)
+          .toDouble();
+      await _onUpdateFrame(
+        CanvasUpdateFrame(elementId: shape.id, width: width, height: height),
+        emit,
+        verb: 'Resized',
+      );
+      return;
+    }
+    if (shape is TableElement) {
+      final minW = TableElement.minCellWidth * shape.columns;
+      final minH = TableElement.minCellHeight * shape.rows;
+      final width = (event.width > 0 ? event.width : event.size)
+          .clamp(minW, 4000.0)
+          .toDouble();
+      final ratio = shape.width > 0 ? shape.height / shape.width : 0.5;
+      final height = (event.height > 0 ? event.height : width * ratio)
+          .clamp(minH, 4000.0)
+          .toDouble();
+      await _onUpdateTableStyle(
+        CanvasUpdateTableStyle(
+          tableId: shape.id,
+          width: width,
+          height: height,
+        ),
+        emit,
+      );
+      return;
+    }
+    final clampedSize = event.size.clamp(24.0, 320.0);
+    if (shape is TextElement) {
+      await _onUpdateText(
+        CanvasUpdateText(elementId: shape.id, width: clampedSize),
+        emit,
+        infoMessage: _singleActionMessage('Resized'),
+      );
+      return;
+    }
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(shape.id) ?? shape.toMap(),
+    );
+    if (shape is ShapeElement && (event.width > 0 || event.height > 0)) {
+      final w = event.width.clamp(1.0, 4000.0);
+      final h = shape.isLinear ? 0.0 : event.height.clamp(1.0, 4000.0);
+      data['width'] = w;
+      data['height'] = h;
+      data['size'] = math.max(w, h);
+    } else {
+      data['size'] = clampedSize;
+    }
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Resized'));
+    }
   }
 
   Future<void> _onToggleSelectedShapeFill(
@@ -2302,11 +5518,50 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final shape = _selectedShape();
-    if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
-      ..['isFilled'] = event.isFilled;
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(shape.id) ?? shape.toMap(),
+    )..['isFilled'] = event.isFilled;
     emit(state.copyWith(selectedShapeIsFilled: event.isFilled));
-    await _updateShape(shape.id, data, emit);
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Updated'));
+    }
+  }
+
+  Future<void> _onUpdateShapeFill(
+    CanvasUpdateShapeFill event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final element = event.shapeId != null
+        ? _findElement(event.shapeId!)
+        : _selectedShape();
+    if (element is! ShapeElement || element.locked) return;
+    final data = Map<String, dynamic>.from(element.toMap());
+    final mode = event.fillMode;
+    if (mode != null) {
+      data['fillMode'] = mode;
+      data['isFilled'] = mode != 'none';
+    }
+    if (event.fillColor != null) {
+      data['fillColor'] = event.fillColor!.value;
+    }
+    if (event.gradientStart != null) {
+      data['gradientStart'] = event.gradientStart!.value;
+    }
+    if (event.gradientEnd != null) {
+      data['gradientEnd'] = event.gradientEnd!.value;
+    }
+    if (event.gradientAngle != null) {
+      data['gradientAngle'] = event.gradientAngle;
+    }
+    if (await _updateShape(element.id, data, emit)) {
+      if (mode != null) {
+        emit(state.copyWith(selectedShapeIsFilled: mode != 'none'));
+      }
+      _announceUndoable(emit, _singleActionMessage('Updated'));
+    }
   }
 
   Future<void> _onUpdateSelectedShapeColor(
@@ -2314,10 +5569,60 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final shape = _selectedShape();
-    if (shape == null || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
-      ..['color'] = event.color.value;
-    await _updateShape(shape.id, data, emit);
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
+    if (shape is TextElement) {
+      await _onUpdateText(
+        CanvasUpdateText(elementId: shape.id, color: event.color),
+        emit,
+        infoMessage: _singleActionMessage('Recolored'),
+      );
+      return;
+    }
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(shape.id) ?? shape.toMap(),
+    )..['color'] = event.color.value;
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Recolored'));
+    }
+  }
+
+  Future<void> _onUpdateSelectedShapeStrokeColor(
+    CanvasUpdateSelectedShapeStrokeColor event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
+    if (shape is! ShapeElement) return;
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(shape.id) ?? shape.toMap(),
+    )..['strokeColor'] = event.strokeColor.value;
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Recolored'));
+    }
+  }
+
+  Future<void> _onFlipSelectedShape(
+    CanvasFlipSelectedShape event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
+    if (shape is! ShapeElement) return;
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(shape.id) ?? shape.toMap(),
+    );
+    if (event.horizontal) {
+      data['flipH'] = !_parseBool(data['flipH']);
+    }
+    if (event.vertical) {
+      data['flipV'] = !_parseBool(data['flipV']);
+    }
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Flipped'));
+    }
   }
 
   Future<void> _onUpdateSelectedShapeBorderRadius(
@@ -2325,7 +5630,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final shape = _selectedShape();
-    if (shape == null || !_ensureCanEdit(emit)) return;
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
     if (shape is! ShapeElement) return;
     final size = shape.size;
     final maxRadius = (size / 2).clamp(0.0, 180.0);
@@ -2333,7 +5638,111 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['borderRadius'] = clampedRadius;
     emit(state.copyWith(selectedShapeBorderRadius: clampedRadius));
-    await _updateShape(shape.id, data, emit);
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Updated'));
+    }
+  }
+
+  Future<void> _onUpdateSelectedShapeStrokeWidth(
+    CanvasUpdateSelectedShapeStrokeWidth event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
+    if (shape is! ShapeElement) return;
+    final data = Map<String, dynamic>.from(shape.toMap())
+      ..['strokeWidth'] = event.strokeWidth.clamp(0.0, 64.0);
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Updated'));
+    }
+  }
+
+  Future<void> _onUpdateSelectedShapeStrokeOpacity(
+    CanvasUpdateSelectedShapeStrokeOpacity event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
+    if (shape is! ShapeElement) return;
+    final data = Map<String, dynamic>.from(shape.toMap())
+      ..['strokeOpacity'] = event.strokeOpacity.clamp(0.0, 1.0);
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Updated'));
+    }
+  }
+
+  Future<void> _onUpdateSelectedShapeDash(
+    CanvasUpdateSelectedShapeDash event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
+    if (shape is! ShapeElement) return;
+    final data = Map<String, dynamic>.from(shape.toMap());
+    final pattern = event.dashPattern;
+    if (pattern == null || pattern.isEmpty) {
+      data.remove('dashPattern');
+    } else {
+      data['dashPattern'] = [
+        for (final length in pattern) length.clamp(0.5, 200.0),
+      ];
+    }
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Updated'));
+    }
+  }
+
+  Future<void> _onUpdateSelectedShapeLabel(
+    CanvasUpdateSelectedShapeLabel event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
+    if (shape is! ShapeElement) return;
+    final data = Map<String, dynamic>.from(shape.toMap());
+    if (event.label != null) data['label'] = event.label;
+    if (event.clearLabelColor) {
+      data.remove('labelColor');
+    } else if (event.labelColor != null) {
+      data['labelColor'] = event.labelColor!.value;
+    }
+    if (event.labelFontSize != null) {
+      data['labelFontSize'] = event.labelFontSize!.clamp(6.0, 96.0);
+    }
+    if (event.labelFontWeight != null) {
+      data['labelFontWeight'] = event.labelFontWeight;
+    }
+    if (event.labelTextAlign != null) {
+      data['labelTextAlign'] = event.labelTextAlign;
+    }
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Updated'));
+    }
+  }
+
+  Future<void> _onUpdateSelectedShapeArrowheads(
+    CanvasUpdateSelectedShapeArrowheads event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final shape = _selectedShape();
+    if (shape == null || shape.locked || !_ensureCanEdit(emit)) return;
+    if (shape is! ShapeElement) return;
+    final data = Map<String, dynamic>.from(shape.toMap());
+    if (event.startArrowhead != null) {
+      data['startArrowhead'] = event.startArrowhead;
+    }
+    if (event.endArrowhead != null) {
+      data['endArrowhead'] = event.endArrowhead;
+    }
+    final changed = await _updateShape(shape.id, data, emit);
+    if (changed) {
+      _announceUndoable(emit, _singleActionMessage('Updated'));
+    }
   }
 
   Future<void> _onCommitPendingShapeEdits(
@@ -2342,31 +5751,40 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     if (!_ensureCanEdit(emit)) return;
     final shape = _selectedShape();
-    if (shape == null) return;
-    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap());
-    for (final entry in event.pendingData.entries) {
-      if (entry.key == 'rotation') {
-        final rotation = _toDoubleValue(entry.value);
-        if (rotation == null) continue;
-        data[entry.key] = _normalizeRotation(rotation);
-      } else if (entry.key == 'size') {
-        final size = _toDoubleValue(entry.value);
-        if (size == null) continue;
-        final clamped = size.clamp(24.0, 320.0);
-        data[entry.key] = clamped;
-        if (shape is StickyNoteElement) {
-          final noteSize = clamped.clamp(40.0, 480.0);
-          data['width'] = noteSize;
-          data['height'] = noteSize;
-        }
-      } else if (entry.key == 'borderRadius') {
-        final borderRadius = _toDoubleValue(entry.value);
-        if (borderRadius == null) continue;
-        final size = _toDoubleValue(data['size']) ?? 64.0;
-        final maxRadius = (size / 2).clamp(0.0, 180.0);
-        data[entry.key] = borderRadius.clamp(0.0, maxRadius);
-      } else {
-        data[entry.key] = entry.value;
+    if (shape == null || shape.locked) return;
+    final verb =
+        event.pendingData.containsKey('size') ||
+            event.pendingData.containsKey('width') ||
+            event.pendingData.containsKey('height')
+        ? 'Resized'
+        : event.pendingData.containsKey('rotation')
+        ? 'Rotated'
+        : 'Updated';
+    if (shape is TextElement) {
+      await _onUpdateText(
+        CanvasUpdateText(
+          elementId: shape.id,
+          rotation: _toDoubleValue(event.pendingData['rotation']),
+          width: _toDoubleValue(event.pendingData['size']),
+        ),
+        emit,
+        infoMessage: _singleActionMessage(verb),
+      );
+      return;
+    }
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(shape.id) ?? shape.toMap(),
+    );
+    _applyPendingShapeEdits(data, event.pendingData);
+    if (shape is StickyNoteElement &&
+        event.pendingData.containsKey('size') &&
+        !event.pendingData.containsKey('width') &&
+        !event.pendingData.containsKey('height')) {
+      final size = _toDoubleValue(data['size']);
+      if (size != null) {
+        final noteSize = size.clamp(40.0, 480.0);
+        data['width'] = noteSize;
+        data['height'] = noteSize;
       }
     }
     if (event.pendingData.containsKey('rotation')) {
@@ -2384,7 +5802,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         emit(state.copyWith(selectedShapeBorderRadius: borderRadius));
       }
     }
-    await _updateShape(shape.id, data, emit);
+    if (await _updateShape(shape.id, data, emit)) {
+      _announceUndoable(emit, _singleActionMessage(verb));
+    }
   }
 
   // ──────────────────────────────────────────────
@@ -2397,20 +5817,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     if (!_ensureCanEdit(emit)) return;
     final element = _selectedShape();
-    if (element is! StrokeElement) return;
+    if (element is! StrokeElement || element.locked) return;
+    if (event.delta == Offset.zero) return;
     final newPoints = element.points.map((p) => p + event.delta).toList();
-    final nextZ = _nextZIndex();
-    final updated = StrokeElement(
-      id: element.id,
-      z: nextZ,
-      color: element.color,
-      strokeWidth: element.strokeWidth,
-      opacity: element.opacity,
-      brushType: element.brushType,
-      points: newPoints,
-    );
-    final next =
-        state.elements.map((e) => e.id == element.id ? updated : e).toList();
+    final updated = element.copyWith(points: newPoints);
+    final next = state.elements
+        .map((e) => e.id == element.id ? updated : e)
+        .toList();
     next.sort((a, b) {
       if (a.z != b.z) return a.z.compareTo(b.z);
       return a.id.compareTo(b.id);
@@ -2423,6 +5836,210 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       data: updated.toMap(),
       emit: emit,
     );
+    _announceUndoable(emit, _singleActionMessage('Moved'));
+  }
+
+  Future<void> _onFillStroke(
+    CanvasFillStroke event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final element = _findElement(event.strokeId);
+    if (element is! StrokeElement || element.locked) return;
+    final data = Map<String, dynamic>.from(element.toMap())
+      ..['fillColor'] = event.color.value;
+    if (await _updateStroke(element.id, data, emit)) {
+      _announceUndoable(emit, _singleActionMessage('Filled'));
+    }
+  }
+
+  Future<void> _onClearStrokeFill(
+    CanvasClearStrokeFill event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final element = _findElement(event.strokeId);
+    if (element is! StrokeElement || element.locked) return;
+    final data = Map<String, dynamic>.from(element.toMap())
+      ..remove('fillColor');
+    if (await _updateStroke(element.id, data, emit)) {
+      _announceUndoable(emit, _singleActionMessage('Fill removed'));
+    }
+  }
+
+  Future<void> _onUpdateSelectionStyle(
+    CanvasUpdateSelectionStyle event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    if (event.ids.isEmpty) return;
+    final idSet = event.ids;
+    final updated = <CanvasElement>{};
+    final writes = <_CrdtWrite>[];
+    for (final element in state.elements) {
+      if (!idSet.contains(element.id) || element is LayerElement) continue;
+      final data = Map<String, dynamic>.from(element.toMap());
+      var changed = false;
+      if (event.color != null) {
+        final color = event.color!;
+        switch (element) {
+          case ShapeElement e:
+            data['color'] = color.value;
+            if (e.effectiveFillMode != 'none') {
+              data['fillColor'] = color.value;
+            }
+            changed = true;
+          case TextElement _:
+          case StickyNoteElement _:
+          case FrameElement _:
+          case ConnectorElement _:
+          case StrokeElement _:
+            data['color'] = color.value;
+            changed = true;
+          case TableElement _:
+            data['borderColor'] = color.toARGB32();
+            changed = true;
+          case ImageElement _:
+          case LayerElement _:
+            break;
+        }
+      }
+      if (event.opacity != null) {
+        data['opacity'] = event.opacity!.clamp(0.0, 1.0);
+        changed = true;
+      }
+      if (event.locked != null) {
+        data['locked'] = event.locked;
+        changed = true;
+      }
+      if (event.visible != null) {
+        data['hidden'] = !event.visible!;
+        changed = true;
+      }
+      if (!changed) continue;
+      final parsed = CanvasElement.fromMap(element.id, data);
+      updated.add(parsed);
+      writes.add((
+        action: 'update',
+        type: _elementType(element),
+        objectId: element.id,
+        data: data,
+      ));
+    }
+    if (writes.isEmpty) return;
+    final updatedById = {for (final element in updated) element.id: element};
+    final next = [
+      for (final element in state.elements) updatedById[element.id] ?? element,
+    ]..sort(_compareByZ);
+    emit(
+      state.copyWith(
+        elements: next,
+        selectedIds: event.visible == false
+            ? state.selectedIds.difference(idSet)
+            : state.selectedIds,
+        selectedShapeId: event.visible == false
+            ? (idSet.contains(state.selectedShapeId)
+                  ? null
+                  : state.selectedShapeId)
+            : state.selectedShapeId,
+      ),
+    );
+    await _saveCrdtBatch(writes, emit);
+    _announceUndoable(emit, _singleActionMessage('Selection updated'));
+  }
+
+  Future<void> _onMoveSelectionToLayer(
+    CanvasMoveSelectionToLayer event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    if (event.ids.isEmpty) return;
+    if (event.layerId != null &&
+        !state.elements.whereType<LayerElement>().any(
+          (layer) => layer.id == event.layerId,
+        )) {
+      return;
+    }
+    final changed = <LayerElement>[];
+    for (final layer in state.elements.whereType<LayerElement>()) {
+      final nextIds = <String>[
+        for (final id in layer.elementIds)
+          if (!event.ids.contains(id)) id,
+        if (layer.id == event.layerId) ...event.ids,
+      ];
+      var same = nextIds.length == layer.elementIds.length;
+      if (same) {
+        for (var i = 0; i < nextIds.length; i++) {
+          if (nextIds[i] != layer.elementIds[i]) {
+            same = false;
+            break;
+          }
+        }
+      }
+      if (same) continue;
+      changed.add(
+        LayerElement(
+          id: layer.id,
+          z: layer.z,
+          hidden: layer.hidden,
+          locked: layer.locked,
+          opacity: layer.opacity,
+          name: layer.name,
+          blendMode: layer.blendMode,
+          elementIds: nextIds,
+        ),
+      );
+    }
+    if (changed.isEmpty) return;
+    final byId = {for (final layer in changed) layer.id: layer};
+    emit(
+      state.copyWith(
+        elements: [
+          for (final element in state.elements) byId[element.id] ?? element,
+        ],
+      ),
+    );
+    await _saveCrdtBatch([
+      for (final layer in changed)
+        (
+          action: 'update',
+          type: 'layer',
+          objectId: layer.id,
+          data: layer.toMap(),
+        ),
+    ], emit);
+    _announceUndoable(emit, _singleActionMessage('Moved to layer'));
+  }
+
+  Future<void> _onRetrySync(
+    CanvasRetrySync event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final canvasService = _canvasService;
+    if (canvasService == null || _boardId.isEmpty) return;
+    emit(
+      state.copyWith(syncStatus: CanvasSyncStatus.syncing, syncMessage: null),
+    );
+    try {
+      final succeeded = await canvasService.retryPendingSync(_boardId);
+      emit(
+        state.copyWith(
+          syncStatus: succeeded
+              ? CanvasSyncStatus.saved
+              : CanvasSyncStatus.offline,
+          syncMessage: succeeded
+              ? null
+              : 'Still offline. Changes are saved on this device.',
+        ),
+      );
+    } catch (error) {
+      emit(
+        state.copyWith(
+          syncStatus: CanvasSyncStatus.offline,
+          syncMessage: 'Still offline. Changes are saved on this device.',
+        ),
+      );
+    }
   }
 
   Future<void> _onUpdateSelectedStrokeColor(
@@ -2430,11 +6047,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final element = _selectedShape();
-    if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap())
-      ..['color'] = event.color;
+    if (element is! StrokeElement || element.locked || !_ensureCanEdit(emit)) {
+      return;
+    }
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(element.id) ?? element.toMap(),
+    )..['color'] = event.color;
     emit(state.copyWith(selectedStrokeColor: event.color));
-    await _updateStroke(element.id, data, emit);
+    if (await _updateStroke(element.id, data, emit)) {
+      _announceUndoable(emit, _singleActionMessage('Recolored'));
+    }
   }
 
   Future<void> _onUpdateSelectedStrokeWidth(
@@ -2442,10 +6064,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final element = _selectedShape();
-    if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap())
-      ..['strokeWidth'] = event.strokeWidth;
+    if (element is! StrokeElement || element.locked || !_ensureCanEdit(emit)) {
+      return;
+    }
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(element.id) ?? element.toMap(),
+    )..['strokeWidth'] = event.strokeWidth;
     emit(state.copyWith(selectedStrokeWidth: event.strokeWidth));
+    // Live slider writes stay silent; the screen posts one undoable toast on
+    // `CanvasCommitSelectedStrokeEdits` when the gesture ends.
     await _updateStroke(element.id, data, emit);
   }
 
@@ -2454,10 +6081,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final element = _selectedShape();
-    if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap())
-      ..['opacity'] = event.opacity;
+    if (element is! StrokeElement || element.locked || !_ensureCanEdit(emit)) {
+      return;
+    }
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(element.id) ?? element.toMap(),
+    )..['opacity'] = event.opacity;
     emit(state.copyWith(selectedStrokeOpacity: event.opacity));
+    // See `_onUpdateSelectedStrokeWidth`: the commit event posts the toast.
     await _updateStroke(element.id, data, emit);
   }
 
@@ -2466,18 +6097,35 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final element = _selectedShape();
-    if (element is! StrokeElement || !_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(_committedElementPayload(element.id) ?? element.toMap())
-      ..['brushType'] = event.brushType;
+    if (element is! StrokeElement || element.locked || !_ensureCanEdit(emit)) {
+      return;
+    }
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(element.id) ?? element.toMap(),
+    )
+      ..['brushType'] = event.brushType
+      ..['brushId'] = event.brushType;
     emit(state.copyWith(selectedStrokeBrushType: event.brushType));
-    await _updateStroke(element.id, data, emit);
+    if (await _updateStroke(element.id, data, emit)) {
+      _announceUndoable(emit, _singleActionMessage('Updated'));
+    }
+  }
+
+  void _onCommitSelectedStrokeEdits(
+    CanvasCommitSelectedStrokeEdits event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (!_ensureCanEdit(emit)) return;
+    final element = _selectedShape();
+    if (element is! StrokeElement || element.locked) return;
+    _announceUndoable(emit, _singleActionMessage('Updated'));
   }
 
   // ──────────────────────────────────────────────
   // Update helpers
   // ──────────────────────────────────────────────
 
-  Future<void> _updateStroke(
+  Future<bool> _updateStroke(
     String elementId,
     Map<String, dynamic> data,
     Emitter<CanvasState> emit,
@@ -2489,10 +6137,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         break;
       }
     }
-    if (existing == null) return;
+    if (existing == null || existing.locked) return false;
     final next = state.elements
-        .map((e) =>
-            e.id == elementId ? CanvasElement.fromMap(e.id, data) : e)
+        .map((e) => e.id == elementId ? CanvasElement.fromMap(e.id, data) : e)
         .toList(growable: false);
     emit(state.copyWith(elements: next));
     await _saveCrdtOperation(
@@ -2502,51 +6149,78 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       data: data,
       emit: emit,
     );
+    return true;
   }
 
-  Offset _computeElementAnchor(
-    CanvasElement element,
-    String anchor, {
-    Offset? overrideCenter,
-  }) {
-    Offset center = overrideCenter ?? Offset.zero;
-    double w = 100.0;
-    double h = 100.0;
-
-    if (element is ShapeElement) {
-      center = overrideCenter ?? element.center;
-      w = element.size * 1.2;
-      h = element.size * 1.2;
-    } else if (element is StickyNoteElement) {
-      center = overrideCenter ?? element.center;
-      w = element.width;
-      h = element.height;
-    } else if (element is ImageElement) {
-      center = overrideCenter ?? element.center;
-      w = element.width;
-      h = element.height;
-    } else if (element is TextElement) {
-      center = overrideCenter ?? element.center;
-      w = 120.0;
-      h = 40.0;
+  Map<String, ConnectorElement> _attachedConnectorUpdates(
+    CanvasElement updatedTarget,
+  ) {
+    final elementById = <String, CanvasElement>{
+      for (final el in state.elements)
+        el.id: el.id == updatedTarget.id ? updatedTarget : el,
+    };
+    final updates = <String, ConnectorElement>{};
+    for (final el in state.elements) {
+      if (el is! ConnectorElement) continue;
+      if (el.startElementId != updatedTarget.id &&
+          el.endElementId != updatedTarget.id) {
+        continue;
+      }
+      final (newStart, newEnd) = resolveConnectorEndpoints(el, elementById);
+      if ((newStart - el.startPoint).distance < 0.01 &&
+          (newEnd - el.endPoint).distance < 0.01) {
+        continue;
+      }
+      updates[el.id] = ConnectorElement(
+        id: el.id,
+        z: el.z,
+        hidden: el.hidden,
+        locked: el.locked,
+        opacity: el.opacity,
+        startElementId: el.startElementId,
+        startPoint: newStart,
+        startAnchor: el.startAnchor,
+        endElementId: el.endElementId,
+        endPoint: newEnd,
+        endAnchor: el.endAnchor,
+        lineStyle: el.lineStyle,
+        color: el.color,
+        strokeWidth: el.strokeWidth,
+        hasArrowhead: el.hasArrowhead,
+        startArrowhead: el.startArrowhead,
+        cornerRadius: el.cornerRadius,
+        dashPattern: el.dashPattern,
+        label: el.label,
+        labelColor: el.labelColor,
+        labelFontSize: el.labelFontSize,
+      );
     }
-
-    switch (anchor) {
-      case 'top':
-        return Offset(center.dx, center.dy - h / 2);
-      case 'bottom':
-        return Offset(center.dx, center.dy + h / 2);
-      case 'left':
-        return Offset(center.dx - w / 2, center.dy);
-      case 'right':
-        return Offset(center.dx + w / 2, center.dy);
-      case 'center':
-      default:
-        return center;
-    }
+    return updates;
   }
 
-  Future<void> _updateShape(
+  Future<void> _syncAttachedConnectors(
+    CanvasElement updatedTarget,
+    Emitter<CanvasState> emit,
+  ) async {
+    final updates = _attachedConnectorUpdates(updatedTarget);
+    if (updates.isEmpty) return;
+
+    final nextElements = state.elements
+        .map((el) => updates[el.id] ?? el)
+        .toList(growable: false);
+    emit(state.copyWith(elements: nextElements));
+    await _saveCrdtBatch([
+      for (final updatedConnector in updates.values)
+        (
+          action: 'update',
+          type: 'connector',
+          objectId: updatedConnector.id,
+          data: updatedConnector.toMap(),
+        ),
+    ], emit);
+  }
+
+  Future<bool> _updateShape(
     String shapeId,
     Map<String, dynamic> data,
     Emitter<CanvasState> emit,
@@ -2558,90 +6232,161 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         break;
       }
     }
-    if (existing == null) return;
+    if (existing == null || existing.locked) return false;
     if (existing is! ShapeElement &&
         existing is! StickyNoteElement &&
         existing is! ImageElement) {
-      return;
+      return false;
     }
 
     final currentCx = existing is ShapeElement
         ? existing.center.dx
         : existing is StickyNoteElement
-            ? existing.center.dx
-            : (existing as ImageElement).center.dx;
+        ? existing.center.dx
+        : (existing as ImageElement).center.dx;
     final currentCy = existing is ShapeElement
         ? existing.center.dy
         : existing is StickyNoteElement
-            ? existing.center.dy
-            : (existing as ImageElement).center.dy;
+        ? existing.center.dy
+        : (existing as ImageElement).center.dy;
     final currentSize = existing is ShapeElement
         ? existing.size
         : existing is StickyNoteElement
-            ? existing.width
-            : (existing as ImageElement).width;
+        ? existing.width
+        : (existing as ImageElement).width;
+    final currentWidth = existing is StickyNoteElement
+        ? existing.width
+        : existing is ImageElement
+        ? existing.width
+        : (existing as ShapeElement).size;
+    final currentHeight = existing is StickyNoteElement
+        ? existing.height
+        : existing is ImageElement
+        ? existing.height
+        : (existing as ShapeElement).size;
     final currentRotation = existing is ShapeElement
-        ? (existing.rotation % (math.pi * 2))
+        ? _normalizeRotation(existing.rotation)
         : existing is StickyNoteElement
-            ? existing.rotation
-            : 0.0;
-    final currentBorderRadius =
-        existing is ShapeElement ? existing.borderRadius : 0.0;
+        ? _normalizeRotation(existing.rotation)
+        : _normalizeRotation((existing as ImageElement).rotation);
+    final currentBorderRadius = existing is ShapeElement
+        ? existing.borderRadius
+        : 0.0;
     final currentColor = existing is ShapeElement
         ? existing.color.value
         : existing is StickyNoteElement
-            ? existing.color.value
-            : 0;
+        ? existing.color.value
+        : 0;
     final currentFilled = existing is ShapeElement ? existing.isFilled : true;
+    final currentText = existing is StickyNoteElement ? existing.text : '';
     final nextCx = (data['cx'] as num?)?.toDouble() ?? 0.0;
     final nextCy = (data['cy'] as num?)?.toDouble() ?? 0.0;
-    final nextSize = (data['size'] as num?)?.toDouble() ??
+    final nextSize =
+        (data['size'] as num?)?.toDouble() ??
         (existing is ShapeElement
             ? 64.0
             : existing is StickyNoteElement
-                ? 160.0
-                : (existing as ImageElement).width);
-    final nextRotation =
-        ((data['rotation'] as num?)?.toDouble() ?? 0.0) % (math.pi * 2);
-    final nextBorderRadius = (data['borderRadius'] as num?)?.toDouble() ?? 0.0;
-    final nextColor = (data['color'] as num?)?.toInt() ?? 0;
-    final nextFilled = (data['isFilled'] as bool?) ?? false;
-    final currentZ = existing.z;
-    final nextZ = (data['z'] as num?)?.toInt() ?? currentZ;
-    final unchanged = (nextCx - currentCx).abs() < 0.01 &&
-        (nextCy - currentCy).abs() < 0.01 &&
-        (nextSize - currentSize).abs() < 0.01 &&
-        (nextRotation - currentRotation).abs() < 0.0001 &&
-        (nextBorderRadius - currentBorderRadius).abs() < 0.01 &&
-        nextColor == currentColor &&
-        nextFilled == currentFilled &&
-        nextZ == currentZ;
-    if (unchanged) return;
+            ? existing.width
+            : (existing as ImageElement).width);
+    final rawNextW = (data['width'] as num?)?.toDouble();
+    final rawNextH = (data['height'] as num?)?.toDouble();
     if (existing is StickyNoteElement) {
-      data['width'] ??= nextSize;
-      data['height'] ??= nextSize;
+      final widthExplicitlyChanged =
+          rawNextW != null && (rawNextW - existing.width).abs() >= 0.01;
+      final heightExplicitlyChanged =
+          rawNextH != null && (rawNextH - existing.height).abs() >= 0.01;
+      if (!widthExplicitlyChanged &&
+          !heightExplicitlyChanged &&
+          (nextSize - existing.width).abs() >= 0.01) {
+        final ratio = existing.width > 0
+            ? existing.height / existing.width
+            : 1.0;
+        data['width'] = nextSize.clamp(40.0, 480.0);
+        data['height'] = (nextSize * ratio).clamp(40.0, 480.0);
+      } else {
+        data['width'] = (rawNextW ?? nextSize).clamp(40.0, 480.0);
+        data['height'] = (rawNextH ?? existing.height).clamp(40.0, 480.0);
+      }
     }
     if (existing is ImageElement) {
       data['imageBase64'] ??= existing.imageBase64;
       _carryAiImageFields(data, existing);
-      data['width'] ??= (data['width'] as num?)?.toDouble() ??
-          (data['size'] as num?)?.toDouble() ??
-          existing.width;
-      data['height'] ??= (data['height'] as num?)?.toDouble() ??
-          (data['size'] as num?)?.toDouble() ??
-          existing.height;
+      final widthExplicitlyChanged =
+          rawNextW != null && (rawNextW - existing.width).abs() >= 0.01;
+      final heightExplicitlyChanged =
+          rawNextH != null && (rawNextH - existing.height).abs() >= 0.01;
+      if (!widthExplicitlyChanged &&
+          !heightExplicitlyChanged &&
+          (nextSize - existing.width).abs() >= 0.01) {
+        final ratio = existing.width > 0
+            ? existing.height / existing.width
+            : 1.0;
+        data['width'] = nextSize.clamp(80.0, 720.0);
+        data['height'] = (nextSize * ratio).clamp(80.0, 720.0);
+      } else {
+        data['width'] = (rawNextW ?? existing.width).clamp(80.0, 720.0);
+        data['height'] = (rawNextH ?? existing.height).clamp(80.0, 720.0);
+      }
     }
+    if (existing is ShapeElement) {
+      // Explicit width/height win; otherwise resolve the rendered box from the
+      // incoming payload so a `size`-only resize scales the legacy aspect box
+      // (the first edit migrates legacy shapes to explicit width/height).
+      // `size` tracks max(width, height); linear shapes stay flat.
+      final dw = (data['width'] as num?)?.toDouble() ?? 0.0;
+      final dh = (data['height'] as num?)?.toDouble() ?? 0.0;
+      double w;
+      double h;
+      if (dw > 0 || dh > 0) {
+        w = dw;
+        h = dh;
+      } else {
+        final incoming = CanvasElement.fromMap(shapeId, data);
+        final box = shapeElementRect(
+          incoming is ShapeElement ? incoming : existing,
+        );
+        w = box.width;
+        h = box.height;
+      }
+      if (existing.isLinear) h = 0.0;
+      data['width'] = w;
+      data['height'] = h;
+      data['size'] = math.max(w, h);
+    }
+    final nextWidth = (data['width'] as num?)?.toDouble() ?? nextSize;
+    final nextHeight = (data['height'] as num?)?.toDouble() ?? nextSize;
+    final nextRotation = _normalizeRotation(
+      (data['rotation'] as num?)?.toDouble() ?? 0.0,
+    );
+    final nextBorderRadius = (data['borderRadius'] as num?)?.toDouble() ?? 0.0;
+    final nextColor = (data['color'] as num?)?.toInt() ?? 0;
+    final nextFilled = (data['isFilled'] as bool?) ?? false;
+    final nextText = (data['text'] as String?) ?? currentText;
+    final currentZ = existing.z;
+    final nextZ = (data['z'] as num?)?.toInt() ?? currentZ;
+    final unchanged = existing is ShapeElement
+        ? _shapeFingerprint(shapeId, existing.toMap()) ==
+              _shapeFingerprint(shapeId, data)
+        : (nextCx - currentCx).abs() < 0.01 &&
+              (nextCy - currentCy).abs() < 0.01 &&
+              (nextSize - currentSize).abs() < 0.01 &&
+              (nextWidth - currentWidth).abs() < 0.01 &&
+              (nextHeight - currentHeight).abs() < 0.01 &&
+              (nextRotation - currentRotation).abs() < 0.0001 &&
+              (nextBorderRadius - currentBorderRadius).abs() < 0.01 &&
+              nextColor == currentColor &&
+              nextFilled == currentFilled &&
+              nextText == currentText &&
+              nextZ == currentZ;
+    if (unchanged) return false;
     final fingerprint = _shapeFingerprint(shapeId, data);
-    if (_lastShapePayloadFingerprint[shapeId] == fingerprint) return;
+    if (_lastShapePayloadFingerprint[shapeId] == fingerprint) return false;
     _lastShapePayloadFingerprint[shapeId] = fingerprint;
+    final updatedTarget = CanvasElement.fromMap(shapeId, data);
     final next = state.elements
-        .map((e) =>
-            e.id == shapeId ? CanvasElement.fromMap(e.id, data) : e)
+        .map((e) => e.id == shapeId ? updatedTarget : e)
         .toList();
-    next.sort((a, b) {
-      if (a.z != b.z) return a.z.compareTo(b.z);
-      return a.id.compareTo(b.id);
-    });
+    next.sort(_compareByZ);
     emit(state.copyWith(elements: next));
     await _saveCrdtOperation(
       action: 'update',
@@ -2652,32 +6397,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
 
     // Maintain dynamic link topology for attached connectors (FR05-15)
-    final updatedTarget = CanvasElement.fromMap(shapeId, data);
-    for (final el in state.elements) {
-      if (el is ConnectorElement &&
-          (el.startElementId == shapeId || el.endElementId == shapeId)) {
-        final newStart = el.startElementId == shapeId
-            ? _computeElementAnchor(updatedTarget, el.startAnchor,
-                overrideCenter: Offset(nextCx, nextCy))
-            : el.startPoint;
-        final newEnd = el.endElementId == shapeId
-            ? _computeElementAnchor(updatedTarget, el.endAnchor,
-                overrideCenter: Offset(nextCx, nextCy))
-            : el.endPoint;
-        final connectorData = Map<String, dynamic>.from(el.toMap())
-          ..['sx'] = newStart.dx
-          ..['sy'] = newStart.dy
-          ..['ex'] = newEnd.dx
-          ..['ey'] = newEnd.dy;
-        await _saveCrdtOperation(
-          action: 'update',
-          type: 'connector',
-          objectId: el.id,
-          data: connectorData,
-          emit: emit,
-        );
-      }
-    }
+    await _syncAttachedConnectors(updatedTarget, emit);
+    return true;
   }
 
   // ──────────────────────────────────────────────
@@ -2690,32 +6411,26 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     final canvasService = _canvasService;
-    if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    if (shape == null ||
+        shape.locked ||
+        canvasService == null ||
+        _boardId.isEmpty) {
+      return;
+    }
     if (!_ensureCanEdit(emit)) return;
-    final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap());
-    for (final entry in event.pendingData.entries) {
-      if (entry.key == 'rotation') {
-        final rotation = _toDoubleValue(entry.value);
-        if (rotation == null) continue;
-        data[entry.key] = _normalizeRotation(rotation);
-      } else if (entry.key == 'size') {
-        final size = _toDoubleValue(entry.value);
-        if (size == null) continue;
-        final clamped = size.clamp(24.0, 320.0);
-        data[entry.key] = clamped;
-        if (shape is StickyNoteElement) {
-          final noteSize = clamped.clamp(40.0, 480.0);
-          data['width'] = noteSize;
-          data['height'] = noteSize;
-        }
-      } else if (entry.key == 'borderRadius') {
-        final borderRadius = _toDoubleValue(entry.value);
-        if (borderRadius == null) continue;
-        final size = _toDoubleValue(data['size']) ?? 64.0;
-        final maxRadius = (size / 2).clamp(0.0, 180.0);
-        data[entry.key] = borderRadius.clamp(0.0, maxRadius);
-      } else {
-        data[entry.key] = entry.value;
+    final data = Map<String, dynamic>.from(
+      _committedElementPayload(shape.id) ?? shape.toMap(),
+    );
+    _applyPendingShapeEdits(data, event.pendingData);
+    if (shape is StickyNoteElement &&
+        event.pendingData.containsKey('size') &&
+        !event.pendingData.containsKey('width') &&
+        !event.pendingData.containsKey('height')) {
+      final size = _toDoubleValue(data['size']);
+      if (size != null) {
+        final noteSize = size.clamp(40.0, 480.0);
+        data['width'] = noteSize;
+        data['height'] = noteSize;
       }
     }
     if (shape is ImageElement) {
@@ -2730,7 +6445,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     final canvasService = _canvasService;
-    if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    if (shape == null ||
+        shape.locked ||
+        canvasService == null ||
+        _boardId.isEmpty) {
+      return;
+    }
     // Connectors carry endpoints, not a centre; moving one is committed on
     // drag end, so there is no cx/cy preview to publish here.
     if (shape is ConnectorElement) return;
@@ -2750,7 +6470,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     final canvasService = _canvasService;
-    if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    if (shape == null ||
+        shape.locked ||
+        canvasService == null ||
+        _boardId.isEmpty) {
+      return;
+    }
     if (!_ensureCanEdit(emit)) return;
     final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['size'] = event.size.clamp(24.0, 320.0);
@@ -2759,8 +6484,42 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       data['width'] = event.size.clamp(80.0, 720.0);
       data['height'] = event.size.clamp(80.0, 720.0);
     } else if (shape is StickyNoteElement) {
-      data['width'] = (event.width ?? event.size).clamp(40.0, 480.0);
-      data['height'] = (event.height ?? event.size).clamp(40.0, 480.0);
+      final newW = (event.width > 0 ? event.width : event.size).clamp(
+        40.0,
+        480.0,
+      );
+      final ratio = shape.width > 0 ? shape.height / shape.width : 1.0;
+      data['width'] = newW;
+      data['height'] = (event.height > 0 ? event.height : newW * ratio).clamp(
+        40.0,
+        480.0,
+      );
+    } else if (shape is ShapeElement && (event.width > 0 || event.height > 0)) {
+      final w = event.width.clamp(1.0, 4000.0);
+      final h = shape.isLinear ? 0.0 : event.height.clamp(1.0, 4000.0);
+      data['width'] = w;
+      data['height'] = h;
+      data['size'] = math.max(w, h);
+    } else if (shape is FrameElement) {
+      final w = (event.width > 0 ? event.width : event.size)
+          .clamp(120.0, 4000.0)
+          .toDouble();
+      final ratio = shape.width > 0 ? shape.height / shape.width : 1.0;
+      data['width'] = w;
+      data['height'] = (event.height > 0 ? event.height : w * ratio)
+          .clamp(80.0, 4000.0)
+          .toDouble();
+    } else if (shape is TableElement) {
+      final minW = TableElement.minCellWidth * shape.columns;
+      final minH = TableElement.minCellHeight * shape.rows;
+      final w = (event.width > 0 ? event.width : event.size)
+          .clamp(minW, 4000.0)
+          .toDouble();
+      final ratio = shape.width > 0 ? shape.height / shape.width : 0.5;
+      data['width'] = w;
+      data['height'] = (event.height > 0 ? event.height : w * ratio)
+          .clamp(minH, 4000.0)
+          .toDouble();
     }
     await _publishSelectedShapePreview(shape.id, data);
   }
@@ -2771,7 +6530,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     final shape = _selectedShape();
     final canvasService = _canvasService;
-    if (shape == null || canvasService == null || _boardId.isEmpty) return;
+    if (shape == null ||
+        shape.locked ||
+        canvasService == null ||
+        _boardId.isEmpty) {
+      return;
+    }
     if (!_ensureCanEdit(emit)) return;
     final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['rotation'] = _normalizeRotation(event.rotation);
@@ -2814,20 +6578,19 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
     session.absorb(result);
     final selectedId = state.selectedShapeId;
-    emit(state.copyWith(
-      elements: result.nextElements,
-      selectedShapeId:
-          selectedId != null && result.deletedElementIds.contains(selectedId)
-              ? null
-              : selectedId,
-    ));
+    emit(
+      state.copyWith(
+        elements: result.nextElements,
+        selectedShapeId:
+            selectedId != null && result.deletedElementIds.contains(selectedId)
+            ? null
+            : selectedId,
+      ),
+    );
     await _publishEraserCursor(session, path.last);
   }
 
-  Future<void> _publishEraserCursor(
-    _EraserSession session,
-    Offset position,
-  ) {
+  Future<void> _publishEraserCursor(_EraserSession session, Offset position) {
     return _publishSelectedShapePreview(session.previewId, {
       'type': 'eraser',
       'radius': session.radius,
@@ -2881,13 +6644,15 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         if (createdIds.contains(element.id)) element,
     ];
     final selectedId = state.selectedShapeId;
-    emit(state.copyWith(
-      elements: nextElements,
-      currentStroke: const [],
-      selectedShapeId: selectedId != null && deletedIds.contains(selectedId)
-          ? null
-          : selectedId,
-    ));
+    emit(
+      state.copyWith(
+        elements: nextElements,
+        currentStroke: const [],
+        selectedShapeId: selectedId != null && deletedIds.contains(selectedId)
+            ? null
+            : selectedId,
+      ),
+    );
     final previewId = session?.previewId;
     if (previewId != null) {
       // Stop the throttled cursor preview so no stray ring is left behind.
@@ -2925,22 +6690,26 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       // Elements that exist locally only as collaborator previews have no CRDT
       // entry to tombstone, so hide their preview too instead of letting the
       // erased ink reappear on the next rebuild.
+      _remotePreviewReceivedAt.remove(id);
       if (_remotePreviewElements.remove(id) != null) {
         _remotePreviewDeletedIds.add(id);
+        _remotePreviewDeletedAt[id] = DateTime.now();
       }
     }
-    final beforeVector = adapter.encodeStateVector();
+    final changes = <({String id, Map<String, dynamic>? payload})>[];
+    final current = adapter.materializeElements();
     for (final id in deletedElementIds) {
-      adapter.deleteElement(id, origin: 'local');
+      if (current.containsKey(id)) {
+        _myCommittedPayload[id] = null;
+        changes.add((id: id, payload: null));
+      }
     }
     for (final stroke in createdStrokes) {
-      adapter.upsertElement(
-        stroke.id,
-        <String, dynamic>{'type': 'stroke', ...stroke.toMap()},
-        origin: 'local',
-      );
+      final payload = <String, dynamic>{'type': 'stroke', ...stroke.toMap()};
+      _myCommittedPayload[stroke.id] = _deepCopyPayload(payload);
+      changes.add((id: stroke.id, payload: payload));
     }
-    final update = adapter.encodeStateUpdate(vector: beforeVector);
+    final update = adapter.applyBatch(changes, origin: 'local');
     _refreshFromCrdtAdapter(emit);
     if (update.isNotEmpty) {
       await _publishCrdtUpdate(update);
@@ -2987,8 +6756,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       );
     }
     for (final element in elements) {
+      // Locked art is protected; hidden art is not part of the visible board.
+      if (element.locked || element.hidden) {
+        nextElements.add(element);
+        continue;
+      }
       if (element is! StrokeElement) {
-        final shouldDeleteWholeElement = eraseEverything &&
+        final shouldDeleteWholeElement =
+            eraseEverything &&
             _elementTouchesErasePath(element, erasePath, eraserRadius);
         if (shouldDeleteWholeElement) {
           deletedIds.add(element.id);
@@ -3003,8 +6778,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         continue;
       }
       // Cheap reject: only strokes near the eraser swath are re-split.
-      if (!_strokeBounds(strokePoints, element.strokeWidth / 2)
-          .overlaps(eraseBounds)) {
+      if (!_strokeBounds(
+        strokePoints,
+        element.strokeWidth / 2,
+      ).overlaps(eraseBounds)) {
         nextElements.add(element);
         continue;
       }
@@ -3023,19 +6800,19 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       for (var index = 0; index < keepSegments.length; index++) {
         final segment = keepSegments[index];
         if (segment.length < 2) continue;
-        final replacement = StrokeElement(
+        final replacement = element.copyWith(
           // Deterministic ids keep the live erase idempotent: re-splitting the
           // same stroke while dragging reuses the same fragments instead of
           // spawning (and duplicating) new ones on every sample.
           id: '${element.id}~e$index',
           // Fragments inherit the source stroke's z, so erasing never lifts a
           // stroke above shapes it was drawn behind.
-          z: element.z,
-          color: element.color,
-          strokeWidth: element.strokeWidth,
-          opacity: element.opacity,
-          brushType: element.brushType,
           points: segment,
+          // Per-point samples no longer line up with the shortened fragment.
+          pressures: const [],
+          tilts: const [],
+          // An open fragment should not keep filling the original closed loop.
+          clearFillColor: true,
         );
         nextElements.add(replacement);
         createdStrokes.add(replacement);
@@ -3098,7 +6875,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       await boardService.removeBoardMember(_boardId, event.targetUid);
       emit(state.copyWith(error: null));
     } catch (e) {
-      emit(state.copyWith(error: 'Failed to revoke member access: ${AppErrorFormatter.cleanMessage(e)}'));
+      emit(
+        state.copyWith(
+          error:
+              'Failed to revoke member access: ${AppErrorFormatter.cleanMessage(e)}',
+        ),
+      );
     }
   }
 
@@ -3116,7 +6898,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       );
       emit(state.copyWith(error: null));
     } catch (e) {
-      emit(state.copyWith(error: 'Failed to update member role: ${AppErrorFormatter.cleanMessage(e)}'));
+      emit(
+        state.copyWith(
+          error:
+              'Failed to update member role: ${AppErrorFormatter.cleanMessage(e)}',
+        ),
+      );
     }
   }
 
@@ -3133,6 +6920,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
   int _activeExportCount = 0;
 
+  CanvasBoardSettings _boardSettings = const CanvasBoardSettings();
+
   Future<void> _onExportBoardRequested(
     CanvasExportBoardRequested event,
     Emitter<CanvasState> emit,
@@ -3141,10 +6930,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(isExporting: true, error: null));
     try {
       final boardTitle = state.boardTitle ?? 'Board';
-      final file = await _boardExportService.exportBoard(
+      final options =
+          event.options ?? CanvasExportOptions(format: event.format);
+      final file = await _boardExportService.exportCanvas(
         boardTitle: boardTitle,
         elements: state.elements,
-        format: event.format,
+        options: options,
+        settings: state.boardSettings,
+        selectedIds: state.selectedIds,
       );
 
       var shareOutcome = BoardShareOutcome.dismissed;
@@ -3156,11 +6949,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         );
       }
 
-      final ext = event.format.name.toUpperCase();
-      final destination = file.path.contains('Download') ? 'Downloads' : 'device storage';
+      final ext = options.format.name.toUpperCase();
+      final destination = file.path.contains('Download')
+          ? 'Downloads'
+          : 'device storage';
       final String successMsg;
       if (!event.shareAfterExport) {
-        successMsg = 'Board saved locally to $destination as $ext!\n${file.path}';
+        successMsg =
+            'Board saved locally to $destination as $ext!\n${file.path}';
       } else if (shareOutcome == BoardShareOutcome.shared) {
         successMsg = 'Board exported as $ext and opened in Share Sheet!';
       } else if (shareOutcome == BoardShareOutcome.unavailable) {
@@ -3207,16 +7003,21 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         requestType: 'edit',
         message: event.message,
       );
-      emit(state.copyWith(
-        infoMessage: 'Edit access request sent to board owner.',
-      ));
-    } catch (e) {
-      emit(state.copyWith(
-        error: AppErrorFormatter.cleanMessage(
-          e,
-          fallback: 'Failed to request edit access.',
+      emit(
+        state.copyWith(
+          infoMessage: 'Edit access request sent to board owner.',
+          infoMessageUndoable: false,
         ),
-      ));
+      );
+    } catch (e) {
+      emit(
+        state.copyWith(
+          error: AppErrorFormatter.cleanMessage(
+            e,
+            fallback: 'Failed to request edit access.',
+          ),
+        ),
+      );
     }
   }
 
@@ -3224,7 +7025,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasConsumeInfoMessage event,
     Emitter<CanvasState> emit,
   ) {
-    emit(state.copyWith(infoMessage: null));
+    emit(
+      state.copyWith(
+        infoMessage: null,
+        infoMessageUndoable: false,
+        infoMessageRedoable: false,
+      ),
+    );
   }
 
   // ──────────────────────────────────────────────
@@ -3331,14 +7138,120 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
   }
 
-  void _onHistoryFeedRequested(
+  List<BoardActivityBlock> _mergeArchivedBlocks(
+    List<BoardActivityBlock> existing,
+    List<BoardActivityBlock> incoming,
+  ) {
+    final byId = <String, BoardActivityBlock>{
+      for (final b in existing) b.blockId: b,
+      for (final b in incoming) b.blockId: b,
+    };
+    final merged = byId.values.toList(growable: false)
+      ..sort((a, b) => b.toVersion.compareTo(a.toVersion));
+    return merged;
+  }
+
+  int? get _oldestArchivedFromVersion {
+    if (_archivedBlocks.isEmpty) return null;
+    return _archivedBlocks.map((b) => b.fromVersion).reduce(math.min);
+  }
+
+  Future<void> _onHistoryFeedRequested(
     CanvasHistoryFeedRequested event,
     Emitter<CanvasState> emit,
-  ) {
+  ) async {
     if (_currentUserRole != Board.roleOwner) return;
+    final service = _historyService;
+    if (event.forceRefresh) {
+      emit(state.copyWith(isHistoryLoading: true, error: null));
+      unawaited(_historyFeedSub?.cancel());
+      _historyFeedSub = null;
+    }
     _syncHistorySubscriptions();
     _ensureHistoryFeedSubscription();
-    unawaited(_refreshLiveTail());
+    if (service == null || _boardId.isEmpty) {
+      if (event.forceRefresh) {
+        emit(state.copyWith(isHistoryLoading: false));
+      }
+      return;
+    }
+    try {
+      final page = await service.getVersions(
+        _boardId,
+        forceRefresh: event.forceRefresh,
+      );
+      if (isClosed) return;
+      if (page.blocks.isNotEmpty) {
+        _archivedBlocks = _mergeArchivedBlocks(_archivedBlocks, page.blocks);
+      }
+      if (page.liveTail != null) {
+        _liveTailBlock = page.liveTail;
+      } else {
+        try {
+          _liveTailBlock = await service.getLiveTail(_boardId);
+        } catch (_) {}
+      }
+      if (isClosed) return;
+      final oldestFrom = _oldestArchivedFromVersion;
+      final hasMore = page.hasMore || (oldestFrom != null && oldestFrom > 1);
+      final nextBefore =
+          page.nextBeforeVersion ?? (oldestFrom != null && oldestFrom > 1 ? oldestFrom : null);
+      emit(state.copyWith(
+        isHistoryLoading: false,
+        activityBlocks: _composeActivityBlocks(),
+        hasMoreHistoryVersions: hasMore,
+        historyNextBeforeVersion: nextBefore,
+      ));
+    } catch (_) {
+      unawaited(_refreshLiveTail());
+      if (!isClosed && event.forceRefresh) {
+        emit(state.copyWith(isHistoryLoading: false));
+      }
+    }
+  }
+
+  Future<void> _onHistoryLoadOlderVersionsRequested(
+    CanvasHistoryLoadOlderVersionsRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null || _currentUserRole != Board.roleOwner) return;
+    if (_boardId.isEmpty || state.isHistoryLoading) return;
+    final beforeVersion =
+        event.beforeVersion ??
+        state.historyNextBeforeVersion ??
+        _oldestArchivedFromVersion;
+    emit(state.copyWith(isHistoryLoading: true, error: null));
+    try {
+      final page = await service.getVersions(
+        _boardId,
+        beforeVersion: beforeVersion,
+      );
+      if (isClosed) return;
+      if (page.blocks.isNotEmpty) {
+        _archivedBlocks = _mergeArchivedBlocks(_archivedBlocks, page.blocks);
+      }
+      final oldestFrom = _oldestArchivedFromVersion;
+      final hasMore = page.hasMore && (oldestFrom != null && oldestFrom > 1);
+      final nextBefore = page.nextBeforeVersion ??
+          (hasMore ? oldestFrom : null);
+      emit(state.copyWith(
+        isHistoryLoading: false,
+        activityBlocks: _composeActivityBlocks(),
+        hasMoreHistoryVersions: hasMore,
+        historyNextBeforeVersion: nextBefore,
+        infoMessage: page.blocks.isEmpty
+            ? 'All available previous versions are already loaded.'
+            : 'Loaded ${page.blocks.length} previous version(s).',
+      ));
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          error: _historyMessage(e),
+        ));
+      }
+    }
   }
 
   void _onHistoryFeedUpdated(
@@ -3346,8 +7259,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     if (_currentUserRole != Board.roleOwner) return;
-    _archivedBlocks = event.blocks;
-    emit(state.copyWith(activityBlocks: _composeActivityBlocks()));
+    _archivedBlocks = _mergeArchivedBlocks(_archivedBlocks, event.blocks);
+    final oldestFrom = _oldestArchivedFromVersion;
+    final hasMore =
+        state.hasMoreHistoryVersions || (oldestFrom != null && oldestFrom > 1);
+    final nextBefore =
+        state.historyNextBeforeVersion ??
+        (oldestFrom != null && oldestFrom > 1 ? oldestFrom : null);
+    emit(state.copyWith(
+      activityBlocks: _composeActivityBlocks(),
+      hasMoreHistoryVersions: hasMore,
+      historyNextBeforeVersion: nextBefore,
+    ));
     unawaited(_refreshLiveTail());
   }
 
@@ -3481,46 +7404,58 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       // since that requested state, starting ON the requested state.
       final targetVersion = request?.targetVersion;
       final scopeIds = request?.targetElementIds ?? const <String>[];
-      if (request != null && targetVersion != null && scopeIds.isNotEmpty) {
-        final timeline = await service.getUserTimeline(
-          _boardId,
-          request.requesterUid,
-          elementIds: scopeIds,
-          afterVersion: targetVersion,
-        );
-        if (isClosed) return;
-        if (timeline.ops.isNotEmpty && timeline.steps.isNotEmpty) {
-          // Virtual first stop: the requested state itself (the base, with
-          // an empty delta). The slider then walks the window between what
-          // the member asked for and the current board.
-          final requestedStop = BoardOperation(
-            version: targetVersion,
-            summary: 'Requested state (v$targetVersion)',
-          );
-          final scrub = HistoryScrub(
-            stops: [requestedStop, ...timeline.ops],
-            baseStateBytes: timeline.baseStateBytes,
-            stepDeltas: [
-              Uint8List(0),
-              ...timeline.steps.map((step) => step.deltaBytes),
-            ],
-            targetUid: request.requesterUid,
+      final scopeMode = request?.scopeMode ?? UndoRequestScopeMode.myChanges;
+      if (request != null &&
+          targetVersion != null &&
+          (scopeIds.isNotEmpty || (area != null && area.isValid))) {
+        try {
+          final timeline = await service.getUserTimeline(
+            _boardId,
+            scopeMode == UndoRequestScopeMode.areaState
+                ? ''
+                : request.requesterUid,
             elementIds: scopeIds,
-            hasMore: timeline.hasMore,
-            nextBeforeVersion: timeline.nextBeforeVersion,
+            area: area,
+            scopeMode: scopeMode,
+            afterVersion: targetVersion,
           );
-          await _enterScrub(
-            scrub,
-            emit: emit,
-            returnTray: returnTray,
-            returnUserUid: returnUserUid,
-            title: 'Undo request from ${request.requesterName}',
-            startIndex: 0,
-            requestId: event.requestId,
-            focusBounds: focusBounds,
-            highlightElementIds: highlightIds ?? const <String>[],
-          );
-          return;
+          if (isClosed) return;
+          if (timeline.ops.isNotEmpty && timeline.steps.isNotEmpty) {
+            final requestedStop = BoardOperation(
+              version: targetVersion,
+              summary: 'Requested state (v$targetVersion)',
+            );
+            final scrub = HistoryScrub(
+              stops: [requestedStop, ...timeline.ops],
+              baseStateBytes: timeline.baseStateBytes,
+              stepDeltas: [
+                Uint8List(0),
+                ..._alignedStepDeltas(timeline),
+              ],
+              targetUid: scopeMode == UndoRequestScopeMode.areaState
+                  ? null
+                  : request.requesterUid,
+              elementIds: scopeIds,
+              area: area,
+              scopeMode: scopeMode,
+              hasMore: timeline.hasMore,
+              nextBeforeVersion: timeline.nextBeforeVersion,
+            );
+            await _enterScrub(
+              scrub,
+              emit: emit,
+              returnTray: returnTray,
+              returnUserUid: returnUserUid,
+              title: 'Undo request from ${request.requesterName}',
+              startIndex: 0,
+              requestId: event.requestId,
+              focusBounds: focusBounds,
+              highlightElementIds: highlightIds ?? const <String>[],
+            );
+            return;
+          }
+        } catch (_) {
+          // Fall back to plan-based comparison when timeline is unavailable.
         }
       }
       // Legacy requests (no targetVersion) or an empty window: build the
@@ -3560,13 +7495,21 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
   }
 
-  void _onHistoryEvidenceViewToggled(
+  Future<void> _onHistoryEvidenceViewToggled(
     CanvasHistoryEvidenceViewToggled event,
     Emitter<CanvasState> emit,
-  ) {
+  ) async {
     // The past/current toggle is shared by undo-request evidence and the
-    // per-log compare screen (historyPreviewCompare).
+    // per-log compare screen (historyPreviewCompare). When a scrub slider is
+    // active, toggling jumps between stop 0 (Requested) and lastIndex (Current).
     if (!state.isViewingHistory) return;
+    final scrub = state.historyScrub;
+    if (scrub != null) {
+      final targetIndex = event.showDesired ? 0 : scrub.lastIndex;
+      emit(state.copyWith(historyPreviewShowsDesired: event.showDesired));
+      await _onHistoryScrubMoved(CanvasHistoryScrubMoved(targetIndex), emit);
+      return;
+    }
     if (state.historyPreviewRequestId == null &&
         !state.historyPreviewCompare) {
       return;
@@ -3582,9 +7525,118 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (enable && state.isViewingHistory) return;
     emit(state.copyWith(
       isSelectingUndoRequestArea: enable,
+      isSelectingHistoryArea: false,
       activeTray: null,
       selectedShapeId: null,
     ));
+  }
+
+  void _onToggleOwnerAreaHistorySelection(
+    CanvasToggleOwnerAreaHistorySelection event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(
+        error: 'Only the board owner can view area history.',
+      ));
+      return;
+    }
+    final enable = event.enable ?? !state.isSelectingHistoryArea;
+    if (enable && state.isViewingHistory) return;
+    emit(state.copyWith(
+      isSelectingHistoryArea: enable,
+      isSelectingUndoRequestArea: false,
+      activeTray: null,
+      selectedShapeId: null,
+    ));
+  }
+
+  Future<void> _onHistoryAreaScrubRequested(
+    CanvasHistoryAreaScrubRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final service = _historyService;
+    if (service == null) return;
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(
+        error: 'Only the board owner can view board history.',
+      ));
+      return;
+    }
+    final area = event.area;
+    if (!area.isValid) {
+      emit(state.copyWith(error: 'Select a valid area on the board first.'));
+      return;
+    }
+    final returnTray = state.isViewingHistory
+        ? state.historyPreviewReturnTray
+        : state.activeTray;
+    final returnUserUid = state.isViewingHistory
+        ? state.historyPreviewReturnUserUid
+        : state.selectedUserUid;
+    emit(state.copyWith(
+      isHistoryLoading: true,
+      isSelectingHistoryArea: false,
+      error: null,
+    ));
+    try {
+      final timeline = await service.getUserTimeline(
+        _boardId,
+        '',
+        elementIds: event.elementIds,
+        area: area,
+        scopeMode: UndoRequestScopeMode.areaState,
+      );
+      if (isClosed) return;
+      if (timeline.ops.isEmpty || timeline.steps.isEmpty) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          error: 'No recorded changes were found in that part of the board.',
+        ));
+        return;
+      }
+      final beforeStop = BoardOperation(
+        version: timeline.baseVersion,
+        summary: 'Before changes in this area (v${timeline.baseVersion})',
+      );
+      final scrub = HistoryScrub(
+        stops: [beforeStop, ...timeline.ops],
+        baseStateBytes: timeline.baseStateBytes,
+        stepDeltas: [
+          Uint8List(0),
+          ..._alignedStepDeltas(timeline),
+        ],
+        targetUid: null,
+        elementIds: event.elementIds,
+        area: area,
+        scopeMode: UndoRequestScopeMode.areaState,
+        hasMore: timeline.hasMore,
+        nextBeforeVersion: timeline.nextBeforeVersion,
+      );
+      await _enterScrub(
+        scrub,
+        emit: emit,
+        returnTray: returnTray,
+        returnUserUid: returnUserUid,
+        title:
+            'Area history (${area.width.round()} × ${area.height.round()} px)',
+        startIndex: scrub.lastIndex,
+        focusBounds: Rect.fromLTWH(
+          area.left,
+          area.top,
+          area.width,
+          area.height,
+        ),
+        highlightElementIds: event.elementIds,
+      );
+    } catch (e) {
+      if (!isClosed) {
+        emit(state.copyWith(
+          isHistoryLoading: false,
+          error: _historyMessage(e),
+        ));
+      }
+    }
   }
 
   // ──────────────────────────────────────────────
@@ -3595,11 +7647,23 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasUndoRequestDraftStarted event,
     Emitter<CanvasState> emit,
   ) {
+    final existingMode = state.undoRequestDraft?.scopeMode;
     emit(state.copyWith(
       undoRequestDraft: UndoRequestDraft(
         elementIds: List<String>.unmodifiable(event.preselectedIds),
         area: event.area,
+        scopeMode: event.scopeMode ?? existingMode ?? UndoRequestScopeMode.myChanges,
       ),
+    ));
+  }
+
+  void _onUndoRequestDraftScopeModeChanged(
+    CanvasUndoRequestDraftScopeModeChanged event,
+    Emitter<CanvasState> emit,
+  ) {
+    final draft = state.undoRequestDraft ?? const UndoRequestDraft();
+    emit(state.copyWith(
+      undoRequestDraft: draft.withScopeMode(event.scopeMode),
     ));
   }
 
@@ -3632,9 +7696,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(undoRequestDraft: null));
   }
 
-  /// Loads the member's OWN timeline scoped to the draft's elements and opens
-  /// the request scrub: stop 0 is the virtual "before these changes" state,
-  /// the slider then walks through what they did in the scope.
+  /// Loads the member's timeline (either their own changes or the whole area
+  /// state according to `draft.scopeMode`) scoped to the draft's elements/area
+  /// and opens the request scrub: stop 0 is the virtual "before these changes"
+  /// state, the slider then walks through what changed in the scope.
   Future<void> _onUndoRequestPreviewRequested(
     CanvasUndoRequestPreviewRequested event,
     Emitter<CanvasState> emit,
@@ -3643,55 +7708,67 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final draft = state.undoRequestDraft;
     if (service == null || draft == null) return;
     final scopeIds = draft.elementIds;
-    if (scopeIds.isEmpty) {
-      emit(state.copyWith(error: 'Select at least one element first.'));
+    final area = draft.area;
+    final hasArea = area != null && area.isValid;
+    if (scopeIds.isEmpty && !hasArea) {
+      emit(state.copyWith(
+        error: 'Select at least one element or board area first.',
+      ));
       return;
     }
     final returnTray = state.activeTray;
     final returnUserUid = state.selectedUserUid;
+    final isAreaState = draft.scopeMode == UndoRequestScopeMode.areaState;
     emit(state.copyWith(isHistoryLoading: true, error: null));
     try {
       final timeline = await service.getUserTimeline(
         _boardId,
-        state.currentUserId,
+        isAreaState ? '' : state.currentUserId,
         elementIds: scopeIds,
+        area: area,
+        scopeMode: draft.scopeMode,
       );
       if (isClosed) return;
       if (timeline.ops.isEmpty || timeline.steps.isEmpty) {
         emit(state.copyWith(
           isHistoryLoading: false,
-          error: 'No changes of yours are recorded in that scope yet.',
+          error: isAreaState
+              ? 'No changes are recorded in that part of the board yet.'
+              : 'No changes of yours are recorded in that scope yet.',
         ));
         return;
       }
       // Virtual first stop: the state before the page's first scoped op.
-      // Picking it asks the owner to undo ALL the member's in-scope changes
-      // on the page; picking any later stop asks for that moment instead.
       final beforeStop = BoardOperation(
         version: timeline.baseVersion,
-        summary: 'Before these changes (v${timeline.baseVersion})',
+        summary: isAreaState
+            ? 'Before changes in this area (v${timeline.baseVersion})'
+            : 'Before my changes (v${timeline.baseVersion})',
       );
       final scrub = HistoryScrub(
         stops: [beforeStop, ...timeline.ops],
         baseStateBytes: timeline.baseStateBytes,
         stepDeltas: [
           Uint8List(0),
-          ...timeline.steps.map((step) => step.deltaBytes),
+          ..._alignedStepDeltas(timeline),
         ],
-        targetUid: state.currentUserId,
+        targetUid: isAreaState ? null : state.currentUserId,
         elementIds: scopeIds,
+        area: area,
+        scopeMode: draft.scopeMode,
         hasMore: timeline.hasMore,
         nextBeforeVersion: timeline.nextBeforeVersion,
       );
-      final area = draft.area;
       await _enterScrub(
         scrub,
         emit: emit,
         returnTray: returnTray,
         returnUserUid: returnUserUid,
-        title: 'Your undo request',
+        title: isAreaState
+            ? 'Your undo request · Whole area state'
+            : 'Your undo request · Only my changes',
         startIndex: 0,
-        focusBounds: (area != null && area.isValid)
+        focusBounds: hasArea
             ? Rect.fromLTWH(area.left, area.top, area.width, area.height)
             : null,
         highlightElementIds: scopeIds,
@@ -3718,7 +7795,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       emit(state.copyWith(error: 'A reason is required.'));
       return;
     }
-    if (scrub == null || draft.elementIds.isEmpty) {
+    final hasArea = draft.area != null && draft.area!.isValid;
+    if (scrub == null || (draft.elementIds.isEmpty && !hasArea)) {
       emit(state.copyWith(error: 'Pick what the owner should restore first.'));
       return;
     }
@@ -3738,6 +7816,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         elementIds: draft.elementIds,
         reason: reason,
         targetVersion: targetVersion,
+        scopeMode: draft.scopeMode,
         area: draft.area,
       );
       if (isClosed) return;
@@ -3786,6 +7865,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       targetUid: event.targetUid,
       afterVersion: event.afterVersion,
       elementIds: event.elementIds,
+      area: event.area,
       requestId: event.requestId,
       emit: emit,
     );
@@ -3816,6 +7896,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     DateTime? fromTime,
     DateTime? toTime,
     List<String>? elementIds,
+    UndoRequestArea? area,
     String? requestId,
     List<int>? opVersions,
     int? afterVersion,
@@ -3836,6 +7917,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         fromTime: fromTime,
         toTime: toTime,
         elementIds: elementIds,
+        area: area,
         requestId: requestId,
         opVersions: opVersions,
         afterVersion: afterVersion,
@@ -3863,6 +7945,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     return _planHistoryRevert(
       mode: 'restore',
       targetVersion: event.version,
+      elementIds: event.elementIds,
+      area: event.area,
+      requestId: event.requestId,
       emit: emit,
     );
   }
@@ -4056,7 +8141,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       final scrub = HistoryScrub(
         stops: timeline.ops,
         baseStateBytes: timeline.baseStateBytes,
-        stepDeltas: [for (final step in timeline.steps) step.deltaBytes],
+        stepDeltas: _alignedStepDeltas(timeline),
         targetUid: event.targetUid,
         hasMore: timeline.hasMore,
         nextBeforeVersion: timeline.nextBeforeVersion,
@@ -4076,6 +8161,152 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
   }
 
+  /// Aligns `timeline.steps` 1:1 with `timeline.ops` by version, falling back
+  /// to positional index or an empty delta when the server omitted a step.
+  List<Uint8List> _alignedStepDeltas(UserTimeline timeline) {
+    final byVersion = <int, Uint8List>{
+      for (final step in timeline.steps) step.version: step.deltaBytes,
+    };
+    return [
+      for (var i = 0; i < timeline.ops.length; i++)
+        byVersion[timeline.ops[i].version] ??
+            (i < timeline.steps.length
+                ? timeline.steps[i].deltaBytes
+                : Uint8List(0)),
+    ];
+  }
+
+  Future<HistoryScrub> _computeScrubWithDiffs(HistoryScrub scrub) async {
+    if (scrub.stops.isEmpty) return scrub;
+    final stepElements = <List<CanvasElement>>[];
+    final adapter = await CanvasDocAdapterFactory.create();
+    if (scrub.baseStateBytes.isNotEmpty) {
+      adapter.applyUpdate(scrub.baseStateBytes, origin: 'remote');
+    }
+    for (var i = 0; i < scrub.stops.length; i++) {
+      final delta = scrub.deltaAt(i);
+      if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
+      stepElements.add(
+        _rebuildElementsFromCrdtState(adapter.materializeElements()),
+      );
+    }
+    final reference =
+        state.elements.isNotEmpty ? state.elements : stepElements.last;
+    final refById = <String, CanvasElement>{
+      for (final e in reference) e.id: e,
+    };
+    final scopeSet = scrub.elementIds.toSet();
+    final area = scrub.area;
+    final areaRect = (area != null && area.isValid)
+        ? Rect.fromLTWH(area.left, area.top, area.width, area.height)
+        : null;
+
+    bool inScope(String id, CanvasElement? a, CanvasElement? b) {
+      if (scopeSet.isEmpty && areaRect == null) return true;
+      if (scopeSet.contains(id)) return true;
+      if (areaRect != null) {
+        if (a != null && elementBounds(a)?.overlaps(areaRect) == true) {
+          return true;
+        }
+        if (b != null && elementBounds(b)?.overlaps(areaRect) == true) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    final diffs = <HistoryScrubDiff>[];
+    for (final stopList in stepElements) {
+      final stopById = <String, CanvasElement>{
+        for (final e in stopList) e.id: e,
+      };
+      final allIds = <String>{...refById.keys, ...stopById.keys};
+      var added = 0;
+      var updated = 0;
+      var deleted = 0;
+      final changed = <String>[];
+      for (final id in allIds) {
+        final cur = refById[id];
+        final past = stopById[id];
+        if (!inScope(id, cur, past)) continue;
+        if (cur != null && past == null) {
+          added++;
+          changed.add(id);
+        } else if (cur == null && past != null) {
+          deleted++;
+          changed.add(id);
+        } else if (cur != null && past != null && cur != past) {
+          updated++;
+          changed.add(id);
+        }
+      }
+      diffs.add(
+        HistoryScrubDiff(
+          addedCount: added,
+          updatedCount: updated,
+          deletedCount: deleted,
+          changedElementIds: changed,
+        ),
+      );
+    }
+
+    return HistoryScrub(
+      stops: scrub.stops,
+      baseStateBytes: scrub.baseStateBytes,
+      stepDeltas: scrub.stepDeltas,
+      targetUid: scrub.targetUid,
+      elementIds: scrub.elementIds,
+      area: scrub.area,
+      scopeMode: scrub.scopeMode,
+      stepDiffs: diffs,
+      hasMore: scrub.hasMore,
+      nextBeforeVersion: scrub.nextBeforeVersion,
+    );
+  }
+
+  List<CanvasElement> _composeScopedScrubPreviewElements(
+    HistoryScrub scrub,
+    List<CanvasElement> rawPreviewElements,
+  ) {
+    final area = scrub.area;
+    final hasArea = area != null && area.isValid;
+    if (state.elements.isEmpty || (scrub.elementIds.isEmpty && !hasArea)) {
+      return rawPreviewElements;
+    }
+    final areaRect = hasArea
+        ? Rect.fromLTWH(area.left, area.top, area.width, area.height)
+        : null;
+    final scopeSet = <String>{...scrub.elementIds};
+    if (areaRect != null) {
+      for (final e in state.elements) {
+        if (elementBounds(e)?.overlaps(areaRect) == true) scopeSet.add(e.id);
+      }
+      for (final e in rawPreviewElements) {
+        if (elementBounds(e)?.overlaps(areaRect) == true) scopeSet.add(e.id);
+      }
+    }
+    if (scopeSet.isEmpty) return rawPreviewElements;
+    final rawById = <String, CanvasElement>{
+      for (final e in rawPreviewElements) e.id: e,
+    };
+    final liveById = <String, CanvasElement>{
+      for (final e in state.elements) e.id: e,
+    };
+    final composed = <String, Map<String, dynamic>>{};
+    for (final entry in liveById.entries) {
+      if (!scopeSet.contains(entry.key)) {
+        composed[entry.key] = entry.value.toMap();
+      }
+    }
+    for (final id in scopeSet) {
+      final past = rawById[id];
+      if (past != null) {
+        composed[id] = past.toMap();
+      }
+    }
+    return _rebuildElementsFromCrdtState(composed);
+  }
+
   /// Renders a scrub session on a fresh temporary adapter. [startIndex]
   /// defaults to the LAST stop (the newest state in range — the slider then
   /// moves back from there); request/evidence scrubs open at 0 (the base
@@ -4091,35 +8322,41 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Rect? focusBounds,
     List<String> highlightElementIds = const [],
   }) async {
+    final enrichedScrub = await _computeScrubWithDiffs(scrub);
     final adapter = await CanvasDocAdapterFactory.create();
-    if (scrub.baseStateBytes.isNotEmpty) {
-      adapter.applyUpdate(scrub.baseStateBytes, origin: 'remote');
+    if (enrichedScrub.baseStateBytes.isNotEmpty) {
+      adapter.applyUpdate(enrichedScrub.baseStateBytes, origin: 'remote');
     }
-    final index = (startIndex ?? scrub.lastIndex).clamp(0, scrub.lastIndex);
+    final index =
+        (startIndex ?? enrichedScrub.lastIndex).clamp(0, enrichedScrub.lastIndex);
     for (var i = 0; i <= index; i++) {
-      final delta = scrub.stepDeltas[i];
+      final delta = enrichedScrub.deltaAt(i);
       if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
     }
     _historyScrubAdapter = adapter;
-    final previewElements =
+    final rawPreview =
         _rebuildElementsFromCrdtState(adapter.materializeElements());
+    final previewElements =
+        _composeScopedScrubPreviewElements(enrichedScrub, rawPreview);
+    final stepDiff = enrichedScrub.diffAt(index);
+    final effectiveHighlights = highlightElementIds.isNotEmpty
+        ? highlightElementIds
+        : (stepDiff?.changedElementIds ?? const <String>[]);
     if (isClosed) return;
     emit(state.copyWith(
       isViewingHistory: true,
       isHistoryLoading: false,
-      historyScrub: scrub,
+      historyScrub: enrichedScrub,
       historyScrubIndex: index,
-      historyPreviewVersion: scrub.stops[index].version,
+      historyPreviewVersion: enrichedScrub.stops[index].version,
       historyPreviewElements: previewElements,
-      // Highlights are set once here (never per step), so the focus key does
-      // not change and the viewport never refits mid-scrub.
-      historyHighlightElementIds: highlightElementIds,
+      historyHighlightElementIds: effectiveHighlights,
       historyPreviewTitle: title,
       historyPreviewReturnTray: returnTray,
       historyPreviewReturnUserUid: returnUserUid,
       historyPreviewFocusBounds: focusBounds,
       historyPreviewRequestId: requestId,
-      historyPreviewShowsDesired: false,
+      historyPreviewShowsDesired: index < enrichedScrub.lastIndex,
       historyPreviewCompare: false,
       historyPreviewOpVersions: const [],
       activeRevertPlan: null,
@@ -4141,7 +8378,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (index == state.historyScrubIndex) return;
     if (index > state.historyScrubIndex) {
       for (var i = state.historyScrubIndex + 1; i <= index; i++) {
-        final delta = scrub.stepDeltas[i];
+        final delta = scrub.deltaAt(i);
         if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
       }
     } else {
@@ -4150,45 +8387,48 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         rebuilt.applyUpdate(scrub.baseStateBytes, origin: 'remote');
       }
       for (var i = 0; i <= index; i++) {
-        final delta = scrub.stepDeltas[i];
+        final delta = scrub.deltaAt(i);
         if (delta.isNotEmpty) rebuilt.applyUpdate(delta, origin: 'remote');
       }
       _historyScrubAdapter = rebuilt;
     }
     final active = _historyScrubAdapter;
     if (active == null || isClosed) return;
-    final previewElements =
+    final rawPreview =
         _rebuildElementsFromCrdtState(active.materializeElements());
+    final previewElements =
+        _composeScopedScrubPreviewElements(scrub, rawPreview);
     emit(state.copyWith(
       historyScrubIndex: index,
       historyPreviewElements: previewElements,
-      // historyPreviewVersion stays at the anchor so the viewport never
-      // refits mid-scrub; the banner reads the stop from historyScrub.
+      historyPreviewShowsDesired: index < scrub.lastIndex,
     ));
   }
 
-  /// Prepend the user's older ops to the active scrub. The adapter already
-  /// holds the board at the previously selected stop — the same op, now at a
-  /// shifted index — so no replay is needed, only the merged session.
+  /// Prepend older ops to the active scrub.
   Future<void> _onHistoryScrubLoadOlderRequested(
     CanvasHistoryScrubLoadOlderRequested event,
     Emitter<CanvasState> emit,
   ) async {
     final service = _historyService;
     final scrub = state.historyScrub;
-    if (service == null || scrub == null || scrub.targetUid == null) return;
+    if (service == null || scrub == null) return;
+    if (scrub.targetUid == null &&
+        scrub.area == null &&
+        scrub.scopeMode != UndoRequestScopeMode.areaState) {
+      return;
+    }
     if (!scrub.hasMore || scrub.nextBeforeVersion == null) return;
     if (state.isHistoryLoading) return;
     emit(state.copyWith(isHistoryLoading: true, error: null));
     try {
       final timeline = await service.getUserTimeline(
         _boardId,
-        scrub.targetUid!,
+        scrub.targetUid ?? '',
         beforeVersion: scrub.nextBeforeVersion,
-        // Request scrubs stay scoped to the picked elements; an evidence
-        // scrub is additionally anchored at the requested state, so its
-        // virtual stop 0 stays the window's floor.
         elementIds: scrub.elementIds.isEmpty ? null : scrub.elementIds,
+        area: scrub.area,
+        scopeMode: scrub.scopeMode,
         afterVersion: state.historyPreviewRequestId != null
             ? scrub.stops.first.version
             : null,
@@ -4198,18 +8438,23 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         emit(state.copyWith(isHistoryLoading: false));
         return;
       }
-      final merged = HistoryScrub(
-        stops: [...timeline.ops, ...scrub.stops],
-        baseStateBytes: timeline.baseStateBytes,
-        stepDeltas: [
-          ...timeline.steps.map((step) => step.deltaBytes),
-          ...scrub.stepDeltas,
-        ],
-        targetUid: scrub.targetUid,
-        elementIds: scrub.elementIds,
-        hasMore: timeline.hasMore,
-        nextBeforeVersion: timeline.nextBeforeVersion,
+      final merged = await _computeScrubWithDiffs(
+        HistoryScrub(
+          stops: [...timeline.ops, ...scrub.stops],
+          baseStateBytes: timeline.baseStateBytes,
+          stepDeltas: [
+            ..._alignedStepDeltas(timeline),
+            ...scrub.stepDeltas,
+          ],
+          targetUid: scrub.targetUid,
+          elementIds: scrub.elementIds,
+          area: scrub.area,
+          scopeMode: scrub.scopeMode,
+          hasMore: timeline.hasMore,
+          nextBeforeVersion: timeline.nextBeforeVersion,
+        ),
       );
+      if (isClosed) return;
       emit(state.copyWith(
         isHistoryLoading: false,
         historyScrub: merged,
@@ -4512,10 +8757,20 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     const warningMessage =
         'You are a viewer. Request editor role from the owner to edit this board.';
     if (clearStroke && state.currentStroke.isNotEmpty) {
-      emit(state.copyWith(currentStroke: const []));
+      _activeStrokeId = null;
+      _strokeStabilizer = null;
+      _strokeClock.stop();
+      emit(
+        state.copyWith(
+          currentStroke: const [],
+          currentStrokePressures: const [],
+          currentStrokeTilts: const [],
+        ),
+      );
     }
     final now = DateTime.now();
-    final shouldShowWarning = _lastViewerWarningAt == null ||
+    final shouldShowWarning =
+        _lastViewerWarningAt == null ||
         now.difference(_lastViewerWarningAt!).inMilliseconds > 1200;
     if (shouldShowWarning) {
       _lastViewerWarningAt = now;
@@ -4545,60 +8800,43 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
     final commentsService = _boardCommentsService;
     if (commentsService != null) {
-      _commentsSub = commentsService
-          .watchComments(boardId)
-          .listen(
-            (comments) {
-              if (!isClosed) add(CanvasCommentsUpdated(comments));
-            },
-            onError: (_) {},
-          );
+      _commentsSub = commentsService.watchComments(boardId).listen((comments) {
+        if (!isClosed) add(CanvasCommentsUpdated(comments));
+      }, onError: (_) {});
     }
 
     final chatService = _boardChatService;
     if (chatService != null) {
       chatService.connect(boardId);
-      _chatSub = chatService
-          .watchChatMessages(boardId)
-          .listen(
-            (msg) {
-              if (!isClosed) add(CanvasChatMessageReceived(msg));
-            },
-            onError: (_) {},
-          );
-      chatService.getChatHistory(boardId).then((history) {
-        if (!isClosed && history.isNotEmpty) {
-          add(CanvasChatMessagesUpdated(history));
-        }
-      }).catchError((_) {});
+      _chatSub = chatService.watchChatMessages(boardId).listen((msg) {
+        if (!isClosed) add(CanvasChatMessageReceived(msg));
+      }, onError: (_) {});
+      chatService
+          .getChatHistory(boardId)
+          .then((history) {
+            if (!isClosed && history.isNotEmpty) {
+              add(CanvasChatMessagesUpdated(history));
+            }
+          })
+          .catchError((_) {});
     }
 
     final voiceService = _voiceService;
     if (voiceService != null) {
-      _voiceParticipantsSub = voiceService
-          .watchParticipants(boardId)
-          .listen(
-            (participants) {
-              if (!isClosed) add(CanvasVoiceParticipantsUpdated(participants));
-            },
-            onError: (_) {},
-          );
-      _voiceCallStatusSub = voiceService
-          .watchIsInCall()
-          .listen(
-            (isInCall) {
-              if (!isClosed) add(CanvasVoiceCallStatusChanged(isInCall));
-            },
-            onError: (_) {},
-          );
-      _voiceMuteStatusSub = voiceService
-          .watchIsMuted()
-          .listen(
-            (isMuted) {
-              if (!isClosed) add(CanvasVoiceMuteStatusChanged(isMuted));
-            },
-            onError: (_) {},
-          );
+      _voiceParticipantsSub = voiceService.watchParticipants(boardId).listen((
+        participants,
+      ) {
+        if (!isClosed) add(CanvasVoiceParticipantsUpdated(participants));
+      }, onError: (_) {});
+      _voiceCallStatusSub = voiceService.watchIsInCall().listen((isInCall) {
+        if (!isClosed) add(CanvasVoiceCallStatusChanged(isInCall));
+      }, onError: (_) {});
+      _voiceMuteStatusSub = voiceService.watchIsMuted().listen((isMuted) {
+        if (!isClosed) add(CanvasVoiceMuteStatusChanged(isMuted));
+      }, onError: (_) {});
+      // Presence is separate from joining: keep the board observing the voice
+      // room so a call started by another member is visible immediately.
+      unawaited(voiceService.observeBoard(boardId));
     }
   }
 
@@ -4633,7 +8871,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     if (state.chatMessages.any((m) => m.id == event.message.id)) return;
-    final updated = List<BoardChatMessage>.from(state.chatMessages)..add(event.message);
+    final updated = List<BoardChatMessage>.from(state.chatMessages)
+      ..add(event.message);
     emit(state.copyWith(chatMessages: updated));
   }
 
@@ -4663,10 +8902,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     final nextOpen = !state.isChatDrawerOpen;
-    emit(state.copyWith(
-      isChatDrawerOpen: nextOpen,
-      isCommentsTrayOpen: nextOpen ? false : state.isCommentsTrayOpen,
-    ));
+    emit(
+      state.copyWith(
+        isChatDrawerOpen: nextOpen,
+        isCommentsTrayOpen: nextOpen ? false : state.isCommentsTrayOpen,
+      ),
+    );
   }
 
   void _onCanvasToggleCommentsTray(
@@ -4674,10 +8915,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     final nextOpen = !state.isCommentsTrayOpen;
-    emit(state.copyWith(
-      isCommentsTrayOpen: nextOpen,
-      isChatDrawerOpen: nextOpen ? false : state.isChatDrawerOpen,
-    ));
+    emit(
+      state.copyWith(
+        isCommentsTrayOpen: nextOpen,
+        isChatDrawerOpen: nextOpen ? false : state.isChatDrawerOpen,
+      ),
+    );
   }
 
   void _onCanvasToggleCommentPlacementMode(
@@ -4710,7 +8953,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       );
       emit(state.copyWith(isPlacingComment: false));
     } catch (e) {
-      emit(state.copyWith(error: 'Failed to add comment: ${AppErrorFormatter.cleanMessage(e)}'));
+      emit(
+        state.copyWith(
+          error: 'Failed to add comment: ${AppErrorFormatter.cleanMessage(e)}',
+        ),
+      );
     }
   }
 
@@ -4728,7 +8975,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         boardTitle: state.boardTitle,
       );
     } catch (e) {
-      emit(state.copyWith(error: 'Failed to add reply: ${AppErrorFormatter.cleanMessage(e)}'));
+      emit(
+        state.copyWith(
+          error: 'Failed to add reply: ${AppErrorFormatter.cleanMessage(e)}',
+        ),
+      );
     }
   }
 
@@ -4747,7 +8998,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         emit(state.copyWith(activeCommentId: null));
       }
     } catch (e) {
-      emit(state.copyWith(error: 'Failed to delete comment: ${AppErrorFormatter.cleanMessage(e)}'));
+      emit(
+        state.copyWith(
+          error:
+              'Failed to delete comment: ${AppErrorFormatter.cleanMessage(e)}',
+        ),
+      );
     }
   }
 
@@ -4756,18 +9012,25 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) async {
     final chatService = _boardChatService;
-    if (chatService == null || _boardId.isEmpty || event.text.trim().isEmpty) return;
+    if (chatService == null || _boardId.isEmpty || event.text.trim().isEmpty) {
+      return;
+    }
     try {
       final msg = await chatService.sendMessage(
         boardId: _boardId,
         text: event.text.trim(),
       );
       if (!state.chatMessages.any((m) => m.id == msg.id)) {
-        final updated = List<BoardChatMessage>.from(state.chatMessages)..add(msg);
+        final updated = List<BoardChatMessage>.from(state.chatMessages)
+          ..add(msg);
         emit(state.copyWith(chatMessages: updated));
       }
     } catch (e) {
-      emit(state.copyWith(error: 'Failed to send message: ${AppErrorFormatter.cleanMessage(e)}'));
+      emit(
+        state.copyWith(
+          error: 'Failed to send message: ${AppErrorFormatter.cleanMessage(e)}',
+        ),
+      );
     }
   }
 
@@ -4781,7 +9044,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       await voiceService.joinCall(_boardId);
       emit(state.copyWith(isVoiceCallActive: true));
     } catch (e) {
-      emit(state.copyWith(error: 'Failed to join voice call: ${AppErrorFormatter.cleanMessage(e)}'));
+      emit(
+        state.copyWith(
+          error:
+              'Failed to join voice call: ${AppErrorFormatter.cleanMessage(e)}',
+        ),
+      );
     }
   }
 
@@ -4795,7 +9063,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       await voiceService.leaveCall(_boardId);
       emit(state.copyWith(isVoiceCallActive: false));
     } catch (e) {
-      emit(state.copyWith(error: 'Failed to leave voice call: ${AppErrorFormatter.cleanMessage(e)}'));
+      emit(
+        state.copyWith(
+          error:
+              'Failed to leave voice call: ${AppErrorFormatter.cleanMessage(e)}',
+        ),
+      );
     }
   }
 
@@ -4848,6 +9121,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _voiceMuteStatusSub = null;
     if (_boardId.isNotEmpty && state.isVoiceCallActive) {
       _voiceService?.leaveCall(_boardId);
+    }
+    if (_boardId.isNotEmpty) {
+      _voiceService?.unobserveBoard(_boardId);
     }
     await _boardMetaSub?.cancel();
     _boardMetaSub = null;

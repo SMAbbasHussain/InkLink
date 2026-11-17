@@ -6,64 +6,169 @@ sealed class CanvasElement {
   final String id;
   final int z;
 
-  const CanvasElement({required this.id, required this.z});
+  /// Layer-panel state. These travel with the element payload so visibility,
+  /// lock and opacity survive reload and sync through CRDT like any edit.
+  final bool hidden;
+  final bool locked;
+  final double opacity;
+
+  const CanvasElement({
+    required this.id,
+    required this.z,
+    this.hidden = false,
+    this.locked = false,
+    this.opacity = 1.0,
+  });
 
   Map<String, dynamic> toMap();
 
   static CanvasElement fromMap(String id, Map<String, dynamic> data) {
     final type = data['type'] as String;
-    final z = data['z'] as int? ?? 0;
+    final z = (data['z'] as num?)?.toInt() ?? 0;
     switch (type) {
       case 'stroke':
+        final rawType = data['brushType'] as String? ?? 'solid';
+        final rawId = data['brushId'] as String? ?? rawType;
         return StrokeElement(
           id: id,
           z: z,
-          color: Color(data['color'] as int),
+          hidden: data['hidden'] as bool? ?? false,
+          locked: data['locked'] as bool? ?? false,
+          color: Color((data['color'] as num).toInt()),
           strokeWidth: (data['strokeWidth'] as num).toDouble(),
-          opacity: (data['opacity'] as num).toDouble(),
-          brushType: data['brushType'] as String? ?? 'solid',
-          points: (data['points'] as List<dynamic>?)
-                  ?.map((p) => Offset(
-                        (p['x'] as num).toDouble(),
-                        (p['y'] as num).toDouble(),
-                      ))
+          opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          brushType: rawType,
+          brushId: rawId,
+          points:
+              (data['points'] as List<dynamic>?)
+                  ?.map(
+                    (p) => Offset(
+                      (p['x'] as num).toDouble(),
+                      (p['y'] as num).toDouble(),
+                    ),
+                  )
                   .toList() ??
               [],
+          pressures:
+              (data['pressures'] as List<dynamic>?)
+                  ?.map((p) => (p as num).toDouble())
+                  .toList() ??
+              const [],
+          tilts:
+              (data['tilts'] as List<dynamic>?)
+                  ?.map((t) => (t as num).toDouble())
+                  .toList() ??
+              const [],
+          spacing: (data['spacing'] as num?)?.toDouble() ?? 0.25,
+          textureSeed: (data['textureSeed'] as num?)?.toInt() ?? 0,
+          fillColor: data['fillColor'] == null
+              ? null
+              : Color((data['fillColor'] as num).toInt()),
         );
       case 'shape':
+        final shapeType = CanvasShapeType.values.byName(
+          data['shapeType'] as String,
+        );
+        final legacyFilled = data['isFilled'] as bool? ?? false;
+        final rawFillMode = data['fillMode'] as String?;
+        final fillMode =
+            rawFillMode != null &&
+                const {
+                  'none',
+                  'solid',
+                  'linear',
+                  'radial',
+                }.contains(rawFillMode)
+            ? rawFillMode
+            : (legacyFilled ? 'solid' : 'none');
         return ShapeElement(
           id: id,
           z: z,
-          shapeType: CanvasShapeType.values.byName(data['shapeType'] as String),
+          hidden: data['hidden'] as bool? ?? false,
+          locked: data['locked'] as bool? ?? false,
+          opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          shapeType: shapeType,
           center: Offset(
             (data['cx'] as num).toDouble(),
             (data['cy'] as num).toDouble(),
           ),
           size: (data['size'] as num).toDouble(),
-          color: Color(data['color'] as int),
+          width: (data['width'] as num?)?.toDouble() ?? 0,
+          height: (data['height'] as num?)?.toDouble() ?? 0,
+          color: Color((data['color'] as num).toInt()),
           strokeWidth: (data['strokeWidth'] as num).toDouble(),
-          isFilled: data['isFilled'] as bool? ?? false,
+          strokeOpacity: (data['strokeOpacity'] as num?)?.toDouble() ?? 1.0,
+          dashPattern: (data['dashPattern'] as List<dynamic>?)
+              ?.map((d) => (d as num).toDouble())
+              .toList(growable: false),
+          isFilled: fillMode != 'none',
+          fillMode: fillMode,
+          fillColor: data['fillColor'] == null
+              ? null
+              : Color((data['fillColor'] as num).toInt()),
+          gradientStart: data['gradientStart'] == null
+              ? null
+              : Color((data['gradientStart'] as num).toInt()),
+          gradientEnd: data['gradientEnd'] == null
+              ? null
+              : Color((data['gradientEnd'] as num).toInt()),
+          gradientAngle: (data['gradientAngle'] as num?)?.toDouble() ?? 0,
           rotation: (data['rotation'] as num?)?.toDouble() ?? 0,
-          borderRadius:
-              (data['borderRadius'] as num?)?.toDouble() ?? 0,
+          borderRadius: (data['borderRadius'] as num?)?.toDouble() ?? 0,
+          label: data['label'] as String? ?? '',
+          labelColor: data['labelColor'] == null
+              ? null
+              : Color((data['labelColor'] as num).toInt()),
+          labelFontSize: (data['labelFontSize'] as num?)?.toDouble() ?? 14,
+          labelFontWeight: (data['labelFontWeight'] as num?)?.toInt() ?? 600,
+          labelTextAlign: data['labelTextAlign'] as String? ?? 'center',
+          startArrowhead: data['startArrowhead'] as bool? ?? false,
+          // Legacy arrows always drew a head at the end; preserve that.
+          endArrowhead:
+              data['endArrowhead'] as bool? ??
+              (shapeType == CanvasShapeType.arrow),
+          strokeColor: data['strokeColor'] == null
+              ? null
+              : Color((data['strokeColor'] as num).toInt()),
+          flipH: data['flipH'] as bool? ?? false,
+          flipV: data['flipV'] as bool? ?? false,
         );
       case 'text':
         return TextElement(
           id: id,
           z: z,
+          hidden: data['hidden'] as bool? ?? false,
+          locked: data['locked'] as bool? ?? false,
+          opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
           text: data['text'] as String? ?? '',
           center: Offset(
-            (data['cx'] as num).toDouble(),
-            (data['cy'] as num).toDouble(),
+            (data['cx'] as num?)?.toDouble() ?? 0,
+            (data['cy'] as num?)?.toDouble() ?? 0,
           ),
-          color: Color(data['color'] as int),
+          color: Color((data['color'] as num?)?.toInt() ?? 0xFF000000),
           width: (data['width'] as num?)?.toDouble() ?? 0,
           height: (data['height'] as num?)?.toDouble() ?? 0,
+          fontSize: (data['fontSize'] as num?)?.toDouble() ?? 16.0,
+          fontWeight: (data['fontWeight'] as num?)?.toInt() ?? 600,
+          fontFamily: data['fontFamily'] as String?,
+          textAlign: data['textAlign'] as String? ?? 'left',
+          lineHeight: (data['lineHeight'] as num?)?.toDouble() ?? 1.2,
+          rotation: (data['rotation'] as num?)?.toDouble() ?? 0,
+          // Legacy payloads truncated at two lines; new text is unlimited.
+          maxLines: (data['maxLines'] as num?)?.toInt() ?? 0,
+          autoSize: data['autoSize'] as bool? ?? false,
+          backgroundColor: data['backgroundColor'] == null
+              ? null
+              : Color((data['backgroundColor'] as num).toInt()),
+          padding: (data['padding'] as num?)?.toDouble() ?? 4.0,
         );
       case 'image':
         return ImageElement(
           id: id,
           z: z,
+          hidden: data['hidden'] as bool? ?? false,
+          locked: data['locked'] as bool? ?? false,
+          opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
           center: Offset(
             (data['cx'] as num).toDouble(),
             (data['cy'] as num).toDouble(),
@@ -71,6 +176,21 @@ sealed class CanvasElement {
           width: (data['width'] as num).toDouble(),
           height: (data['height'] as num).toDouble(),
           imageBase64: data['imageBase64'] as String? ?? '',
+          rotation: (data['rotation'] as num?)?.toDouble() ?? 0,
+          flipped: data['flipped'] as bool? ?? false,
+          flipV: data['flipV'] as bool? ?? false,
+          crop: _parseImageCrop(data),
+          borderRadius:
+              (data['borderRadius'] as num?)?.toDouble() ??
+              ImageElement.defaultBorderRadius,
+          borderWidth: (data['borderWidth'] as num?)?.toDouble() ?? 0,
+          borderColor: data['borderColor'] == null
+              ? ImageElement.defaultBorderColor
+              : Color((data['borderColor'] as num).toInt()),
+          brightness: (data['brightness'] as num?)?.toDouble() ?? 0,
+          contrast: (data['contrast'] as num?)?.toDouble() ?? 0,
+          saturation: (data['saturation'] as num?)?.toDouble() ?? 0,
+          isReference: data['isReference'] as bool? ?? false,
           imageUrl: ImageElement.optionalString(data['imageUrl']),
           aiPrompt: ImageElement.optionalString(data['aiPrompt']),
           generationId: ImageElement.optionalString(data['generationId']),
@@ -79,24 +199,131 @@ sealed class CanvasElement {
         return StickyNoteElement(
           id: id,
           z: z,
+          hidden: data['hidden'] as bool? ?? false,
+          locked: data['locked'] as bool? ?? false,
+          opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
           center: Offset(
             (data['cx'] as num).toDouble(),
             (data['cy'] as num).toDouble(),
           ),
-          width: (data['width'] as num?)?.toDouble() ??
+          width:
+              (data['width'] as num?)?.toDouble() ??
               (data['size'] as num?)?.toDouble() ??
               160,
-          height: (data['height'] as num?)?.toDouble() ??
+          height:
+              (data['height'] as num?)?.toDouble() ??
               (data['size'] as num?)?.toDouble() ??
               160,
           text: data['text'] as String? ?? '',
-          color: Color(data['color'] as int? ?? 0xFFFFF9A6),
+          color: Color((data['color'] as num?)?.toInt() ?? 0xFFFFF9A6),
           rotation: (data['rotation'] as num?)?.toDouble() ?? 0,
+          fontSize: (data['fontSize'] as num?)?.toDouble() ?? 14,
+          fontWeight: (data['fontWeight'] as num?)?.toInt() ?? 500,
+          textColor: Color((data['textColor'] as num?)?.toInt() ?? 0xFF1E293B),
+          textAlign: data['textAlign'] as String? ?? 'left',
+          autoSize: data['autoSize'] as bool? ?? false,
+          authorUid: data['authorUid'] as String?,
+        );
+      case 'frame':
+        return FrameElement(
+          id: id,
+          z: z,
+          hidden: data['hidden'] as bool? ?? false,
+          locked: data['locked'] as bool? ?? false,
+          opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          center: Offset(
+            (data['cx'] as num?)?.toDouble() ?? 0,
+            (data['cy'] as num?)?.toDouble() ?? 0,
+          ),
+          width: (data['width'] as num?)?.toDouble() ?? 480,
+          height: (data['height'] as num?)?.toDouble() ?? 320,
+          title: data['title'] as String? ?? '',
+          color: Color((data['color'] as num?)?.toInt() ?? 0xFF64748B),
+          cornerRadius: (data['cornerRadius'] as num?)?.toDouble() ?? 12,
+          clipContents: data['clipContents'] as bool? ?? false,
+        );
+      case 'table':
+        final rows = ((data['rows'] as num?)?.toInt() ?? 3).clamp(1, 20);
+        final columns = ((data['columns'] as num?)?.toInt() ?? 3).clamp(1, 20);
+        final rawCells = data['cells'] as List<dynamic>? ?? const [];
+        final parsedCells = <TableCellData>[];
+        for (final item in rawCells) {
+          if (item is Map) {
+            parsedCells.add(
+              TableCellData.fromMap(Map<String, dynamic>.from(item)),
+            );
+          } else {
+            parsedCells.add(const TableCellData());
+          }
+        }
+        return TableElement(
+          id: id,
+          z: z,
+          hidden: data['hidden'] as bool? ?? false,
+          locked: data['locked'] as bool? ?? false,
+          opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          center: Offset(
+            (data['cx'] as num?)?.toDouble() ?? 0,
+            (data['cy'] as num?)?.toDouble() ?? 0,
+          ),
+          width: ((data['width'] as num?)?.toDouble() ?? 360)
+              .clamp(TableElement.minCellWidth * columns, 4000.0)
+              .toDouble(),
+          height: ((data['height'] as num?)?.toDouble() ?? 180)
+              .clamp(TableElement.minCellHeight * rows, 4000.0)
+              .toDouble(),
+          rows: rows,
+          columns: columns,
+          cells: TableElement.normalizeCells(parsedCells, rows, columns),
+          headerRow: data['headerRow'] as bool? ?? true,
+          borderColor: Color(
+            (data['borderColor'] as num?)?.toInt() ?? 0xFFCBD5E1,
+          ),
+          borderWidth:
+              ((data['borderWidth'] as num?)?.toDouble() ?? 1.5).clamp(0.5, 12),
+          cellPadding:
+              ((data['cellPadding'] as num?)?.toDouble() ?? 8.0).clamp(2, 32),
+          fontSize:
+              ((data['fontSize'] as num?)?.toDouble() ?? 13.0).clamp(8, 64),
+          textColor: Color(
+            (data['textColor'] as num?)?.toInt() ?? 0xFF0F172A,
+          ),
+          backgroundColor: Color(
+            (data['backgroundColor'] as num?)?.toInt() ?? 0xFFFFFFFF,
+          ),
+          headerBackgroundColor: Color(
+            (data['headerBackgroundColor'] as num?)?.toInt() ?? 0xFFF1F5F9,
+          ),
+          columnFractions: (data['columnFractions'] as List<dynamic>?)
+                  ?.map((v) => (v as num).toDouble())
+                  .toList(growable: false) ??
+              const [],
+          rowFractions: (data['rowFractions'] as List<dynamic>?)
+                  ?.map((v) => (v as num).toDouble())
+                  .toList(growable: false) ??
+              const [],
+          rotation: (data['rotation'] as num?)?.toDouble() ?? 0,
+        );
+      case 'layer':
+        return LayerElement(
+          id: id,
+          z: z,
+          hidden: data['hidden'] as bool? ?? false,
+          locked: data['locked'] as bool? ?? false,
+          opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          name: data['name'] as String? ?? 'Layer',
+          blendMode: data['blendMode'] as String? ?? 'normal',
+          elementIds: (data['elementIds'] as List<dynamic>? ?? const [])
+              .map((value) => value as String)
+              .toList(growable: false),
         );
       case 'connector':
         return ConnectorElement(
           id: id,
           z: z,
+          hidden: data['hidden'] as bool? ?? false,
+          locked: data['locked'] as bool? ?? false,
+          opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
           startElementId: data['startElementId'] as String?,
           startPoint: Offset(
             (data['sx'] as num).toDouble(),
@@ -110,9 +337,22 @@ sealed class CanvasElement {
           ),
           endAnchor: data['endAnchor'] as String? ?? 'center',
           lineStyle: data['lineStyle'] as String? ?? 'straight',
-          color: Color(data['color'] as int? ?? 0xFF000000),
+          color: Color((data['color'] as num?)?.toInt() ?? 0xFF000000),
           strokeWidth: (data['strokeWidth'] as num?)?.toDouble() ?? 2.5,
-          hasArrowhead: data['hasArrowhead'] as bool? ?? true,
+          hasArrowhead:
+              data['endArrowhead'] as bool? ??
+              data['hasArrowhead'] as bool? ??
+              true,
+          startArrowhead: data['startArrowhead'] as bool? ?? false,
+          cornerRadius: (data['cornerRadius'] as num?)?.toDouble() ?? 0,
+          dashPattern: (data['dashPattern'] as List<dynamic>?)
+              ?.map((d) => (d as num).toDouble())
+              .toList(growable: false),
+          label: data['label'] as String? ?? '',
+          labelColor: data['labelColor'] == null
+              ? null
+              : Color((data['labelColor'] as num).toInt()),
+          labelFontSize: (data['labelFontSize'] as num?)?.toDouble() ?? 14,
         );
       default:
         throw ArgumentError('Unknown canvas element type: $type');
@@ -125,18 +365,38 @@ sealed class CanvasElement {
       other is CanvasElement &&
           runtimeType == other.runtimeType &&
           id == other.id &&
-          z == other.z;
+          z == other.z &&
+          hidden == other.hidden &&
+          locked == other.locked &&
+          opacity == other.opacity;
 
   @override
-  int get hashCode => id.hashCode ^ z.hashCode;
+  int get hashCode =>
+      id.hashCode ^
+      z.hashCode ^
+      hidden.hashCode ^
+      locked.hashCode ^
+      opacity.hashCode;
 }
 
 class StrokeElement extends CanvasElement {
   final List<Offset> points;
   final Color color;
   final double strokeWidth;
-  final double opacity;
   final String brushType;
+  final String brushId;
+  final List<double> pressures;
+
+  /// Stylus tilt per point in radians (0 = upright). Empty on mouse/touch and
+  /// on strokes recorded before tilt support.
+  final List<double> tilts;
+  final double spacing;
+  final int textureSeed;
+
+  /// Interior colour for a closed freehand shape. Null keeps the stroke
+  /// unfilled. The fill follows the stroke's closed outline and is painted
+  /// beneath the ink on canvas and in exports.
+  final Color? fillColor;
 
   const StrokeElement({
     required super.id,
@@ -144,22 +404,71 @@ class StrokeElement extends CanvasElement {
     this.points = const [],
     required this.color,
     this.strokeWidth = 5,
-    this.opacity = 1.0,
+    super.hidden,
+    super.locked,
+    super.opacity,
     this.brushType = 'solid',
-  });
+    String? brushId,
+    this.pressures = const [],
+    this.tilts = const [],
+    this.spacing = 0.15,
+    this.textureSeed = 0,
+    this.fillColor,
+  }) : brushId = brushId ?? brushType;
+
+  StrokeElement copyWith({
+    String? id,
+    int? z,
+    List<Offset>? points,
+    Color? color,
+    double? strokeWidth,
+    bool? hidden,
+    bool? locked,
+    double? opacity,
+    String? brushType,
+    String? brushId,
+    List<double>? pressures,
+    List<double>? tilts,
+    double? spacing,
+    int? textureSeed,
+    Color? fillColor,
+    bool clearFillColor = false,
+  }) => StrokeElement(
+    id: id ?? this.id,
+    z: z ?? this.z,
+    points: points ?? this.points,
+    color: color ?? this.color,
+    strokeWidth: strokeWidth ?? this.strokeWidth,
+    hidden: hidden ?? this.hidden,
+    locked: locked ?? this.locked,
+    opacity: opacity ?? this.opacity,
+    brushType: brushType ?? this.brushType,
+    brushId: brushId ?? this.brushId,
+    pressures: pressures ?? this.pressures,
+    tilts: tilts ?? this.tilts,
+    spacing: spacing ?? this.spacing,
+    textureSeed: textureSeed ?? this.textureSeed,
+    fillColor: clearFillColor ? null : (fillColor ?? this.fillColor),
+  );
 
   @override
   Map<String, dynamic> toMap() => {
-        'type': 'stroke',
-        'z': z,
-        'color': color.value,
-        'strokeWidth': strokeWidth,
-        'opacity': opacity,
-        'brushType': brushType,
-        'points': points
-            .map((p) => {'x': p.dx, 'y': p.dy})
-            .toList(),
-      };
+    'type': 'stroke',
+    'z': z,
+    'hidden': hidden,
+    'locked': locked,
+    'opacity': opacity,
+    'color': color.value,
+    'strokeWidth': strokeWidth,
+    'brushType': brushType,
+    'brushId': brushId,
+    'points': points.map((p) => {'x': p.dx, 'y': p.dy}).toList(growable: false),
+    if (pressures.isNotEmpty) 'pressures': pressures,
+    if (tilts.isNotEmpty) 'tilts': tilts,
+    'spacing': spacing,
+    'textureSeed': textureSeed,
+    if (fillColor != null) 'fillColor': fillColor!.value,
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -168,18 +477,27 @@ class StrokeElement extends CanvasElement {
           super == other &&
           color == other.color &&
           strokeWidth == other.strokeWidth &&
-          opacity == other.opacity &&
           brushType == other.brushType &&
-          _listEquals(points, other.points);
+          brushId == other.brushId &&
+          spacing == other.spacing &&
+          textureSeed == other.textureSeed &&
+          fillColor == other.fillColor &&
+          _listEquals(points, other.points) &&
+          _doubleListEquals(pressures, other.pressures) &&
+          _doubleListEquals(tilts, other.tilts);
 
   @override
   int get hashCode =>
       super.hashCode ^
       color.hashCode ^
       strokeWidth.hashCode ^
-      opacity.hashCode ^
       brushType.hashCode ^
-      Object.hashAll(points);
+      brushId.hashCode ^
+      spacing.hashCode ^
+      textureSeed.hashCode ^
+      fillColor.hashCode ^
+      Object.hashAll(points) ^
+      Object.hashAll(tilts);
 
   static bool _listEquals(List<Offset> a, List<Offset> b) {
     if (a.length != b.length) return false;
@@ -188,45 +506,153 @@ class StrokeElement extends CanvasElement {
     }
     return true;
   }
+
+  static bool _doubleListEquals(List<double> a, List<double> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if ((a[i] - b[i]).abs() > 1e-6) return false;
+    }
+    return true;
+  }
 }
 
 class ShapeElement extends CanvasElement {
   final CanvasShapeType shapeType;
   final Offset center;
+
+  /// Legacy single dimension. Kept in sync as `max(width, height)` for new
+  /// payloads; old payloads carry only this and derive width/height from the
+  /// per-type aspect ratio (see [shapeElementRect]).
   final double size;
+
+  /// Explicit box dimensions. 0 means "derive from [size] and the legacy
+  /// aspect". When either is set the pair is used as-is, so line/arrow can
+  /// store a flat segment (height 0) and rectangles can be non-uniform.
+  final double width;
+  final double height;
   final Color color;
   final double strokeWidth;
+
+  /// Opacity applied to the outline only; the fill keeps [color]'s alpha.
+  final double strokeOpacity;
+
+  /// Dash lengths in logical pixels (on, off, …). null/empty means solid.
+  final List<double>? dashPattern;
   final bool isFilled;
+
+  /// `none`, `solid`, `linear` or `radial`. The source of truth for fill;
+  /// [isFilled] is kept in sync for legacy payload readers.
+  final String fillMode;
+  final Color? fillColor;
+  final Color? gradientStart;
+  final Color? gradientEnd;
+
+  /// Gradient direction in degrees; 0 points left-to-right.
+  final double gradientAngle;
+
+  /// Resolves the fill mode while honoring legacy `isFilled` payloads.
+  String get effectiveFillMode =>
+      fillMode != 'none' ? fillMode : (isFilled ? 'solid' : 'none');
+
+  Color get resolvedFillColor => fillColor ?? color;
+  Color get resolvedGradientStart => gradientStart ?? resolvedFillColor;
+  Color get resolvedGradientEnd => gradientEnd ?? Colors.white;
+  Color get resolvedStrokeColor => strokeColor ?? color;
+
   final double rotation;
   final double borderRadius;
+
+  /// Centered label drawn inside the shape. Empty means no label.
+  final String label;
+  final Color? labelColor;
+  final double labelFontSize;
+  final int labelFontWeight;
+  final String labelTextAlign;
+
+  /// Arrowheads for line/arrow shapes. Legacy `arrow` payloads default
+  /// [endArrowhead] to true so they keep their head on read.
+  final bool startArrowhead;
+  final bool endArrowhead;
+
+  /// Optional outline color separate from [color] (F-10). When null, falls
+  /// back to [color] so legacy payloads render identically.
+  final Color? strokeColor;
+
+  /// Horizontal/vertical mirror applied around [center] (F-10).
+  final bool flipH;
+  final bool flipV;
 
   const ShapeElement({
     required super.id,
     required super.z,
+    super.hidden,
+    super.locked,
+    super.opacity,
     required this.shapeType,
     required this.center,
     required this.size,
     required this.color,
+    this.width = 0,
+    this.height = 0,
     this.strokeWidth = 2,
+    this.strokeOpacity = 1,
+    this.dashPattern,
     this.isFilled = false,
+    this.fillMode = 'none',
+    this.fillColor,
+    this.gradientStart,
+    this.gradientEnd,
+    this.gradientAngle = 0,
     this.rotation = 0,
     this.borderRadius = 0,
+    this.label = '',
+    this.labelColor,
+    this.labelFontSize = 14,
+    this.labelFontWeight = 600,
+    this.labelTextAlign = 'center',
+    this.startArrowhead = false,
+    this.endArrowhead = false,
+    this.strokeColor,
+    this.flipH = false,
+    this.flipV = false,
   });
 
   @override
   Map<String, dynamic> toMap() => {
-        'type': 'shape',
-        'z': z,
-        'shapeType': shapeType.name,
-        'cx': center.dx,
-        'cy': center.dy,
-        'size': size,
-        'color': color.value,
-        'strokeWidth': strokeWidth,
-        'isFilled': isFilled,
-        'rotation': rotation,
-        'borderRadius': borderRadius,
-      };
+    'type': 'shape',
+    'z': z,
+    'hidden': hidden,
+    'locked': locked,
+    'opacity': opacity,
+    'shapeType': shapeType.name,
+    'cx': center.dx,
+    'cy': center.dy,
+    'size': size,
+    'width': width,
+    'height': height,
+    'color': color.value,
+    if (strokeColor != null) 'strokeColor': strokeColor!.value,
+    'strokeWidth': strokeWidth,
+    'strokeOpacity': strokeOpacity,
+    if (dashPattern != null) 'dashPattern': dashPattern,
+    'isFilled': effectiveFillMode != 'none',
+    'fillMode': effectiveFillMode,
+    if (fillColor != null) 'fillColor': fillColor!.value,
+    if (gradientStart != null) 'gradientStart': gradientStart!.value,
+    if (gradientEnd != null) 'gradientEnd': gradientEnd!.value,
+    'gradientAngle': gradientAngle,
+    'rotation': rotation,
+    'borderRadius': borderRadius,
+    'label': label,
+    if (labelColor != null) 'labelColor': labelColor!.value,
+    'labelFontSize': labelFontSize,
+    'labelFontWeight': labelFontWeight,
+    'labelTextAlign': labelTextAlign,
+    'startArrowhead': startArrowhead,
+    'endArrowhead': endArrowhead,
+    if (flipH) 'flipH': flipH,
+    if (flipV) 'flipV': flipV,
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -236,11 +662,29 @@ class ShapeElement extends CanvasElement {
           shapeType == other.shapeType &&
           center == other.center &&
           size == other.size &&
+          width == other.width &&
+          height == other.height &&
           color == other.color &&
+          strokeColor == other.strokeColor &&
           strokeWidth == other.strokeWidth &&
-          isFilled == other.isFilled &&
+          strokeOpacity == other.strokeOpacity &&
+          _dashEquals(dashPattern, other.dashPattern) &&
+          effectiveFillMode == other.effectiveFillMode &&
+          fillColor == other.fillColor &&
+          gradientStart == other.gradientStart &&
+          gradientEnd == other.gradientEnd &&
+          gradientAngle == other.gradientAngle &&
           rotation == other.rotation &&
-          borderRadius == other.borderRadius;
+          borderRadius == other.borderRadius &&
+          label == other.label &&
+          labelColor == other.labelColor &&
+          labelFontSize == other.labelFontSize &&
+          labelFontWeight == other.labelFontWeight &&
+          labelTextAlign == other.labelTextAlign &&
+          startArrowhead == other.startArrowhead &&
+          endArrowhead == other.endArrowhead &&
+          flipH == other.flipH &&
+          flipV == other.flipV;
 
   @override
   int get hashCode =>
@@ -248,43 +692,117 @@ class ShapeElement extends CanvasElement {
       shapeType.hashCode ^
       center.hashCode ^
       size.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
       color.hashCode ^
+      strokeColor.hashCode ^
       strokeWidth.hashCode ^
-      isFilled.hashCode ^
+      strokeOpacity.hashCode ^
+      Object.hashAll(dashPattern ?? const []) ^
+      effectiveFillMode.hashCode ^
+      fillMode.hashCode ^
+      fillColor.hashCode ^
+      gradientStart.hashCode ^
+      gradientEnd.hashCode ^
+      gradientAngle.hashCode ^
       rotation.hashCode ^
-      borderRadius.hashCode;
+      borderRadius.hashCode ^
+      label.hashCode ^
+      labelColor.hashCode ^
+      labelFontSize.hashCode ^
+      labelFontWeight.hashCode ^
+      labelTextAlign.hashCode ^
+      startArrowhead.hashCode ^
+      endArrowhead.hashCode ^
+      flipH.hashCode ^
+      flipV.hashCode;
+
+  static bool _dashEquals(List<double>? a, List<double>? b) {
+    if (a == null || b == null) return a == null && b == null;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if ((a[i] - b[i]).abs() > 1e-6) return false;
+    }
+    return true;
+  }
 }
 
 class TextElement extends CanvasElement {
   final String text;
+
+  /// Top-left corner of the text box.
+  ///
+  /// The field has always been called `center`, but the painter draws from it
+  /// as the top-left origin. The name is kept so existing payloads keep
+  /// loading; use [textElementRect] for the actual drawn box.
   final Offset center;
   final Color color;
+
   // Measured layout bounds, persisted so selection/erase overlays match
   // the drawn text; 0 means unknown (fall back to measuring).
   final double width;
   final double height;
 
+  final double fontSize;
+  final int fontWeight;
+  final String? fontFamily;
+  final String textAlign;
+  final double lineHeight;
+  final double rotation;
+
+  /// 0 means unlimited lines.
+  final int maxLines;
+  final bool autoSize;
+  final Color? backgroundColor;
+  final double padding;
+
   const TextElement({
     required super.id,
     required super.z,
+    super.hidden,
+    super.locked,
+    super.opacity,
     this.text = '',
     required this.center,
     required this.color,
     this.width = 0,
     this.height = 0,
+    this.fontSize = 16.0,
+    this.fontWeight = 600,
+    this.fontFamily,
+    this.textAlign = 'left',
+    this.lineHeight = 1.2,
+    this.rotation = 0,
+    this.maxLines = 0,
+    this.autoSize = false,
+    this.backgroundColor,
+    this.padding = 4.0,
   });
 
   @override
   Map<String, dynamic> toMap() => {
-        'type': 'text',
-        'z': z,
-        'text': text,
-        'cx': center.dx,
-        'cy': center.dy,
-        'color': color.value,
-        if (width > 0) 'width': width,
-        if (height > 0) 'height': height,
-      };
+    'type': 'text',
+    'z': z,
+    'hidden': hidden,
+    'locked': locked,
+    'opacity': opacity,
+    'text': text,
+    'cx': center.dx,
+    'cy': center.dy,
+    'color': color.value,
+    if (width > 0) 'width': width,
+    if (height > 0) 'height': height,
+    'fontSize': fontSize,
+    'fontWeight': fontWeight,
+    if (fontFamily != null) 'fontFamily': fontFamily,
+    'textAlign': textAlign,
+    'lineHeight': lineHeight,
+    'rotation': rotation,
+    'maxLines': maxLines,
+    'autoSize': autoSize,
+    if (backgroundColor != null) 'backgroundColor': backgroundColor!.value,
+    'padding': padding,
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -295,7 +813,17 @@ class TextElement extends CanvasElement {
           center == other.center &&
           color == other.color &&
           width == other.width &&
-          height == other.height;
+          height == other.height &&
+          fontSize == other.fontSize &&
+          fontWeight == other.fontWeight &&
+          fontFamily == other.fontFamily &&
+          textAlign == other.textAlign &&
+          lineHeight == other.lineHeight &&
+          rotation == other.rotation &&
+          maxLines == other.maxLines &&
+          autoSize == other.autoSize &&
+          backgroundColor == other.backgroundColor &&
+          padding == other.padding;
 
   @override
   int get hashCode =>
@@ -304,7 +832,17 @@ class TextElement extends CanvasElement {
       center.hashCode ^
       color.hashCode ^
       width.hashCode ^
-      height.hashCode;
+      height.hashCode ^
+      fontSize.hashCode ^
+      fontWeight.hashCode ^
+      fontFamily.hashCode ^
+      textAlign.hashCode ^
+      lineHeight.hashCode ^
+      rotation.hashCode ^
+      maxLines.hashCode ^
+      autoSize.hashCode ^
+      backgroundColor.hashCode ^
+      padding.hashCode;
 }
 
 class ImageElement extends CanvasElement {
@@ -312,6 +850,31 @@ class ImageElement extends CanvasElement {
   final double width;
   final double height;
   final String imageBase64;
+
+  /// Clockwise rotation in radians, applied around [center].
+  final double rotation;
+
+  /// Horizontal mirror, applied in the image's own rotated frame.
+  final bool flipped;
+
+  /// Vertical mirror, applied in the image's own rotated frame.
+  final bool flipV;
+
+  /// Visible part of the source image in normalized 0–1 coordinates. The
+  /// original pixels are never modified, so crops can be widened again.
+  final Rect crop;
+
+  final double borderRadius;
+  final double borderWidth;
+  final Color borderColor;
+
+  /// Colour adjustments in -1…1; 0 leaves the image untouched.
+  final double brightness;
+  final double contrast;
+  final double saturation;
+
+  /// Tracing reference: drawn faded and locked when enabled.
+  final bool isReference;
 
   /// Optional: full-size image URL (AI images). When set, the image is loaded
   /// from this URL and [imageBase64] holds only a small thumbnail, which older
@@ -324,23 +887,48 @@ class ImageElement extends CanvasElement {
   /// Optional: server id of the AI generation.
   final String? generationId;
 
+  static const Rect fullCrop = Rect.fromLTRB(0, 0, 1, 1);
+  static const double defaultBorderRadius = 8;
+  static const Color defaultBorderColor = Color(0xFF0F172A);
+  static const double referenceOpacity = 0.4;
+
   const ImageElement({
     required super.id,
     required super.z,
+    super.hidden,
+    super.locked,
+    super.opacity,
     required this.center,
     this.width = 100,
     this.height = 100,
     this.imageBase64 = '',
+    this.rotation = 0,
+    this.flipped = false,
+    this.flipV = false,
+    this.crop = fullCrop,
+    this.borderRadius = defaultBorderRadius,
+    this.borderWidth = 0,
+    this.borderColor = defaultBorderColor,
+    this.brightness = 0,
+    this.contrast = 0,
+    this.saturation = 0,
+    this.isReference = false,
     this.imageUrl,
     this.aiPrompt,
     this.generationId,
   });
 
+  bool get hasFilters => brightness != 0 || contrast != 0 || saturation != 0;
+
   /// True when this image was produced by AI and is stored by URL.
   bool get isAiImage => imageUrl != null;
 
   /// Map keys of the optional AI fields, in the order they are written.
-  static const List<String> aiFieldKeys = ['imageUrl', 'aiPrompt', 'generationId'];
+  static const List<String> aiFieldKeys = [
+    'imageUrl',
+    'aiPrompt',
+    'generationId',
+  ];
 
   /// Reads an optional string field. Anything that is not a non-empty string
   /// (missing, null, wrong type) is treated as "not set".
@@ -349,21 +937,89 @@ class ImageElement extends CanvasElement {
     return value.trim().isEmpty ? null : value;
   }
 
+  ImageElement copyWith({
+    int? z,
+    bool? hidden,
+    bool? locked,
+    double? opacity,
+    Offset? center,
+    double? width,
+    double? height,
+    String? imageBase64,
+    double? rotation,
+    bool? flipped,
+    bool? flipV,
+    Rect? crop,
+    double? borderRadius,
+    double? borderWidth,
+    Color? borderColor,
+    double? brightness,
+    double? contrast,
+    double? saturation,
+    bool? isReference,
+    String? imageUrl,
+    String? aiPrompt,
+    String? generationId,
+  }) {
+    return ImageElement(
+      id: id,
+      z: z ?? this.z,
+      hidden: hidden ?? this.hidden,
+      locked: locked ?? this.locked,
+      opacity: opacity ?? this.opacity,
+      center: center ?? this.center,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      imageBase64: imageBase64 ?? this.imageBase64,
+      rotation: rotation ?? this.rotation,
+      flipped: flipped ?? this.flipped,
+      flipV: flipV ?? this.flipV,
+      crop: crop ?? this.crop,
+      borderRadius: borderRadius ?? this.borderRadius,
+      borderWidth: borderWidth ?? this.borderWidth,
+      borderColor: borderColor ?? this.borderColor,
+      brightness: brightness ?? this.brightness,
+      contrast: contrast ?? this.contrast,
+      saturation: saturation ?? this.saturation,
+      isReference: isReference ?? this.isReference,
+      imageUrl: imageUrl ?? this.imageUrl,
+      aiPrompt: aiPrompt ?? this.aiPrompt,
+      generationId: generationId ?? this.generationId,
+    );
+  }
+
   @override
   Map<String, dynamic> toMap() => {
-        'type': 'image',
-        'z': z,
-        'cx': center.dx,
-        'cy': center.dy,
-        'width': width,
-        'height': height,
-        'imageBase64': imageBase64,
-        // Written only when set, so ordinary images serialise exactly as
-        // they did before these fields existed.
-        if (imageUrl != null) 'imageUrl': imageUrl,
-        if (aiPrompt != null) 'aiPrompt': aiPrompt,
-        if (generationId != null) 'generationId': generationId,
-      };
+    'type': 'image',
+    'z': z,
+    'hidden': hidden,
+    'locked': locked,
+    'opacity': opacity,
+    'cx': center.dx,
+    'cy': center.dy,
+    'width': width,
+    'height': height,
+    'imageBase64': imageBase64,
+    'rotation': rotation,
+    'flipped': flipped,
+    'flipV': flipV,
+    'cropL': crop.left,
+    'cropT': crop.top,
+    'cropR': crop.right,
+    'cropB': crop.bottom,
+    'borderRadius': borderRadius,
+    'borderWidth': borderWidth,
+    'borderColor': borderColor.toARGB32(),
+    'brightness': brightness,
+    'contrast': contrast,
+    'saturation': saturation,
+    'isReference': isReference,
+    // Written only when set, so ordinary images serialise exactly as
+    // they did before these fields existed.
+    if (imageUrl != null) 'imageUrl': imageUrl,
+    if (aiPrompt != null) 'aiPrompt': aiPrompt,
+    if (generationId != null) 'generationId': generationId,
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -374,6 +1030,17 @@ class ImageElement extends CanvasElement {
           width == other.width &&
           height == other.height &&
           imageBase64 == other.imageBase64 &&
+          rotation == other.rotation &&
+          flipped == other.flipped &&
+          flipV == other.flipV &&
+          crop == other.crop &&
+          borderRadius == other.borderRadius &&
+          borderWidth == other.borderWidth &&
+          borderColor == other.borderColor &&
+          brightness == other.brightness &&
+          contrast == other.contrast &&
+          saturation == other.saturation &&
+          isReference == other.isReference &&
           imageUrl == other.imageUrl &&
           aiPrompt == other.aiPrompt &&
           generationId == other.generationId;
@@ -385,9 +1052,38 @@ class ImageElement extends CanvasElement {
       width.hashCode ^
       height.hashCode ^
       imageBase64.hashCode ^
-      imageUrl.hashCode ^
-      aiPrompt.hashCode ^
-      generationId.hashCode;
+      rotation.hashCode ^
+      flipped.hashCode ^
+      Object.hash(
+        flipV,
+        crop,
+        borderRadius,
+        borderWidth,
+        borderColor,
+        brightness,
+        contrast,
+        saturation,
+        isReference,
+        imageUrl,
+        aiPrompt,
+        generationId,
+      );
+}
+
+/// Reads a normalized crop, falling back to the full image for legacy or
+/// malformed payloads.
+Rect _parseImageCrop(Map<String, dynamic> data) {
+  double read(String key, double fallback) {
+    final value = (data[key] as num?)?.toDouble();
+    return value != null && value.isFinite ? value : fallback;
+  }
+
+  final l = read('cropL', 0).clamp(0.0, 1.0);
+  final t = read('cropT', 0).clamp(0.0, 1.0);
+  final r = read('cropR', 1).clamp(0.0, 1.0);
+  final b = read('cropB', 1).clamp(0.0, 1.0);
+  if (r - l <= 0 || b - t <= 0) return ImageElement.fullCrop;
+  return Rect.fromLTRB(l, t, r, b);
 }
 
 class StickyNoteElement extends CanvasElement {
@@ -397,30 +1093,91 @@ class StickyNoteElement extends CanvasElement {
   final String text;
   final Color color;
   final double rotation;
+  final double fontSize;
+  final int fontWeight;
+  final Color textColor;
+  final String textAlign;
+  final bool autoSize;
+  final String? authorUid;
 
   const StickyNoteElement({
     required super.id,
     required super.z,
+    super.hidden,
+    super.locked,
+    super.opacity,
     required this.center,
     this.width = 160,
     this.height = 160,
     this.text = '',
     this.color = const Color(0xFFFFF9A6),
     this.rotation = 0,
+    this.fontSize = 14,
+    this.fontWeight = 500,
+    this.textColor = const Color(0xFF1E293B),
+    this.textAlign = 'left',
+    this.autoSize = false,
+    this.authorUid,
   });
+
+  StickyNoteElement copyWith({
+    int? z,
+    bool? hidden,
+    bool? locked,
+    double? opacity,
+    Offset? center,
+    double? width,
+    double? height,
+    String? text,
+    Color? color,
+    double? rotation,
+    double? fontSize,
+    int? fontWeight,
+    Color? textColor,
+    String? textAlign,
+    bool? autoSize,
+    String? authorUid,
+  }) => StickyNoteElement(
+    id: id,
+    z: z ?? this.z,
+    hidden: hidden ?? this.hidden,
+    locked: locked ?? this.locked,
+    opacity: opacity ?? this.opacity,
+    center: center ?? this.center,
+    width: width ?? this.width,
+    height: height ?? this.height,
+    text: text ?? this.text,
+    color: color ?? this.color,
+    rotation: rotation ?? this.rotation,
+    fontSize: fontSize ?? this.fontSize,
+    fontWeight: fontWeight ?? this.fontWeight,
+    textColor: textColor ?? this.textColor,
+    textAlign: textAlign ?? this.textAlign,
+    autoSize: autoSize ?? this.autoSize,
+    authorUid: authorUid ?? this.authorUid,
+  );
 
   @override
   Map<String, dynamic> toMap() => {
-        'type': 'sticky_note',
-        'z': z,
-        'cx': center.dx,
-        'cy': center.dy,
-        'width': width,
-        'height': height,
-        'text': text,
-        'color': color.value,
-        'rotation': rotation,
-      };
+    'type': 'sticky_note',
+    'z': z,
+    'hidden': hidden,
+    'locked': locked,
+    'opacity': opacity,
+    'cx': center.dx,
+    'cy': center.dy,
+    'width': width,
+    'height': height,
+    'text': text,
+    'color': color.toARGB32(),
+    'rotation': rotation,
+    'fontSize': fontSize,
+    'fontWeight': fontWeight,
+    'textColor': textColor.toARGB32(),
+    'textAlign': textAlign,
+    'autoSize': autoSize,
+    if (authorUid != null) 'authorUid': authorUid,
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -432,17 +1189,510 @@ class StickyNoteElement extends CanvasElement {
           height == other.height &&
           text == other.text &&
           color == other.color &&
-          rotation == other.rotation;
+          rotation == other.rotation &&
+          fontSize == other.fontSize &&
+          fontWeight == other.fontWeight &&
+          textColor == other.textColor &&
+          textAlign == other.textAlign &&
+          autoSize == other.autoSize &&
+          authorUid == other.authorUid;
+
+  @override
+  int get hashCode => Object.hash(
+    super.hashCode,
+    center,
+    width,
+    height,
+    text,
+    color,
+    rotation,
+    fontSize,
+    fontWeight,
+    textColor,
+    textAlign,
+    autoSize,
+    authorUid,
+  );
+}
+
+/// A titled region that groups other elements visually.
+///
+/// V1 membership is geometric: any element whose bounds sit fully inside the
+/// frame belongs to it, so no per-element parent field or migration is needed.
+/// Moving a frame moves its contents in one transaction. Frames are ordinary
+/// elements (CRDT type `frame`) with the lowest `z`, so contents stay above the
+/// background.
+class FrameElement extends CanvasElement {
+  final Offset center;
+  final double width;
+  final double height;
+  final String title;
+  final Color color;
+  final double cornerRadius;
+  final bool clipContents;
+
+  static const double defaultWidth = 480;
+  static const double defaultHeight = 320;
+  static const double titleBarHeight = 32;
+
+  const FrameElement({
+    required super.id,
+    required super.z,
+    super.hidden,
+    super.locked,
+    super.opacity,
+    required this.center,
+    this.width = defaultWidth,
+    this.height = defaultHeight,
+    this.title = '',
+    this.color = const Color(0xFF64748B),
+    this.cornerRadius = 12,
+    this.clipContents = false,
+  });
+
+  FrameElement copyWith({
+    int? z,
+    bool? hidden,
+    bool? locked,
+    double? opacity,
+    Offset? center,
+    double? width,
+    double? height,
+    String? title,
+    Color? color,
+    double? cornerRadius,
+    bool? clipContents,
+  }) => FrameElement(
+    id: id,
+    z: z ?? this.z,
+    hidden: hidden ?? this.hidden,
+    locked: locked ?? this.locked,
+    opacity: opacity ?? this.opacity,
+    center: center ?? this.center,
+    width: width ?? this.width,
+    height: height ?? this.height,
+    title: title ?? this.title,
+    color: color ?? this.color,
+    cornerRadius: cornerRadius ?? this.cornerRadius,
+    clipContents: clipContents ?? this.clipContents,
+  );
+
+  @override
+  Map<String, dynamic> toMap() => {
+    'type': 'frame',
+    'z': z,
+    'hidden': hidden,
+    'locked': locked,
+    'opacity': opacity,
+    'cx': center.dx,
+    'cy': center.dy,
+    'width': width,
+    'height': height,
+    'title': title,
+    'color': color.toARGB32(),
+    'cornerRadius': cornerRadius,
+    if (clipContents) 'clipContents': clipContents,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FrameElement &&
+          super == other &&
+          center == other.center &&
+          width == other.width &&
+          height == other.height &&
+          title == other.title &&
+          color == other.color &&
+          cornerRadius == other.cornerRadius &&
+          clipContents == other.clipContents;
+
+  @override
+  int get hashCode => Object.hash(
+    super.hashCode,
+    center,
+    width,
+    height,
+    title,
+    color,
+    cornerRadius,
+    clipContents,
+  );
+}
+
+/// Cell payload inside a [TableElement] (F-16).
+class TableCellData {
+  final String text;
+  final Color? backgroundColor;
+  final Color? textColor;
+  final int? fontWeight;
+  final String textAlign;
+
+  const TableCellData({
+    this.text = '',
+    this.backgroundColor,
+    this.textColor,
+    this.fontWeight,
+    this.textAlign = 'left',
+  });
+
+  TableCellData copyWith({
+    String? text,
+    Color? backgroundColor,
+    bool clearBackgroundColor = false,
+    Color? textColor,
+    bool clearTextColor = false,
+    int? fontWeight,
+    bool clearFontWeight = false,
+    String? textAlign,
+  }) => TableCellData(
+    text: text ?? this.text,
+    backgroundColor: clearBackgroundColor
+        ? null
+        : (backgroundColor ?? this.backgroundColor),
+    textColor: clearTextColor ? null : (textColor ?? this.textColor),
+    fontWeight: clearFontWeight ? null : (fontWeight ?? this.fontWeight),
+    textAlign: textAlign ?? this.textAlign,
+  );
+
+  Map<String, dynamic> toMap() => {
+    'text': text,
+    if (backgroundColor != null)
+      'backgroundColor': backgroundColor!.toARGB32(),
+    if (textColor != null) 'textColor': textColor!.toARGB32(),
+    if (fontWeight != null) 'fontWeight': fontWeight,
+    if (textAlign != 'left') 'textAlign': textAlign,
+  };
+
+  static TableCellData fromMap(Map<String, dynamic> map) {
+    final align = map['textAlign'] as String? ?? 'left';
+    return TableCellData(
+      text: map['text'] as String? ?? '',
+      backgroundColor: map['backgroundColor'] == null
+          ? null
+          : Color((map['backgroundColor'] as num).toInt()),
+      textColor: map['textColor'] == null
+          ? null
+          : Color((map['textColor'] as num).toInt()),
+      fontWeight: (map['fontWeight'] as num?)?.toInt(),
+      textAlign: const {'left', 'center', 'right'}.contains(align)
+          ? align
+          : 'left',
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TableCellData &&
+          text == other.text &&
+          backgroundColor == other.backgroundColor &&
+          textColor == other.textColor &&
+          fontWeight == other.fontWeight &&
+          textAlign == other.textAlign;
+
+  @override
+  int get hashCode =>
+      Object.hash(text, backgroundColor, textColor, fontWeight, textAlign);
+}
+
+/// A structured grid of editable cells with optional header row and resizable
+/// column/row fractions (F-16).
+class TableElement extends CanvasElement {
+  final Offset center;
+  final double width;
+  final double height;
+  final int rows;
+  final int columns;
+  final List<TableCellData> cells;
+  final bool headerRow;
+  final Color borderColor;
+  final double borderWidth;
+  final double cellPadding;
+  final double fontSize;
+  final Color textColor;
+  final Color backgroundColor;
+  final Color headerBackgroundColor;
+  final List<double> columnFractions;
+  final List<double> rowFractions;
+  final double rotation;
+
+  static const int maxRows = 20;
+  static const int maxColumns = 20;
+  static const int maxTotalCells = 200;
+  static const double minCellWidth = 28;
+  static const double minCellHeight = 20;
+
+  const TableElement({
+    required super.id,
+    required super.z,
+    super.hidden,
+    super.locked,
+    super.opacity,
+    required this.center,
+    this.width = 360,
+    this.height = 180,
+    this.rows = 3,
+    this.columns = 3,
+    this.cells = const [],
+    this.headerRow = true,
+    this.borderColor = const Color(0xFFCBD5E1),
+    this.borderWidth = 1.5,
+    this.cellPadding = 8.0,
+    this.fontSize = 13.0,
+    this.textColor = const Color(0xFF0F172A),
+    this.backgroundColor = const Color(0xFFFFFFFF),
+    this.headerBackgroundColor = const Color(0xFFF1F5F9),
+    this.columnFractions = const [],
+    this.rowFractions = const [],
+    this.rotation = 0,
+  });
+
+  static List<TableCellData> normalizeCells(
+    List<TableCellData> raw,
+    int rows,
+    int columns,
+  ) {
+    final target = (rows * columns).clamp(1, maxTotalCells);
+    if (raw.length == target) return List<TableCellData>.unmodifiable(raw);
+    if (raw.length > target) {
+      return List<TableCellData>.unmodifiable(raw.sublist(0, target));
+    }
+    return List<TableCellData>.unmodifiable([
+      ...raw,
+      for (var i = raw.length; i < target; i++) const TableCellData(),
+    ]);
+  }
+
+  static List<double> normalizeFractions(List<double> raw, int count) {
+    if (count <= 0) return const [];
+    if (raw.length != count) {
+      final uniform = 1.0 / count;
+      return List<double>.filled(count, uniform);
+    }
+    var sum = 0.0;
+    final clamped = <double>[];
+    for (final v in raw) {
+      final safe = (v.isFinite && v > 0.02) ? v : 0.02;
+      clamped.add(safe);
+      sum += safe;
+    }
+    if (sum <= 0) {
+      return List<double>.filled(count, 1.0 / count);
+    }
+    return clamped.map((v) => v / sum).toList(growable: false);
+  }
+
+  List<double> get resolvedColumnFractions =>
+      normalizeFractions(columnFractions, columns);
+
+  List<double> get resolvedRowFractions =>
+      normalizeFractions(rowFractions, rows);
+
+  TableCellData cellAt(int row, int col) {
+    if (row < 0 || row >= rows || col < 0 || col >= columns) {
+      return const TableCellData();
+    }
+    final idx = row * columns + col;
+    if (idx < 0 || idx >= cells.length) return const TableCellData();
+    return cells[idx];
+  }
+
+  TableElement copyWith({
+    int? z,
+    bool? hidden,
+    bool? locked,
+    double? opacity,
+    Offset? center,
+    double? width,
+    double? height,
+    int? rows,
+    int? columns,
+    List<TableCellData>? cells,
+    bool? headerRow,
+    Color? borderColor,
+    double? borderWidth,
+    double? cellPadding,
+    double? fontSize,
+    Color? textColor,
+    Color? backgroundColor,
+    Color? headerBackgroundColor,
+    List<double>? columnFractions,
+    List<double>? rowFractions,
+    double? rotation,
+  }) {
+    final nextRows = rows ?? this.rows;
+    final nextCols = columns ?? this.columns;
+    return TableElement(
+      id: id,
+      z: z ?? this.z,
+      hidden: hidden ?? this.hidden,
+      locked: locked ?? this.locked,
+      opacity: opacity ?? this.opacity,
+      center: center ?? this.center,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      rows: nextRows,
+      columns: nextCols,
+      cells: normalizeCells(cells ?? this.cells, nextRows, nextCols),
+      headerRow: headerRow ?? this.headerRow,
+      borderColor: borderColor ?? this.borderColor,
+      borderWidth: borderWidth ?? this.borderWidth,
+      cellPadding: cellPadding ?? this.cellPadding,
+      fontSize: fontSize ?? this.fontSize,
+      textColor: textColor ?? this.textColor,
+      backgroundColor: backgroundColor ?? this.backgroundColor,
+      headerBackgroundColor:
+          headerBackgroundColor ?? this.headerBackgroundColor,
+      columnFractions: columnFractions ?? this.columnFractions,
+      rowFractions: rowFractions ?? this.rowFractions,
+      rotation: rotation ?? this.rotation,
+    );
+  }
+
+  @override
+  Map<String, dynamic> toMap() => {
+    'type': 'table',
+    'z': z,
+    'hidden': hidden,
+    'locked': locked,
+    'opacity': opacity,
+    'cx': center.dx,
+    'cy': center.dy,
+    'width': width,
+    'height': height,
+    'rows': rows,
+    'columns': columns,
+    'cells': normalizeCells(cells, rows, columns)
+        .map((c) => c.toMap())
+        .toList(growable: false),
+    'headerRow': headerRow,
+    'borderColor': borderColor.toARGB32(),
+    'borderWidth': borderWidth,
+    'cellPadding': cellPadding,
+    'fontSize': fontSize,
+    'textColor': textColor.toARGB32(),
+    'backgroundColor': backgroundColor.toARGB32(),
+    'headerBackgroundColor': headerBackgroundColor.toARGB32(),
+    if (columnFractions.isNotEmpty) 'columnFractions': columnFractions,
+    if (rowFractions.isNotEmpty) 'rowFractions': rowFractions,
+    'rotation': rotation,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TableElement &&
+          super == other &&
+          center == other.center &&
+          width == other.width &&
+          height == other.height &&
+          rows == other.rows &&
+          columns == other.columns &&
+          headerRow == other.headerRow &&
+          borderColor == other.borderColor &&
+          borderWidth == other.borderWidth &&
+          cellPadding == other.cellPadding &&
+          fontSize == other.fontSize &&
+          textColor == other.textColor &&
+          backgroundColor == other.backgroundColor &&
+          headerBackgroundColor == other.headerBackgroundColor &&
+          rotation == other.rotation &&
+          _cellsEqual(cells, other.cells) &&
+          _fractionsEqual(
+            resolvedColumnFractions,
+            other.resolvedColumnFractions,
+          ) &&
+          _fractionsEqual(resolvedRowFractions, other.resolvedRowFractions);
+
+  static bool _cellsEqual(List<TableCellData> a, List<TableCellData> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  static bool _fractionsEqual(List<double> a, List<double> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if ((a[i] - b[i]).abs() > 1e-6) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    super.hashCode,
+    center,
+    width,
+    height,
+    rows,
+    columns,
+    headerRow,
+    borderColor,
+    borderWidth,
+    cellPadding,
+    fontSize,
+    textColor,
+    backgroundColor,
+    headerBackgroundColor,
+    rotation,
+    Object.hashAll(cells),
+  );
+}
+
+/// A named group of elements. Layers are organisational: painting still uses
+/// each element's own `z`, and membership is stored as element ids on the
+/// layer so element payloads stay unchanged.
+class LayerElement extends CanvasElement {
+  final String name;
+  final List<String> elementIds;
+
+  /// `normal`, `multiply`, `screen`, `overlay`, `darken` or `lighten`.
+  final String blendMode;
+
+  const LayerElement({
+    required super.id,
+    required super.z,
+    super.hidden,
+    super.locked,
+    super.opacity,
+    this.name = 'Layer',
+    this.elementIds = const [],
+    this.blendMode = 'normal',
+  });
+
+  @override
+  Map<String, dynamic> toMap() => {
+    'type': 'layer',
+    'z': z,
+    'hidden': hidden,
+    'locked': locked,
+    'opacity': opacity,
+    'name': name,
+    'elementIds': elementIds,
+    'blendMode': blendMode,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LayerElement &&
+          super == other &&
+          name == other.name &&
+          blendMode == other.blendMode &&
+          elementIds.length == other.elementIds.length &&
+          elementIds.indexed.every(
+            (entry) => other.elementIds[entry.$1] == entry.$2,
+          );
 
   @override
   int get hashCode =>
       super.hashCode ^
-      center.hashCode ^
-      width.hashCode ^
-      height.hashCode ^
-      text.hashCode ^
-      color.hashCode ^
-      rotation.hashCode;
+      name.hashCode ^
+      blendMode.hashCode ^
+      Object.hashAll(elementIds);
 }
 
 class ConnectorElement extends CanvasElement {
@@ -456,10 +1706,19 @@ class ConnectorElement extends CanvasElement {
   final Color color;
   final double strokeWidth;
   final bool hasArrowhead;
+  final bool startArrowhead;
+  final double cornerRadius;
+  final List<double>? dashPattern;
+  final String label;
+  final Color? labelColor;
+  final double labelFontSize;
 
   const ConnectorElement({
     required super.id,
     required super.z,
+    super.hidden,
+    super.locked,
+    super.opacity,
     this.startElementId,
     required this.startPoint,
     this.startAnchor = 'center',
@@ -470,25 +1729,44 @@ class ConnectorElement extends CanvasElement {
     this.color = const Color(0xFF000000),
     this.strokeWidth = 2.5,
     this.hasArrowhead = true,
+    this.startArrowhead = false,
+    this.cornerRadius = 0,
+    this.dashPattern,
+    this.label = '',
+    this.labelColor,
+    this.labelFontSize = 14,
   });
+
+  /// `hasArrowhead` is the legacy end-arrow flag; new code reads [endArrowhead].
+  bool get endArrowhead => hasArrowhead;
 
   @override
   Map<String, dynamic> toMap() => {
-        'type': 'connector',
-        'z': z,
-        if (startElementId != null) 'startElementId': startElementId,
-        'sx': startPoint.dx,
-        'sy': startPoint.dy,
-        'startAnchor': startAnchor,
-        if (endElementId != null) 'endElementId': endElementId,
-        'ex': endPoint.dx,
-        'ey': endPoint.dy,
-        'endAnchor': endAnchor,
-        'lineStyle': lineStyle,
-        'color': color.value,
-        'strokeWidth': strokeWidth,
-        'hasArrowhead': hasArrowhead,
-      };
+    'type': 'connector',
+    'z': z,
+    'hidden': hidden,
+    'locked': locked,
+    'opacity': opacity,
+    if (startElementId != null) 'startElementId': startElementId,
+    'sx': startPoint.dx,
+    'sy': startPoint.dy,
+    'startAnchor': startAnchor,
+    if (endElementId != null) 'endElementId': endElementId,
+    'ex': endPoint.dx,
+    'ey': endPoint.dy,
+    'endAnchor': endAnchor,
+    'lineStyle': lineStyle,
+    'color': color.value,
+    'strokeWidth': strokeWidth,
+    'hasArrowhead': hasArrowhead,
+    'endArrowhead': hasArrowhead,
+    'startArrowhead': startArrowhead,
+    'cornerRadius': cornerRadius,
+    if (dashPattern != null) 'dashPattern': dashPattern,
+    'label': label,
+    if (labelColor != null) 'labelColor': labelColor!.value,
+    'labelFontSize': labelFontSize,
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -504,7 +1782,13 @@ class ConnectorElement extends CanvasElement {
           lineStyle == other.lineStyle &&
           color == other.color &&
           strokeWidth == other.strokeWidth &&
-          hasArrowhead == other.hasArrowhead;
+          hasArrowhead == other.hasArrowhead &&
+          startArrowhead == other.startArrowhead &&
+          (cornerRadius - other.cornerRadius).abs() < 1e-6 &&
+          _dashEquals(dashPattern, other.dashPattern) &&
+          label == other.label &&
+          labelColor == other.labelColor &&
+          (labelFontSize - other.labelFontSize).abs() < 1e-6;
 
   @override
   int get hashCode =>
@@ -518,5 +1802,20 @@ class ConnectorElement extends CanvasElement {
       lineStyle.hashCode ^
       color.hashCode ^
       strokeWidth.hashCode ^
-      hasArrowhead.hashCode;
+      hasArrowhead.hashCode ^
+      startArrowhead.hashCode ^
+      cornerRadius.hashCode ^
+      Object.hashAll(dashPattern ?? const []) ^
+      label.hashCode ^
+      labelColor.hashCode ^
+      labelFontSize.hashCode;
+
+  static bool _dashEquals(List<double>? a, List<double>? b) {
+    if (a == null || b == null) return a == null && b == null;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if ((a[i] - b[i]).abs() > 1e-6) return false;
+    }
+    return true;
+  }
 }

@@ -75,6 +75,11 @@ app.get('/health', (req, res) => {
 // live board traffic; these endpoints exist so the client can mint/renew
 // tokens for the Agora-Chat SDK and for RTC voice joins.
 
+function sanitizeErrorMessage(err) {
+  const msg = (err && typeof err === 'object' && err.message) ? err.message : String(err || 'unknown error');
+  return msg.replace(/(:\/\/)([^:@\s]+):([^@\s]+)@/g, '$1$2:***@');
+}
+
 app.post('/api/agora/chat/token', async (req, res) => {
   try {
     const decoded = await authenticateFirebaseRequest(req);
@@ -138,7 +143,7 @@ app.post('/api/agora/chat/token', async (req, res) => {
 
     return res.status(200).json(payload);
   } catch (err) {
-    console.error('[agora/chat/token] Error:', err);
+    console.error('[agora/chat/token] Error:', sanitizeErrorMessage(err));
     return res.status(502).json({ error: 'agora chat token request failed' });
   }
 });
@@ -179,7 +184,7 @@ app.post('/api/agora/rtc/token', async (req, res) => {
     console.log(`[agora-rtc] minted RTC token for ${decoded.uid} channel ${channelName} (valid 1h)`);
     return res.status(200).json({ appId, token, channelName, privilegeExpiredTs });
   } catch (err) {
-    console.error('[agora/rtc/token] Error:', err);
+    console.error('[agora/rtc/token] Error:', sanitizeErrorMessage(err));
     return res.status(500).json({ error: 'agora rtc token request failed' });
   }
 });
@@ -666,8 +671,7 @@ async function getAgoraChatAppToken() {
   );
 
   if (!response.ok) {
-    const detail = (await response.text().catch(() => '')).slice(0, 300);
-    console.warn(`[agora-chat] App token request failed: HTTP ${response.status} ${detail}`);
+    console.warn(`[agora-chat] App token request failed: HTTP ${response.status}`);
     throw new Error(`agora chat app token request failed (${response.status})`);
   }
 
@@ -727,13 +731,13 @@ async function ensureAgoraChatUser(username, appToken) {
 
   if (response.status === 401 || response.status === 403) {
     // Auth failures are NOT swallowed — the app token itself is bad/expired.
-    console.warn(`[agora-chat] User registration rejected: HTTP ${response.status} ${detail}`);
+    console.warn(`[agora-chat] User registration rejected: HTTP ${response.status}`);
     throw new Error(`agora chat user registration rejected (${response.status})`);
   }
 
   // Pessimistic-but-idempotent: other failures (transient 5xx etc.) are
   // swallowed with a log — token minting below surfaces real problems anyway.
-  console.warn(`[agora-chat] User registration failed (HTTP ${response.status}): ${detail}`);
+  console.warn(`[agora-chat] User registration failed: HTTP ${response.status}`);
   return false;
 }
 
@@ -763,8 +767,7 @@ async function createAgoraChatUserToken(username, expirySeconds) {
   );
 
   if (!response.ok) {
-    const detail = (await response.text().catch(() => '')).slice(0, 300);
-    console.warn(`[agora-chat] User token request failed for ${username}: HTTP ${response.status} ${detail}`);
+    console.warn(`[agora-chat] User token request failed for ${username}: HTTP ${response.status}`);
     throw new Error(`agora chat user token request failed (${response.status})`);
   }
 
@@ -1650,8 +1653,11 @@ io.on('connection', (socket) => {
     // Warm up seed status and edit permission cache asynchronously on join
     seedRedisFromFirestore(boardId).catch(() => { });
     canUserAccessBoard(boardId, uid, true).catch(() => { });
-    console.log(`[watch_board] User ${uid} joined board ${boardId} (socket: ${socket.id})`);
-    if (typeof callback === 'function') callback({ status: 'success', boardId });
+    const currentVersion = redisAvailable
+      ? parseInt(await redis.get(`board:${boardId}:version`) || '0', 10)
+      : 0;
+    console.log(`[watch_board] User ${uid} joined board ${boardId} (socket: ${socket.id}, version: ${currentVersion})`);
+    if (typeof callback === 'function') callback({ status: 'success', boardId, currentVersion });
   });
 
   // ----------------------------------------------------------
@@ -1815,7 +1821,7 @@ io.on('connection', (socket) => {
         ack({ status: 'success', updateId: update.updateId, boardId, version: version || 0 });
       }
     } catch (error) {
-      console.error('Failed processing crdt_update:', error);
+      console.error('Failed processing crdt_update:', sanitizeErrorMessage(error));
       if (typeof ack === 'function') {
         try {
           ack({ status: 'error', message: error.message });
@@ -1879,6 +1885,50 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('history_get_versions', async ({ boardId, beforeVersion, limit } = {}, ack) => {
+    if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
+    if (!isValidBoardId(boardId)) return historyError(ack, 'invalid_payload');
+    if (!db) return historyError(ack, 'persistence_unavailable');
+    if (!(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
+    try {
+      const pageSize = Math.max(1, Math.min(100, Number(limit) || 50));
+      const snap = await db.collection('boards').doc(boardId)
+        .collection('activity_index')
+        .orderBy('fromVersion', 'desc')
+        .get();
+      let all = snap.docs.map(d => ({ blockId: d.id, ...(d.data() || {}) }));
+      if (beforeVersion != null && Number.isFinite(Number(beforeVersion))) {
+        const bv = Number(beforeVersion);
+        all = all.filter(b => (Number(b.fromVersion) || 0) < bv);
+      }
+      all.sort((a, b) => (Number(b.toVersion) || 0) - (Number(a.toVersion) || 0));
+      const blocks = all.slice(0, pageSize);
+      const hasMore = all.length > pageSize;
+      const nextBeforeVersion = blocks.length
+        ? Number(blocks[blocks.length - 1].fromVersion) || null
+        : null;
+      let liveTail = null;
+      if (beforeVersion == null && redisAvailable) {
+        try {
+          const tail = await buildLiveTailBlock(boardId);
+          liveTail = tail.block || null;
+        } catch (_) {}
+      }
+      if (typeof ack === 'function') {
+        ack({
+          status: 'success',
+          blocks,
+          hasMore,
+          nextBeforeVersion,
+          liveTail,
+        });
+      }
+    } catch (e) {
+      console.warn(`[history_get_versions] ${e.message}`);
+      historyError(ack, 'archive_unavailable');
+    }
+  });
+
   socket.on('history_get_user_ops', async (payload = {}, ack) => {
     if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
     const { boardId, targetUid, fromTime, toTime, beforeVersion, limit } = payload;
@@ -1907,10 +1957,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  // One user's ops + the board-state delta at each of them, so the owner can
-  // replay that user's work on the canvas (scrub) without further round-trips.
-  // A member may request their OWN timeline — the undo-request slider (D5) —
-  // but never another member's. Read-only; never appends.
+  // One user's (or selected area's) ops + the board-state delta at each of
+  // them, so the owner or member can replay work on the canvas (scrub) without
+  // further round-trips.
   socket.on('history_preview_user_timeline', async (payload = {}, ack) => {
     if (isRateLimited(socket.id)) return historyError(ack, 'rate_limited');
     const {
@@ -1921,24 +1970,15 @@ io.on('connection', (socket) => {
       beforeVersion,
       limit,
       elementIds,
+      area,
+      scopeMode,
       afterVersion,
     } = payload;
-    if (!isValidBoardId(boardId) || typeof targetUid !== 'string' || !targetUid) {
+    if (!isValidBoardId(boardId)) {
       return historyError(ack, 'invalid_payload');
     }
     if (!redisAvailable || !db) return historyError(ack, 'persistence_unavailable');
-    const isSelf = targetUid === uid;
-    if (isSelf) {
-      // Members scope their own replay for the undo request they are about
-      // to send; ordinary edit access is enough.
-      const canEdit = await canUserAccessBoard(boardId, uid, true);
-      if (!canEdit) return historyError(ack, 'forbidden');
-    } else if (!(await isBoardOwner(boardId, uid))) {
-      return historyError(ack, 'forbidden');
-    }
-    // Optional element scope (the member's picked area / double-tapped
-    // elements). Unknown or malformed ids are dropped; an empty scope means
-    // "no filter" rather than "no ops".
+
     let scopeIds;
     if (elementIds != null) {
       if (!Array.isArray(elementIds)) return historyError(ack, 'invalid_payload');
@@ -1947,16 +1987,48 @@ io.on('connection', (socket) => {
         .slice(0, 200);
       if (!scopeIds.length) scopeIds = undefined;
     }
+
+    let validArea;
+    if (area && typeof area === 'object' && !Array.isArray(area)) {
+      const l = Number(area.left);
+      const t = Number(area.top);
+      const w = Number(area.width);
+      const h = Number(area.height);
+      if (Number.isFinite(l) && Number.isFinite(t) && w > 0 && h > 0) {
+        validArea = { left: l, top: t, width: w, height: h };
+      }
+    }
+
+    const isOwner = await isBoardOwner(boardId, uid);
+    const isSelf = typeof targetUid === 'string' && targetUid === uid;
+    const isScopedAreaRequest = scopeMode === 'area_state' && (scopeIds || validArea);
+    if (!isOwner) {
+      if (!isSelf && !isScopedAreaRequest) {
+        return historyError(ack, 'forbidden');
+      }
+      const canEdit = await canUserAccessBoard(boardId, uid, true);
+      if (!canEdit) return historyError(ack, 'forbidden');
+    }
+
+    const effectiveTargetUid = typeof targetUid === 'string' && targetUid.length > 0
+      ? targetUid
+      : null;
+    if (!effectiveTargetUid && !scopeIds && !validArea && !isOwner) {
+      return historyError(ack, 'invalid_payload');
+    }
+
     try {
       const timeline = await buildUserTimeline(
         boardId,
-        targetUid,
+        effectiveTargetUid,
         {
           fromTime,
           toTime,
           beforeVersion: beforeVersion == null ? null : Number(beforeVersion),
           limit: Number(limit),
           elementIds: scopeIds,
+          area: validArea,
+          scopeMode: scopeMode === 'area_state' ? 'area_state' : 'my_changes',
           afterVersion: afterVersion == null ? null : Number(afterVersion),
         },
         redis,
@@ -2002,22 +2074,45 @@ io.on('connection', (socket) => {
     if (!(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
     try {
       let opts;
-      if (requestId) {
+      if (requestId && !payload.mode) {
         const reqDoc = await db.collection('boards').doc(boardId)
           .collection('undo_requests').doc(String(requestId)).get();
         if (!reqDoc.exists) return historyError(ack, 'not_found');
         const req = reqDoc.data() || {};
-        opts = {
-          mode: 'user',
-          targetUid: req.requesterUid,
-          elementIds: Array.isArray(req.targetElementIds) ? req.targetElementIds : undefined,
-          fromTime: req.timeRangeStart?.toDate?.().toISOString?.() || undefined,
-          toTime: req.timeRangeEnd?.toDate?.().toISOString?.() || undefined,
-        };
+        if (req.scopeMode === 'area_state' && req.targetVersion != null) {
+          opts = {
+            mode: 'restore',
+            targetVersion: Number(req.targetVersion),
+            elementIds: Array.isArray(req.targetElementIds) ? req.targetElementIds : undefined,
+            area: req.area || undefined,
+          };
+        } else if (req.targetVersion != null) {
+          opts = {
+            mode: 'ops',
+            targetUid: req.requesterUid,
+            afterVersion: Number(req.targetVersion),
+            elementIds: Array.isArray(req.targetElementIds) ? req.targetElementIds : undefined,
+            area: req.area || undefined,
+          };
+        } else {
+          opts = {
+            mode: 'user',
+            targetUid: req.requesterUid,
+            elementIds: Array.isArray(req.targetElementIds) ? req.targetElementIds : undefined,
+            area: req.area || undefined,
+            fromTime: req.timeRangeStart?.toDate?.().toISOString?.() || undefined,
+            toTime: req.timeRangeEnd?.toDate?.().toISOString?.() || undefined,
+          };
+        }
       } else if (payload.mode === 'restore') {
         const targetVersion = Number(payload.targetVersion);
         if (!Number.isFinite(targetVersion)) return historyError(ack, 'invalid_payload');
-        opts = { mode: 'restore', targetVersion };
+        opts = {
+          mode: 'restore',
+          targetVersion,
+          elementIds: Array.isArray(payload.elementIds) ? payload.elementIds : undefined,
+          area: payload.area && typeof payload.area === 'object' ? payload.area : undefined,
+        };
       } else if (payload.mode === 'ops') {
         // Undo specific logged ops (per-op revert, multi-select, or the tail
         // of a user's replay after settling on the scrub slider) — or, without
@@ -2050,6 +2145,7 @@ io.on('connection', (socket) => {
           elementIds: Array.isArray(payload.elementIds)
             ? payload.elementIds
             : undefined,
+          area: payload.area && typeof payload.area === 'object' ? payload.area : undefined,
         };
       } else if (payload.mode === 'user') {
         if (typeof payload.targetUid !== 'string' || !payload.targetUid) {
@@ -2061,6 +2157,20 @@ io.on('connection', (socket) => {
           fromTime: payload.fromTime || undefined,
           toTime: payload.toTime || undefined,
           elementIds: Array.isArray(payload.elementIds) ? payload.elementIds : undefined,
+          area: payload.area && typeof payload.area === 'object' ? payload.area : undefined,
+        };
+      } else if (requestId) {
+        const reqDoc = await db.collection('boards').doc(boardId)
+          .collection('undo_requests').doc(String(requestId)).get();
+        if (!reqDoc.exists) return historyError(ack, 'not_found');
+        const req = reqDoc.data() || {};
+        opts = {
+          mode: 'user',
+          targetUid: req.requesterUid,
+          elementIds: Array.isArray(req.targetElementIds) ? req.targetElementIds : undefined,
+          area: req.area || undefined,
+          fromTime: req.timeRangeStart?.toDate?.().toISOString?.() || undefined,
+          toTime: req.timeRangeEnd?.toDate?.().toISOString?.() || undefined,
         };
       } else {
         return historyError(ack, 'invalid_payload');
@@ -2291,6 +2401,122 @@ io.on('connection', (socket) => {
   });
 
   // ============================================================
+  // get_missing_crdt_updates — TARGETED VERSION GAP RECOVERY
+  // ============================================================
+  socket.on('get_missing_crdt_updates', async (data = {}, callback) => {
+    const { boardId, fromVersion, toVersion, sinceVersion, missingVersions } = data;
+    if (isRateLimited(socket.id)) {
+      if (typeof callback === 'function') callback({ status: 'error', message: 'rate_limited' });
+      return;
+    }
+    if (!isValidBoardId(boardId)) {
+      if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
+      return;
+    }
+    const hasAccess = await canUserAccessBoard(boardId, uid, false);
+    if (!hasAccess) {
+      if (typeof callback === 'function') callback({ status: 'error', message: 'forbidden' });
+      return;
+    }
+
+    try {
+      if (!redisAvailable) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'persistence_unavailable' });
+        return;
+      }
+
+      await seedRedisFromFirestore(boardId);
+      const streamKey = `board_updates:${boardId}`;
+      const rawEntries = await redis.xrange(streamKey, '-', '+');
+      const allEntries = (rawEntries || []).map(([id, fields]) => {
+        const entry = parseStreamEntry(fields);
+        entry._streamId = id;
+        entry.appliedAt = entry.timestamp;
+        return entry;
+      });
+
+      let filtered = [];
+      const minVer = fromVersion != null
+        ? parseInt(fromVersion, 10)
+        : (sinceVersion != null ? parseInt(sinceVersion, 10) + 1 : null);
+      const maxVer = toVersion != null ? parseInt(toVersion, 10) : null;
+      const targetSet = Array.isArray(missingVersions) && missingVersions.length > 0
+        ? new Set(missingVersions.map(v => parseInt(v, 10)))
+        : null;
+
+      if (targetSet) {
+        filtered = allEntries.filter(e => targetSet.has(e.version));
+      } else if (minVer != null && maxVer != null) {
+        filtered = allEntries.filter(e => e.version >= minVer && e.version <= maxVer);
+      } else if (minVer != null) {
+        filtered = allEntries.filter(e => e.version >= minVer);
+      } else {
+        filtered = allEntries;
+      }
+
+      filtered.sort((a, b) => a.version - b.version);
+      const currentVersion = parseInt(await redis.get(`board:${boardId}:version`) || '0', 10);
+
+      logWsEvent('GAP UPDATES SERVED', [
+        `[user] ${uid}`,
+        `[board] ${boardId}`,
+        `[minVer] ${minVer ?? 'n/a'}`,
+        `[maxVer] ${maxVer ?? 'n/a'}`,
+        `[count] ${filtered.length}`,
+        `[currentVersion] ${currentVersion}`,
+      ]);
+
+      if (typeof callback === 'function') {
+        callback({
+          status: 'success',
+          boardId,
+          updates: filtered,
+          currentVersion,
+        });
+      }
+    } catch (error) {
+      console.error('[get_missing_crdt_updates] Error:', sanitizeErrorMessage(error));
+      if (typeof callback === 'function') {
+        callback({ status: 'error', message: error.message });
+      }
+    }
+  });
+
+  // ============================================================
+  // PEER UPDATE RECOVERY — Request & relay missing updates between peers
+  // ============================================================
+  socket.on('request_peer_crdt_updates', async ({ boardId, fromVersion, toVersion, missingVersions } = {}) => {
+    if (!isValidBoardId(boardId) || isRateLimited(socket.id)) return;
+    const hasAccess = await canUserAccessBoard(boardId, uid, false);
+    if (!hasAccess) return;
+
+    socket.to(`board_room:${boardId}`).emit('peer_crdt_updates_requested', {
+      boardId,
+      requesterUid: uid,
+      fromVersion,
+      toVersion,
+      missingVersions,
+    });
+  });
+
+  socket.on('relay_peer_crdt_updates', async ({ boardId, targetUid, updates } = {}) => {
+    if (!isValidBoardId(boardId) || !Array.isArray(updates) || isRateLimited(socket.id)) return;
+    const hasAccess = await canUserAccessBoard(boardId, uid, false);
+    if (!hasAccess) return;
+
+    if (targetUid) {
+      const sockets = await io.in(`board_room:${boardId}`).fetchSockets();
+      for (const s of sockets) {
+        if (s.data.uid === targetUid) {
+          s.emit('peer_crdt_updates_received', { boardId, updates, senderUid: uid });
+        }
+      }
+    } else {
+      socket.to(`board_room:${boardId}`).emit('peer_crdt_updates_received', { boardId, updates, senderUid: uid });
+    }
+  });
+
+  // ============================================================
   // sync_offline — VERSION-BASED SYNC (Phase 2+)
   // ============================================================
   socket.on('sync_offline', async ({ boardId, lastSeenCursor, sinceVersion }, callback) => {
@@ -2445,34 +2671,49 @@ io.on('connection', (socket) => {
 
         // Snapshot path didn't apply (no snapshot, or client is current).
         // Try reading any pending entries from the Redis stream directly
-        // before giving up.  This handles boards with < 100 updates where
-        // no snapshot has been created yet.
+        // before giving up. This handles boards with < 100 updates where
+        // no snapshot has been created yet, or catch-up past effectiveServerVersion.
         const streamKey = `board_updates:${boardId}`;
-        const raw = await redis.xread('COUNT', 100, 'STREAMS', streamKey, '0-0');
-        if (raw && raw[0] && raw[0][1] && raw[0][1].length > 0) {
-          const entries = raw[0][1];
-          const updates = [];
-          let lastEntryId = '0-0';
-          let lastVer = 0;
-          for (const [entryId, fields] of entries) {
+        const rawEntries = await redis.xrange(streamKey, '-', '+');
+        if (rawEntries && rawEntries.length > 0) {
+          const parsed = rawEntries.map(([id, fields]) => {
             const entry = parseStreamEntry(fields);
+            entry._streamId = id;
             entry.appliedAt = entry.timestamp;
-            updates.push(entry);
-            lastEntryId = entryId;
+            return entry;
+          });
+
+          const filtered = effectiveServerVersion > 0
+            ? parsed.filter(e => e.version > effectiveServerVersion)
+            : parsed;
+
+          const paged = filtered.slice(0, 100);
+          let lastEntryId = '0-0';
+          let lastVer = effectiveServerVersion || 0;
+          for (const entry of paged) {
+            lastEntryId = entry._streamId;
             if (entry.version > lastVer) lastVer = entry.version;
           }
+
           const newCursor = `${lastEntryId}:${lastVer}`;
           await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => { });
 
           logWsEvent('SYNC RESPONSE (stream catch-up)', [
             `[user] ${uid}`,
             `[board] ${boardId}`,
-            `[updates] ${updates.length}`,
+            `[updates] ${paged.length}`,
             `[cursor] ${newCursor}`,
+            `[effectiveServerVersion] ${effectiveServerVersion}`,
           ]);
 
           if (typeof callback === 'function') {
-            callback({ status: 'success', updates, cursor: newCursor, hasMore: entries.length >= 100, source: 'cursor' });
+            callback({
+              status: 'success',
+              updates: paged,
+              cursor: newCursor,
+              hasMore: filtered.length > 100,
+              source: 'cursor',
+            });
           }
           return;
         }
@@ -2521,7 +2762,7 @@ io.on('connection', (socket) => {
         callback({ status: 'fallback_required', boardId });
       }
     } catch (error) {
-      console.error('Error in sync_offline:', error);
+      console.error('Error in sync_offline:', sanitizeErrorMessage(error));
       if (typeof callback === 'function') {
         callback({ status: 'error', error: error.message });
       }
@@ -2579,7 +2820,7 @@ io.on('connection', (socket) => {
 
       if (typeof ack === 'function') ack({ status: 'success', message: chatMessage });
     } catch (err) {
-      console.error('[board_chat_message] Error:', err);
+      console.error('[board_chat_message] Error:', sanitizeErrorMessage(err));
       if (typeof ack === 'function') ack({ status: 'error', message: err.message });
     }
   });
@@ -2612,7 +2853,7 @@ io.on('connection', (socket) => {
 
       if (typeof callback === 'function') callback({ status: 'success', messages: [] });
     } catch (err) {
-      console.error('[get_board_chat_history] Error:', err);
+      console.error('[get_board_chat_history] Error:', sanitizeErrorMessage(err));
       if (typeof callback === 'function') callback({ status: 'error', message: err.message });
     }
   });
@@ -2667,10 +2908,12 @@ io.on('connection', (socket) => {
 
       socket.join(`board_voice:${boardId}`);
       socket.data.currentVoiceBoardId = boardId;
+      if (!socket.data.voicePresenceBoards) socket.data.voicePresenceBoards = new Set();
+      socket.data.voicePresenceBoards.add(boardId);
 
-      // Voice events target the voice room — voice sockets only ever join
-      // `board_voice:` (they never call watch_board), so emitting to
-      // `board_room:` would leave participants blind to each other.
+      // Voice events target the voice room. Every board viewer subscribes to
+      // this room as an observer, so a newly started call is visible even to
+      // people who have not joined it yet.
       io.to(`board_voice:${boardId}`).emit('voice_participant_joined', participant);
 
       console.log(`[voice] User ${uid} joined voice channel ${channelName}`);
@@ -2684,7 +2927,7 @@ io.on('connection', (socket) => {
         });
       }
     } catch (err) {
-      console.error('[join_voice_call] Error:', err);
+      console.error('[join_voice_call] Error:', sanitizeErrorMessage(err));
       if (typeof callback === 'function') callback({ status: 'error', message: err.message });
     }
   });
@@ -2697,14 +2940,15 @@ io.on('connection', (socket) => {
           const voiceKey = `voice:board:${boardId}:participants`;
           await redis.hdel(voiceKey, uid);
         }
-        socket.leave(`board_voice:${boardId}`);
+        const observing = socket.data.voicePresenceBoards && socket.data.voicePresenceBoards.has(boardId);
+        if (!observing) socket.leave(`board_voice:${boardId}`);
         socket.data.currentVoiceBoardId = null;
         io.to(`board_voice:${boardId}`).emit('voice_participant_left', { uid, boardId });
         console.log(`[voice] User ${uid} left voice channel board_${boardId}`);
       }
       if (typeof callback === 'function') callback({ status: 'success' });
     } catch (err) {
-      console.error('[leave_voice_call] Error:', err);
+      console.error('[leave_voice_call] Error:', sanitizeErrorMessage(err));
       if (typeof callback === 'function') callback({ status: 'error', message: err.message });
     }
   });
@@ -2732,6 +2976,50 @@ io.on('connection', (socket) => {
         isMuted: !!isMuted,
       });
     } catch (_) { }
+  });
+
+  socket.on('subscribe_voice_presence', async ({ boardId }, callback) => {
+    try {
+      if (!isValidBoardId(boardId)) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
+        return;
+      }
+      const hasAccess = await canUserAccessBoard(boardId, uid, false);
+      if (!hasAccess) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'forbidden' });
+        return;
+      }
+      socket.join(`board_voice:${boardId}`);
+      if (!socket.data.voicePresenceBoards) socket.data.voicePresenceBoards = new Set();
+      socket.data.voicePresenceBoards.add(boardId);
+
+      let participants = [];
+      if (redisAvailable) {
+        const rawMap = await redis.hgetall(`voice:board:${boardId}:participants`);
+        participants = Object.values(rawMap || {}).map(v => JSON.parse(v));
+      }
+      if (typeof callback === 'function') callback({ status: 'success', participants });
+    } catch (err) {
+      if (typeof callback === 'function') callback({ status: 'error', message: err.message });
+    }
+  });
+
+  socket.on('unsubscribe_voice_presence', async ({ boardId }, callback) => {
+    try {
+      if (!isValidBoardId(boardId)) {
+        if (typeof callback === 'function') callback({ status: 'error', message: 'invalid_board_id' });
+        return;
+      }
+      if (socket.data.voicePresenceBoards) {
+        socket.data.voicePresenceBoards.delete(boardId);
+      }
+      if (socket.data.currentVoiceBoardId !== boardId) {
+        socket.leave(`board_voice:${boardId}`);
+      }
+      if (typeof callback === 'function') callback({ status: 'success' });
+    } catch (err) {
+      if (typeof callback === 'function') callback({ status: 'error', message: err.message });
+    }
   });
 
   socket.on('get_voice_participants', async ({ boardId }, callback) => {
@@ -2833,7 +3121,7 @@ server.listen(PORT, () => {
     console.log('  AGORA_CHAT_* (org/app/client id/secret): all absent');
   }
   console.log(`  → Agora Chat tokens: ${isAgoraChatConfigured()
-    ? `ready (appKey ${chatCfg.orgName}#${chatCfg.appName}, base ${chatCfg.restBase})`
+    ? `ready (base ${chatCfg.restBase})`
     : 'disabled (clients will run chat in local-first mode)'}`);
 });
 

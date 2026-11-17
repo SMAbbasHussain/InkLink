@@ -117,9 +117,9 @@ class _MembersTrayState extends State<MembersTray> {
                     ),
                     IconButton(
                       onPressed: () {
-                        context
-                            .read<CanvasBloc>()
-                            .add(const CanvasToggleChatDrawer());
+                        context.read<CanvasBloc>().add(
+                          const CanvasToggleChatDrawer(),
+                        );
                       },
                       icon: Icon(
                         LucideIcons.messageSquare,
@@ -133,9 +133,9 @@ class _MembersTrayState extends State<MembersTray> {
                     ),
                     IconButton(
                       onPressed: () {
-                        context
-                            .read<CanvasBloc>()
-                            .add(const CanvasToggleCommentsTray());
+                        context.read<CanvasBloc>().add(
+                          const CanvasToggleCommentsTray(),
+                        );
                       },
                       icon: Icon(
                         LucideIcons.messageCircle,
@@ -149,7 +149,11 @@ class _MembersTrayState extends State<MembersTray> {
                     ),
                     IconButton(
                       onPressed: _enterSearchMode,
-                      icon: Icon(LucideIcons.search, size: 18, color: tokens.inkMuted),
+                      icon: Icon(
+                        LucideIcons.search,
+                        size: 18,
+                        color: tokens.inkMuted,
+                      ),
                       tooltip: 'Search members',
                       splashRadius: 18,
                     ),
@@ -168,7 +172,11 @@ class _MembersTrayState extends State<MembersTray> {
                     leadingIcon: LucideIcons.search,
                     suffixIcon: IconButton(
                       tooltip: 'Close search',
-                      icon: Icon(LucideIcons.x, size: 18, color: tokens.inkMuted),
+                      icon: Icon(
+                        LucideIcons.x,
+                        size: 18,
+                        color: tokens.inkMuted,
+                      ),
                       onPressed: _exitSearchMode,
                     ),
                   ),
@@ -177,13 +185,16 @@ class _MembersTrayState extends State<MembersTray> {
               if (state.currentUserRole == Board.roleViewer)
                 Container(
                   margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: tokens.pending.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
-                    border:
-                        Border.all(color: tokens.pending.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: tokens.pending.withValues(alpha: 0.3),
+                    ),
                   ),
                   child: Row(
                     children: [
@@ -205,9 +216,9 @@ class _MembersTrayState extends State<MembersTray> {
                             confirmLabel: 'Send Request',
                           );
                           if (confirmed && context.mounted) {
-                            context
-                                .read<CanvasBloc>()
-                                .add(const CanvasRequestEditAccess());
+                            context.read<CanvasBloc>().add(
+                              const CanvasRequestEditAccess(),
+                            );
                           }
                         },
                         style: TextButton.styleFrom(
@@ -220,8 +231,9 @@ class _MembersTrayState extends State<MembersTray> {
                         ),
                         child: Text(
                           'Request Edit',
-                          style: InkType.caption(tokens.accentText)
-                              .copyWith(fontWeight: FontWeight.bold),
+                          style: InkType.caption(
+                            tokens.accentText,
+                          ).copyWith(fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],
@@ -242,9 +254,11 @@ class _MembersTrayState extends State<MembersTray> {
                           final extraData = n['extraData'] is Map
                               ? (n['extraData'] as Map).cast<String, dynamic>()
                               : <String, dynamic>{};
-                          final bId = extraData['boardId']?.toString() ??
+                          final bId =
+                              extraData['boardId']?.toString() ??
                               n['targetId']?.toString();
-                          final reqType = extraData['requestType']?.toString() ??
+                          final reqType =
+                              extraData['requestType']?.toString() ??
                               (type == 'board_edit_request' ? 'edit' : 'join');
                           return (type == 'board_edit_request' ||
                                   (type == 'board_access_request' &&
@@ -258,18 +272,24 @@ class _MembersTrayState extends State<MembersTray> {
 
                   return Container(
                     margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: tokens.accent.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(8),
-                      border:
-                          Border.all(color: tokens.accent.withValues(alpha: 0.3)),
+                      border: Border.all(
+                        color: tokens.accent.withValues(alpha: 0.3),
+                      ),
                     ),
                     child: Row(
                       children: [
-                        Icon(LucideIcons.userCheck,
-                            size: 14, color: tokens.accent),
+                        Icon(
+                          LucideIcons.userCheck,
+                          size: 14,
+                          color: tokens.accent,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -299,8 +319,9 @@ class _MembersTrayState extends State<MembersTray> {
                           ),
                           child: Text(
                             'Review',
-                            style: InkType.caption(tokens.accent)
-                                .copyWith(fontWeight: FontWeight.bold),
+                            style: InkType.caption(
+                              tokens.accent,
+                            ).copyWith(fontWeight: FontWeight.bold),
                           ),
                         ),
                       ],
@@ -316,10 +337,16 @@ class _MembersTrayState extends State<MembersTray> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(LucideIcons.users, size: 48, color: tokens.inkMuted),
+                            Icon(
+                              LucideIcons.users,
+                              size: 48,
+                              color: tokens.inkMuted,
+                            ),
                             const SizedBox(height: InkSpacing.s12),
                             Text(
-                              _isSearchMode ? 'No members found' : 'No members yet',
+                              _isSearchMode
+                                  ? 'No members found'
+                                  : 'No members yet',
                               style: InkType.body(tokens.inkMuted),
                             ),
                           ],
@@ -410,7 +437,9 @@ class _MembersTrayState extends State<MembersTray> {
           ],
         ),
       ),
-      ...membersInRole.map((member) => _buildMemberTile(context, tokens, member, state)),
+      ...membersInRole.map(
+        (member) => _buildMemberTile(context, tokens, member, state),
+      ),
     ];
   }
 
@@ -458,7 +487,11 @@ class _MembersTrayState extends State<MembersTray> {
           ),
           if (canManage)
             PopupMenuButton<String>(
-              icon: Icon(LucideIcons.ellipsisVertical, size: 18, color: tokens.inkSecondary),
+              icon: Icon(
+                LucideIcons.ellipsisVertical,
+                size: 18,
+                color: tokens.inkSecondary,
+              ),
               tooltip: 'Member options',
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(InkRadii.input),
@@ -470,11 +503,11 @@ class _MembersTrayState extends State<MembersTray> {
                       ? Board.roleViewer
                       : Board.roleEditor;
                   context.read<CanvasBloc>().add(
-                        CanvasUpdateBoardMemberRole(
-                          targetUid: member.uid,
-                          newRole: newRole,
-                        ),
-                      );
+                    CanvasUpdateBoardMemberRole(
+                      targetUid: member.uid,
+                      newRole: newRole,
+                    ),
+                  );
                 } else if (action == 'revoke') {
                   _confirmRevokeMember(context, tokens, member, displayName);
                 }
@@ -512,10 +545,7 @@ class _MembersTrayState extends State<MembersTray> {
                         color: tokens.danger,
                       ),
                       const SizedBox(width: InkSpacing.s8),
-                      Text(
-                        'Revoke Access',
-                        style: InkType.body(tokens.danger),
-                      ),
+                      Text('Revoke Access', style: InkType.body(tokens.danger)),
                     ],
                   ),
                 ),

@@ -52,6 +52,7 @@ module.exports = async (request) => {
     targetElementIds,
     reason,
     area,
+    scopeMode,
     timeRangeStart,
     timeRangeEnd,
     targetVersion,
@@ -64,16 +65,16 @@ module.exports = async (request) => {
     if (typeof boardId !== 'string' || boardId.trim().length === 0) {
       throw new HttpsError('invalid-argument', 'boardId is required.');
     }
-    if (!Array.isArray(targetElementIds) || targetElementIds.length === 0) {
-      throw new HttpsError('invalid-argument', 'Select at least one element to undo.');
-    }
+    const selectedArea = parseOptionalArea(area);
+    const resolvedScopeMode = scopeMode === 'area_state' ? 'area_state' : 'my_changes';
+    const rawIds = Array.isArray(targetElementIds) ? targetElementIds : [];
     const elementIds = [...new Set(
-      targetElementIds
+      rawIds
         .filter(id => typeof id === 'string' && id.trim().length > 0)
         .map(id => id.trim()),
     )];
-    if (elementIds.length === 0) {
-      throw new HttpsError('invalid-argument', 'targetElementIds must contain element ids.');
+    if (elementIds.length === 0 && !selectedArea) {
+      throw new HttpsError('invalid-argument', 'Select at least one element or area to undo.');
     }
     if (elementIds.length > MAX_ELEMENTS) {
       throw new HttpsError('invalid-argument', `Select at most ${MAX_ELEMENTS} elements.`);
@@ -85,7 +86,6 @@ module.exports = async (request) => {
       throw new HttpsError('invalid-argument', 'Reason is too long.');
     }
 
-    const selectedArea = parseOptionalArea(area);
     const rangeStart = parseOptionalDate(timeRangeStart, 'timeRangeStart');
     const rangeEnd = parseOptionalDate(timeRangeEnd, 'timeRangeEnd');
     const chosenVersion = Number(targetVersion);
@@ -166,6 +166,7 @@ module.exports = async (request) => {
       requesterPhotoUrl,
       targetElementIds: elementIds,
       targetVersion: chosenVersion,
+      scopeMode: resolvedScopeMode,
       area: selectedArea,
       timeRangeStart: rangeStart
         ? admin.firestore.Timestamp.fromDate(rangeStart)

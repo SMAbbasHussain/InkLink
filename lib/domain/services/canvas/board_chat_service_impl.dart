@@ -149,10 +149,10 @@ class BoardChatServiceImpl implements BoardChatService {
       _scheduleReconnect();
     });
 
-    socket.on('connect_error', (data) {
+    socket.on('connect_error', (_) {
       if (_disposed || gen != _connectGeneration) return;
       developer.log(
-        'Socket connect_error: $data; scheduling reconnect with fresh token',
+        'Socket connect_error; scheduling reconnect with fresh token',
         name: 'BoardChatService',
       );
       _scheduleReconnect();

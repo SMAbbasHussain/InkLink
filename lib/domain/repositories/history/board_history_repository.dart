@@ -12,6 +12,15 @@ abstract class BoardHistoryRepository {
     int limit = 50,
   });
 
+  /// Fetches a page of archived blocks from `boards/{boardId}/activity_index`,
+  /// optionally older than [beforeFromVersion], newest first.
+  Future<List<BoardActivityBlock>> fetchActivityBlocks(
+    String boardId, {
+    int? beforeFromVersion,
+    int limit = 50,
+  }) async =>
+      const <BoardActivityBlock>[];
+
   /// All undo requests on the board (owner view), newest first.
   Stream<List<UndoRequest>> watchUndoRequests(String boardId);
 

@@ -38,10 +38,16 @@ InkLink is a real-time collaborative canvas and digital whiteboard application b
 ## Core Capabilities & Features
 
 ### 1. Collaborative Real-Time Canvas
-- **Yjs CRDT Engine:** Low-latency vector strokes, shapes, sticky notes, text, and connector lines synchronized with conflict-free replicated data types.
-- **Layering & Media:** Drag-and-drop image placement, live remote cursors, natural painter z-ordering, stroke smoothing, and pan/zoom canvas manipulation.
-- **Export Formats:** Full vector and raster export (PNG, PDF, SVG) with background preservation and native platform sharing.
+- **Yjs CRDT Engine:** Low-latency vector strokes (8 brush presets, pressure/tilt, stabilizer, QuickShape), shapes (labels, free aspect, independent fill/stroke colors, flips, dashes, arrowheads), sticky notes, rich-styled text, tables (`TableElement` up to 200 cells), and smart connectors (straight/curved/elbow with labels & anchors) synchronized with conflict-free replicated data types.
+- **Layers, Frames & Media Tools:** Named layers as paint bands with per-layer opacity & blend modes, lock/hide, titled section frames with optional content clipping and frame-or-contents deletion, auto-layout/mind-map arrangement (`grid`/`row`/`column`/`tree`/`flow`), rulers/guides/snap/symmetry/perspective guides, mobile camera/gallery media editor (non-destructive crop, filters, flips, reference mode), starter templates (gallery filters + board creation flow), mobile long-press context menu, and minimap/pan/zoom controls.
+- **Scoped Export Formats:** Export whole board, current selection, frame, or page preset bounds to PNG (1×/2×/4×, optional transparent background & pattern), PDF, and SVG with live pixel output dimensions and native share sheet integration.
+- **Version History & Undo Requests:** Owner version history refresh & older-version fetching, area-scoped history scrub/revert, and member desired-state sliders (`Only my changes` vs `Whole area state`) with owner Requested ↔ Current comparison.
 - **Pin Comments & Threads:** Contextual pin annotations anchored to canvas coordinates with @mention alert delivery.
+
+#### Known Canvas Gaps
+- **Desktop & Web Input (`C-16`, `F-21` desktop):** Desktop keyboard shortcuts and secondary-click context menus are intentionally omitted in favor of mobile touch gestures and the mobile long-press menu; Isar's 64-bit IDs target native mobile/desktop builds rather than Flutter web.
+- **Text & AI Placeholders:** Rich inline multi-style text spans and AI image generation (`_onGenerateImagePlaceholder`) are not implemented; the AI prompt tray inserts text notes or uploaded images rather than calling an image-generation model.
+- **Table & Frame Scope Limits:** Tables omit merged `colSpan`/`rowSpan` cells, and frames omit nested sub-frames.
 
 ### 2. High-Performance In-App Communication
 - **Direct & Group Chat (Agora-backed):** Real-time text messaging, media/file sharing, rich board/workspace snippet cards, emoji reactions with user inspection sheets, blue-tick read receipts, and message recall.

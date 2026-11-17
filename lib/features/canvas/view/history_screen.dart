@@ -331,18 +331,30 @@ class _BoardHistoryScreenState extends State<BoardHistoryScreen> {
               ),
               actions: [
                 IconButton(
-                  tooltip: 'Refresh history',
+                  tooltip: 'Select board area history',
                   onPressed: () {
-                    widget.bloc.add(const CanvasHistoryFeedRequested());
+                    _returnToCanvasForPreview();
+                    widget.bloc.add(
+                      const CanvasToggleOwnerAreaHistorySelection(enable: true),
+                    );
+                  },
+                  icon: Icon(
+                    LucideIcons.scan,
+                    size: 18,
+                    color: tokens.inkSecondary,
+                  ),
+                ),
+                _RotatingRefreshButton(
+                  isLoading: state.isHistoryLoading,
+                  color: tokens.inkSecondary,
+                  onRefresh: () {
+                    widget.bloc.add(
+                      const CanvasHistoryFeedRequested(forceRefresh: true),
+                    );
                     if (state.selectedUserUid != null) {
                       _openUserTimeline(state.selectedUserUid!);
                     }
                   },
-                  icon: Icon(
-                    LucideIcons.refreshCw,
-                    size: 18,
-                    color: tokens.inkSecondary,
-                  ),
                 ),
               ],
             ),
@@ -454,6 +466,35 @@ class _BoardHistoryScreenState extends State<BoardHistoryScreen> {
                     onSelectContributor: _openUserTimeline,
                   ),
                 ),
+              const SizedBox(height: InkSpacing.s8),
+              Wrap(
+                spacing: InkSpacing.s8,
+                runSpacing: InkSpacing.s8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: state.isHistoryLoading
+                        ? null
+                        : () {
+                            widget.bloc.add(
+                              const CanvasHistoryLoadOlderVersionsRequested(),
+                            );
+                          },
+                    icon: const Icon(LucideIcons.history, size: 15),
+                    label: Text(
+                      state.hasMoreHistoryVersions
+                          ? 'Request previous versions'
+                          : 'Check for previous versions',
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: state.isHistoryLoading
+                        ? null
+                        : () => _promptRequestSpecificVersion(context),
+                    icon: const Icon(LucideIcons.searchCode, size: 15),
+                    label: const Text('Fetch version by number…'),
+                  ),
+                ],
+              ),
             ],
             if (_filter == HistoryFilter.requests && requests.isEmpty)
               Text(
@@ -743,6 +784,48 @@ class _BoardHistoryScreenState extends State<BoardHistoryScreen> {
     widget.bloc.add(CanvasHistoryRestoreRequested(block.toVersion));
   }
 
+  Future<void> _promptRequestSpecificVersion(BuildContext context) async {
+    final controller = TextEditingController();
+    final chosen = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Fetch previous version'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Version number',
+            hintText: 'e.g. 12',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final v = int.tryParse(controller.text.trim());
+              if (v != null && v >= 0) {
+                Navigator.pop(dialogContext, v);
+              }
+            },
+            child: const Text('Preview version'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (chosen == null || !mounted) return;
+    _returnToCanvasForPreview();
+    widget.bloc.add(
+      CanvasHistoryPreviewRequested(
+        chosen,
+        title: 'Viewing version v$chosen',
+      ),
+    );
+  }
+
   Future<void> _denyRequest(BuildContext context, UndoRequest request) async {
     final service = widget.historyService;
     if (service == null) return;
@@ -1003,11 +1086,14 @@ class _UndoRequestRow extends StatelessWidget {
     final n = request.targetElementIds.length;
     final elements = '$n element${n == 1 ? '' : 's'}';
     final area = request.area;
-    if (area != null && area.isValid) {
-      return '$elements · area ${area.width.round()} × '
-          '${area.height.round()} px';
+    final base = (area != null && area.isValid)
+        ? '$elements · area ${area.width.round()} × '
+              '${area.height.round()} px'
+        : elements;
+    if (request.targetVersion != null) {
+      return '$base · v${request.targetVersion} (${request.scopeMode.label})';
     }
-    return elements;
+    return base;
   }
 
   String get _age {
@@ -1121,6 +1207,79 @@ class _DenyNoteDialogState extends State<_DenyNoteDialog> {
           child: const Text('Decline'),
         ),
       ],
+    );
+  }
+}
+
+class _RotatingRefreshButton extends StatefulWidget {
+  final bool isLoading;
+  final Color color;
+  final VoidCallback onRefresh;
+
+  const _RotatingRefreshButton({
+    required this.isLoading,
+    required this.color,
+    required this.onRefresh,
+  });
+
+  @override
+  State<_RotatingRefreshButton> createState() => _RotatingRefreshButtonState();
+}
+
+class _RotatingRefreshButtonState extends State<_RotatingRefreshButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    )..addStatusListener((status) {
+        if (status == AnimationStatus.completed && mounted && widget.isLoading) {
+          _controller.forward(from: 0);
+        }
+      });
+    if (widget.isLoading) {
+      _controller.forward(from: 0);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _RotatingRefreshButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isLoading && !oldWidget.isLoading) {
+      _controller.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _handlePressed() {
+    _controller.forward(from: 0);
+    widget.onRefresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'Refresh history',
+      onPressed: widget.isLoading ? null : _handlePressed,
+      icon: RotationTransition(
+        turns: Tween<double>(begin: 0.0, end: 1.0).animate(
+          CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+        ),
+        child: Icon(
+          LucideIcons.refreshCw,
+          size: 18,
+          color: widget.color,
+        ),
+      ),
     );
   }
 }

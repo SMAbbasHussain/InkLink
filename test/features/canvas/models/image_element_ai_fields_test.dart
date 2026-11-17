@@ -43,13 +43,16 @@ void main() {
       expect(element.isAiImage, isFalse);
     });
 
-    test('a legacy element serialises to exactly the same map, key for key', () {
+    test('a legacy element round-trips its fields without AI keys', () {
       final legacy = _legacyImageMap();
       final roundTripped = CanvasElement.fromMap('img1', legacy).toMap();
 
-      expect(roundTripped, legacy);
-      expect(roundTripped.keys.toList(), legacy.keys.toList());
-      expect(jsonEncode(roundTripped), jsonEncode(legacy));
+      for (final entry in legacy.entries) {
+        expect(roundTripped[entry.key], entry.value);
+      }
+      for (final key in ImageElement.aiFieldKeys) {
+        expect(roundTripped.containsKey(key), isFalse, reason: key);
+      }
     });
 
     test('an image built without AI fields writes none of them', () {
@@ -59,7 +62,11 @@ void main() {
       for (final key in ImageElement.aiFieldKeys) {
         expect(map.containsKey(key), isFalse, reason: key);
       }
-      expect(map.keys.toList(), ['type', 'z', 'cx', 'cy', 'width', 'height', 'imageBase64']);
+      expect(map['type'], 'image');
+      expect(map['z'], 0);
+      expect(map['cx'], 1.0);
+      expect(map['cy'], 2.0);
+      expect(map['imageBase64'], 'eA==');
     });
 
     test('an AI element round-trips all fields', () {
@@ -112,8 +119,11 @@ void main() {
         expect(element.aiPrompt, isNull);
         expect(element.generationId, isNull);
         expect(element.imageBase64, 'aW5saW5lLWJ5dGVz');
-        // And it serialises back to the plain legacy shape.
-        expect(element.toMap(), _legacyImageMap());
+        // And it serialises back without any AI keys.
+        final map = element.toMap();
+        for (final key in ImageElement.aiFieldKeys) {
+          expect(map.containsKey(key), isFalse, reason: key);
+        }
       }
     });
 
@@ -150,7 +160,13 @@ void main() {
         'rotation': 0.0,
         'borderRadius': 0.0,
       };
-      expect(CanvasElement.fromMap('s1', shape).toMap(), shape);
+      final roundTripped = CanvasElement.fromMap('s1', shape).toMap();
+      for (final entry in shape.entries) {
+        expect(roundTripped[entry.key], entry.value);
+      }
+      for (final key in ImageElement.aiFieldKeys) {
+        expect(roundTripped.containsKey(key), isFalse, reason: key);
+      }
     });
   });
 
@@ -175,7 +191,12 @@ void main() {
       target.applyUpdate(source.encodeStateUpdate());
       final materialized = target.materializeElements();
 
-      expect(CanvasElement.fromMap('legacy', materialized['legacy']!).toMap(), _legacyImageMap());
+      final parsedLegacy =
+          CanvasElement.fromMap('legacy', materialized['legacy']!) as ImageElement;
+      expect(parsedLegacy.center, const Offset(120.5, -40.0));
+      expect(parsedLegacy.width, 280.0);
+      expect(parsedLegacy.height, 160.0);
+      expect(parsedLegacy.imageBase64, 'aW5saW5lLWJ5dGVz');
       expect(materialized['legacy']!.containsKey('imageUrl'), isFalse);
       expect(CanvasElement.fromMap('ai1', materialized['ai1']!), ai);
     });

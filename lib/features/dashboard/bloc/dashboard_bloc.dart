@@ -19,6 +19,7 @@ class DashboardLoaded extends DashboardState {
   final String? actionInfo;
   final String? joinedBoardId;
   final String? createdBoardId;
+  final String? pendingTemplateId;
 
   DashboardLoaded({
     required this.ownedBoards,
@@ -28,6 +29,7 @@ class DashboardLoaded extends DashboardState {
     this.actionInfo,
     this.joinedBoardId,
     this.createdBoardId,
+    this.pendingTemplateId,
   });
 
   DashboardLoaded copyWith({
@@ -38,6 +40,7 @@ class DashboardLoaded extends DashboardState {
     Object? actionInfo = _unset,
     Object? joinedBoardId = _unset,
     Object? createdBoardId = _unset,
+    Object? pendingTemplateId = _unset,
   }) {
     return DashboardLoaded(
       ownedBoards: ownedBoards ?? this.ownedBoards,
@@ -57,6 +60,9 @@ class DashboardLoaded extends DashboardState {
       createdBoardId: createdBoardId == _unset
           ? this.createdBoardId
           : createdBoardId as String?,
+      pendingTemplateId: pendingTemplateId == _unset
+          ? this.pendingTemplateId
+          : pendingTemplateId as String?,
     );
   }
 }
@@ -88,6 +94,7 @@ class DashboardCreateBoardRequested extends DashboardEvent {
   final bool allowMembersToCopy;
   final List<String> invitedUserIds;
   final int inviteExpiryHours;
+  final String? initialTemplateId;
 
   DashboardCreateBoardRequested({
     this.title,
@@ -100,6 +107,7 @@ class DashboardCreateBoardRequested extends DashboardEvent {
     this.allowMembersToCopy = false,
     this.invitedUserIds = const [],
     this.inviteExpiryHours = 72,
+    this.initialTemplateId,
   });
 }
 
@@ -375,6 +383,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         emit(
           current.copyWith(
             createdBoardId: createResult.boardId,
+            pendingTemplateId: event.initialTemplateId,
             actionError: null,
             actionInfo: warningText,
           ),
@@ -595,6 +604,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           actionInfo: null,
           joinedBoardId: null,
           createdBoardId: null,
+          pendingTemplateId: null,
         ),
       );
     }

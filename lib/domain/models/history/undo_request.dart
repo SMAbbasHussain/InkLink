@@ -1,3 +1,23 @@
+/// Whether the member wants only their own changes in the scope undone, or
+/// the entire state of the selected part of the board restored.
+enum UndoRequestScopeMode {
+  myChanges('my_changes'),
+  areaState('area_state');
+
+  final String wireValue;
+  const UndoRequestScopeMode(this.wireValue);
+
+  static UndoRequestScopeMode fromWire(String? raw) {
+    if (raw == 'area_state') return UndoRequestScopeMode.areaState;
+    return UndoRequestScopeMode.myChanges;
+  }
+
+  String get label => switch (this) {
+    UndoRequestScopeMode.myChanges => 'Only my changes',
+    UndoRequestScopeMode.areaState => 'Whole area state',
+  };
+}
+
 /// World-space rectangle a member selected when asking for an undo.
 class UndoRequestArea {
   final double left;
@@ -29,6 +49,19 @@ class UndoRequestArea {
     'width': width,
     'height': height,
   };
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UndoRequestArea &&
+          runtimeType == other.runtimeType &&
+          left == other.left &&
+          top == other.top &&
+          width == other.width &&
+          height == other.height;
+
+  @override
+  int get hashCode => Object.hash(left, top, width, height);
 }
 
 /// `boards/{boardId}/undo_requests/{requestId}` (D5).
@@ -45,6 +78,10 @@ class UndoRequest {
   /// every edit the member made. Null only on requests created before the
   /// desired-state flow existed.
   final int? targetVersion;
+
+  /// Whether the member requested only their own edits undone (`myChanges`)
+  /// or the entire state of the selected part of the board (`areaState`).
+  final UndoRequestScopeMode scopeMode;
   final UndoRequestArea? area;
   final DateTime? timeRangeStart;
   final DateTime? timeRangeEnd;
@@ -65,6 +102,7 @@ class UndoRequest {
     this.requesterPhotoUrl,
     this.targetElementIds = const [],
     this.targetVersion,
+    this.scopeMode = UndoRequestScopeMode.myChanges,
     this.area,
     this.timeRangeStart,
     this.timeRangeEnd,
@@ -90,6 +128,7 @@ class UndoRequest {
               .toList() ??
           const [],
       targetVersion: (map['targetVersion'] as num?)?.toInt(),
+      scopeMode: UndoRequestScopeMode.fromWire(map['scopeMode'] as String?),
       area: rawArea is Map
           ? UndoRequestArea.fromMap(Map<String, dynamic>.from(rawArea))
           : null,
@@ -115,6 +154,7 @@ class UndoRequest {
     'requesterPhotoUrl': requesterPhotoUrl,
     'targetElementIds': targetElementIds,
     'targetVersion': targetVersion,
+    'scopeMode': scopeMode.wireValue,
     'area': area?.toMap(),
     'timeRangeStart': timeRangeStart?.toIso8601String(),
     'timeRangeEnd': timeRangeEnd?.toIso8601String(),

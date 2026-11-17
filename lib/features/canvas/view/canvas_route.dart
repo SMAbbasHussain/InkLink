@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/services/auth_service.dart';
+import '../../../domain/models/canvas/canvas_toolbar_action.dart';
 import '../../../domain/services/ai/ai_image_service.dart';
 import '../../../domain/services/board/board_service.dart';
 import '../../../domain/services/canvas/board_chat_service.dart';
@@ -18,11 +19,13 @@ Route<void> buildCanvasRoute(
   BuildContext context, {
   required String boardId,
   bool showTrayTipsOnEntry = false,
+  String? initialTemplateId,
 }) {
   return MaterialPageRoute(
     builder: (_) => _CanvasRouteWrapper(
       boardId: boardId,
       showTrayTipsOnEntry: showTrayTipsOnEntry,
+      initialTemplateId: initialTemplateId,
     ),
   );
 }
@@ -30,10 +33,12 @@ Route<void> buildCanvasRoute(
 class _CanvasRouteWrapper extends StatefulWidget {
   final String boardId;
   final bool showTrayTipsOnEntry;
+  final String? initialTemplateId;
 
   const _CanvasRouteWrapper({
     required this.boardId,
     required this.showTrayTipsOnEntry,
+    this.initialTemplateId,
   });
 
   @override
@@ -41,7 +46,14 @@ class _CanvasRouteWrapper extends StatefulWidget {
 }
 
 class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
-  late Future<({String quality, bool compressionEnabled})> _settingsFuture;
+  late Future<
+    ({
+      String quality,
+      bool compressionEnabled,
+      List<CanvasToolbarAction> bottomBarActions,
+    })
+  >
+  _settingsFuture;
 
   @override
   void initState() {
@@ -49,17 +61,36 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
     _settingsFuture = _loadSettings();
   }
 
-  Future<({String quality, bool compressionEnabled})> _loadSettings() async {
+  Future<
+    ({
+      String quality,
+      bool compressionEnabled,
+      List<CanvasToolbarAction> bottomBarActions,
+    })
+  >
+  _loadSettings() async {
     final settingsService = context.read<SettingsService>();
     final quality = await settingsService.getBoardPreviewQuality();
     final compressionEnabled = await settingsService
         .getBoardPreviewCompressionEnabled();
-    return (quality: quality, compressionEnabled: compressionEnabled);
+    final bottomBarActions = await settingsService.getBottomBarActions();
+    return (
+      quality: quality,
+      compressionEnabled: compressionEnabled,
+      bottomBarActions: bottomBarActions,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<({String quality, bool compressionEnabled})>(
+    final settingsService = context.read<SettingsService>();
+    return FutureBuilder<
+      ({
+        String quality,
+        bool compressionEnabled,
+        List<CanvasToolbarAction> bottomBarActions,
+      })
+    >(
       future: _settingsFuture,
       builder: (context, snapshot) {
         final data = snapshot.data;
@@ -90,7 +121,12 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
             showTrayTipsOnEntry: widget.showTrayTipsOnEntry,
             boardPreviewQuality: data?.quality ?? 'medium',
             boardPreviewCompressionEnabled: data?.compressionEnabled ?? true,
+            initialBottomBarActions:
+                data?.bottomBarActions ??
+                CanvasToolbarAction.defaultBottomBarActions,
+            onSaveBottomBarActions: settingsService.setBottomBarActions,
             historyService: context.read<BoardHistoryService>(),
+            initialTemplateId: widget.initialTemplateId,
           ),
         );
       },

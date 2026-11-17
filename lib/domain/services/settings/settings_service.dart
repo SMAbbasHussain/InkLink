@@ -1,3 +1,4 @@
+import '../../models/canvas/canvas_toolbar_action.dart';
 import '../../repositories/settings/settings_repository.dart';
 
 abstract class SettingsService {
@@ -7,6 +8,8 @@ abstract class SettingsService {
   Future<void> setBoardPreviewQuality(String quality);
   Future<bool> getBoardPreviewCompressionEnabled();
   Future<void> setBoardPreviewCompressionEnabled(bool enabled);
+  Future<List<CanvasToolbarAction>> getBottomBarActions();
+  Future<void> setBottomBarActions(List<CanvasToolbarAction> actions);
   Future<bool> getPushNotificationsEnabled([String? userId]);
   Future<void> setPushNotificationsEnabled(bool value, [String? userId]);
   Future<bool> getInviteAlertsEnabled([String? userId]);
@@ -48,6 +51,16 @@ class SettingsServiceImpl implements SettingsService {
   @override
   Future<void> setBoardPreviewCompressionEnabled(bool enabled) {
     return _settingsRepository.setBoardPreviewCompressionEnabled(enabled);
+  }
+
+  @override
+  Future<List<CanvasToolbarAction>> getBottomBarActions() {
+    return _settingsRepository.getBottomBarActions();
+  }
+
+  @override
+  Future<void> setBottomBarActions(List<CanvasToolbarAction> actions) {
+    return _settingsRepository.setBottomBarActions(actions);
   }
 
   @override

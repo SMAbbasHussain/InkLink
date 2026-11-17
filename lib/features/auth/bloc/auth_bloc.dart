@@ -114,7 +114,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         developer.log('LoginRequested: emitting Authenticated', name: 'AuthBloc');
         emit(_toAuthenticated(user));
       } catch (e) {
-        developer.log('LoginRequested: caught error=$e', name: 'AuthBloc');
+        developer.log('LoginRequested: caught error=${AppErrorFormatter.cleanMessage(e)}', name: 'AuthBloc');
         emit(AuthError(AppErrorFormatter.cleanMessage(e)));
       }
     });
@@ -163,7 +163,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           emit(Unauthenticated());
         }
       } catch (e) {
-        developer.log('GoogleSignInRequested: caught error=$e', name: 'AuthBloc');
+        developer.log('GoogleSignInRequested: caught error=${AppErrorFormatter.cleanMessage(e)}', name: 'AuthBloc');
         emit(AuthError(AppErrorFormatter.cleanMessage(e)));
         emit(Unauthenticated());
       }

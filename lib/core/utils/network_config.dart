@@ -14,7 +14,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 /// 3. In debug mode, custom URLs or local emulators are permitted.
 String resolveWebSocketUrl([String? configuredUrl]) {
   final rawUrl = (configuredUrl ?? dotenv.env['WEBSOCKET_URL'])?.trim();
-  const defaultReleaseUrl = 'https://inklink.app';
+  const defaultReleaseUrl = 'https://inklink-api.duckdns.org';
   const defaultDebugUrl = 'http://10.0.2.2:3000';
 
   if (kReleaseMode) {
@@ -34,8 +34,9 @@ String resolveWebSocketUrl([String? configuredUrl]) {
         host.startsWith('10.');
 
     if (!isSecure || isLocalHost) {
+      final safeEndpoint = uri != null ? '${uri.scheme}://${uri.host}' : 'invalid endpoint';
       developer.log(
-        'Insecure, non-HTTPS, or emulator WEBSOCKET_URL "$rawUrl" rejected in release mode. '
+        'Insecure, non-HTTPS, or emulator WEBSOCKET_URL ($safeEndpoint) rejected in release mode. '
         'Falling back to secure endpoint: $defaultReleaseUrl.',
         name: 'NetworkConfig',
       );

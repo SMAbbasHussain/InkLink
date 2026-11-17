@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:inklink/domain/models/canvas/canvas_toolbar_action.dart';
 import 'package:inklink/domain/services/profile/profile_service.dart';
 import 'package:inklink/domain/services/settings/settings_service.dart';
 import 'package:inklink/features/settings/bloc/settings_bloc.dart';
@@ -7,6 +8,8 @@ class FakeSettingsService implements SettingsService {
   bool showTrayTips = true;
   String boardPreviewQuality = 'medium';
   bool boardPreviewCompressionEnabled = true;
+  List<CanvasToolbarAction> bottomBarActions =
+      CanvasToolbarAction.defaultBottomBarActions;
   bool pushNotificationsEnabled = true;
   bool inviteAlertsEnabled = true;
   bool friendAlertsEnabled = true;
@@ -34,6 +37,15 @@ class FakeSettingsService implements SettingsService {
   @override
   Future<void> setBoardPreviewCompressionEnabled(bool enabled) async {
     boardPreviewCompressionEnabled = enabled;
+  }
+
+  @override
+  Future<List<CanvasToolbarAction>> getBottomBarActions() async =>
+      bottomBarActions;
+
+  @override
+  Future<void> setBottomBarActions(List<CanvasToolbarAction> actions) async {
+    bottomBarActions = actions;
   }
 
   @override
@@ -228,6 +240,50 @@ void main() {
       expect(
         profileService.lastUpdatedNotifPrefs['inviteAlertsEnabled'],
         isFalse,
+      );
+    });
+  });
+
+  group('SettingsBloc Bottom Bar Preferences', () {
+    test('loads saved actions, updates custom order, and resets to defaults', () async {
+      final settingsService = FakeSettingsService()
+        ..bottomBarActions = const [
+          CanvasToolbarAction.layers,
+          CanvasToolbarAction.pen,
+        ];
+      final bloc = SettingsBloc(settingsService: settingsService);
+
+      bloc.add(const SettingsLoadRequested());
+      await pumpEventQueue();
+      expect(
+        bloc.state.bottomBarActions,
+        equals([CanvasToolbarAction.layers, CanvasToolbarAction.pen]),
+      );
+
+      bloc.add(
+        const SettingsBottomBarActionsChanged([
+          CanvasToolbarAction.templates,
+        ]),
+      );
+      await pumpEventQueue();
+      expect(
+        bloc.state.bottomBarActions,
+        equals([CanvasToolbarAction.templates]),
+      );
+      expect(
+        settingsService.bottomBarActions,
+        equals([CanvasToolbarAction.templates]),
+      );
+
+      bloc.add(const SettingsBottomBarResetRequested());
+      await pumpEventQueue();
+      expect(
+        bloc.state.bottomBarActions,
+        equals(CanvasToolbarAction.defaultBottomBarActions),
+      );
+      expect(
+        settingsService.bottomBarActions,
+        equals(CanvasToolbarAction.defaultBottomBarActions),
       );
     });
   });

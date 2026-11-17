@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../domain/models/board.dart';
+import '../../../domain/models/canvas/canvas_board_settings.dart';
 import '../../../domain/models/history/board_activity_block.dart';
 import '../../../domain/models/history/board_operation.dart';
 import '../../../domain/models/history/history_scrub.dart';
@@ -9,9 +10,13 @@ import '../../../domain/models/history/undo_request.dart';
 import '../models/board_chat_message.dart';
 import '../models/canvas_comment.dart';
 import '../models/canvas_element.dart';
+import '../models/canvas_selection_mode.dart';
 import '../models/canvas_tool_mode.dart';
 import '../models/voice_participant.dart';
 import '../view/trays/canvas_shape_type.dart';
+
+/// Whether local board changes have reached the collaboration service.
+enum CanvasSyncStatus { idle, syncing, saved, offline }
 
 /// State for CanvasBloc
 class CanvasState {
@@ -28,12 +33,19 @@ class CanvasState {
   final bool isLoading;
   final String? error;
   final String? infoMessage;
+
+  /// Whether [infoMessage] describes an action that the snackbar can undo.
+  final bool infoMessageUndoable;
+
+  /// Whether [infoMessage] describes an undo that the snackbar can redo.
+  final bool infoMessageRedoable;
   final String currentUserRole;
   final bool isArchived;
   final String currentUserId;
   final List<BoardMember> boardMembers;
   final String memberSearchQuery;
   final String? selectedShapeId;
+  final Set<String> selectedIds;
   final bool selectedShapeIsFilled;
   final double selectedShapeRotation;
   final double selectedShapeBorderRadius;
@@ -42,6 +54,7 @@ class CanvasState {
   final double selectedStrokeOpacity;
   final String selectedStrokeBrushType;
   final CanvasToolMode currentToolMode;
+  final CanvasSelectionMode selectionMode;
   final CanvasShapeType? pendingShapeType;
   final bool isDrawingShape;
   final Offset? shapeDrawStart;
@@ -59,6 +72,38 @@ class CanvasState {
   final String? activeCommentId;
   final bool isPlacingComment;
 
+  /// Whether the in-app element clipboard holds anything to paste.
+  final bool hasClipboard;
+
+  /// Layer that receives newly drawn elements; null means the default group.
+  final String? activeLayerId;
+
+  /// Collaborative background/page look, persisted as a CRDT payload.
+  final CanvasBoardSettings boardSettings;
+
+  /// Parallel pressures captured for [currentStroke]. Empty means all 1.0.
+  final List<double> currentStrokePressures;
+
+  /// Parallel stylus tilt captured for [currentStroke]. Empty means upright.
+  final List<double> currentStrokeTilts;
+
+  /// Whether stylus pressure affects stroke width / opacity.
+  final bool stylusPressureEnabled;
+
+  /// Whether holding at the end of a stroke snaps it to a clean shape.
+  final bool quickShapeEnabled;
+
+  /// When false, one-finger drags pan instead of drawing with a brush.
+  /// Stylus input always draws.
+  final bool fingerDrawingEnabled;
+
+  final double stabilizerStrength;
+
+  /// Sync state surfaced in the board header. [syncMessage] explains the
+  /// offline/recovery case; it is null while everything is healthy.
+  final CanvasSyncStatus syncStatus;
+  final String? syncMessage;
+
   // ── Board history (owner-only) + member undo ──
   final bool isViewingHistory;
   final int? historyPreviewVersion;
@@ -71,7 +116,10 @@ class CanvasState {
   final String? historyPreviewRequestId;
   final bool historyPreviewShowsDesired;
   final bool isSelectingUndoRequestArea;
+  final bool isSelectingHistoryArea;
   final List<BoardActivityBlock> activityBlocks;
+  final bool hasMoreHistoryVersions;
+  final int? historyNextBeforeVersion;
   final List<UndoRequest> undoRequests;
   final RevertPlan? activeRevertPlan;
   final bool isHistoryLoading;
@@ -110,6 +158,14 @@ class CanvasState {
     this.boardTitle,
     this.elements = const [],
     this.currentStroke = const [],
+    this.currentStrokePressures = const [],
+    this.currentStrokeTilts = const [],
+    this.stylusPressureEnabled = true,
+    this.quickShapeEnabled = true,
+    this.fingerDrawingEnabled = true,
+    this.stabilizerStrength = 0,
+    this.syncStatus = CanvasSyncStatus.idle,
+    this.syncMessage,
     this.selectedColor = Colors.black,
     this.strokeWidth = 5,
     this.brushOpacity = 1.0,
@@ -120,12 +176,15 @@ class CanvasState {
     this.isLoading = false,
     this.error,
     this.infoMessage,
+    this.infoMessageUndoable = false,
+    this.infoMessageRedoable = false,
     this.currentUserRole = 'viewer',
     this.isArchived = false,
     this.currentUserId = '',
     this.boardMembers = const [],
     this.memberSearchQuery = '',
     this.selectedShapeId,
+    this.selectedIds = const <String>{},
     this.selectedShapeIsFilled = false,
     this.selectedShapeRotation = 0,
     this.selectedShapeBorderRadius = 0,
@@ -134,6 +193,7 @@ class CanvasState {
     this.selectedStrokeOpacity = 1.0,
     this.selectedStrokeBrushType = 'solid',
     this.currentToolMode = CanvasToolMode.doodle,
+    this.selectionMode = CanvasSelectionMode.marquee,
     this.pendingShapeType,
     this.isDrawingShape = false,
     this.shapeDrawStart,
@@ -150,6 +210,9 @@ class CanvasState {
     this.isCommentsTrayOpen = false,
     this.activeCommentId,
     this.isPlacingComment = false,
+    this.hasClipboard = false,
+    this.activeLayerId,
+    this.boardSettings = const CanvasBoardSettings(),
     this.isViewingHistory = false,
     this.historyPreviewVersion,
     this.historyPreviewElements = const [],
@@ -165,7 +228,10 @@ class CanvasState {
     this.historyPreviewCompare = false,
     this.historyPreviewOpVersions = const [],
     this.isSelectingUndoRequestArea = false,
+    this.isSelectingHistoryArea = false,
     this.activityBlocks = const [],
+    this.hasMoreHistoryVersions = false,
+    this.historyNextBeforeVersion,
     this.undoRequests = const [],
     this.activeRevertPlan,
     this.isHistoryLoading = false,
@@ -183,6 +249,14 @@ class CanvasState {
     Object? boardTitle = _unset,
     List<CanvasElement>? elements,
     List<Offset>? currentStroke,
+    List<double>? currentStrokePressures,
+    List<double>? currentStrokeTilts,
+    bool? stylusPressureEnabled,
+    bool? quickShapeEnabled,
+    bool? fingerDrawingEnabled,
+    double? stabilizerStrength,
+    CanvasSyncStatus? syncStatus,
+    Object? syncMessage = _unset,
     Color? selectedColor,
     double? strokeWidth,
     double? brushOpacity,
@@ -193,12 +267,15 @@ class CanvasState {
     bool? isLoading,
     Object? error = _unset,
     Object? infoMessage = _unset,
+    bool? infoMessageUndoable,
+    bool? infoMessageRedoable,
     String? currentUserRole,
     bool? isArchived,
     String? currentUserId,
     List<BoardMember>? boardMembers,
     String? memberSearchQuery,
     Object? selectedShapeId = _unset,
+    Set<String>? selectedIds,
     bool? selectedShapeIsFilled,
     double? selectedShapeRotation,
     double? selectedShapeBorderRadius,
@@ -207,6 +284,7 @@ class CanvasState {
     double? selectedStrokeOpacity,
     String? selectedStrokeBrushType,
     CanvasToolMode? currentToolMode,
+    CanvasSelectionMode? selectionMode,
     Object? pendingShapeType = _unset,
     bool? isDrawingShape,
     Object? shapeDrawStart = _unset,
@@ -223,6 +301,9 @@ class CanvasState {
     bool? isCommentsTrayOpen,
     Object? activeCommentId = _unset,
     bool? isPlacingComment,
+    bool? hasClipboard,
+    Object? activeLayerId = _unset,
+    CanvasBoardSettings? boardSettings,
     bool? isViewingHistory,
     Object? historyPreviewVersion = _unset,
     List<CanvasElement>? historyPreviewElements,
@@ -238,7 +319,10 @@ class CanvasState {
     bool? historyPreviewCompare,
     List<int>? historyPreviewOpVersions,
     bool? isSelectingUndoRequestArea,
+    bool? isSelectingHistoryArea,
     List<BoardActivityBlock>? activityBlocks,
+    bool? hasMoreHistoryVersions,
+    Object? historyNextBeforeVersion = _unset,
     List<UndoRequest>? undoRequests,
     Object? activeRevertPlan = _unset,
     bool? isHistoryLoading,
@@ -255,6 +339,18 @@ class CanvasState {
           : boardTitle as String?,
       elements: elements ?? this.elements,
       currentStroke: currentStroke ?? this.currentStroke,
+      currentStrokePressures:
+          currentStrokePressures ?? this.currentStrokePressures,
+      currentStrokeTilts: currentStrokeTilts ?? this.currentStrokeTilts,
+      stylusPressureEnabled:
+          stylusPressureEnabled ?? this.stylusPressureEnabled,
+      quickShapeEnabled: quickShapeEnabled ?? this.quickShapeEnabled,
+      fingerDrawingEnabled: fingerDrawingEnabled ?? this.fingerDrawingEnabled,
+      stabilizerStrength: stabilizerStrength ?? this.stabilizerStrength,
+      syncStatus: syncStatus ?? this.syncStatus,
+      syncMessage: syncMessage == _unset
+          ? this.syncMessage
+          : syncMessage as String?,
       selectedColor: selectedColor ?? this.selectedColor,
       strokeWidth: strokeWidth ?? this.strokeWidth,
       brushOpacity: brushOpacity ?? this.brushOpacity,
@@ -267,8 +363,11 @@ class CanvasState {
       showTrayTips: showTrayTips ?? this.showTrayTips,
       isLoading: isLoading ?? this.isLoading,
       error: error == _unset ? this.error : error as String?,
-      infoMessage:
-          infoMessage == _unset ? this.infoMessage : infoMessage as String?,
+      infoMessage: infoMessage == _unset
+          ? this.infoMessage
+          : infoMessage as String?,
+      infoMessageUndoable: infoMessageUndoable ?? this.infoMessageUndoable,
+      infoMessageRedoable: infoMessageRedoable ?? this.infoMessageRedoable,
       currentUserRole: currentUserRole ?? this.currentUserRole,
       isArchived: isArchived ?? this.isArchived,
       currentUserId: currentUserId ?? this.currentUserId,
@@ -277,21 +376,21 @@ class CanvasState {
       selectedShapeId: selectedShapeId == _unset
           ? this.selectedShapeId
           : selectedShapeId as String?,
+      selectedIds: selectedIds ?? this.selectedIds,
       selectedShapeIsFilled:
           selectedShapeIsFilled ?? this.selectedShapeIsFilled,
       selectedShapeRotation:
           selectedShapeRotation ?? this.selectedShapeRotation,
       selectedShapeBorderRadius:
           selectedShapeBorderRadius ?? this.selectedShapeBorderRadius,
-      selectedStrokeColor:
-          selectedStrokeColor ?? this.selectedStrokeColor,
-      selectedStrokeWidth:
-          selectedStrokeWidth ?? this.selectedStrokeWidth,
+      selectedStrokeColor: selectedStrokeColor ?? this.selectedStrokeColor,
+      selectedStrokeWidth: selectedStrokeWidth ?? this.selectedStrokeWidth,
       selectedStrokeOpacity:
           selectedStrokeOpacity ?? this.selectedStrokeOpacity,
       selectedStrokeBrushType:
           selectedStrokeBrushType ?? this.selectedStrokeBrushType,
       currentToolMode: currentToolMode ?? this.currentToolMode,
+      selectionMode: selectionMode ?? this.selectionMode,
       pendingShapeType: pendingShapeType == _unset
           ? this.pendingShapeType
           : pendingShapeType as CanvasShapeType?,
@@ -320,6 +419,11 @@ class CanvasState {
           ? this.activeCommentId
           : activeCommentId as String?,
       isPlacingComment: isPlacingComment ?? this.isPlacingComment,
+      hasClipboard: hasClipboard ?? this.hasClipboard,
+      activeLayerId: activeLayerId == _unset
+          ? this.activeLayerId
+          : activeLayerId as String?,
+      boardSettings: boardSettings ?? this.boardSettings,
       isViewingHistory: isViewingHistory ?? this.isViewingHistory,
       historyPreviewVersion: historyPreviewVersion == _unset
           ? this.historyPreviewVersion
@@ -354,7 +458,14 @@ class CanvasState {
           historyPreviewOpVersions ?? this.historyPreviewOpVersions,
       isSelectingUndoRequestArea:
           isSelectingUndoRequestArea ?? this.isSelectingUndoRequestArea,
+      isSelectingHistoryArea:
+          isSelectingHistoryArea ?? this.isSelectingHistoryArea,
       activityBlocks: activityBlocks ?? this.activityBlocks,
+      hasMoreHistoryVersions:
+          hasMoreHistoryVersions ?? this.hasMoreHistoryVersions,
+      historyNextBeforeVersion: historyNextBeforeVersion == _unset
+          ? this.historyNextBeforeVersion
+          : historyNextBeforeVersion as int?,
       undoRequests: undoRequests ?? this.undoRequests,
       activeRevertPlan: activeRevertPlan == _unset
           ? this.activeRevertPlan
@@ -377,6 +488,18 @@ class CanvasState {
     );
   }
 
+  /// Whether this session may edit the board.
+  ///
+  /// This is UI gating only; every mutation handler still calls
+  /// `_ensureCanEdit` so a stale screen cannot bypass the permission check.
+  bool get canEdit => !isArchived && currentUserRole != Board.roleViewer;
+
+  static bool _setEquals(Set<String> a, Set<String> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    return a.containsAll(b);
+  }
+
   List<BoardMember> get filteredBoardMembers {
     if (memberSearchQuery.trim().isEmpty) return boardMembers;
     final query = memberSearchQuery.trim().toLowerCase();
@@ -393,8 +516,16 @@ class CanvasState {
       other is CanvasState &&
           runtimeType == other.runtimeType &&
           boardTitle == other.boardTitle &&
-          elements == other.elements &&
+          _listEquals(elements, other.elements) &&
           currentStroke == other.currentStroke &&
+          currentStrokePressures == other.currentStrokePressures &&
+          currentStrokeTilts == other.currentStrokeTilts &&
+          stylusPressureEnabled == other.stylusPressureEnabled &&
+          quickShapeEnabled == other.quickShapeEnabled &&
+          fingerDrawingEnabled == other.fingerDrawingEnabled &&
+          stabilizerStrength == other.stabilizerStrength &&
+          syncStatus == other.syncStatus &&
+          syncMessage == other.syncMessage &&
           selectedColor == other.selectedColor &&
           strokeWidth == other.strokeWidth &&
           brushOpacity == other.brushOpacity &&
@@ -405,12 +536,15 @@ class CanvasState {
           isLoading == other.isLoading &&
           error == other.error &&
           infoMessage == other.infoMessage &&
+          infoMessageUndoable == other.infoMessageUndoable &&
+          infoMessageRedoable == other.infoMessageRedoable &&
           currentUserRole == other.currentUserRole &&
           isArchived == other.isArchived &&
           currentUserId == other.currentUserId &&
           boardMembers == other.boardMembers &&
           memberSearchQuery == other.memberSearchQuery &&
           selectedShapeId == other.selectedShapeId &&
+          _setEquals(selectedIds, other.selectedIds) &&
           selectedShapeIsFilled == other.selectedShapeIsFilled &&
           selectedShapeBorderRadius == other.selectedShapeBorderRadius &&
           selectedShapeRotation == other.selectedShapeRotation &&
@@ -419,6 +553,7 @@ class CanvasState {
           selectedStrokeOpacity == other.selectedStrokeOpacity &&
           selectedStrokeBrushType == other.selectedStrokeBrushType &&
           currentToolMode == other.currentToolMode &&
+          selectionMode == other.selectionMode &&
           pendingShapeType == other.pendingShapeType &&
           isDrawingShape == other.isDrawingShape &&
           shapeDrawStart == other.shapeDrawStart &&
@@ -435,6 +570,9 @@ class CanvasState {
           isCommentsTrayOpen == other.isCommentsTrayOpen &&
           activeCommentId == other.activeCommentId &&
           isPlacingComment == other.isPlacingComment &&
+          hasClipboard == other.hasClipboard &&
+          activeLayerId == other.activeLayerId &&
+          boardSettings == other.boardSettings &&
           isViewingHistory == other.isViewingHistory &&
           historyPreviewVersion == other.historyPreviewVersion &&
           historyPreviewElements == other.historyPreviewElements &&
@@ -450,7 +588,10 @@ class CanvasState {
           historyPreviewCompare == other.historyPreviewCompare &&
           _listEquals(historyPreviewOpVersions, other.historyPreviewOpVersions) &&
           isSelectingUndoRequestArea == other.isSelectingUndoRequestArea &&
+          isSelectingHistoryArea == other.isSelectingHistoryArea &&
           activityBlocks == other.activityBlocks &&
+          hasMoreHistoryVersions == other.hasMoreHistoryVersions &&
+          historyNextBeforeVersion == other.historyNextBeforeVersion &&
           undoRequests == other.undoRequests &&
           activeRevertPlan == other.activeRevertPlan &&
           isHistoryLoading == other.isHistoryLoading &&
@@ -466,6 +607,14 @@ class CanvasState {
       boardTitle.hashCode ^
       elements.hashCode ^
       currentStroke.hashCode ^
+      currentStrokePressures.hashCode ^
+      currentStrokeTilts.hashCode ^
+      stylusPressureEnabled.hashCode ^
+      quickShapeEnabled.hashCode ^
+      fingerDrawingEnabled.hashCode ^
+      stabilizerStrength.hashCode ^
+      syncStatus.hashCode ^
+      syncMessage.hashCode ^
       selectedColor.hashCode ^
       strokeWidth.hashCode ^
       brushOpacity.hashCode ^
@@ -476,12 +625,15 @@ class CanvasState {
       isLoading.hashCode ^
       error.hashCode ^
       infoMessage.hashCode ^
+      infoMessageUndoable.hashCode ^
+      infoMessageRedoable.hashCode ^
       currentUserRole.hashCode ^
       isArchived.hashCode ^
       currentUserId.hashCode ^
       boardMembers.hashCode ^
       memberSearchQuery.hashCode ^
       selectedShapeId.hashCode ^
+      Object.hashAllUnordered(selectedIds).hashCode ^
       selectedShapeIsFilled.hashCode ^
       selectedShapeBorderRadius.hashCode ^
       selectedShapeRotation.hashCode ^
@@ -490,6 +642,7 @@ class CanvasState {
       selectedStrokeOpacity.hashCode ^
       selectedStrokeBrushType.hashCode ^
       currentToolMode.hashCode ^
+      selectionMode.hashCode ^
       pendingShapeType.hashCode ^
       isDrawingShape.hashCode ^
       shapeDrawStart.hashCode ^
@@ -506,6 +659,9 @@ class CanvasState {
       isCommentsTrayOpen.hashCode ^
       activeCommentId.hashCode ^
       isPlacingComment.hashCode ^
+      hasClipboard.hashCode ^
+      activeLayerId.hashCode ^
+      boardSettings.hashCode ^
       isViewingHistory.hashCode ^
       historyPreviewVersion.hashCode ^
       historyPreviewElements.hashCode ^
@@ -521,7 +677,10 @@ class CanvasState {
       historyPreviewCompare.hashCode ^
       Object.hashAll(historyPreviewOpVersions) ^
       isSelectingUndoRequestArea.hashCode ^
+      isSelectingHistoryArea.hashCode ^
       activityBlocks.hashCode ^
+      hasMoreHistoryVersions.hashCode ^
+      historyNextBeforeVersion.hashCode ^
       undoRequests.hashCode ^
       activeRevertPlan.hashCode ^
       isHistoryLoading.hashCode ^
@@ -581,17 +740,23 @@ class CanvasUndoConflict {
 class UndoRequestDraft {
   final List<String> elementIds;
   final UndoRequestArea? area;
+  final UndoRequestScopeMode scopeMode;
 
   const UndoRequestDraft({
     this.elementIds = const [],
     this.area,
+    this.scopeMode = UndoRequestScopeMode.myChanges,
   });
 
   /// Draft with [elementId] added, or removed when already in the scope.
   UndoRequestDraft withToggledElement(String elementId) {
     final next = List<String>.of(elementIds);
     if (!next.remove(elementId)) next.add(elementId);
-    return UndoRequestDraft(elementIds: next, area: area);
+    return UndoRequestDraft(
+      elementIds: next,
+      area: area,
+      scopeMode: scopeMode,
+    );
   }
 
   /// Draft with the member's drawn [area] and the scope the screen resolved
@@ -601,6 +766,14 @@ class UndoRequestDraft {
       UndoRequestDraft(
         elementIds: List<String>.unmodifiable(elementIds),
         area: area,
+        scopeMode: scopeMode,
+      );
+
+  UndoRequestDraft withScopeMode(UndoRequestScopeMode nextScopeMode) =>
+      UndoRequestDraft(
+        elementIds: elementIds,
+        area: area,
+        scopeMode: nextScopeMode,
       );
 
   @override
@@ -609,10 +782,12 @@ class UndoRequestDraft {
       other is UndoRequestDraft &&
           runtimeType == other.runtimeType &&
           _listEquals(elementIds, other.elementIds) &&
-          area == other.area;
+          area == other.area &&
+          scopeMode == other.scopeMode;
 
   @override
-  int get hashCode => Object.hash(area, Object.hashAll(elementIds));
+  int get hashCode =>
+      Object.hash(area, scopeMode, Object.hashAll(elementIds));
 }
 
 bool _listEquals<T>(List<T> a, List<T> b) {

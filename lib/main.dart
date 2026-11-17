@@ -86,8 +86,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
     await dotenv.load(fileName: ".env");
-  } catch (e) {
-    debugPrint("Warning: Failed to load .env file: $e");
+  } catch (_) {
+    debugPrint("Warning: Failed to load .env file");
   }
   // Any startup failure (Firebase init, SharedPreferences, theme load, or
   // the local database init) would otherwise escape main() as an unhandled

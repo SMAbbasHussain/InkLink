@@ -43,6 +43,18 @@ class NotificationMarkReadRequested extends NotificationsEvent {
   const NotificationMarkReadRequested(this.notificationId);
 }
 
+/// Optimistically resolves a workspace invitation notification after the
+/// workspace invitation has been accepted or declined.
+class NotificationWorkspaceInviteResolved extends NotificationsEvent {
+  final String inviteId;
+  final String status;
+
+  const NotificationWorkspaceInviteResolved({
+    required this.inviteId,
+    required this.status,
+  });
+}
+
 class _NotificationsUpdated extends NotificationsEvent {
   final List<Map<String, dynamic>> notifications;
 
@@ -101,6 +113,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     on<NotificationsDeleteRequested>(_onDeleteRequested);
     on<NotificationRespondToAccessRequest>(_onRespondToAccessRequest);
     on<NotificationMarkReadRequested>(_onMarkReadRequested);
+    on<NotificationWorkspaceInviteResolved>(_onWorkspaceInviteResolved);
   }
 
   Future<void> _onLoadRequested(
@@ -110,13 +123,16 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     emit(const NotificationsLoading());
     await _notificationsSub?.cancel();
     _readIds = await _notificationPreferences.getReadNotificationIds();
-    _notificationsSub = _notificationService.watchNotifications().listen((
-      items,
-    ) {
-      _rawNotifications = items;
-      final normalized = _normalizeNotifications(items);
-      add(_NotificationsUpdated(normalized));
-    }, onError: (error) => add(_NotificationsErrorOccurred(AppErrorFormatter.cleanMessage(error))));
+    _notificationsSub = _notificationService.watchNotifications().listen(
+      (items) {
+        _rawNotifications = items;
+        final normalized = _normalizeNotifications(items);
+        add(_NotificationsUpdated(normalized));
+      },
+      onError: (error) => add(
+        _NotificationsErrorOccurred(AppErrorFormatter.cleanMessage(error)),
+      ),
+    );
   }
 
   void _onNotificationsUpdated(
@@ -149,6 +165,32 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     await _notificationPreferences.markAsRead(notificationId);
     _readIds.add(notificationId);
     if (_rawNotifications.isNotEmpty) {
+      add(_NotificationsUpdated(_normalizeNotifications(_rawNotifications)));
+    }
+  }
+
+  void _onWorkspaceInviteResolved(
+    NotificationWorkspaceInviteResolved event,
+    Emitter<NotificationsState> emit,
+  ) {
+    if (event.inviteId.isEmpty) return;
+    var changed = false;
+    _rawNotifications = _rawNotifications
+        .map((item) {
+          if (item['type'] != 'workspace_invite') return item;
+          final extraData = item['extraData'];
+          final inviteId = extraData is Map
+              ? extraData['inviteId']?.toString()
+              : null;
+          if (inviteId != event.inviteId &&
+              item['targetId']?.toString() != event.inviteId) {
+            return item;
+          }
+          changed = true;
+          return {...item, 'status': event.status};
+        })
+        .toList(growable: false);
+    if (changed) {
       add(_NotificationsUpdated(_normalizeNotifications(_rawNotifications)));
     }
   }

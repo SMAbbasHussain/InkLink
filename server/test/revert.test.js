@@ -483,3 +483,40 @@ test('a plan with nothing to change yields no items', async () => {
   const plan = await buildPlan('board-1', { mode: 'restore', targetVersion: 2 }, redisWith([]), 'owner');
   assert.deepEqual(plan.items, []);
 });
+
+test('scoped restore plan with area or elementIds only reverts elements inside the selected part of the board', async () => {
+  reset();
+  state.elementMap = {
+    insideUpdated: { id: 'insideUpdated', type: 'shape', centerX: 50, centerY: 50, width: 40, height: 40, color: 2 },
+    insideAddedLater: { id: 'insideAddedLater', type: 'shape', centerX: 60, centerY: 60, width: 20, height: 20 },
+    outsideUpdated: { id: 'outsideUpdated', type: 'shape', centerX: 500, centerY: 500, width: 40, height: 40, color: 9 },
+  };
+  state.version = 10;
+  state.versioned[3] = {
+    insideUpdated: { id: 'insideUpdated', type: 'shape', centerX: 50, centerY: 50, width: 40, height: 40, color: 1 },
+    insideDeletedLater: { id: 'insideDeletedLater', type: 'shape', centerX: 70, centerY: 70, width: 20, height: 20 },
+    outsideUpdated: { id: 'outsideUpdated', type: 'shape', centerX: 500, centerY: 500, width: 40, height: 40, color: 1 },
+  };
+
+  const plan = await buildPlan(
+    'board-1',
+    {
+      mode: 'restore',
+      targetVersion: 3,
+      area: { left: 0, top: 0, width: 150, height: 150 },
+    },
+    redisWith([]),
+    'owner',
+  );
+  const byId = Object.fromEntries(plan.items.map((i) => [i.elementId, i]));
+  assert.deepEqual(
+    Object.keys(byId).sort(),
+    ['insideAddedLater', 'insideDeletedLater', 'insideUpdated'],
+    'only elements inside the selected area are reverted; outsideUpdated is untouched',
+  );
+  assert.equal(byId.insideUpdated.kind, 'update');
+  assert.equal(byId.insideUpdated.after.color, 1);
+  assert.equal(byId.insideAddedLater.kind, 'delete');
+  assert.equal(byId.insideDeletedLater.kind, 'add');
+  assert.equal(byId.outsideUpdated, undefined);
+});

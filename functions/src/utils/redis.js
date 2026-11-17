@@ -2,6 +2,10 @@ const path = require('path');
 
 let redisClient = null;
 
+function sanitizeErrorMessage(msg) {
+  return String(msg || '').replace(/(:\/\/)([^:@\s]+):([^@\s]+)@/g, '$1$2:***@');
+}
+
 function getRedisClient() {
   if (redisClient) return redisClient;
 
@@ -19,7 +23,7 @@ function getRedisClient() {
       });
       return redisClient;
     } catch (err) {
-      console.warn('Failed to initialize @upstash/redis client:', err.message);
+      console.warn('Failed to initialize @upstash/redis client:', sanitizeErrorMessage(err.message));
     }
   }
 
@@ -46,11 +50,11 @@ function _createIoRedisClient(url) {
       connectTimeout: 5000,
     });
     redisClient.on('error', (e) => {
-      console.warn('Redis unavailable:', e.message);
+      console.warn('Redis unavailable:', sanitizeErrorMessage(e.message));
     });
     return redisClient;
   } catch (err) {
-    console.warn('Failed to create ioredis client:', err.message);
+    console.warn('Failed to create ioredis client:', sanitizeErrorMessage(err.message));
     return null;
   }
 }

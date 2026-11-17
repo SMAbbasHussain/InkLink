@@ -188,6 +188,10 @@ class _HomeScreenState extends State<HomeScreen>
             if (_isNavigatingToCanvas) return;
             _isNavigatingToCanvas = true;
 
+            final templateId = state.createdBoardId != null
+                ? state.pendingTemplateId
+                : null;
+
             // Consume effect before navigation so state refreshes cannot
             // retrigger additional pushes while the canvas route is open.
             dashboardBloc.add(DashboardConsumeEffects());
@@ -198,6 +202,7 @@ class _HomeScreenState extends State<HomeScreen>
                   this.context,
                   boardId: boardId,
                   showTrayTipsOnEntry: true,
+                  initialTemplateId: templateId,
                 ),
               );
             } finally {
