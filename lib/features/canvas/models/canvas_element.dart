@@ -71,6 +71,9 @@ sealed class CanvasElement {
           width: (data['width'] as num).toDouble(),
           height: (data['height'] as num).toDouble(),
           imageBase64: data['imageBase64'] as String? ?? '',
+          imageUrl: ImageElement.optionalString(data['imageUrl']),
+          aiPrompt: ImageElement.optionalString(data['aiPrompt']),
+          generationId: ImageElement.optionalString(data['generationId']),
         );
       case 'sticky_note':
         return StickyNoteElement(
@@ -310,6 +313,17 @@ class ImageElement extends CanvasElement {
   final double height;
   final String imageBase64;
 
+  /// Optional: full-size image URL (AI images). When set, the image is loaded
+  /// from this URL and [imageBase64] holds only a small thumbnail, which older
+  /// app versions display instead. Null for ordinary inline images.
+  final String? imageUrl;
+
+  /// Optional: the prompt that produced an AI image.
+  final String? aiPrompt;
+
+  /// Optional: server id of the AI generation.
+  final String? generationId;
+
   const ImageElement({
     required super.id,
     required super.z,
@@ -317,7 +331,23 @@ class ImageElement extends CanvasElement {
     this.width = 100,
     this.height = 100,
     this.imageBase64 = '',
+    this.imageUrl,
+    this.aiPrompt,
+    this.generationId,
   });
+
+  /// True when this image was produced by AI and is stored by URL.
+  bool get isAiImage => imageUrl != null;
+
+  /// Map keys of the optional AI fields, in the order they are written.
+  static const List<String> aiFieldKeys = ['imageUrl', 'aiPrompt', 'generationId'];
+
+  /// Reads an optional string field. Anything that is not a non-empty string
+  /// (missing, null, wrong type) is treated as "not set".
+  static String? optionalString(Object? value) {
+    if (value is! String) return null;
+    return value.trim().isEmpty ? null : value;
+  }
 
   @override
   Map<String, dynamic> toMap() => {
@@ -328,6 +358,11 @@ class ImageElement extends CanvasElement {
         'width': width,
         'height': height,
         'imageBase64': imageBase64,
+        // Written only when set, so ordinary images serialise exactly as
+        // they did before these fields existed.
+        if (imageUrl != null) 'imageUrl': imageUrl,
+        if (aiPrompt != null) 'aiPrompt': aiPrompt,
+        if (generationId != null) 'generationId': generationId,
       };
 
   @override
@@ -338,7 +373,10 @@ class ImageElement extends CanvasElement {
           center == other.center &&
           width == other.width &&
           height == other.height &&
-          imageBase64 == other.imageBase64;
+          imageBase64 == other.imageBase64 &&
+          imageUrl == other.imageUrl &&
+          aiPrompt == other.aiPrompt &&
+          generationId == other.generationId;
 
   @override
   int get hashCode =>
@@ -346,7 +384,10 @@ class ImageElement extends CanvasElement {
       center.hashCode ^
       width.hashCode ^
       height.hashCode ^
-      imageBase64.hashCode;
+      imageBase64.hashCode ^
+      imageUrl.hashCode ^
+      aiPrompt.hashCode ^
+      generationId.hashCode;
 }
 
 class StickyNoteElement extends CanvasElement {

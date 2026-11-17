@@ -8,7 +8,28 @@ import '../../../../ui/theme/ink_tokens.dart';
 import '../../../../ui/theme/ink_type.dart';
 import '../../../../ui/widgets/ink_button.dart';
 import '../../../../ui/widgets/ink_text_field.dart';
+import '../../../../ui/widgets/ink_segmented.dart';
+import '../../bloc/ai_image_state.dart';
+import '../widgets/ai_image_widgets.dart';
 import '../widgets/sliding_tray.dart';
+
+/// Everything the tray needs for working AI image generation.
+class AiTrayGeneration {
+  /// False for viewers: the controls are shown disabled with an explanation.
+  final bool canEdit;
+  final bool isGenerating;
+  final String aspectRatio;
+  final ValueChanged<String> onAspectRatioChanged;
+  final VoidCallback onGenerate;
+
+  const AiTrayGeneration({
+    required this.canEdit,
+    required this.isGenerating,
+    required this.aspectRatio,
+    required this.onAspectRatioChanged,
+    required this.onGenerate,
+  });
+}
 
 class AITray extends StatelessWidget {
   final bool isOpen;
@@ -19,6 +40,10 @@ class AITray extends StatelessWidget {
   final List<Uint8List> recentImages;
   final VoidCallback? onClose;
 
+  /// Working AI generation controls. When null (feature switched off) the
+  /// tray shows the original "coming soon" button wired to [onGenerateImage].
+  final AiTrayGeneration? generation;
+
   const AITray({
     super.key,
     required this.isOpen,
@@ -28,7 +53,62 @@ class AITray extends StatelessWidget {
     required this.onGenerateImage,
     required this.recentImages,
     this.onClose,
+    this.generation,
   });
+
+  List<Widget> _buildGenerationControls(
+    InkTokens tokens,
+    AiTrayGeneration generation,
+  ) {
+    final selectedIndex = kAiAspectRatios.indexOf(generation.aspectRatio);
+    return [
+      const SizedBox(height: InkSpacing.s4),
+      Align(
+        alignment: Alignment.centerRight,
+        child: AiPromptCounter(controller: controller),
+      ),
+      const SizedBox(height: InkSpacing.s8),
+      Text('Shape', style: InkType.label(tokens.inkMuted)),
+      const SizedBox(height: InkSpacing.s8),
+      IgnorePointer(
+        ignoring: !generation.canEdit || generation.isGenerating,
+        child: Opacity(
+          opacity: generation.canEdit ? 1 : 0.5,
+          child: InkSegmented(
+            labels: kAiAspectRatios,
+            selectedIndex: selectedIndex < 0 ? 0 : selectedIndex,
+            onChanged: (index) =>
+                generation.onAspectRatioChanged(kAiAspectRatios[index]),
+          ),
+        ),
+      ),
+      const SizedBox(height: InkSpacing.s12),
+      ValueListenableBuilder<TextEditingValue>(
+        valueListenable: controller,
+        builder: (context, value, _) {
+          final ready =
+              generation.canEdit &&
+              !generation.isGenerating &&
+              isValidAiPrompt(value.text);
+          return InkButton.primary(
+            label: generation.isGenerating ? 'Generating...' : 'Generate Image',
+            icon: const Icon(LucideIcons.sparkles),
+            isLoading: generation.isGenerating,
+            onPressed: ready ? generation.onGenerate : null,
+          );
+        },
+      ),
+      const SizedBox(height: InkSpacing.s8 + 2),
+      Text(
+        !generation.canEdit
+            ? 'Only editors can generate images on this board.'
+            : generation.isGenerating
+            ? 'You can keep drawing while the image is generated.'
+            : 'The image appears in the middle of your view.',
+        style: InkType.caption(tokens.inkMuted),
+      ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +136,9 @@ class AITray extends StatelessWidget {
                     hintText: 'Describe an image idea...',
                     leadingIcon: LucideIcons.sparkles,
                   ),
+                  if (generation != null)
+                    ..._buildGenerationControls(tokens, generation!)
+                  else ...[
                   const SizedBox(height: InkSpacing.s12),
                   InkButton.secondary(
                     label: 'Generate Image (Soon)',
@@ -67,6 +150,7 @@ class AITray extends StatelessWidget {
                     'Generation integration is coming next.',
                     style: InkType.caption(tokens.inkMuted),
                   ),
+                  ],
                   const SizedBox(height: InkSpacing.s12),
                   Divider(height: 1, color: tokens.glassStroke),
                   const SizedBox(height: InkSpacing.s12),

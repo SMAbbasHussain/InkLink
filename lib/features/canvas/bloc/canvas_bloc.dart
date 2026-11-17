@@ -151,6 +151,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasAddShape>(_onAddShape);
     on<CanvasAddAiText>(_onAddAiText);
     on<CanvasAddImageElement>(_onAddImageElement);
+    on<CanvasAddAiImageElement>(_onAddAiImageElement);
+    on<CanvasReplaceImageSource>(_onReplaceImageSource);
     on<CanvasPreviewImageElement>(_onPreviewImageElement);
     on<CanvasUpdateImageElement>(_onUpdateImageElement);
     on<CanvasAddStickyNote>(_onAddStickyNote);
@@ -675,6 +677,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
                 _cachedCrdtElements
                     ?.where((e) => e.id == elementId)
                     .firstOrNull;
+            if (existing is ImageElement) {
+              _carryAiImageFields(decoded, existing);
+            }
             if (existing is ImageElement && existing.imageBase64.isNotEmpty) {
               decoded['imageBase64'] = existing.imageBase64;
             } else {
@@ -1047,6 +1052,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           width: (payload['width'] as num?)?.toDouble() ?? 220.0,
           height: (payload['height'] as num?)?.toDouble() ?? 160.0,
           imageBase64: (payload['imageBase64'] as String?) ?? '',
+          imageUrl: ImageElement.optionalString(payload['imageUrl']),
+          aiPrompt: ImageElement.optionalString(payload['aiPrompt']),
+          generationId: ImageElement.optionalString(payload['generationId']),
         ));
         continue;
       }
@@ -1335,6 +1343,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
                 width: newW,
                 height: newH,
                 imageBase64: (e as ImageElement).imageBase64,
+                imageUrl: e.imageUrl,
+                aiPrompt: e.aiPrompt,
+                generationId: e.generationId,
               )
             : e)
         .toList();
@@ -1352,11 +1363,116 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       'height': newH,
       'imageBase64': oldElement.imageBase64,
     };
+    _carryAiImageFields(updateData, oldElement);
     await _saveCrdtOperation(
       action: 'update',
       type: 'image',
       objectId: event.elementId,
       data: updateData,
+      emit: emit,
+    );
+  }
+
+  /// Copies the optional AI image fields from [from] into [target] when
+  /// [target] does not already have them, so an update never drops them.
+  /// Does nothing for ordinary images (the fields are null).
+  void _carryAiImageFields(Map<String, dynamic> target, ImageElement from) {
+    final values = <String, String?>{
+      'imageUrl': from.imageUrl,
+      'aiPrompt': from.aiPrompt,
+      'generationId': from.generationId,
+    };
+    for (final key in ImageElement.aiFieldKeys) {
+      final value = values[key];
+      if (value != null && target[key] == null) {
+        target[key] = value;
+      }
+    }
+  }
+
+  /// Canvas size for an image of [sourceWidth] x [sourceHeight] pixels:
+  /// longest side [maxSide], aspect ratio kept, within the image limits.
+  Size _fitImageSize(int sourceWidth, int sourceHeight, double maxSide) {
+    final w = sourceWidth <= 0 ? 1.0 : sourceWidth.toDouble();
+    final h = sourceHeight <= 0 ? 1.0 : sourceHeight.toDouble();
+    final scale = maxSide / math.max(w, h);
+    return Size(
+      (w * scale).clamp(80.0, 720.0).toDouble(),
+      (h * scale).clamp(80.0, 720.0).toDouble(),
+    );
+  }
+
+  Future<void> _onAddAiImageElement(
+    CanvasAddAiImageElement event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final imageId = _uuid.v4();
+    final imageElement = ImageElement(
+      id: imageId,
+      z: _nextZIndex(),
+      center: event.center,
+      width: event.width.clamp(80.0, 720.0),
+      height: event.height.clamp(80.0, 720.0),
+      imageBase64: event.thumbnailBase64,
+      imageUrl: event.imageUrl,
+      aiPrompt: ImageElement.optionalString(event.aiPrompt),
+      generationId: ImageElement.optionalString(event.generationId),
+    );
+    final nextElements =
+        List<CanvasElement>.from(state.elements)..add(imageElement);
+    emit(state.copyWith(elements: nextElements));
+    await _saveCrdtOperation(
+      action: 'create',
+      type: _elementType(imageElement),
+      objectId: imageId,
+      data: imageElement.toMap(),
+      emit: emit,
+    );
+  }
+
+  Future<void> _onReplaceImageSource(
+    CanvasReplaceImageSource event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    ImageElement? oldElement;
+    for (final element in state.elements) {
+      if (element.id == event.elementId && element is ImageElement) {
+        oldElement = element;
+        break;
+      }
+    }
+    // The image was deleted while the request was running: nothing to replace.
+    if (oldElement == null) return;
+
+    // Keep the position and the longest side; follow the new aspect ratio.
+    final size = _fitImageSize(
+      event.sourceWidth,
+      event.sourceHeight,
+      math.max(oldElement.width, oldElement.height),
+    );
+    final replaced = ImageElement(
+      id: oldElement.id,
+      z: oldElement.z,
+      center: oldElement.center,
+      width: size.width,
+      height: size.height,
+      imageBase64: event.thumbnailBase64,
+      imageUrl: event.imageUrl,
+      aiPrompt: ImageElement.optionalString(event.aiPrompt) ?? oldElement.aiPrompt,
+      generationId: ImageElement.optionalString(event.generationId),
+    );
+    final next = state.elements
+        .map((e) => e.id == event.elementId ? replaced : e)
+        .toList();
+    emit(state.copyWith(elements: next));
+    // One upsert = one CRDT update = one undo step back to the old version.
+    await _saveCrdtOperation(
+      action: 'update',
+      type: 'image',
+      objectId: event.elementId,
+      data: replaced.toMap(),
       emit: emit,
     );
   }
@@ -2507,6 +2623,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     if (existing is ImageElement) {
       data['imageBase64'] ??= existing.imageBase64;
+      _carryAiImageFields(data, existing);
       data['width'] ??= (data['width'] as num?)?.toDouble() ??
           (data['size'] as num?)?.toDouble() ??
           existing.width;

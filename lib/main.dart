@@ -40,6 +40,7 @@ import 'package:inklink/domain/repositories/settings/settings_repository_impl.da
 import 'package:inklink/domain/repositories/workspace/workspace_repository.dart';
 import 'package:inklink/domain/repositories/workspace/workspace_repository_impl.dart';
 import 'package:inklink/domain/repositories/theme/theme_repository_impl.dart';
+import 'package:inklink/domain/services/ai/ai_image_service.dart';
 import 'package:inklink/domain/services/auth/auth_session_service.dart';
 import 'package:inklink/domain/services/board/board_service.dart';
 import 'package:inklink/domain/services/canvas/board_export_service.dart';
@@ -328,6 +329,11 @@ Future<void> _startApp() async {
             authService: context.read<AuthService>(),
             cloudFunctionsService: context.read<CloudFunctionsService>(),
             friendsRepository: context.read<FriendsRepository>(),
+          ),
+        ),
+        RepositoryProvider<AiImageService>(
+          create: (context) => AiImageServiceImpl(
+            cloudFunctionsService: context.read<CloudFunctionsService>(),
           ),
         ),
         RepositoryProvider<DataPrefetchService>(
