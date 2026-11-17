@@ -40,7 +40,9 @@ const allowedOrigins = configuredOrigins.length > 0 ? configuredOrigins : defaul
 function isOriginAllowed(origin) {
   // Allow requests with no Origin header (such as native mobile apps or curl)
   if (!origin) return true;
-  return allowedOrigins.includes(origin);
+  if (allowedOrigins.includes(origin)) return true;
+  // Allow any localhost or 127.0.0.1 port for local web development
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 }
 
 const corsOptions = {
