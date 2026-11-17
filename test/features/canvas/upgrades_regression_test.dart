@@ -16,7 +16,8 @@ import 'package:inklink/domain/services/profile/profile_service.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
 import 'package:inklink/features/canvas/geometry/canvas_element_geometry.dart';
 import 'package:inklink/features/canvas/view/trays/canvas_shape_type.dart';
-import 'package:inklink/features/canvas/view/trays/tools_tray.dart';
+import 'package:inklink/domain/models/canvas/canvas_toolbar_action.dart';
+import 'package:inklink/features/canvas/view/trays/canvas_actions_tray.dart';
 import 'package:inklink/features/canvas/view/widgets/template_gallery_sheet.dart';
 import 'package:inklink/features/canvas/view/widgets/undo_request_sheet.dart';
 import 'package:inklink/features/dashboard/bloc/dashboard_bloc.dart';
@@ -293,20 +294,18 @@ void main() {
       expect(chosen?.id, 'd1');
     });
 
-    testWidgets('ToolsTray shows Table button for editors and invokes callback', (tester) async {
-      var tapped = false;
+    testWidgets('CanvasActionsTray shows Table button for editors and invokes callback', (tester) async {
+      CanvasToolbarAction? tapped;
       await tester.pumpWidget(
         MaterialApp(
           theme: InkTheme.light(),
           home: Scaffold(
             body: Stack(
               children: [
-                ToolsTray(
+                CanvasActionsTray(
                   isOpen: true,
                   canEdit: true,
-                  onUndo: () {},
-                  onRedo: () {},
-                  onAddTable: () => tapped = true,
+                  onActionSelected: (action) => tapped = action,
                 ),
               ],
             ),
@@ -318,7 +317,7 @@ void main() {
       expect(find.text('Table'), findsOneWidget);
       await tester.tap(find.text('Table'));
       await tester.pump();
-      expect(tapped, isTrue);
+      expect(tapped, CanvasToolbarAction.table);
     });
 
     testWidgets('UndoRequestSendSheet displays scope mode & diff summary cleanly', (tester) async {

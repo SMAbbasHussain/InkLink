@@ -14,7 +14,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 /// 3. In debug mode, custom URLs or local emulators are permitted.
 String resolveWebSocketUrl([String? configuredUrl]) {
   final rawUrl = (configuredUrl ?? dotenv.env['WEBSOCKET_URL'])?.trim();
-  const defaultReleaseUrl = 'https://inklink.app';
+  const defaultReleaseUrl = 'https://inklink-api.duckdns.org';
   const defaultDebugUrl = 'http://10.0.2.2:3000';
 
   if (kReleaseMode) {

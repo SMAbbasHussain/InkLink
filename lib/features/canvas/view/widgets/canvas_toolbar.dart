@@ -1,47 +1,154 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../../domain/models/canvas/canvas_toolbar_action.dart';
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_tokens.dart';
+import '../../../../ui/widgets/canvas_toolbar_action_meta.dart';
 import '../../models/canvas_tool_mode.dart';
 
-/// The single primary tool strip for the canvas.
+/// The customizable primary bottom strip for the canvas.
 ///
-/// Every tool is one tap away; deep options still live in the sliding trays.
-/// Viewers see the same strip with edit tools disabled so the board reads as
-/// read-only instead of broken.
+/// Renders [actions] in the user's chosen order plus a trailing "More" button
+/// to open the bottom-right tools tray. Shrink-wraps to fit cleanly even when
+/// only 1 or 2 actions are pinned, and scrolls horizontally when many are set.
 class CanvasToolbar extends StatelessWidget {
   const CanvasToolbar({
     super.key,
     required this.activeTool,
     required this.canEdit,
     required this.onToolSelected,
+    this.actions = CanvasToolbarAction.defaultBottomBarActions,
+    this.onActionSelected,
+    this.onShape,
     this.onStickyNote,
     this.onFrame,
     this.onImage,
+    this.onLayers,
+    this.onTemplates,
+    this.onTable,
+    this.onConnector,
     this.onMore,
     this.isArrowPreset = false,
+    this.isShapesPopupOpen = false,
+    this.isLayersOpen = false,
+    this.isToolsTrayOpen = false,
   });
 
   final CanvasToolMode activeTool;
   final bool canEdit;
+  final List<CanvasToolbarAction> actions;
   final ValueChanged<CanvasToolMode> onToolSelected;
+  final ValueChanged<CanvasToolbarAction>? onActionSelected;
+  final VoidCallback? onShape;
   final VoidCallback? onStickyNote;
   final VoidCallback? onFrame;
   final VoidCallback? onImage;
+  final VoidCallback? onLayers;
+  final VoidCallback? onTemplates;
+  final VoidCallback? onTable;
+  final VoidCallback? onConnector;
   final VoidCallback? onMore;
   final bool isArrowPreset;
+  final bool isShapesPopupOpen;
+  final bool isLayersOpen;
+  final bool isToolsTrayOpen;
+
+  bool _isSelected(CanvasToolbarAction action) => switch (action) {
+    CanvasToolbarAction.select => activeTool == CanvasToolMode.select,
+    CanvasToolbarAction.hand => activeTool == CanvasToolMode.hand,
+    CanvasToolbarAction.pen => activeTool == CanvasToolMode.doodle,
+    CanvasToolbarAction.highlight => activeTool == CanvasToolMode.highlight,
+    CanvasToolbarAction.eraser => activeTool == CanvasToolMode.eraser,
+    CanvasToolbarAction.fill => activeTool == CanvasToolMode.fill,
+    CanvasToolbarAction.shape =>
+      isShapesPopupOpen || (activeTool == CanvasToolMode.shape && !isArrowPreset),
+    CanvasToolbarAction.arrow =>
+      isArrowPreset || activeTool == CanvasToolMode.arrow,
+    CanvasToolbarAction.text => activeTool == CanvasToolMode.text,
+    CanvasToolbarAction.image => activeTool == CanvasToolMode.image,
+    CanvasToolbarAction.layers => isLayersOpen,
+    _ => false,
+  };
+
+  VoidCallback? _handlerFor(CanvasToolbarAction action) {
+    if (!canEdit && action.requiresEdit) return null;
+    if (onActionSelected != null) {
+      return () => onActionSelected!(action);
+    }
+    return switch (action) {
+      CanvasToolbarAction.select => () => onToolSelected(CanvasToolMode.select),
+      CanvasToolbarAction.hand => () => onToolSelected(CanvasToolMode.hand),
+      CanvasToolbarAction.pen => () => onToolSelected(CanvasToolMode.doodle),
+      CanvasToolbarAction.highlight =>
+        () => onToolSelected(CanvasToolMode.highlight),
+      CanvasToolbarAction.eraser => () => onToolSelected(CanvasToolMode.eraser),
+      CanvasToolbarAction.fill => () => onToolSelected(CanvasToolMode.fill),
+      CanvasToolbarAction.shape =>
+        onShape ?? () => onToolSelected(CanvasToolMode.shape),
+      CanvasToolbarAction.arrow => () => onToolSelected(CanvasToolMode.arrow),
+      CanvasToolbarAction.stickyNote => onStickyNote,
+      CanvasToolbarAction.frame => onFrame,
+      CanvasToolbarAction.text => () => onToolSelected(CanvasToolMode.text),
+      CanvasToolbarAction.image => onImage,
+      CanvasToolbarAction.layers => onLayers,
+      CanvasToolbarAction.templates => onTemplates,
+      CanvasToolbarAction.table => onTable,
+      CanvasToolbarAction.connector => onConnector,
+    };
+  }
+
+  String _tooltipFor(CanvasToolbarAction action, bool enabled) {
+    if (!enabled) {
+      return switch (action) {
+        CanvasToolbarAction.pen ||
+        CanvasToolbarAction.highlight => 'Viewer: drawing disabled',
+        CanvasToolbarAction.eraser => 'Viewer: erasing disabled',
+        _ => 'Viewer: editing disabled',
+      };
+    }
+    return '${action.label}: ${action.description}';
+  }
 
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final buttons = <Widget>[
+      for (final action in actions)
+        () {
+          final handler = _handlerFor(action);
+          final enabled = handler != null && (!action.requiresEdit || canEdit);
+          return _ToolButton(
+            icon: iconForCanvasToolbarAction(action),
+            label: action.shortLabel,
+            tooltip: _tooltipFor(action, enabled),
+            selected: _isSelected(action),
+            enabled: enabled,
+            onTap: handler,
+          );
+        }(),
+      if (onMore != null)
+        _ToolButton(
+          icon: LucideIcons.layoutGrid,
+          label: 'More',
+          tooltip: 'All tools & board options',
+          selected: isToolsTrayOpen,
+          enabled: true,
+          onTap: onMore,
+        ),
+    ];
+
+    if (buttons.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     return Material(
       color: tokens.paper,
       elevation: 8,
       borderRadius: BorderRadius.circular(InkRadii.glassBar),
-      // A horizontal scroll view expands to its parent's full height in the
-      // cross axis; without an explicit height the toolbar would leave a large
-      // empty slab below the buttons.
+      // Fixed cross-axis height keeps the horizontally scrollable strip slim;
+      // Row(mainAxisSize: min) ensures 1 or 2 buttons stay compact and centered
+      // instead of stretching across empty horizontal space.
       child: SizedBox(
         height: 56,
         child: SingleChildScrollView(
@@ -49,120 +156,7 @@ class CanvasToolbar extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
           child: Row(
             mainAxisSize: MainAxisSize.min,
-            children: [
-              _ToolButton(
-                icon: LucideIcons.mousePointer2,
-                label: 'Select',
-                tooltip: 'Select and move',
-                selected: activeTool == CanvasToolMode.select,
-                enabled: true,
-                onTap: () => onToolSelected(CanvasToolMode.select),
-              ),
-              _ToolButton(
-                icon: LucideIcons.hand,
-                label: 'Hand',
-                tooltip: 'Pan the canvas (or hold Space)',
-                selected: activeTool == CanvasToolMode.hand,
-                enabled: true,
-                onTap: () => onToolSelected(CanvasToolMode.hand),
-              ),
-              _ToolButton(
-                icon: LucideIcons.penLine,
-                label: 'Pen',
-                tooltip: canEdit ? 'Pen' : 'Viewer: drawing disabled',
-                selected: activeTool == CanvasToolMode.doodle,
-                enabled: canEdit,
-                onTap: () => onToolSelected(CanvasToolMode.doodle),
-              ),
-              _ToolButton(
-                icon: LucideIcons.highlighter,
-                label: 'Highlight',
-                tooltip: canEdit
-                    ? 'Highlighter: wide translucent marker'
-                    : 'Viewer: drawing disabled',
-                selected: activeTool == CanvasToolMode.highlight,
-                enabled: canEdit,
-                onTap: () => onToolSelected(CanvasToolMode.highlight),
-              ),
-              _ToolButton(
-                icon: LucideIcons.eraser,
-                label: 'Eraser',
-                tooltip: canEdit ? 'Eraser' : 'Viewer: erasing disabled',
-                selected: activeTool == CanvasToolMode.eraser,
-                enabled: canEdit,
-                onTap: () => onToolSelected(CanvasToolMode.eraser),
-              ),
-              _ToolButton(
-                icon: LucideIcons.paintBucket,
-                label: 'Fill',
-                tooltip: canEdit
-                    ? 'Fill: tap a shape to fill it with the current color'
-                    : 'Viewer: editing disabled',
-                selected: activeTool == CanvasToolMode.fill,
-                enabled: canEdit,
-                onTap: () => onToolSelected(CanvasToolMode.fill),
-              ),
-              _ToolButton(
-                icon: LucideIcons.shapes,
-                label: 'Shape',
-                tooltip: canEdit ? 'Shape' : 'Viewer: editing disabled',
-                selected: activeTool == CanvasToolMode.shape && !isArrowPreset,
-                enabled: canEdit,
-                onTap: () => onToolSelected(CanvasToolMode.shape),
-              ),
-              _ToolButton(
-                icon: LucideIcons.arrowRight,
-                label: 'Arrow',
-                tooltip: canEdit
-                    ? 'Arrow: drag, or tap two elements to connect'
-                    : 'Viewer: editing disabled',
-                selected: isArrowPreset || activeTool == CanvasToolMode.arrow,
-                enabled: canEdit,
-                onTap: () => onToolSelected(CanvasToolMode.arrow),
-              ),
-              _ToolButton(
-                icon: LucideIcons.stickyNote,
-                label: 'Sticky',
-                tooltip: canEdit ? 'Sticky note' : 'Viewer: editing disabled',
-                selected: false,
-                enabled: canEdit && onStickyNote != null,
-                onTap: onStickyNote,
-              ),
-              _ToolButton(
-                icon: LucideIcons.frame,
-                label: 'Frame',
-                tooltip: canEdit
-                    ? 'Frame: add a titled section'
-                    : 'Viewer: editing disabled',
-                selected: false,
-                enabled: canEdit && onFrame != null,
-                onTap: onFrame,
-              ),
-              _ToolButton(
-                icon: LucideIcons.type,
-                label: 'Text',
-                tooltip: canEdit ? 'Text: tap the canvas to add' : 'Viewer',
-                selected: activeTool == CanvasToolMode.text,
-                enabled: canEdit,
-                onTap: () => onToolSelected(CanvasToolMode.text),
-              ),
-              _ToolButton(
-                icon: LucideIcons.image,
-                label: 'Image',
-                tooltip: canEdit ? 'Add image' : 'Viewer: editing disabled',
-                selected: activeTool == CanvasToolMode.image,
-                enabled: canEdit && onImage != null,
-                onTap: onImage,
-              ),
-              _ToolButton(
-                icon: LucideIcons.slidersHorizontal,
-                label: 'More',
-                tooltip: 'More tools',
-                selected: false,
-                enabled: onMore != null,
-                onTap: onMore,
-              ),
-            ],
+            children: buttons,
           ),
         ),
       ),
@@ -223,6 +217,7 @@ class _ToolButton extends StatelessWidget {
                   label,
                   maxLines: 1,
                   softWrap: false,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 9,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w500,

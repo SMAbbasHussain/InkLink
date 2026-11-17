@@ -8,6 +8,9 @@ import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_type.dart';
 import '../widgets/sliding_tray.dart';
 
+/// Bottom-left sliding tray holding authoritative / non-art board controls:
+/// Undo, Redo, History, Request undo, Canvas Settings, Export & Share, and
+/// Clear All.
 class ToolsTray extends StatelessWidget {
   /// Height of one tool row plus the gap that follows it.
   static const double _rowHeight = 58;
@@ -20,11 +23,7 @@ class ToolsTray extends StatelessWidget {
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final VoidCallback? onClearAll;
-  final VoidCallback? onAddStickyNote;
-  final VoidCallback? onAddConnector;
-  final VoidCallback? onAddTable;
   final VoidCallback? onCanvasSettings;
-  final VoidCallback? onTemplates;
   final VoidCallback? onExport;
   final VoidCallback? onHistory;
   final VoidCallback? onRequestUndo;
@@ -37,11 +36,7 @@ class ToolsTray extends StatelessWidget {
     required this.onUndo,
     required this.onRedo,
     this.onClearAll,
-    this.onAddStickyNote,
-    this.onAddConnector,
-    this.onAddTable,
     this.onCanvasSettings,
-    this.onTemplates,
     this.onExport,
     this.onHistory,
     this.onRequestUndo,
@@ -52,40 +47,12 @@ class ToolsTray extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = context.ink;
     final buttons = <Widget>[
-      if (canEdit && onAddStickyNote != null)
-        _ToolButton(
-          icon: LucideIcons.stickyNote,
-          label: 'Sticky Note',
-          color: tokens.pending,
-          onTap: onAddStickyNote!,
-        ),
-      if (canEdit && onAddConnector != null)
-        _ToolButton(
-          icon: LucideIcons.spline,
-          label: 'Connector / Link',
-          color: tokens.success,
-          onTap: onAddConnector!,
-        ),
-      if (canEdit && onAddTable != null)
-        _ToolButton(
-          icon: LucideIcons.table,
-          label: 'Table',
-          color: tokens.accent,
-          onTap: onAddTable!,
-        ),
       if (canEdit && onCanvasSettings != null)
         _ToolButton(
           icon: LucideIcons.slidersHorizontal,
           label: 'Canvas Settings',
           color: tokens.inkSecondary,
           onTap: onCanvasSettings!,
-        ),
-      if (canEdit && onTemplates != null)
-        _ToolButton(
-          icon: LucideIcons.frame,
-          label: 'Templates',
-          color: tokens.accent,
-          onTap: onTemplates!,
         ),
       if (canEdit) ...[
         _ToolButton(
@@ -131,9 +98,6 @@ class ToolsTray extends StatelessWidget {
         ),
     ];
 
-    // Size the tray from the rows that are actually shown and cap below the
-    // top bar so adding role-specific or tool-specific actions never clips or
-    // overlaps the header on smaller viewports.
     final desiredHeight = _chromeHeight + buttons.length * _rowHeight;
     final media = MediaQuery.of(context);
     final maxHeight = math.max(150.0, media.size.height - media.padding.top - 124);
@@ -142,13 +106,12 @@ class ToolsTray extends StatelessWidget {
     return SlidingTray(
       isOpen: isOpen,
       direction: TrayDirection.left,
-      title: 'Editing Tools',
+      title: 'Board & History',
       height: trayHeight,
       width: 230,
       bottomOffset: 60,
       onClose: onClose,
       child: SingleChildScrollView(
-        // Safety net: the row math can be off on unusual text scales or short viewports.
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [

@@ -22,6 +22,7 @@ import '../../../core/utils/app_snackbar.dart';
 import '../../../domain/models/board.dart';
 import '../../../domain/models/canvas/canvas_board_settings.dart';
 import '../../../domain/models/canvas/canvas_export_options.dart';
+import '../../../domain/models/canvas/canvas_toolbar_action.dart';
 import '../../../domain/models/history/board_operation.dart';
 import '../../../domain/models/history/undo_request.dart';
 import '../../../domain/services/history/board_history_service.dart';
@@ -30,6 +31,7 @@ import '../../../core/utils/tray_tips_preferences.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
+import '../../../ui/widgets/bottom_bar_customizer_sheet.dart';
 import '../../../ui/widgets/glass_panel.dart';
 import '../../../ui/widgets/ink_avatar.dart';
 import '../../../ui/widgets/ink_button.dart';
@@ -55,13 +57,14 @@ import 'ai_repaint_screen.dart';
 import 'media_editor_screen.dart';
 import 'trays/ai_tray.dart';
 import 'trays/brush_tray.dart';
+import 'trays/canvas_actions_tray.dart';
 import 'trays/canvas_shape_type.dart';
 import 'trays/layers_tray.dart';
 import 'trays/members_tray.dart';
 import 'history_screen.dart';
-import 'trays/shapes_tray.dart';
 import 'trays/tools_tray.dart';
 import 'widgets/history_preview_banner.dart';
+import 'widgets/shapes_picker_popup.dart';
 import 'widgets/revert_review_sheet.dart';
 import 'widgets/undo_request_sheet.dart';
 import 'chat/board_chat_drawer.dart';
@@ -88,6 +91,9 @@ class CanvasScreen extends StatefulWidget {
   final bool showTrayTipsOnEntry;
   final String boardPreviewQuality;
   final bool boardPreviewCompressionEnabled;
+  final List<CanvasToolbarAction> initialBottomBarActions;
+  final Future<void> Function(List<CanvasToolbarAction>)?
+      onSaveBottomBarActions;
   final BoardHistoryService? historyService;
   final String? initialTemplateId;
 
@@ -97,6 +103,9 @@ class CanvasScreen extends StatefulWidget {
     this.showTrayTipsOnEntry = false,
     this.boardPreviewQuality = 'medium',
     this.boardPreviewCompressionEnabled = true,
+    this.initialBottomBarActions =
+        CanvasToolbarAction.defaultBottomBarActions,
+    this.onSaveBottomBarActions,
     this.historyService,
     this.initialTemplateId,
   });
@@ -262,6 +271,9 @@ class _CanvasScreenState extends State<CanvasScreen>
   InkTokens get _tokens => context.ink;
   bool _preventGestureBack = true;
   bool _showEdgeTrayButtons = true;
+  bool _isShapesPopupOpen = false;
+  late List<CanvasToolbarAction> _bottomBarActions =
+      List<CanvasToolbarAction>.of(widget.initialBottomBarActions);
   DateTime? _lastEdgeDragTime;
   DateTime? _lastBackSnackbarTime;
 
@@ -279,6 +291,19 @@ class _CanvasScreenState extends State<CanvasScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _maybeApplyInitialTemplate(_canvasBloc.state);
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant CanvasScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!listEquals(
+      oldWidget.initialBottomBarActions,
+      widget.initialBottomBarActions,
+    )) {
+      _bottomBarActions = List<CanvasToolbarAction>.of(
+        widget.initialBottomBarActions,
+      );
+    }
   }
 
   void _maybeApplyInitialTemplate(CanvasState state) {
@@ -432,12 +457,18 @@ class _CanvasScreenState extends State<CanvasScreen>
   }
 
   void _openTray(String tray) {
+    if (_isShapesPopupOpen) {
+      setState(() => _isShapesPopupOpen = false);
+    }
     if (_canvasBloc.state.activeTray == tray) return;
     HapticFeedback.lightImpact();
     _canvasBloc.add(CanvasToggleTray(tray));
   }
 
   void _toggleTray(String tray) {
+    if (_isShapesPopupOpen) {
+      setState(() => _isShapesPopupOpen = false);
+    }
     HapticFeedback.lightImpact();
     _canvasBloc.add(CanvasToggleTray(tray));
   }
@@ -1231,6 +1262,7 @@ class _CanvasScreenState extends State<CanvasScreen>
   void _selectShapeForDrawing(CanvasShapeType shapeType) {
     setState(() {
       _isShapeEditTrayExpanded = false;
+      _isShapesPopupOpen = false;
     });
     _canvasBloc.add(
       CanvasSetToolMode(CanvasToolMode.shape, shapeType: shapeType),
@@ -5245,6 +5277,10 @@ class _CanvasScreenState extends State<CanvasScreen>
                             _buildAiImageActionBar(state),
                           if (!state.isViewingHistory && !editingElement)
                             _buildAllTrays(state),
+                          if (!state.isViewingHistory &&
+                              !editingElement &&
+                              _isShapesPopupOpen)
+                            ..._buildShapesPickerPopup(state),
                           if (!state.isViewingHistory)
                             _buildTextEditorOverlay(),
                           _buildHistoryPlanListener(),
@@ -7417,16 +7453,134 @@ class _CanvasScreenState extends State<CanvasScreen>
           child: CanvasToolbar(
             activeTool: state.currentToolMode,
             canEdit: state.canEdit,
+            actions: _bottomBarActions,
             isArrowPreset: _isArrowMode(state),
+            isShapesPopupOpen: _isShapesPopupOpen,
+            isLayersOpen: state.activeTray == 'layers',
+            isToolsTrayOpen: state.activeTray == 'actions',
             onToolSelected: _onToolbarToolSelected,
-            onStickyNote: state.canEdit ? _addStickyNoteDialog : null,
-            onFrame: state.canEdit ? _addFrame : null,
-            onImage: state.canEdit ? () => _uploadImageToCanvas() : null,
-            onMore: () => _toggleTray('tools'),
+            onActionSelected: _executeToolbarAction,
+            onMore: () => _toggleTray('actions'),
           ),
         ),
       ),
     );
+  }
+
+  List<Widget> _buildShapesPickerPopup(CanvasState state) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    return [
+      Positioned.fill(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() => _isShapesPopupOpen = false),
+        ),
+      ),
+      Positioned(
+        left: 12,
+        right: 12,
+        bottom: bottomInset + 66,
+        child: Center(
+          child: ShapesPickerPopup(
+            selectedType: state.pendingShapeType,
+            onSelectShape: _selectShapeForDrawing,
+            onClose: () => setState(() => _isShapesPopupOpen = false),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  Future<void> _openBottomBarCustomizer() async {
+    final activeTray = _canvasBloc.state.activeTray;
+    if (activeTray != null) {
+      _canvasBloc.add(CanvasToggleTray(activeTray));
+    }
+    if (_isShapesPopupOpen) {
+      setState(() => _isShapesPopupOpen = false);
+    }
+    final updated = await showBottomBarCustomizerSheet(
+      context,
+      initialActions: _bottomBarActions,
+    );
+    if (updated == null || !mounted) return;
+    setState(() => _bottomBarActions = updated);
+    await widget.onSaveBottomBarActions?.call(updated);
+  }
+
+  void _executeToolbarAction(CanvasToolbarAction action) {
+    final current = _canvasBloc.state;
+    if (!current.canEdit && action.requiresEdit) return;
+
+    void closeTrayIfOpen() {
+      final tray = _canvasBloc.state.activeTray;
+      if (tray != null) {
+        _canvasBloc.add(CanvasToggleTray(tray));
+      }
+    }
+
+    switch (action) {
+      case CanvasToolbarAction.select:
+        _onToolbarToolSelected(CanvasToolMode.select);
+        return;
+      case CanvasToolbarAction.hand:
+        _onToolbarToolSelected(CanvasToolMode.hand);
+        return;
+      case CanvasToolbarAction.pen:
+        _onToolbarToolSelected(CanvasToolMode.doodle);
+        return;
+      case CanvasToolbarAction.highlight:
+        _onToolbarToolSelected(CanvasToolMode.highlight);
+        return;
+      case CanvasToolbarAction.eraser:
+        _onToolbarToolSelected(CanvasToolMode.eraser);
+        return;
+      case CanvasToolbarAction.fill:
+        _onToolbarToolSelected(CanvasToolMode.fill);
+        return;
+      case CanvasToolbarAction.shape:
+        _onToolbarToolSelected(CanvasToolMode.shape);
+        return;
+      case CanvasToolbarAction.arrow:
+        _onToolbarToolSelected(CanvasToolMode.arrow);
+        return;
+      case CanvasToolbarAction.text:
+        _onToolbarToolSelected(CanvasToolMode.text);
+        return;
+      case CanvasToolbarAction.stickyNote:
+        setState(() => _isShapesPopupOpen = false);
+        closeTrayIfOpen();
+        _addStickyNoteDialog();
+        return;
+      case CanvasToolbarAction.frame:
+        setState(() => _isShapesPopupOpen = false);
+        closeTrayIfOpen();
+        _addFrame();
+        return;
+      case CanvasToolbarAction.image:
+        setState(() => _isShapesPopupOpen = false);
+        closeTrayIfOpen();
+        _uploadImageToCanvas();
+        return;
+      case CanvasToolbarAction.layers:
+        _toggleTray('layers');
+        return;
+      case CanvasToolbarAction.templates:
+        setState(() => _isShapesPopupOpen = false);
+        closeTrayIfOpen();
+        _showTemplateGallerySheet(context);
+        return;
+      case CanvasToolbarAction.table:
+        setState(() => _isShapesPopupOpen = false);
+        closeTrayIfOpen();
+        _addTableDialog();
+        return;
+      case CanvasToolbarAction.connector:
+        setState(() => _isShapesPopupOpen = false);
+        closeTrayIfOpen();
+        _addConnectorDialog();
+        return;
+    }
   }
 
   /// Marquee rectangle drawn while the Select tool drags on empty canvas.
@@ -7776,27 +7930,34 @@ class _CanvasScreenState extends State<CanvasScreen>
 
   void _onToolbarToolSelected(CanvasToolMode mode) {
     final current = _canvasBloc.state;
-    if (!current.canEdit && mode != CanvasToolMode.select) return;
+    if (!current.canEdit &&
+        mode != CanvasToolMode.select &&
+        mode != CanvasToolMode.hand) {
+      return;
+    }
     HapticFeedback.selectionClick();
     setState(() {
       _isShapeEditTrayExpanded = false;
       _isStrokeEditExpanded = false;
       _arrowConnectStartElementId = null;
+      if (mode != CanvasToolMode.shape) {
+        _isShapesPopupOpen = false;
+      }
     });
     if (mode == CanvasToolMode.shape) {
-      if (current.currentToolMode == CanvasToolMode.shape) {
-        _canvasBloc.add(const CanvasToggleTray('shapes'));
-        return;
+      final activeTray = current.activeTray;
+      if (activeTray != null) {
+        _canvasBloc.add(CanvasToggleTray(activeTray));
       }
-      _canvasBloc.add(
-        CanvasSetToolMode(
-          CanvasToolMode.shape,
-          shapeType: current.pendingShapeType ?? CanvasShapeType.square,
-          keepTray: current.activeTray == 'shapes',
-        ),
-      );
-      if (current.activeTray != 'shapes') {
-        _canvasBloc.add(const CanvasToggleTray('shapes'));
+      final nextOpen = !_isShapesPopupOpen;
+      setState(() => _isShapesPopupOpen = nextOpen);
+      if (nextOpen && current.currentToolMode != CanvasToolMode.shape) {
+        _canvasBloc.add(
+          CanvasSetToolMode(
+            CanvasToolMode.shape,
+            shapeType: current.pendingShapeType ?? CanvasShapeType.square,
+          ),
+        );
       }
       return;
     }
@@ -10496,11 +10657,7 @@ class _CanvasScreenState extends State<CanvasScreen>
           onClearAll: state.currentUserRole == Board.roleOwner
               ? _clearAll
               : null,
-          onAddStickyNote: _addStickyNoteDialog,
-          onAddConnector: _addConnectorDialog,
-          onAddTable: _addTableDialog,
           onCanvasSettings: () => _showCanvasSettingsSheet(context),
-          onTemplates: () => _showTemplateGallerySheet(context),
           onExport: () => _showExportOptionsSheet(context),
           onHistory: state.currentUserRole == Board.roleOwner
               ? _openHistoryScreen
@@ -10510,11 +10667,17 @@ class _CanvasScreenState extends State<CanvasScreen>
               : null,
           onClose: () => _toggleTray('tools'),
         ),
-        ShapesTray(
-          isOpen: state.activeTray == 'shapes',
-          onSelectShapeForDrawing: _selectShapeForDrawing,
-          selectedType: state.pendingShapeType,
-          onClose: () => _toggleTray('shapes'),
+        CanvasActionsTray(
+          isOpen: state.activeTray == 'actions',
+          canEdit: state.canEdit,
+          activeTool: state.currentToolMode,
+          isArrowPreset: _isArrowMode(state),
+          isLayersOpen: state.activeTray == 'layers',
+          isShapesPopupOpen: _isShapesPopupOpen,
+          bottomBarActions: _bottomBarActions,
+          onActionSelected: _executeToolbarAction,
+          onCustomizeBottomBar: _openBottomBarCustomizer,
+          onClose: () => _toggleTray('actions'),
         ),
         LayersTray(
           isOpen: state.activeTray == 'layers',
@@ -11219,7 +11382,7 @@ class _CanvasScreenState extends State<CanvasScreen>
             ),
           ),
         ),
-        // BOTTOM LEFT: Swipe Right for Tools
+        // BOTTOM LEFT: Swipe Right for Board & History Tools
         Align(
           alignment: Alignment.bottomLeft,
           child: GestureDetector(
@@ -11259,23 +11422,23 @@ class _CanvasScreenState extends State<CanvasScreen>
             ),
           ),
         ),
-        // BOTTOM RIGHT: Swipe Left for Shapes
+        // BOTTOM RIGHT: Swipe Left for Canvas Tools
         Align(
           alignment: Alignment.bottomRight,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () => _openTray('shapes'),
+            onTap: () => _openTray('actions'),
             onHorizontalDragStart: (_) => _lastEdgeDragTime = DateTime.now(),
             onHorizontalDragUpdate: (d) {
               _lastEdgeDragTime = DateTime.now();
-              if (d.delta.dx < -6) _openTray('shapes');
+              if (d.delta.dx < -6) _openTray('actions');
             },
             child: Container(
               height: 220,
               width: 50,
               margin: const EdgeInsets.only(bottom: 60),
               color: Colors.transparent,
-              child: _buildGlassEdgeTab(LucideIcons.shapes),
+              child: _buildGlassEdgeTab(LucideIcons.layoutGrid),
             ),
           ),
         ),
