@@ -34,6 +34,8 @@ class FirestoreBoardRepository implements BoardRepository {
   String? _activeBoardId;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   _activeBoardMetadataSub;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+  _activeBoardMemberSub;
   StreamController<Board?>? _activeBoardController;
 
   Set<String> _ownedBoardIds = <String>{};
@@ -289,6 +291,53 @@ class FirestoreBoardRepository implements BoardRepository {
             _activeBoardController?.add(null);
           },
         );
+
+    final uid = _syncUserId ?? currentUserId;
+    if (uid != null && uid.isNotEmpty) {
+      _activeBoardMemberSub = StreamRegistry.instance
+          .getOrCreate<DocumentSnapshot<Map<String, dynamic>>>(
+            'board_member:$trimmedBoardId:$uid',
+            () => _firestoreService
+                .collection('boards')
+                .doc(trimmedBoardId)
+                .collection(_membersSubcollection)
+                .doc(uid)
+                .snapshots(),
+          )
+          .listen((memberDoc) async {
+            try {
+              final isar = await _localDatabaseService.database;
+              final localBoard = await isar.localBoards.getByBoardId(
+                trimmedBoardId,
+              );
+              if (localBoard == null) return;
+
+              final String resolvedRole;
+              if (localBoard.ownerId == uid) {
+                resolvedRole = Board.roleOwner;
+              } else if (!memberDoc.exists) {
+                resolvedRole = Board.roleViewer;
+              } else {
+                final role =
+                    (memberDoc.data() ?? const <String, dynamic>{})['role'];
+                resolvedRole =
+                    (role == Board.roleEditor || role == Board.roleOwner)
+                        ? role as String
+                        : Board.roleViewer;
+              }
+
+              if (localBoard.currentUserRole != resolvedRole) {
+                localBoard.currentUserRole = resolvedRole;
+                await isar.writeTxn(() async {
+                  await isar.localBoards.putByBoardId(localBoard);
+                });
+              }
+              _activeBoardController?.add(_mapLocalBoard(localBoard));
+            } catch (_) {
+              // Keep listener alive on transient read/write errors.
+            }
+          }, onError: (_) {});
+    }
   }
 
   @override
@@ -296,6 +345,8 @@ class FirestoreBoardRepository implements BoardRepository {
     final activeBoardId = _activeBoardId;
     await _activeBoardMetadataSub?.cancel();
     _activeBoardMetadataSub = null;
+    await _activeBoardMemberSub?.cancel();
+    _activeBoardMemberSub = null;
     if (_activeBoardController != null && !_activeBoardController!.isClosed) {
       await _activeBoardController!.close();
     }
@@ -562,7 +613,7 @@ class FirestoreBoardRepository implements BoardRepository {
     String boardId,
     Map<String, dynamic> data,
   ) async {
-    final uid = _syncUserId;
+    final uid = _syncUserId ?? currentUserId;
     if (uid == null) {
       developer.log(
         'Board sync: _syncUserId is null, skipping $boardId',

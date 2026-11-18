@@ -6858,6 +6858,50 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasBoardMembersUpdated event,
     Emitter<CanvasState> emit,
   ) {
+    // Keep the current user's effective role in sync with live member changes
+    // (e.g. when the owner promotes/demotes them from the Members tray)
+    // without waiting for a separate board metadata snapshot.
+    String? nextRole;
+    final uid = state.currentUserId;
+    if (uid.isNotEmpty && _currentUserRole != Board.roleOwner) {
+      for (final member in event.members) {
+        if (member.uid == uid) {
+          nextRole =
+              (member.role == Board.roleEditor ||
+                  member.role == Board.roleOwner)
+              ? member.role
+              : Board.roleViewer;
+          break;
+        }
+      }
+    }
+
+    if (nextRole != null && nextRole != _currentUserRole) {
+      final wasOwner = _currentUserRole == Board.roleOwner;
+      _currentUserRole = nextRole;
+      _syncHistorySubscriptions();
+      if (!wasOwner && _currentUserRole == Board.roleOwner) {
+        _ensureHistoryFeedSubscription();
+        unawaited(_refreshLiveTail());
+      }
+      if (nextRole == Board.roleViewer && state.currentStroke.isNotEmpty) {
+        _activeStrokeId = null;
+        _strokeStabilizer = null;
+        _strokeClock.stop();
+      }
+      emit(
+        state.copyWith(
+          boardMembers: event.members,
+          currentUserRole: nextRole,
+          currentStroke: nextRole == Board.roleViewer ? const [] : null,
+          currentStrokePressures:
+              nextRole == Board.roleViewer ? const [] : null,
+          currentStrokeTilts: nextRole == Board.roleViewer ? const [] : null,
+        ),
+      );
+      return;
+    }
+
     emit(state.copyWith(boardMembers: event.members));
   }
 
