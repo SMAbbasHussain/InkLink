@@ -5452,7 +5452,9 @@ class _CanvasScreenState extends State<CanvasScreen>
               color: e.color,
               width: e.width,
               height: e.height,
-              data: {'rotation': e.rotation},
+              // The full map (it includes 'rotation'): the editing bar parses
+              // it back with CanvasElement.fromMap, which needs 'type'.
+              data: e.toMap(),
               fontSize: e.fontSize,
               fontWeight: e.fontWeight,
               fontFamily: e.fontFamily,
