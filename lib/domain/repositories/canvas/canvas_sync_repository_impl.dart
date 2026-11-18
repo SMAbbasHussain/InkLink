@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../../../core/services/auth_service.dart';
@@ -182,7 +183,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
     await Future.any([
       connectCompleter.future,
-      Future.delayed(const Duration(seconds: 2)),
+      // The web keeps no local copy of a board: giving up on a slow first
+      // connection would show it empty, so allow it longer than phones.
+      Future.delayed(Duration(seconds: kIsWeb ? 10 : 2)),
     ]);
 
     if (gen != _connectGeneration ||
