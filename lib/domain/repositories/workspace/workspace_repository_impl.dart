@@ -233,8 +233,7 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
             }
             final linkedBoardId =
                 (linkData[FirestorePaths.boardId] as String?) ?? linkDoc.id;
-            if (linkedBoardId.isNotEmpty &&
-                readableBoardIds.contains(linkedBoardId)) {
+            if (linkedBoardId.isNotEmpty) {
               visibleBoardIds.add(linkedBoardId);
             }
           }
@@ -254,6 +253,20 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
           for (final linkedBoardId in visibleBoardIds) {
             final boardData = boardDataById[linkedBoardId];
             if (boardData == null) {
+              continue;
+            }
+            // A workspace member who has never opened a board has no local
+            // `users/{uid}/boards` entry yet, so fall back to the board
+            // document's own access list. Otherwise the board (and its
+            // preview tile) would be missing until the user opened it.
+            final boardOwnerId = boardData[FirestorePaths.ownerId];
+            final boardMembers =
+                (boardData['members'] as List?) ?? const <dynamic>[];
+            final hasBoardAccess =
+                readableBoardIds.contains(linkedBoardId) ||
+                boardOwnerId == currentUid ||
+                boardMembers.contains(currentUid);
+            if (!hasBoardAccess) {
               continue;
             }
             final firestoreBoardData = Map<String, dynamic>.from(boardData);

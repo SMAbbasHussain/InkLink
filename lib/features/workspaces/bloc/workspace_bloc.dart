@@ -13,6 +13,10 @@ abstract class WorkspaceEvent {}
 
 class LoadWorkspacesRequested extends WorkspaceEvent {}
 
+/// Re-reads the board lists (workspace grid and card previews) so previews
+/// written to the device while a board was open show up.
+class RefreshWorkspacePreviewsRequested extends WorkspaceEvent {}
+
 class LoadWorkspaceBoardsRequested extends WorkspaceEvent {
   final String workspaceId;
 
@@ -296,6 +300,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       super(WorkspaceInitial()) {
     on<LoadWorkspacesRequested>(_onLoadWorkspacesRequested);
     on<LoadWorkspaceBoardsRequested>(_onLoadWorkspaceBoardsRequested);
+    on<RefreshWorkspacePreviewsRequested>(_onRefreshWorkspacePreviewsRequested);
     on<LoadWorkspaceMembersRequested>(_onLoadWorkspaceMembersRequested);
     on<CreateWorkspaceRequested>(_onCreateWorkspaceRequested);
     on<UpdateWorkspaceRequested>(_onUpdateWorkspaceRequested);
@@ -402,9 +407,13 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     Emitter<WorkspaceState> emit,
   ) async {
     final service = _workspaceService;
-    if (service == null || _workspaceBoardSubs.containsKey(event.workspaceId)) {
+    if (service == null) {
       return;
     }
+
+    // Re-subscribe instead of reusing the old listener: board previews are
+    // local files, so only a fresh read picks up the ones written since.
+    await _workspaceBoardSubs.remove(event.workspaceId)?.cancel();
 
     _workspaceBoardSubs[event.workspaceId] = service
         .getWorkspaceBoards(event.workspaceId)
@@ -1198,6 +1207,32 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
           ),
         );
       }
+    }
+  }
+
+  void _onRefreshWorkspacePreviewsRequested(
+    RefreshWorkspacePreviewsRequested event,
+    Emitter<WorkspaceState> emit,
+  ) {
+    final current = state;
+    if (current is! WorkspaceLoaded) {
+      return;
+    }
+
+    final openWorkspaceIds = _workspaceBoardSubs.keys.toList();
+
+    for (final sub in _previewBoardSubs.values) {
+      sub.cancel();
+    }
+    _previewBoardSubs.clear();
+    for (final sub in _workspaceBoardSubs.values) {
+      sub.cancel();
+    }
+    _workspaceBoardSubs.clear();
+
+    _syncWorkspacePreviewSubscriptions(current);
+    for (final workspaceId in openWorkspaceIds) {
+      add(LoadWorkspaceBoardsRequested(workspaceId));
     }
   }
 

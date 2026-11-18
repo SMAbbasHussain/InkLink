@@ -176,6 +176,14 @@ class ProfileServiceImpl implements ProfileService {
         'photoURL': photoUrl,
       });
 
+      // Mirror the new avatar onto the auth profile so surfaces that read the
+      // signed-in user (settings header, chat, comments, voice) stop showing the
+      // previous picture. Firestore remains the source of truth, so a failed
+      // mirror must not fail the upload.
+      try {
+        await user.updatePhotoURL(photoUrl.toString());
+      } catch (_) {}
+
       return photoUrl.toString();
     } on FirebaseFunctionsException catch (e) {
       throw Exception('Upload failed: ${e.message}');

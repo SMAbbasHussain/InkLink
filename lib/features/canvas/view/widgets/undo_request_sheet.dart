@@ -124,8 +124,13 @@ class _UndoRequestScopeSheetState extends State<_UndoRequestScopeSheet> {
     _scopeMode = widget.initialScopeMode;
   }
 
+  bool get _isWholeBoard =>
+      _scopeMode == UndoRequestScopeMode.areaState &&
+      _selected.isEmpty &&
+      (_area == null || !_area!.isValid);
+
   bool get _canPreview =>
-      _selected.isNotEmpty || (_area != null && _area!.isValid);
+      _selected.isNotEmpty || (_area != null && _area!.isValid) || _isWholeBoard;
 
   void _cancel() {
     widget.bloc.add(const CanvasUndoRequestDraftCleared());
@@ -270,7 +275,9 @@ class _UndoRequestScopeSheetState extends State<_UndoRequestScopeSheet> {
                   ),
                 const SizedBox(height: InkSpacing.s8),
                 InkButton.primary(
-                  label: _scopeMode == UndoRequestScopeMode.areaState
+                  label: _isWholeBoard
+                      ? 'Preview whole board'
+                      : _scopeMode == UndoRequestScopeMode.areaState
                       ? 'Preview area state'
                       : 'Preview my changes',
                   onPressed: !_canPreview ? null : _preview,

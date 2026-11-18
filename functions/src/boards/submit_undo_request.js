@@ -73,7 +73,7 @@ module.exports = async (request) => {
         .filter(id => typeof id === 'string' && id.trim().length > 0)
         .map(id => id.trim()),
     )];
-    if (elementIds.length === 0 && !selectedArea) {
+    if (elementIds.length === 0 && !selectedArea && resolvedScopeMode !== 'area_state') {
       throw new HttpsError('invalid-argument', 'Select at least one element or area to undo.');
     }
     if (elementIds.length > MAX_ELEMENTS) {

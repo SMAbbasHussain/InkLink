@@ -196,6 +196,7 @@ const server = http.createServer(app);
 // Comment 3: Explicit origin check for Socket.IO WebSocket handshakes via Engine.IO allowRequest
 const io = new Server(server, {
   cors: corsOptions,
+  maxHttpBufferSize: 5 * 1024 * 1024,
   allowRequest: (req, callback) => {
     const origin = req.headers.origin;
     if (isOriginAllowed(origin)) {
@@ -418,6 +419,16 @@ redisSub.on('message', async (channel, message) => {
             redis.srem(`board_editors:${data.boardId}`, data.uid).catch(() => { });
           }
         }
+      } else if (data.type === 'board_paused_changed' && data.boardId) {
+        invalidateCachedBoardAccess(data.boardId);
+        const paused = Boolean(data.isPaused);
+        if (redisAvailable) {
+          redis.set(`board_paused:${data.boardId}`, paused ? '1' : '0', 'EX', 86400).catch(() => { });
+        }
+        io.to(`board_room:${data.boardId}`).emit('board_pause_changed', {
+          boardId: data.boardId,
+          isPaused: paused,
+        });
       } else if (data.type === 'board_deleted' && data.boardId) {
         invalidateCachedBoardAccess(data.boardId);
         seededBoards.delete(data.boardId);
@@ -454,8 +465,13 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
   try {
     if (redisAvailable) {
       if (requireEdit) {
+        const pausedFlag = await redis.get(`board_paused:${boardId}`);
+        if (pausedFlag === '1') {
+          setCachedBoardAccess(boardId, uid, true, false);
+          return false;
+        }
         const isEditor = await redis.sismember(`board_editors:${boardId}`, uid);
-        if (isEditor) {
+        if (isEditor && pausedFlag === '0') {
           setCachedBoardAccess(boardId, uid, true, true);
           return true;
         }
@@ -476,9 +492,17 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
       const boardDoc = await db.collection('boards').doc(boardId).get();
       if (!boardDoc.exists) return false;
       const data = boardDoc.data() || {};
+      const isPaused = data.isPaused === true;
+
+      if (redisAvailable) {
+        redis
+          .set(`board_paused:${boardId}`, isPaused ? '1' : '0', 'EX', EDITORS_REDIS_TTL_SEC)
+          .catch(() => { });
+      }
 
       if (data.ownerId === uid) {
-        setCachedBoardAccess(boardId, uid, true, true);
+        const ownerCanEdit = !isPaused;
+        setCachedBoardAccess(boardId, uid, true, ownerCanEdit);
         if (redisAvailable) {
           const p = redis.pipeline();
           p.sadd(`board_members:${boardId}`, uid);
@@ -487,7 +511,7 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
           p.expire(`board_editors:${boardId}`, EDITORS_REDIS_TTL_SEC);
           p.exec().catch(() => { });
         }
-        return true;
+        return requireEdit ? ownerCanEdit : true;
       }
 
       // Allow read-only access for public boards
@@ -513,6 +537,10 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
       }
 
       if (requireEdit) {
+        if (isPaused) {
+          setCachedBoardAccess(boardId, uid, true, false);
+          return false;
+        }
         const memberDoc = await db.collection('boards').doc(boardId)
           .collection('members').doc(uid).get();
         if (memberDoc.exists) {
@@ -2003,7 +2031,7 @@ io.on('connection', (socket) => {
 
     const isOwner = await isBoardOwner(boardId, uid);
     const isSelf = typeof targetUid === 'string' && targetUid === uid;
-    const isScopedAreaRequest = scopeMode === 'area_state' && (scopeIds || validArea);
+    const isScopedAreaRequest = scopeMode === 'area_state';
     if (!isOwner) {
       if (!isSelf && !isScopedAreaRequest) {
         return historyError(ack, 'forbidden');
@@ -2015,7 +2043,7 @@ io.on('connection', (socket) => {
     const effectiveTargetUid = typeof targetUid === 'string' && targetUid.length > 0
       ? targetUid
       : null;
-    if (!effectiveTargetUid && !scopeIds && !validArea && !isOwner) {
+    if (!effectiveTargetUid && !scopeIds && !validArea && !isOwner && !isScopedAreaRequest) {
       return historyError(ack, 'invalid_payload');
     }
 

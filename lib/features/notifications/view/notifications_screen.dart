@@ -513,6 +513,28 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                   }
                                 }
 
+                                // Undo requests (and their decisions) live on
+                                // the board: open it so the owner lands where
+                                // the request can be reviewed.
+                                if (type.startsWith('undo_request')) {
+                                  final boardId =
+                                      item['extraData']?['boardId']
+                                          ?.toString() ??
+                                      item['targetId']?.toString() ??
+                                      '';
+                                  if (boardId.isNotEmpty) {
+                                    Navigator.push(
+                                      context,
+                                      buildCanvasRoute(
+                                        context,
+                                        boardId: boardId,
+                                        showTrayTipsOnEntry: true,
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                }
+
                                 if (type == 'board_access_request' ||
                                     type == 'board_access_accepted' ||
                                     type == 'board_edit_accepted') {

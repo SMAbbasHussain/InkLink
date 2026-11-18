@@ -37,13 +37,21 @@ class WorkspaceDetailScreen extends StatefulWidget {
 
 class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
   final Set<String> _selectedBoardIds = <String>{};
+  late final WorkspaceBloc _workspaceBloc;
 
   @override
   void initState() {
     super.initState();
-    context.read<WorkspaceBloc>().add(
-      LoadWorkspaceBoardsRequested(widget.workspaceId),
-    );
+    _workspaceBloc = context.read<WorkspaceBloc>();
+    _workspaceBloc.add(LoadWorkspaceBoardsRequested(widget.workspaceId));
+  }
+
+  @override
+  void dispose() {
+    // The workspaces list keeps its own board-preview subscriptions; re-read
+    // them so previews written while a board was open show up on the cards.
+    _workspaceBloc.add(RefreshWorkspacePreviewsRequested());
+    super.dispose();
   }
 
   @override
@@ -124,10 +132,16 @@ class _WorkspaceDetailScreenState extends State<WorkspaceDetailScreen> {
                     return _WorkspaceBoardCard(
                       board: board,
                       isOwner: isOwner,
-                      onTap: () {
-                        Navigator.push(
+                      onTap: () async {
+                        await Navigator.push(
                           context,
                           buildCanvasRoute(context, boardId: board.id),
+                        );
+                        if (!mounted) return;
+                        // The preview for this board was just written; read
+                        // the board list again so its tile updates.
+                        _workspaceBloc.add(
+                          RefreshWorkspacePreviewsRequested(),
                         );
                       },
                       onMoveToWorkspace: isOwner

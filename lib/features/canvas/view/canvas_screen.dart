@@ -118,7 +118,7 @@ class _CanvasScreenState extends State<CanvasScreen>
     with WidgetsBindingObserver {
   final TextEditingController _aiPromptController = TextEditingController();
   final GlobalKey _canvasPreviewKey = GlobalKey();
-  bool _savingPreview = false;
+  Future<void>? _inFlightPreviewSave;
   bool _isDraggingShape = false;
   bool _isDraggingStroke = false;
   bool _isDrawingShape = false;
@@ -202,6 +202,11 @@ class _CanvasScreenState extends State<CanvasScreen>
   Offset? _lastTapWorldPoint;
   Offset? _lastDoubleTapWorldPoint;
   bool _suppressTapDeselect = false;
+
+  /// Set when an in-place text edit commits, so the tap that dismisses the
+  /// editor does not also clear the selection. A later tap is a real
+  /// "click elsewhere" and deselects as usual.
+  DateTime? _textCommitAt;
   String? _arrowConnectStartElementId;
   bool _isMarqueeSelecting = false;
   Offset? _marqueeStart;
@@ -658,6 +663,16 @@ class _CanvasScreenState extends State<CanvasScreen>
     List<String>? initialIds,
     UndoRequestArea? initialArea,
   }) {
+    // Only one request can be pending per board: surface the one already with
+    // the owner instead of starting a duplicate.
+    if (_canvasBloc.state.myPendingUndoRequest != null) {
+      AppSnackBar.showMessage(
+        context,
+        'You already have an undo request waiting for the owner.',
+      );
+      _canvasBloc.add(const CanvasUndoRequestDraftCleared());
+      return;
+    }
     final state = _canvasBloc.state;
     final ids = initialIds ?? state.undoRequestDraft?.elementIds ?? const [];
     final area = initialArea ?? state.undoRequestDraft?.area;
@@ -762,16 +777,11 @@ class _CanvasScreenState extends State<CanvasScreen>
       );
       return;
     }
-    // Keep double-tapped elements outside the area: an explicit pick should
-    // not be discarded by drawing a new area.
-    final extras =
-        _canvasBloc.state.undoRequestDraft?.elementIds ?? const <String>[];
-    final merged = <String>{
-      ...ids,
-      ...extras.where((id) => !ids.contains(id)),
-    }.toList(growable: false);
-    _canvasBloc.add(CanvasUndoRequestDraftAreaSet(area, merged));
-    _openUndoRequestSheet(initialIds: merged, initialArea: area);
+    // The newest area is the whole scope: elements picked before it (a
+    // double-tapped element or an earlier area's members) are dropped, so the
+    // request always reflects exactly what the member just enclosed.
+    _canvasBloc.add(CanvasUndoRequestDraftAreaSet(area, ids));
+    _openUndoRequestSheet(initialIds: ids, initialArea: area);
   }
 
   void _maybeFocusHistoryPreview(
@@ -894,6 +904,7 @@ class _CanvasScreenState extends State<CanvasScreen>
         _isEyedropperActive ||
         !state.canEdit ||
         state.isArchived ||
+        state.isPaused ||
         state.isViewingHistory ||
         state.isSelectingUndoRequestArea ||
         state.isSelectingHistoryArea ||
@@ -2877,74 +2888,140 @@ class _CanvasScreenState extends State<CanvasScreen>
     }
   }
 
-  Future<void> _savePreview() async {
-    if (_savingPreview) return;
-    _savingPreview = true;
+  Future<void> _savePreview() {
+    final active = _inFlightPreviewSave;
+    if (active != null) {
+      return active;
+    }
+    final future = _performSavePreview();
+    _inFlightPreviewSave = future;
+    future.whenComplete(() {
+      if (identical(_inFlightPreviewSave, future)) {
+        _inFlightPreviewSave = null;
+      }
+    });
+    return future;
+  }
 
+  double _previewPixelRatio() {
+    double pixelRatio;
+    switch (widget.boardPreviewQuality) {
+      case 'low':
+        pixelRatio = 0.2;
+        break;
+      case 'high':
+        pixelRatio = 0.5;
+        break;
+      case 'medium':
+      default:
+        pixelRatio = 0.35;
+        break;
+    }
+    if (!widget.boardPreviewCompressionEnabled) {
+      pixelRatio = (pixelRatio + 0.2).clamp(0.2, 0.8);
+    }
+    return pixelRatio;
+  }
+
+  Future<Uint8List?> _renderBlankBoardPreviewPng(
+    CanvasBoardSettings settings,
+  ) async {
+    ui.Picture? picture;
+    ui.Image? image;
     try {
+      const width = 320;
+      const height = 200;
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(
+        recorder,
+        const Rect.fromLTWH(0, 0, 320, 200),
+      );
+      canvas.drawRect(
+        const Rect.fromLTWH(0, 0, 320, 200),
+        Paint()..color = settings.backgroundColor,
+      );
+      picture = recorder.endRecording();
+      image = await picture.toImage(width, height);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      return byteData?.buffer.asUint8List();
+    } catch (e) {
+      developer.log('Blank preview render error: $e', name: 'CanvasScreen');
+      return null;
+    } finally {
+      image?.dispose();
+      picture?.dispose();
+    }
+  }
+
+  Future<void> _performSavePreview() async {
+    try {
+      if (_canvasBloc.isClosed) return;
+      final canvasState = _canvasBloc.state;
+      final elements = canvasState.elements;
+      final boardSettings = canvasState.boardSettings;
       Uint8List? bytes;
 
-      final boundary =
-          _canvasPreviewKey.currentContext?.findRenderObject()
-              as RenderRepaintBoundary?;
-
-      if (boundary != null) {
-        if (boundary.debugNeedsPaint) {
-          await WidgetsBinding.instance.endOfFrame;
-        }
-
-        double pixelRatio;
-        switch (widget.boardPreviewQuality) {
-          case 'low':
-            pixelRatio = 0.2;
-            break;
-          case 'high':
-            pixelRatio = 0.5;
-            break;
-          case 'medium':
-          default:
-            pixelRatio = 0.35;
-            break;
-        }
-
-        if (!widget.boardPreviewCompressionEnabled) {
-          pixelRatio = (pixelRatio + 0.2).clamp(0.2, 0.8);
-        }
-
+      // Prefer deterministic offscreen rendering when elements exist:
+      // RepaintBoundary.toImage() with BackdropFilter glass overlays often
+      // fails or captures blank/chrome frames on physical Android Impeller GPUs.
+      if (elements.isNotEmpty) {
         try {
-          final ui.Image image = await boundary.toImage(pixelRatio: pixelRatio);
-          final byteData = await image.toByteData(
-            format: ui.ImageByteFormat.png,
-          );
-          bytes = byteData?.buffer.asUint8List();
-        } catch (e) {
-          developer.log('boundary.toImage error: $e', name: 'CanvasScreen');
-        }
-      }
-
-      // Robust fallback: if boundary capture failed or produced empty bytes,
-      // and canvas elements exist, render offscreen using BoardExportServiceImpl.
-      if ((bytes == null || bytes.isEmpty) &&
-          _canvasBloc.state.elements.isNotEmpty) {
-        try {
+          final scale = switch (widget.boardPreviewQuality) {
+            'low' => 0.3,
+            'high' => 0.8,
+            _ => 0.5,
+          };
           bytes = await const BoardExportServiceImpl().renderToPng(
-            _canvasBloc.state.elements,
-            scale: 0.5,
+            elements,
+            settings: boardSettings,
+            scale: widget.boardPreviewCompressionEnabled ? scale : 0.8,
           );
         } catch (e) {
-          developer.log('Fallback renderToPng error: $e', name: 'CanvasScreen');
+          developer.log('Offscreen renderToPng error: $e', name: 'CanvasScreen');
         }
       }
 
-      if (bytes != null && bytes.isNotEmpty) {
-        if (mounted) {
-          _canvasBloc.add(CanvasSaveBoardPreviewRequested(bytes));
+      if (bytes == null || bytes.isEmpty) {
+        final boundary =
+            _canvasPreviewKey.currentContext?.findRenderObject()
+                as RenderRepaintBoundary?;
+
+        if (boundary != null) {
+          if (boundary.debugNeedsPaint) {
+            await WidgetsBinding.instance.endOfFrame;
+          }
+
+          ui.Image? image;
+          try {
+            image = await boundary.toImage(pixelRatio: _previewPixelRatio());
+            final byteData = await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            );
+            bytes = byteData?.buffer.asUint8List();
+          } catch (e) {
+            developer.log('boundary.toImage error: $e', name: 'CanvasScreen');
+          } finally {
+            image?.dispose();
+          }
         }
+      }
+
+      if (bytes == null || bytes.isEmpty) {
+        bytes = await _renderBlankBoardPreviewPng(boardSettings);
+      }
+
+      if (bytes != null && bytes.isNotEmpty && mounted && !_canvasBloc.isClosed) {
+        final completer = Completer<void>();
+        _canvasBloc.add(
+          CanvasSaveBoardPreviewRequested(bytes, completer: completer),
+        );
+        await completer.future.timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {},
+        );
       }
     } catch (e) {
       developer.log('Failed to save board preview: $e', name: 'CanvasScreen');
-    } finally {
-      _savingPreview = false;
     }
   }
 
@@ -4281,6 +4358,7 @@ class _CanvasScreenState extends State<CanvasScreen>
             'you are a viewer',
           );
           final isArchivedWarning = message.toLowerCase().contains('archived');
+          final isPausedWarning = message.toLowerCase().contains('paused');
 
           if (isViewerWarning) {
             AppSnackBar.show(
@@ -4313,7 +4391,7 @@ class _CanvasScreenState extends State<CanvasScreen>
               ),
               duration: AppSnackBar.defaultDuration,
             );
-          } else if (isArchivedWarning) {
+          } else if (isArchivedWarning || isPausedWarning) {
             AppSnackBar.show(
               context,
               SnackBar(
@@ -4321,7 +4399,9 @@ class _CanvasScreenState extends State<CanvasScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      LucideIcons.archive,
+                      isPausedWarning
+                          ? LucideIcons.pause
+                          : LucideIcons.archive,
                       size: 16,
                       color: _tokens.pending,
                     ),
@@ -5161,6 +5241,14 @@ class _CanvasScreenState extends State<CanvasScreen>
                               onTap: () {
                                 final suppressDeselect = _suppressTapDeselect;
                                 _suppressTapDeselect = false;
+                                // Finishing a text edit (the tap that dismissed
+                                // the keyboard) keeps the element selected so
+                                // its editing bar stays open for styling. Only a
+                                // later tap counts as clicking elsewhere.
+                                final justCommittedText = _textCommitAt != null &&
+                                    DateTime.now().difference(_textCommitAt!) <
+                                        const Duration(milliseconds: 500);
+                                _textCommitAt = null;
                                 if (state.isViewingHistory ||
                                     state.isSelectingUndoRequestArea ||
                                     state.isSelectingHistoryArea ||
@@ -5169,6 +5257,7 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 }
                                 final worldPoint = _lastTapWorldPoint;
                                 if (!suppressDeselect &&
+                                    !justCommittedText &&
                                     worldPoint != null &&
                                     !_isBrushTool(state.currentToolMode)) {
                                   final hitShapeId = _hitTestShape(
@@ -5427,12 +5516,24 @@ class _CanvasScreenState extends State<CanvasScreen>
                           if (!state.isViewingHistory && state.isArchived)
                             _buildArchivedBanner(state),
 
+                          if (!state.isViewingHistory &&
+                              !state.isArchived &&
+                              state.isPaused)
+                            _buildPausedBanner(state),
+
                           if (state.isSelectingUndoRequestArea ||
                               state.isSelectingHistoryArea)
                             _buildAreaSelectionHint(state),
 
                           if (_isPickingUndoRequestScope(state))
                             _buildUndoRequestPickHint(state),
+
+                          if (!state.isViewingHistory &&
+                              !state.isSelectingUndoRequestArea &&
+                              !state.isSelectingHistoryArea &&
+                              !_isPickingUndoRequestScope(state) &&
+                              state.myPendingUndoRequest != null)
+                            _buildUndoRequestPendingNotice(state),
 
                           if (state.showTrayTips)
                             TrayTipsOverlay(
@@ -5526,7 +5627,9 @@ class _CanvasScreenState extends State<CanvasScreen>
               color: e.color,
               width: e.width,
               height: e.height,
-              data: {'rotation': e.rotation},
+              // The full payload: the element editing bar parses it with
+              // CanvasElement.fromMap, which needs `type` and the text fields.
+              data: e.toMap(),
               fontSize: e.fontSize,
               fontWeight: e.fontWeight,
               fontFamily: e.fontFamily,
@@ -8103,9 +8206,13 @@ class _CanvasScreenState extends State<CanvasScreen>
           rotation: draft.rotation,
         ),
       );
+      // Switch to Select so the new text keeps a live editing bar, and keep
+      // the selection through the tap that dismissed the editor.
       _canvasBloc.add(const CanvasSetToolMode(CanvasToolMode.select));
+      _textCommitAt = DateTime.now();
     } else {
       _canvasBloc.add(CanvasUpdateText(elementId: elementId, text: text));
+      _textCommitAt = DateTime.now();
     }
   }
 
@@ -10381,7 +10488,12 @@ class _CanvasScreenState extends State<CanvasScreen>
                             (shape.data['rotation'] as num?)?.toDouble() ??
                             state.selectedShapeRotation;
                         _resizeStartGlobalPos = details.globalPosition;
-                        _resizeStartSize = shape.size;
+                        // Text carries no `size`: its box width is what the
+                        // handle resizes, so start from the drawn width instead
+                        // of zero (which made any drag narrow the box).
+                        _resizeStartSize = shape.kind == _ElementKind.text
+                            ? rawW
+                            : shape.size;
                         _resizeStartWidth = rawW;
                         _resizeStartHeight = rawH;
                         _resizeStartRotation = baseRotation;
@@ -10449,7 +10561,8 @@ class _CanvasScreenState extends State<CanvasScreen>
                         } else if (shape.kind == _ElementKind.stickyNote ||
                             shape.kind == _ElementKind.shape ||
                             shape.kind == _ElementKind.frame ||
-                            shape.kind == _ElementKind.table) {
+                            shape.kind == _ElementKind.table ||
+                            shape.kind == _ElementKind.text) {
                           _canvasBloc.add(
                             CanvasPreviewResizeSelectedShape(
                               nextSize,
@@ -10482,6 +10595,12 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 width: draft.width,
                                 height: draft.height,
                               ),
+                            );
+                          } else if (shape.kind == _ElementKind.text) {
+                            // Width only: text height follows from wrapping.
+                            _resizeSelectedShape(
+                              draft.size,
+                              width: draft.width ?? 0,
                             );
                           } else if (shape.kind == _ElementKind.shape ||
                               shape.kind == _ElementKind.frame ||
@@ -10849,9 +10968,41 @@ class _CanvasScreenState extends State<CanvasScreen>
   }
 
   Widget _buildArchivedBanner(CanvasState state) {
+    final isOwner = state.currentUserRole == Board.roleOwner;
+    return _buildReadOnlyStatusBanner(
+      icon: LucideIcons.archive,
+      message: isOwner
+          ? 'This board is archived. Unarchive it from Settings to edit.'
+          : 'This board was archived by the owner (Read-only).',
+      actionLabel: isOwner ? 'Settings' : 'Exit',
+      onAction: isOwner
+          ? () => _openSettings(state.boardTitle ?? 'Board')
+          : _exitCanvas,
+    );
+  }
+
+  Widget _buildPausedBanner(CanvasState state) {
+    final isOwner = state.currentUserRole == Board.roleOwner;
+    return _buildReadOnlyStatusBanner(
+      icon: LucideIcons.pause,
+      message: isOwner
+          ? 'This board is paused. Resume it to allow editing.'
+          : 'This board is paused by the owner (Read-only).',
+      actionLabel: isOwner ? 'Resume' : 'Exit',
+      onAction: isOwner
+          ? () => _canvasBloc.add(const CanvasSetBoardPausedRequested(false))
+          : _exitCanvas,
+    );
+  }
+
+  Widget _buildReadOnlyStatusBanner({
+    required IconData icon,
+    required String message,
+    required String actionLabel,
+    required VoidCallback onAction,
+  }) {
     final tokens = _tokens;
     final topInset = MediaQuery.of(context).padding.top + 8;
-    final isOwner = state.currentUserRole == Board.roleOwner;
 
     return Positioned(
       top: topInset + 56,
@@ -10862,34 +11013,47 @@ class _CanvasScreenState extends State<CanvasScreen>
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         child: Row(
           children: [
-            Icon(LucideIcons.archive, size: 16, color: tokens.pending),
+            Icon(icon, size: 16, color: tokens.pending),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                isOwner
-                    ? 'This board is archived. Unarchive it from Settings to edit.'
-                    : 'This board was archived by the owner (Read-only).',
+                message,
                 style: InkType.caption(tokens.ink),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 2,
               ),
             ),
             const SizedBox(width: 8),
-            if (isOwner)
-              InkButton.secondary(
-                label: 'Settings',
-                compact: true,
-                expand: false,
-                onPressed: () => _openSettings(state.boardTitle ?? 'Board'),
-              )
-            else
-              InkButton.secondary(
-                label: 'Exit',
-                compact: true,
-                expand: false,
-                onPressed: _exitCanvas,
-              ),
+            InkButton.secondary(
+              label: actionLabel,
+              compact: true,
+              expand: false,
+              onPressed: onAction,
+            ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge(InkTokens tokens, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 6,
+        vertical: 2,
+      ),
+      decoration: BoxDecoration(
+        color: tokens.pending.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(
+          color: tokens.pending.withValues(alpha: 0.4),
+        ),
+      ),
+      child: Text(
+        label,
+        style: InkType.caption(tokens.pending).copyWith(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
@@ -10959,26 +11123,10 @@ class _CanvasScreenState extends State<CanvasScreen>
                             ),
                             if (state.isArchived) ...[
                               const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: tokens.pending.withValues(alpha: 0.15),
-                                  borderRadius: BorderRadius.circular(4),
-                                  border: Border.all(
-                                    color: tokens.pending.withValues(alpha: 0.4),
-                                  ),
-                                ),
-                                child: Text(
-                                  'Archived',
-                                  style: InkType.caption(tokens.pending).copyWith(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
+                              _buildStatusBadge(tokens, 'Archived'),
+                            ] else if (state.isPaused) ...[
+                              const SizedBox(width: 6),
+                              _buildStatusBadge(tokens, 'Paused'),
                             ],
                             if (pendingRequestsCount > 0) ...[
                               const SizedBox(width: 6),
@@ -11561,6 +11709,59 @@ class _CanvasScreenState extends State<CanvasScreen>
               child: Padding(
                 padding: const EdgeInsets.all(InkSpacing.s4),
                 child: Icon(LucideIcons.x, size: 16, color: tokens.inkSecondary),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Member-side status pill: their undo request is with the owner. It stays
+  /// visible while the request is pending, so the member can see it is being
+  /// reviewed instead of sending another one.
+  Widget _buildUndoRequestPendingNotice(CanvasState state) {
+    final request = state.myPendingUndoRequest!;
+    final tokens = _tokens;
+    final reason = request.reason.trim();
+    final elementCount = request.targetElementIds.length;
+    final detail = [
+      if (elementCount > 0) '$elementCount element(s)',
+      if (reason.isNotEmpty) '“$reason”',
+    ].join(' · ');
+    return Positioned(
+      left: 24,
+      right: 24,
+      bottom: 112,
+      child: GlassPanel(
+        radius: InkRadii.pill,
+        padding: const EdgeInsets.symmetric(
+          horizontal: InkSpacing.s12,
+          vertical: InkSpacing.s8,
+        ),
+        child: Row(
+          children: [
+            Icon(LucideIcons.clock, size: 16, color: tokens.pending),
+            const SizedBox(width: InkSpacing.s8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Undo request pending · waiting for the owner',
+                    style: InkType.caption(tokens.ink),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (detail.isNotEmpty)
+                    Text(
+                      detail,
+                      style: InkType.caption(tokens.inkMuted),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
               ),
             ),
           ],

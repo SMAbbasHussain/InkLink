@@ -19,6 +19,7 @@ import '../../../ui/widgets/paper_card.dart';
 import '../../../core/utils/app_snackbar.dart';
 import '../../friends/bloc/friends_bloc.dart';
 import '../bloc/dashboard_bloc.dart';
+import 'widgets/invite_expiration_picker.dart';
 
 class CreateBoardScreen extends StatefulWidget {
   const CreateBoardScreen({super.key});
@@ -38,13 +39,15 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
   String? _selectedTemplateId;
   bool _allowMembersToCopy = false;
   int _inviteExpiryHours = 72;
+  bool _inviteExpiryValid = true;
   String _visibility = Board.visibilityPrivate;
   String _privateJoinPolicy = Board.policyOwnerOnlyInvite;
   String _whoCanInvite = Board.inviteOwnerOnly;
   String _defaultLinkJoinRole = Board.roleViewer;
   String _inviteTargetRole = Board.roleViewer;
 
-  bool get _canSubmit => _titleController.text.trim().isNotEmpty;
+  bool get _canSubmit =>
+      _titleController.text.trim().isNotEmpty && _inviteExpiryValid;
 
   @override
   void initState() {
@@ -160,7 +163,7 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
 
   Future<void> _openInviteSettings() async {
     final tokens = context.ink;
-    final result = await showModalBottomSheet<Map<String, String>>(
+    final result = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -168,6 +171,8 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
         String whoCanInvite = _whoCanInvite;
         String defaultLinkJoinRole = _defaultLinkJoinRole;
         String inviteTargetRole = _inviteTargetRole;
+        int inviteExpiryHours = _inviteExpiryHours;
+        bool inviteExpiryValid = _inviteExpiryValid;
 
         return StatefulBuilder(
           builder: (context, setSheetState) {
@@ -176,78 +181,104 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                 padding: EdgeInsets.only(
                   bottom: MediaQuery.of(context).viewInsets.bottom,
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Invite Settings', style: InkType.title(tokens.ink)),
-                    const SizedBox(height: InkSpacing.s16),
-                    _buildDropdown<String>(
-                      label: 'Who can send invites',
-                      value: whoCanInvite,
-                      items: const [
-                        DropdownMenuItem(
-                          value: Board.inviteOwnerOnly,
-                          child: Text('Owner only'),
-                        ),
-                        DropdownMenuItem(
-                          value: Board.inviteOwnerEditor,
-                          child: Text('Owner + Editors'),
-                        ),
-                        DropdownMenuItem(
-                          value: Board.inviteAllMembers,
-                          child: Text('All members'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setSheetState(() => whoCanInvite = value);
-                      },
-                    ),
-                    const SizedBox(height: InkSpacing.s12),
-                    _buildDropdown<String>(
-                      label: 'Default role for link/code joins',
-                      value: defaultLinkJoinRole,
-                      items: const [
-                        DropdownMenuItem(
-                          value: Board.roleViewer,
-                          child: Text('Viewer (default)'),
-                        ),
-                        DropdownMenuItem(
-                          value: Board.roleEditor,
-                          child: Text('Editor'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setSheetState(() => defaultLinkJoinRole = value);
-                      },
-                    ),
-                    const SizedBox(height: InkSpacing.s12),
-                    _buildDropdown<String>(
-                      label: 'Role for invited users',
-                      value: inviteTargetRole,
-                      items: const [
-                        DropdownMenuItem(value: Board.roleViewer, child: Text('Viewer')),
-                        DropdownMenuItem(value: Board.roleEditor, child: Text('Editor')),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setSheetState(() => inviteTargetRole = value);
-                      },
-                    ),
-                    const SizedBox(height: InkSpacing.s20),
-                    InkButton.primary(
-                      label: 'Save Settings',
-                      onPressed: () {
-                        Navigator.pop(context, {
-                          'whoCanInvite': whoCanInvite,
-                          'defaultLinkJoinRole': defaultLinkJoinRole,
-                          'inviteTargetRole': inviteTargetRole,
-                        });
-                      },
-                    ),
-                  ],
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Invite Settings', style: InkType.title(tokens.ink)),
+                      const SizedBox(height: InkSpacing.s16),
+                      _buildDropdown<String>(
+                        label: 'Who can send invites',
+                        value: whoCanInvite,
+                        items: const [
+                          DropdownMenuItem(
+                            value: Board.inviteOwnerOnly,
+                            child: Text('Owner only'),
+                          ),
+                          DropdownMenuItem(
+                            value: Board.inviteOwnerEditor,
+                            child: Text('Owner + Editors'),
+                          ),
+                          DropdownMenuItem(
+                            value: Board.inviteAllMembers,
+                            child: Text('All members'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setSheetState(() => whoCanInvite = value);
+                        },
+                      ),
+                      const SizedBox(height: InkSpacing.s12),
+                      _buildDropdown<String>(
+                        label: 'Default role for link/code joins',
+                        value: defaultLinkJoinRole,
+                        items: const [
+                          DropdownMenuItem(
+                            value: Board.roleViewer,
+                            child: Text('Viewer (default)'),
+                          ),
+                          DropdownMenuItem(
+                            value: Board.roleEditor,
+                            child: Text('Editor'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setSheetState(() => defaultLinkJoinRole = value);
+                        },
+                      ),
+                      const SizedBox(height: InkSpacing.s12),
+                      _buildDropdown<String>(
+                        label: 'Role for invited users',
+                        value: inviteTargetRole,
+                        items: const [
+                          DropdownMenuItem(
+                            value: Board.roleViewer,
+                            child: Text('Viewer'),
+                          ),
+                          DropdownMenuItem(
+                            value: Board.roleEditor,
+                            child: Text('Editor'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setSheetState(() => inviteTargetRole = value);
+                        },
+                      ),
+                      const SizedBox(height: InkSpacing.s16),
+                      Text(
+                        'Invite expiration',
+                        style: InkType.title(tokens.ink),
+                      ),
+                      const SizedBox(height: InkSpacing.s8),
+                      InviteExpirationPicker(
+                        valueHours: inviteExpiryHours,
+                        onChanged: (hours) {
+                          setSheetState(() => inviteExpiryHours = hours);
+                        },
+                        onValidityChanged: (isValid) {
+                          setSheetState(() => inviteExpiryValid = isValid);
+                        },
+                      ),
+                      const SizedBox(height: InkSpacing.s20),
+                      InkButton.primary(
+                        label: 'Save Settings',
+                        onPressed: inviteExpiryValid
+                            ? () {
+                                Navigator.pop(context, <String, dynamic>{
+                                  'whoCanInvite': whoCanInvite,
+                                  'defaultLinkJoinRole': defaultLinkJoinRole,
+                                  'inviteTargetRole': inviteTargetRole,
+                                  'inviteExpiryHours': inviteExpiryHours,
+                                });
+                              }
+                            : null,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -258,9 +289,15 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
 
     if (result == null) return;
     setState(() {
-      _whoCanInvite = result['whoCanInvite'] ?? Board.inviteOwnerOnly;
-      _defaultLinkJoinRole = result['defaultLinkJoinRole'] ?? Board.roleViewer;
-      _inviteTargetRole = result['inviteTargetRole'] ?? Board.roleViewer;
+      _whoCanInvite =
+          result['whoCanInvite'] as String? ?? Board.inviteOwnerOnly;
+      _defaultLinkJoinRole =
+          result['defaultLinkJoinRole'] as String? ?? Board.roleViewer;
+      _inviteTargetRole =
+          result['inviteTargetRole'] as String? ?? Board.roleViewer;
+      _inviteExpiryHours =
+          result['inviteExpiryHours'] as int? ?? _inviteExpiryHours;
+      _inviteExpiryValid = true;
     });
   }
 
@@ -667,16 +704,13 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                     const SizedBox(height: InkSpacing.s16),
                     Text('Invite expiration', style: InkType.title(tokens.ink)),
                     const SizedBox(height: InkSpacing.s12),
-                    _buildDropdown<int>(
-                      value: _inviteExpiryHours,
-                      items: const [
-                        DropdownMenuItem(value: 24, child: Text('24 hours')),
-                        DropdownMenuItem(value: 72, child: Text('3 days')),
-                        DropdownMenuItem(value: 168, child: Text('7 days')),
-                      ],
+                    InviteExpirationPicker(
+                      valueHours: _inviteExpiryHours,
                       onChanged: (value) {
-                        if (value == null) return;
                         setState(() => _inviteExpiryHours = value);
+                      },
+                      onValidityChanged: (isValid) {
+                        setState(() => _inviteExpiryValid = isValid);
                       },
                     ),
                   ],

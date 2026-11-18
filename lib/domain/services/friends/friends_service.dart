@@ -19,6 +19,7 @@ class FriendsInfoSnapshot {
 }
 
 abstract class FriendsService {
+  Stream<List<Map<String, dynamic>>> watchFriends();
   Stream<FriendsInfoSnapshot> watchFriendsInfo();
   Stream<List<Map<String, dynamic>>> watchBlockedUsers();
   Future<List<Map<String, dynamic>>> searchUsersByEmail(String email);
@@ -52,6 +53,33 @@ class FriendsServiceImpl implements FriendsService {
        _authService = authService,
        _cloudFunctionsService = cloudFunctionsService;
 
+  List<Map<String, dynamic>> _excludeSelfFriends(
+    List<Map<String, dynamic>> friends,
+  ) {
+    final currentUid = _authService.getCurrentUserId();
+    final currentEmail = _authService.getCurrentUser()?.email?.trim().toLowerCase();
+    return friends.where((f) {
+      final fUid = (f['uid'] ?? '').toString().trim();
+      final fEmail = (f['email'] ?? '').toString().trim().toLowerCase();
+      if (currentUid != null && fUid.isNotEmpty && fUid == currentUid.trim()) {
+        return false;
+      }
+      if (currentEmail != null &&
+          fEmail.isNotEmpty &&
+          fEmail == currentEmail) {
+        return false;
+      }
+      final status = f['friendshipStatus']?.toString().toLowerCase();
+      if (status == 'friendshipstatus.self' || status == 'self') return false;
+      return true;
+    }).toList();
+  }
+
+  @override
+  Stream<List<Map<String, dynamic>>> watchFriends() {
+    return _friendsRepository.watchFriendsList().map(_excludeSelfFriends);
+  }
+
   @override
   Stream<FriendsInfoSnapshot> watchFriendsInfo() {
     return Rx.combineLatest3(
@@ -63,19 +91,8 @@ class FriendsServiceImpl implements FriendsService {
         List<Map<String, dynamic>> incomingRequests,
         List<Map<String, dynamic>> outgoingRequests,
       ) {
-        final currentUid = _authService.getCurrentUserId();
-        final currentEmail = _authService.getCurrentUser()?.email?.trim().toLowerCase();
-        final filteredFriends = friends.where((f) {
-          final fUid = (f['uid'] ?? '').toString().trim();
-          final fEmail = (f['email'] ?? '').toString().trim().toLowerCase();
-          if (currentUid != null && fUid.isNotEmpty && fUid == currentUid.trim()) return false;
-          if (currentEmail != null && fEmail.isNotEmpty && fEmail == currentEmail) return false;
-          final status = f['friendshipStatus']?.toString().toLowerCase();
-          if (status == 'friendshipstatus.self' || status == 'self') return false;
-          return true;
-        }).toList();
         return FriendsInfoSnapshot(
-          friends: filteredFriends,
+          friends: _excludeSelfFriends(friends),
           incomingRequests: incomingRequests,
           outgoingRequests: outgoingRequests,
         );

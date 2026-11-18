@@ -181,6 +181,80 @@ void main() {
     });
   });
 
+  group('CanvasResizeSelectedShape (text)', () {
+    Future<(CanvasBloc, TextElement)> createText(String content) async {
+      final bloc = CanvasBloc();
+      _grantEditor(bloc);
+      bloc.add(
+        CanvasAddText(
+          topLeft: Offset.zero,
+          text: content,
+          color: Colors.black,
+        ),
+      );
+      final state = await _nextWhere(bloc, (s) => s.elements.isNotEmpty);
+      return (bloc, state.elements.single as TextElement);
+    }
+
+    test('a horizontal resize sets the box width', () async {
+      final (bloc, text) = await createText('Hi');
+      addTearDown(bloc.close);
+
+      bloc.add(const CanvasResizeSelectedShape(400, width: 400));
+      final state = await _nextWhere(
+        bloc,
+        (s) => (s.elements.single as TextElement).width == 400,
+      );
+
+      final resized = state.elements.single as TextElement;
+      expect(resized.id, text.id);
+      expect(resized.width, 400);
+      expect(resized.height, greaterThan(0));
+      expect(resized.text, 'Hi');
+    });
+
+    test('widening text never wraps it into a taller box', () async {
+      // Regression: text carries no `size`, so the resize used to start from
+      // zero and a rightward drag produced a narrow box that wrapped the text
+      // into a tall column instead of widening it.
+      final (bloc, text) = await createText(
+        'a fairly long line of text that wraps at the default width',
+      );
+      addTearDown(bloc.close);
+      final before = bloc.state.elements.single as TextElement;
+      expect(before.width, greaterThan(0));
+
+      bloc.add(const CanvasResizeSelectedShape(400, width: 400));
+      final state = await _nextWhere(
+        bloc,
+        (s) => (s.elements.single as TextElement).width == 400,
+      );
+
+      final resized = state.elements.single as TextElement;
+      expect(resized.width, 400);
+      expect(resized.width, greaterThan(before.width));
+      expect(resized.height, lessThanOrEqualTo(before.height));
+    });
+
+    test('a second horizontal resize continues from the box width', () async {
+      final (bloc, _) = await createText('Hi');
+      addTearDown(bloc.close);
+
+      bloc.add(const CanvasResizeSelectedShape(320, width: 320));
+      await _nextWhere(
+        bloc,
+        (s) => (s.elements.single as TextElement).width == 320,
+      );
+
+      bloc.add(const CanvasResizeSelectedShape(200, width: 200));
+      final state = await _nextWhere(
+        bloc,
+        (s) => (s.elements.single as TextElement).width == 200,
+      );
+      expect((state.elements.single as TextElement).width, 200);
+    });
+  });
+
   group('tool mode is the single source of truth for erasing', () {
     test('selecting the eraser sets the eraser brush, pen restores a pen',
         () async {

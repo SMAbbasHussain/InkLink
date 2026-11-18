@@ -18,6 +18,8 @@ class BoardCard extends StatelessWidget {
   final VoidCallback? onDuplicate;
   final VoidCallback? onArchive;
   final VoidCallback? onUnarchive;
+  final VoidCallback? onPause;
+  final VoidCallback? onResume;
   final int pendingRequestsCount;
 
   const BoardCard({
@@ -31,6 +33,8 @@ class BoardCard extends StatelessWidget {
     this.onDuplicate,
     this.onArchive,
     this.onUnarchive,
+    this.onPause,
+    this.onResume,
     this.pendingRequestsCount = 0,
   });
 
@@ -48,6 +52,8 @@ class BoardCard extends StatelessWidget {
       caption: captionText,
       pendingRequestsCount: isOwner ? pendingRequestsCount : 0,
       onPendingRequestsTap: isOwner ? onOpenRequests : null,
+      isPaused: board.isPaused && !board.isArchived,
+      previewUpdatedAt: board.updatedAt,
       onTap: () async {
         HapticFeedback.lightImpact();
         await Navigator.push(context, buildCanvasRoute(context, boardId: board.id));
@@ -75,6 +81,12 @@ class BoardCard extends StatelessWidget {
           } else if (value == 'unarchive') {
             HapticFeedback.lightImpact();
             onUnarchive?.call();
+          } else if (value == 'pause') {
+            HapticFeedback.lightImpact();
+            onPause?.call();
+          } else if (value == 'resume') {
+            HapticFeedback.lightImpact();
+            onResume?.call();
           } else if (value == 'delete') {
             HapticFeedback.mediumImpact();
             onDelete(board.id);
@@ -118,6 +130,16 @@ class BoardCard extends StatelessWidget {
                 isOwner ? 'Duplicate' : 'Make a Copy',
                 tokens.ink,
               ),
+            ),
+          if (isOwner && onPause != null && !board.isArchived && !board.isPaused)
+            PopupMenuItem(
+              value: 'pause',
+              child: _menuRow(LucideIcons.pause, 'Pause Board', tokens.ink),
+            ),
+          if (isOwner && onResume != null && !board.isArchived && board.isPaused)
+            PopupMenuItem(
+              value: 'resume',
+              child: _menuRow(LucideIcons.play, 'Resume Board', tokens.accent),
             ),
           if (isOwner && onArchive != null && !board.isArchived)
             PopupMenuItem(

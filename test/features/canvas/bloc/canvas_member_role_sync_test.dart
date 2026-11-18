@@ -159,6 +159,9 @@ class _FakeBoardService implements BoardService {
   Future<void> renameBoard(String boardId, String newName) async {}
 
   @override
+  Future<void> setBoardPaused(String boardId, {required bool isPaused}) async {}
+
+  @override
   Future<void> requestBoardAccess({
     required String boardId,
     required String requestType,

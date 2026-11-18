@@ -92,6 +92,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   StreamSubscription<bool>? _voiceSpeakerStatusSub;
   StreamSubscription<List<BoardActivityBlock>>? _historyFeedSub;
   StreamSubscription<List<UndoRequest>>? _undoRequestsSub;
+  StreamSubscription<List<UndoRequest>>? _myUndoRequestsSub;
   List<BoardActivityBlock> _archivedBlocks = const [];
   BoardActivityBlock? _liveTailBlock;
   Timer? _liveTailDebounceTimer;
@@ -143,6 +144,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   String _currentUserRole = Board.roleViewer;
   DateTime? _lastViewerWarningAt;
   DateTime? _lastArchivedWarningAt;
+  DateTime? _lastPausedWarningAt;
 
   final BoardExportService _boardExportService;
 
@@ -291,6 +293,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasUpdateSelectedStrokeBrushType>(_onUpdateSelectedStrokeBrushType);
     on<CanvasCommitSelectedStrokeEdits>(_onCommitSelectedStrokeEdits);
     on<CanvasSaveBoardPreviewRequested>(_onSaveBoardPreviewRequested);
+    on<CanvasSetBoardPausedRequested>(_onSetBoardPausedRequested);
     on<CanvasBoardMembersUpdated>(_onBoardMembersUpdated);
     on<CanvasMemberSearchQueryChanged>(_onMemberSearchQueryChanged);
     on<CanvasRemoveBoardMember>(_onRemoveBoardMember);
@@ -364,6 +367,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
     on<CanvasHistoryAreaScrubRequested>(_onHistoryAreaScrubRequested);
     on<CanvasUndoRequestsUpdated>(_onUndoRequestsUpdated);
+    on<CanvasMyUndoRequestsUpdated>(_onMyUndoRequestsUpdated);
     on<CanvasUndoConflictDismissed>(_onUndoConflictDismissed);
     on<CanvasUndoRequestDraftStarted>(_onUndoRequestDraftStarted);
     on<CanvasUndoRequestDraftScopeModeChanged>(
@@ -415,6 +419,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) {
     final wasOwner = _currentUserRole == Board.roleOwner;
     final wasArchived = state.isArchived;
+    final wasPaused = state.isPaused;
     _currentUserRole = event.currentUserRole;
     _syncHistorySubscriptions();
     // The role can resolve AFTER the owner already opened the history screen
@@ -432,14 +437,22 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           : 'This board was archived by the owner. Edits are disabled.';
     } else if (wasArchived && !event.isArchived) {
       transitionInfo = 'Board has been unarchived. Editing is enabled.';
+    } else if (!wasPaused && event.isPaused) {
+      transitionInfo = _currentUserRole == Board.roleOwner
+          ? 'Board paused. No one can edit until you resume it.'
+          : 'This board is paused by the owner. Edits are disabled until resumed.';
+    } else if (wasPaused && !event.isPaused) {
+      transitionInfo = 'Board resumed. Editing is enabled.';
     }
 
+    final isLocked = event.isArchived || event.isPaused;
     emit(
       state.copyWith(
         boardTitle: event.title,
         currentUserRole: event.currentUserRole,
         isArchived: event.isArchived,
-        currentStroke: event.isArchived ? const [] : null,
+        isPaused: event.isPaused,
+        currentStroke: isLocked ? const [] : null,
         infoMessage: transitionInfo,
       ),
     );
@@ -602,6 +615,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             board.title,
             currentUserRole: board.currentUserRole,
             isArchived: board.isArchived,
+            isPaused: board.isPaused,
           ),
         );
       }
@@ -667,7 +681,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
     // Apply snapshot FIRST (full state restore via CRDT hydration)
     for (final snapshot in snapshotUpdate) {
-      if (snapshot.payloadBase64.isEmpty) continue;
+      if (_appliedCrdtUpdateIds.contains(snapshot.updateId)) continue;
+      if (snapshot.payloadBase64.isEmpty) {
+        _appliedCrdtUpdateIds.add(snapshot.updateId);
+        continue;
+      }
       try {
         final bytes = base64Decode(snapshot.payloadBase64);
         if (bytes.isEmpty) continue;
@@ -2115,8 +2133,30 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
   }
 
+  /// Width the text would need on a single line, with no wrapping.
+  ///
+  /// Compared against a text element's box width to tell a box the user
+  /// resized from one that still auto-fits its text.
+  double _naturalTextWidth(TextElement element) {
+    return CanvasTextLayout.layout(
+      text: element.text,
+      fontSize: element.fontSize,
+      fontWeight: element.fontWeight,
+      fontFamily: element.fontFamily,
+      textAlign: element.textAlign,
+      lineHeight: element.lineHeight,
+      maxWidth: 1e6,
+      maxLines: 0,
+      color: element.color,
+    ).size.width;
+  }
+
   /// Rewrites the measured width/height from the element's real text style.
-  TextElement _measureText(TextElement element) {
+  ///
+  /// With [keepWidth] the box keeps the requested wrapping width instead of
+  /// collapsing back to the text's natural width, so widening a text box stays
+  /// wide until the text itself changes.
+  TextElement _measureText(TextElement element, {bool keepWidth = false}) {
     final layout = CanvasTextLayout.forElement(element);
     return TextElement(
       id: element.id,
@@ -2127,7 +2167,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       text: element.text,
       center: element.center,
       color: element.color,
-      width: layout.size.width,
+      width: keepWidth && element.width > 0
+          ? element.width
+          : layout.size.width,
       height: layout.size.height,
       fontSize: element.fontSize,
       fontWeight: element.fontWeight,
@@ -2188,7 +2230,19 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       backgroundColor: event.backgroundColor ?? existing.backgroundColor,
       padding: existing.padding,
     );
-    if (needsMeasure) updated = _measureText(updated);
+    if (needsMeasure) {
+      // Changing the text size (or any other style) must not throw away a
+      // width the user dragged: keep a customised width, but still let an
+      // untouched box keep fitting its text.
+      final wasResized =
+          existing.width > 0 &&
+          (existing.width - _naturalTextWidth(existing)).abs() > 1.0;
+      updated = _measureText(
+        updated,
+        keepWidth:
+            event.autoSize != true && (event.width != null || wasResized),
+      );
+    }
     if (updated == existing) return;
     final next = state.elements
         .map((e) => e.id == updated.id ? updated : e)
@@ -5491,8 +5545,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     final clampedSize = event.size.clamp(24.0, 320.0);
     if (shape is TextElement) {
+      // Text has no `size`: the resize handle sets its box width, and the
+      // height follows from how the text wraps at that width.
+      final width = (event.width > 0 ? event.width : clampedSize)
+          .clamp(40.0, 4000.0)
+          .toDouble();
       await _onUpdateText(
-        CanvasUpdateText(elementId: shape.id, width: clampedSize),
+        CanvasUpdateText(elementId: shape.id, width: width),
         emit,
         infoMessage: _singleActionMessage('Resized'),
       );
@@ -6497,6 +6556,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         40.0,
         480.0,
       );
+    } else if (shape is TextElement) {
+      // Preview the wider/narrower text box; the receiver measures the height
+      // from the wrapping width, so a stale height would draw the wrong box.
+      data['width'] = (event.width > 0 ? event.width : event.size)
+          .clamp(40.0, 4000.0)
+          .toDouble();
+      data.remove('height');
     } else if (shape is ShapeElement && (event.width > 0 || event.height > 0)) {
       final w = event.width.clamp(1.0, 4000.0);
       final h = shape.isLinear ? 0.0 : event.height.clamp(1.0, 4000.0);
@@ -6958,11 +7024,47 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasSaveBoardPreviewRequested event,
     Emitter<CanvasState> emit,
   ) async {
-    final canvasService = _canvasService;
-    if (canvasService == null || _boardId.isEmpty) return;
     try {
+      final canvasService = _canvasService;
+      if (canvasService == null || _boardId.isEmpty) return;
       await canvasService.saveBoardPreview(_boardId, event.pngBytes);
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (event.completer != null && !event.completer!.isCompleted) {
+        event.completer!.complete();
+      }
+    }
+  }
+
+  Future<void> _onSetBoardPausedRequested(
+    CanvasSetBoardPausedRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(error: 'Only the board owner can pause or resume this board.'));
+      return;
+    }
+    final boardService = _boardService;
+    if (boardService == null || _boardId.isEmpty) return;
+
+    try {
+      await boardService.setBoardPaused(_boardId, isPaused: event.isPaused);
+      emit(
+        state.copyWith(
+          isPaused: event.isPaused,
+          currentStroke: event.isPaused ? const [] : null,
+          infoMessage: event.isPaused
+              ? 'Board paused. No one can edit until you resume it.'
+              : 'Board resumed. Editing is enabled.',
+        ),
+      );
+    } catch (_) {
+      emit(
+        state.copyWith(
+          error: 'Failed to update board pause state. Please try again.',
+        ),
+      );
+    }
   }
 
   int _activeExportCount = 0;
@@ -7095,6 +7197,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           return 'Board history is temporarily unavailable. Please try again.';
         case 'plan_expired':
           return 'That revert expired. Please try again.';
+        case 'pending_exists':
+          return 'You already have a pending undo request on this board. '
+              'The owner has to approve or deny it first.';
+        case 'board_missing':
+          return 'This board no longer exists.';
+        case 'invalid_request':
+          return error.message.isNotEmpty && error.message != error.code
+              ? error.message
+              : 'That undo request was not accepted. Please try again.';
+        case 'submit_unavailable':
+          return 'Could not reach the undo request service. Please retry.';
         case 'socket_unavailable':
         case 'unauthenticated':
           return 'Could not reach the history service. Please retry.';
@@ -7113,15 +7226,50 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final service = _historyService;
     if (service == null || _boardId.isEmpty || isClosed) return;
     if (_currentUserRole == Board.roleOwner) {
+      _myUndoRequestsSub?.cancel();
+      _myUndoRequestsSub = null;
       _undoRequestsSub ??= service.watchUndoRequests(_boardId).listen(
         (requests) {
           if (!isClosed) add(CanvasUndoRequestsUpdated(requests));
         },
-        onError: (_) {},
+        onError: (Object error, StackTrace stackTrace) {
+          // A listener that errored (rules/network hiccup while the board doc
+          // was still loading) never delivers again, and `??=` would keep it
+          // forever. Drop it so the next board update or history-screen open
+          // subscribes afresh — otherwise undo requests silently never reach
+          // the owner.
+          debugPrint(
+            'Undo request feed failed for board $_boardId: $error',
+          );
+          unawaited(_undoRequestsSub?.cancel());
+          _undoRequestsSub = null;
+        },
       );
     } else {
       _undoRequestsSub?.cancel();
       _undoRequestsSub = null;
+      if (_currentUserRole == Board.roleEditor &&
+          state.currentUserId.isNotEmpty) {
+        // Members see their own pending request so the canvas can say it is
+        // waiting on the owner instead of letting them send it twice.
+        _myUndoRequestsSub ??= service
+            .watchMyUndoRequests(_boardId, state.currentUserId)
+            .listen(
+              (requests) {
+                if (!isClosed) add(CanvasMyUndoRequestsUpdated(requests));
+              },
+              onError: (Object error, StackTrace stackTrace) {
+                debugPrint(
+                  'My undo request feed failed for board $_boardId: $error',
+                );
+                unawaited(_myUndoRequestsSub?.cancel());
+                _myUndoRequestsSub = null;
+              },
+            );
+      } else {
+        _myUndoRequestsSub?.cancel();
+        _myUndoRequestsSub = null;
+      }
     }
   }
 
@@ -7454,7 +7602,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       final scopeMode = request?.scopeMode ?? UndoRequestScopeMode.myChanges;
       if (request != null &&
           targetVersion != null &&
-          (scopeIds.isNotEmpty || (area != null && area.isValid))) {
+          (scopeIds.isNotEmpty ||
+              (area != null && area.isValid) ||
+              scopeMode == UndoRequestScopeMode.areaState)) {
         try {
           final timeline = await service.getUserTimeline(
             _boardId,
@@ -7574,6 +7724,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       isSelectingUndoRequestArea: enable,
       isSelectingHistoryArea: false,
       activeTray: null,
+      // Picking a new area starts from a clean canvas selection: whatever was
+      // selected before (the previous area's elements) must not stay marked.
+      selectedIds: enable ? const <String>{} : state.selectedIds,
       selectedShapeId: null,
     ));
   }
@@ -7594,6 +7747,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       isSelectingHistoryArea: enable,
       isSelectingUndoRequestArea: false,
       activeTray: null,
+      // A new area history selection replaces the previous one, including the
+      // elements that were selected on the canvas.
+      selectedIds: enable ? const <String>{} : state.selectedIds,
       selectedShapeId: null,
     ));
   }
@@ -7757,7 +7913,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final scopeIds = draft.elementIds;
     final area = draft.area;
     final hasArea = area != null && area.isValid;
-    if (scopeIds.isEmpty && !hasArea) {
+    final isAreaState = draft.scopeMode == UndoRequestScopeMode.areaState;
+    final isWholeBoard = isAreaState && scopeIds.isEmpty && !hasArea;
+    if (scopeIds.isEmpty && !hasArea && !isWholeBoard) {
       emit(state.copyWith(
         error: 'Select at least one element or board area first.',
       ));
@@ -7765,7 +7923,6 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     final returnTray = state.activeTray;
     final returnUserUid = state.selectedUserUid;
-    final isAreaState = draft.scopeMode == UndoRequestScopeMode.areaState;
     emit(state.copyWith(isHistoryLoading: true, error: null));
     try {
       final timeline = await service.getUserTimeline(
@@ -7788,7 +7945,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       // Virtual first stop: the state before the page's first scoped op.
       final beforeStop = BoardOperation(
         version: timeline.baseVersion,
-        summary: isAreaState
+        summary: isWholeBoard
+            ? 'Initial board state (v${timeline.baseVersion})'
+            : isAreaState
             ? 'Before changes in this area (v${timeline.baseVersion})'
             : 'Before my changes (v${timeline.baseVersion})',
       );
@@ -7811,7 +7970,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         emit: emit,
         returnTray: returnTray,
         returnUserUid: returnUserUid,
-        title: isAreaState
+        title: isWholeBoard
+            ? 'Your undo request · Whole board'
+            : isAreaState
             ? 'Your undo request · Whole area state'
             : 'Your undo request · Only my changes',
         startIndex: 0,
@@ -7837,13 +7998,29 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final draft = state.undoRequestDraft;
     final scrub = state.historyScrub;
     if (service == null || draft == null) return;
+    // One pending request per board: submitting again would be rejected by the
+    // server, so refuse locally and point the member at the one waiting.
+    if (state.myPendingUndoRequest != null) {
+      emit(state.copyWith(
+        isHistoryLoading: false,
+        error:
+            'You already have an undo request waiting for the owner. '
+            'They have to approve or deny it first.',
+      ));
+      return;
+    }
     final reason = event.reason.trim();
     if (reason.isEmpty) {
       emit(state.copyWith(error: 'A reason is required.'));
       return;
     }
     final hasArea = draft.area != null && draft.area!.isValid;
-    if (scrub == null || (draft.elementIds.isEmpty && !hasArea)) {
+    final isWholeBoard =
+        draft.scopeMode == UndoRequestScopeMode.areaState &&
+        draft.elementIds.isEmpty &&
+        !hasArea;
+    if (scrub == null ||
+        (draft.elementIds.isEmpty && !hasArea && !isWholeBoard)) {
       emit(state.copyWith(error: 'Pick what the owner should restore first.'));
       return;
     }
@@ -8208,6 +8385,42 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
   }
 
+  /// Applies one update during a history replay.
+  ///
+  /// An archived update can be unreadable — a partial or corrupt CRDT payload
+  /// recorded by an older client — and `applyUpdate` answers with a bare
+  /// `RangeError`. Letting it escape aborted the whole replay (the member's
+  /// undo-request preview died with "RangeError (length): …"), so a bad delta
+  /// is skipped and the replay continues from the last state that did apply.
+  void _applyHistoryUpdate(
+    CanvasDocAdapter adapter,
+    Uint8List bytes, {
+    required String label,
+  }) {
+    if (bytes.isEmpty) return;
+    try {
+      adapter.applyUpdate(bytes, origin: 'remote');
+    } catch (error, stackTrace) {
+      debugPrint('Skipped unreadable history $label: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
+  /// Materializes a replayed document, falling back to [fallback] when the
+  /// document is left unreadable by an update that could not be applied.
+  List<CanvasElement> _materializeHistoryElements(
+    CanvasDocAdapter adapter,
+    List<CanvasElement> fallback,
+  ) {
+    try {
+      return _rebuildElementsFromCrdtState(adapter.materializeElements());
+    } catch (error, stackTrace) {
+      debugPrint('Unreadable history replay state: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      return fallback;
+    }
+  }
+
   /// Aligns `timeline.steps` 1:1 with `timeline.ops` by version, falling back
   /// to positional index or an empty delta when the server omitted a step.
   List<Uint8List> _alignedStepDeltas(UserTimeline timeline) {
@@ -8227,14 +8440,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (scrub.stops.isEmpty) return scrub;
     final stepElements = <List<CanvasElement>>[];
     final adapter = await CanvasDocAdapterFactory.create();
-    if (scrub.baseStateBytes.isNotEmpty) {
-      adapter.applyUpdate(scrub.baseStateBytes, origin: 'remote');
-    }
+    _applyHistoryUpdate(adapter, scrub.baseStateBytes, label: 'base state');
     for (var i = 0; i < scrub.stops.length; i++) {
-      final delta = scrub.deltaAt(i);
-      if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
+      _applyHistoryUpdate(
+        adapter,
+        scrub.deltaAt(i),
+        label: 'step ${i + 1} of the replay',
+      );
       stepElements.add(
-        _rebuildElementsFromCrdtState(adapter.materializeElements()),
+        _materializeHistoryElements(
+          adapter,
+          stepElements.isEmpty ? const <CanvasElement>[] : stepElements.last,
+        ),
       );
     }
     final reference =
@@ -8371,18 +8588,22 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   }) async {
     final enrichedScrub = await _computeScrubWithDiffs(scrub);
     final adapter = await CanvasDocAdapterFactory.create();
-    if (enrichedScrub.baseStateBytes.isNotEmpty) {
-      adapter.applyUpdate(enrichedScrub.baseStateBytes, origin: 'remote');
-    }
+    _applyHistoryUpdate(
+      adapter,
+      enrichedScrub.baseStateBytes,
+      label: 'base state',
+    );
     final index =
         (startIndex ?? enrichedScrub.lastIndex).clamp(0, enrichedScrub.lastIndex);
     for (var i = 0; i <= index; i++) {
-      final delta = enrichedScrub.deltaAt(i);
-      if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
+      _applyHistoryUpdate(
+        adapter,
+        enrichedScrub.deltaAt(i),
+        label: 'step ${i + 1} of the preview',
+      );
     }
     _historyScrubAdapter = adapter;
-    final rawPreview =
-        _rebuildElementsFromCrdtState(adapter.materializeElements());
+    final rawPreview = _materializeHistoryElements(adapter, state.elements);
     final previewElements =
         _composeScopedScrubPreviewElements(enrichedScrub, rawPreview);
     final stepDiff = enrichedScrub.diffAt(index);
@@ -8425,24 +8646,30 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (index == state.historyScrubIndex) return;
     if (index > state.historyScrubIndex) {
       for (var i = state.historyScrubIndex + 1; i <= index; i++) {
-        final delta = scrub.deltaAt(i);
-        if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
+        _applyHistoryUpdate(
+          adapter,
+          scrub.deltaAt(i),
+          label: 'step ${i + 1} of the preview',
+        );
       }
     } else {
       final rebuilt = await CanvasDocAdapterFactory.create();
-      if (scrub.baseStateBytes.isNotEmpty) {
-        rebuilt.applyUpdate(scrub.baseStateBytes, origin: 'remote');
-      }
+      _applyHistoryUpdate(rebuilt, scrub.baseStateBytes, label: 'base state');
       for (var i = 0; i <= index; i++) {
-        final delta = scrub.deltaAt(i);
-        if (delta.isNotEmpty) rebuilt.applyUpdate(delta, origin: 'remote');
+        _applyHistoryUpdate(
+          rebuilt,
+          scrub.deltaAt(i),
+          label: 'step ${i + 1} of the preview',
+        );
       }
       _historyScrubAdapter = rebuilt;
     }
     final active = _historyScrubAdapter;
     if (active == null || isClosed) return;
-    final rawPreview =
-        _rebuildElementsFromCrdtState(active.materializeElements());
+    final rawPreview = _materializeHistoryElements(
+      active,
+      state.historyPreviewElements,
+    );
     final previewElements =
         _composeScopedScrubPreviewElements(scrub, rawPreview);
     emit(state.copyWith(
@@ -8761,6 +8988,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(undoRequests: event.requests));
   }
 
+  void _onMyUndoRequestsUpdated(
+    CanvasMyUndoRequestsUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (_currentUserRole == Board.roleOwner) return;
+    emit(state.copyWith(myUndoRequests: event.requests));
+  }
+
   // ──────────────────────────────────────────────
   // Permission checks
   // ──────────────────────────────────────────────
@@ -8784,7 +9019,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     if (state.isArchived) {
       if (clearStroke && state.currentStroke.isNotEmpty) {
-        emit(state.copyWith(currentStroke: const []));
+        _activeStrokeId = null;
+        _strokeStabilizer = null;
+        _strokeClock.stop();
+        emit(
+          state.copyWith(
+            currentStroke: const [],
+            currentStrokePressures: const [],
+            currentStrokeTilts: const [],
+          ),
+        );
       }
       final now = DateTime.now();
       final shouldShowWarning = _lastArchivedWarningAt == null ||
@@ -8796,6 +9040,33 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           error: _currentUserRole == Board.roleOwner
               ? 'This board is archived. Unarchive it from Settings to edit.'
               : 'This board was archived by the owner. Edits are disabled.',
+        ));
+      }
+      return false;
+    }
+    if (state.isPaused) {
+      if (clearStroke && state.currentStroke.isNotEmpty) {
+        _activeStrokeId = null;
+        _strokeStabilizer = null;
+        _strokeClock.stop();
+        emit(
+          state.copyWith(
+            currentStroke: const [],
+            currentStrokePressures: const [],
+            currentStrokeTilts: const [],
+          ),
+        );
+      }
+      final now = DateTime.now();
+      final shouldShowWarning = _lastPausedWarningAt == null ||
+          now.difference(_lastPausedWarningAt!).inMilliseconds > 1200;
+      if (shouldShowWarning) {
+        _lastPausedWarningAt = now;
+        emit(state.copyWith(error: null));
+        emit(state.copyWith(
+          error: _currentUserRole == Board.roleOwner
+              ? 'This board is paused. Resume it to continue editing.'
+              : 'This board is paused by the owner. Edits are disabled.',
         ));
       }
       return false;
@@ -9208,6 +9479,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _historyFeedSub = null;
     await _undoRequestsSub?.cancel();
     _undoRequestsSub = null;
+    await _myUndoRequestsSub?.cancel();
+    _myUndoRequestsSub = null;
     await _previewUpdatesSub?.cancel();
     _previewUpdatesSub = null;
     await _canvasService?.stopCrdtRemoteSync(_boardId);

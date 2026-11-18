@@ -38,6 +38,8 @@ class Board {
   final String currentUserRole;
   final bool? _isArchived;
   bool get isArchived => _isArchived ?? false;
+  final bool? _isPaused;
+  bool get isPaused => _isPaused ?? false;
   final bool? _allowMembersToCopy;
   bool get allowMembersToCopy => _allowMembersToCopy ?? false;
   final int membersCount;
@@ -58,11 +60,13 @@ class Board {
     this.defaultLinkJoinRole = roleViewer,
     this.currentUserRole = roleViewer,
     bool isArchived = false,
+    bool isPaused = false,
     bool allowMembersToCopy = false,
     int? membersCount,
     required this.createdAt,
     required this.updatedAt,
   }) : _isArchived = isArchived,
+       _isPaused = isPaused,
        _allowMembersToCopy = allowMembersToCopy,
        membersCount = membersCount ?? members.length;
 
@@ -92,6 +96,7 @@ class Board {
           (invitePolicy?['defaultLinkJoinRole'] as String?) ?? roleViewer,
       currentUserRole: (map['currentUserRole'] as String?) ?? roleViewer,
       isArchived: (map['isArchived'] as bool?) ?? false,
+      isPaused: (map['isPaused'] as bool?) ?? false,
       allowMembersToCopy: (map['allowMembersToCopy'] as bool?) ?? false,
       membersCount: membersCount,
       createdAt: _parseDate(map['createdAt']),
@@ -113,6 +118,7 @@ class Board {
     String? defaultLinkJoinRole,
     String? currentUserRole,
     bool? isArchived,
+    bool? isPaused,
     bool? allowMembersToCopy,
     int? membersCount,
     DateTime? createdAt,
@@ -132,6 +138,7 @@ class Board {
       defaultLinkJoinRole: defaultLinkJoinRole ?? this.defaultLinkJoinRole,
       currentUserRole: currentUserRole ?? this.currentUserRole,
       isArchived: isArchived ?? this.isArchived,
+      isPaused: isPaused ?? this.isPaused,
       allowMembersToCopy: allowMembersToCopy ?? this.allowMembersToCopy,
       membersCount: membersCount ?? this.membersCount,
       createdAt: createdAt ?? this.createdAt,
@@ -151,6 +158,7 @@ class Board {
       'tags': tags,
       'joinViaCodeEnabled': joinViaCodeEnabled,
       'isArchived': isArchived,
+      'isPaused': isPaused,
       'allowMembersToCopy': allowMembersToCopy,
       'invitePolicy': {
         'whoCanInvite': whoCanInvite,

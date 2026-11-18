@@ -22,6 +22,7 @@ import '../../notifications/bloc/notifications_bloc.dart';
 import '../bloc/board_settings_bloc.dart';
 import '../bloc/dashboard_bloc.dart';
 import 'board_edit_requests_screen.dart';
+import 'widgets/invite_expiration_picker.dart';
 
 class BoardSettingsScreen extends StatelessWidget {
   final Board board;
@@ -44,6 +45,8 @@ class _BoardSettingsView extends StatefulWidget {
 class _BoardSettingsViewState extends State<_BoardSettingsView> {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _inviteController = TextEditingController();
+  final TextEditingController _friendFilterController = TextEditingController();
+  final Set<String> _selectedFriendIds = <String>{};
 
   late String _visibility;
   late String _privateJoinPolicy;
@@ -51,6 +54,9 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
   late String _defaultLinkJoinRole;
   late String _inviteTargetRole;
   late bool _allowMembersToCopy;
+  int _inviteExpiryHours = 72;
+  bool _inviteExpiryValid = true;
+  bool _friendsDropdownOpen = false;
   bool _formInitialized = false;
   bool _showMembersSearch = false;
   final RegExp _emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
@@ -60,6 +66,7 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
   void dispose() {
     _searchController.dispose();
     _inviteController.dispose();
+    _friendFilterController.dispose();
     super.dispose();
   }
 
@@ -104,10 +111,15 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
     context.read<BoardSettingsBloc>().add(
       BoardSettingsInviteSubmitted(
         rawEmails: invitedEmails.join(','),
+        invitedUserIds: _selectedFriendIds.toList(growable: false),
         targetRole: _inviteTargetRole,
+        inviteExpiryHours: _inviteExpiryHours,
       ),
     );
     _inviteController.clear();
+    _friendFilterController.clear();
+    _selectedFriendIds.clear();
+    _friendsDropdownOpen = false;
     setState(() {});
   }
 
@@ -300,6 +312,20 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
     Navigator.pop(context);
   }
 
+  Future<void> _confirmPauseToggle(BuildContext context, Board board) async {
+    final nextPaused = !board.isPaused;
+    final confirmed = await showInkConfirmDialog(
+      context,
+      title: nextPaused ? 'Pause Board' : 'Resume Board',
+      message: nextPaused
+          ? 'Pause editing on this board? No one (including you) will be able to edit until you resume it.'
+          : 'Resume editing on this board? Collaborators with edit permission will be able to edit again.',
+      confirmLabel: nextPaused ? 'Pause Board' : 'Resume Board',
+    );
+    if (!confirmed || !context.mounted) return;
+    context.read<BoardSettingsBloc>().add(BoardSettingsPauseToggled(nextPaused));
+  }
+
   Future<void> _confirmArchiveToggle(BuildContext context, Board board) async {
     final isArchiving = !board.isArchived;
     final confirmed = await showInkConfirmDialog(
@@ -427,8 +453,9 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
               .where((entry) => !_isValidEmail(entry))
               .toList();
           final canSendInvites =
-              validInviteEmails.isNotEmpty &&
+              (_selectedFriendIds.isNotEmpty || validInviteEmails.isNotEmpty) &&
               invalidInviteEntries.isEmpty &&
+              _inviteExpiryValid &&
               !state.isOperationLoading;
           _initFormFields(board);
 
@@ -724,107 +751,16 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                 const SizedBox(height: InkSpacing.s8),
                 PaperCard(
                   padding: const EdgeInsets.all(InkSpacing.s16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      InkTextField(
-                        controller: _inviteController,
-                        hintText: 'Emails (comma, space, or newline separated)',
-                        leadingIcon: LucideIcons.mail,
-                        onChanged: (_) => setState(() {}),
-                      ),
-                      if (inviteEntries.isNotEmpty) ...[
-                        const SizedBox(height: InkSpacing.s12),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            ...validInviteEmails.map(
-                              (email) => _inviteEmailChip(
-                                tokens,
-                                email,
-                                valid: true,
-                              ),
-                            ),
-                            ...invalidInviteEntries.map(
-                              (entry) => _inviteEmailChip(
-                                tokens,
-                                entry,
-                                valid: false,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: InkSpacing.s8),
-                        Text(
-                          '${validInviteEmails.length} valid, ${invalidInviteEntries.length} invalid',
-                          style: InkType.caption(tokens.inkMuted),
-                        ),
-                      ],
-                      const SizedBox(height: InkSpacing.s16),
-                      Row(
-                        children: [
-                          Text('Invite as:', style: InkType.body(tokens.inkSecondary)),
-                          const SizedBox(width: InkSpacing.s12),
-                          Expanded(
-                            child: _dropdown<String>(
-                              value: _inviteTargetRole,
-                              items: const [
-                                DropdownMenuItem(value: Board.roleViewer, child: Text('Viewer')),
-                                DropdownMenuItem(value: Board.roleEditor, child: Text('Editor')),
-                              ],
-                              onChanged: (value) {
-                                if (value != null) {
-                                  setState(() => _inviteTargetRole = value);
-                                }
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: InkSpacing.s16),
-                      InkButton.primary(
-                        label: 'Send Invites',
-                        icon: const Icon(LucideIcons.send),
-                        expand: false,
-                        onPressed: canSendInvites
-                            ? () => _sendInvites(context, validInviteEmails)
-                            : null,
-                      ),
-                      if (state.infoMessage != null ||
-                          state.unresolvedInviteEmails.isNotEmpty) ...[
-                        const SizedBox(height: InkSpacing.s12),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(InkSpacing.s12),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(12),
-                            color: state.unresolvedInviteEmails.isEmpty
-                                ? tokens.success.withValues(alpha: 0.12)
-                                : tokens.pending.withValues(alpha: 0.15),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (state.infoMessage != null)
-                                Text(state.infoMessage!, style: InkType.bodyStrong(tokens.ink)),
-                              if (state.unresolvedInviteEmails.isNotEmpty) ...[
-                                const SizedBox(height: InkSpacing.s8),
-                                Text('Unresolved emails', style: InkType.bodyStrong(tokens.ink)),
-                                const SizedBox(height: InkSpacing.s8 - 2),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children: state.unresolvedInviteEmails
-                                      .map((email) => InkChip(label: email))
-                                      .toList(),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
+                  child: _buildInviteSection(
+                    context: context,
+                    tokens: tokens,
+                    board: board,
+                    state: state,
+                    currentUserId: currentUserId,
+                    inviteEntries: inviteEntries,
+                    validInviteEmails: validInviteEmails,
+                    invalidInviteEntries: invalidInviteEntries,
+                    canSendInvites: canSendInvites,
                   ),
                 ),
                 const SizedBox(height: InkSpacing.s20),
@@ -915,6 +851,32 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                         onPressed: () => _confirmDuplicate(context, board.id),
                       ),
                       if (isOwner) ...[
+                        if (!board.isArchived) ...[
+                          const SizedBox(height: InkSpacing.s12),
+                          if (board.isPaused)
+                            InkButton.primary(
+                              label: 'Resume Board',
+                              icon: const Icon(LucideIcons.play),
+                              onPressed: state.isOperationLoading
+                                  ? null
+                                  : () => _confirmPauseToggle(context, board),
+                            )
+                          else
+                            InkButton.secondary(
+                              label: 'Pause Board',
+                              icon: const Icon(LucideIcons.pause),
+                              onPressed: state.isOperationLoading
+                                  ? null
+                                  : () => _confirmPauseToggle(context, board),
+                            ),
+                          const SizedBox(height: InkSpacing.s4),
+                          Text(
+                            board.isPaused
+                                ? 'Editing is currently paused for everyone. Resume to re-enable edits.'
+                                : 'Temporarily freeze all board edits until you resume it.',
+                            style: InkType.caption(tokens.inkMuted),
+                          ),
+                        ],
                         const SizedBox(height: InkSpacing.s12),
                         InkButton.secondary(
                           label: board.isArchived ? 'Unarchive Board' : 'Archive Board',
@@ -954,6 +916,352 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
           );
         },
       ),
+    );
+  }
+
+  Widget _buildInviteSection({
+    required BuildContext context,
+    required InkTokens tokens,
+    required Board board,
+    required BoardSettingsState state,
+    required String? currentUserId,
+    required List<String> inviteEntries,
+    required List<String> validInviteEmails,
+    required List<String> invalidInviteEntries,
+    required bool canSendInvites,
+  }) {
+    final excludedUids = <String>{
+      ...board.members,
+      if (board.ownerId.isNotEmpty) board.ownerId,
+      if (currentUserId != null && currentUserId.isNotEmpty) currentUserId,
+    };
+
+    final availableFriends = state.friends.where((friend) {
+      final uid = (friend['uid'] ?? '').toString().trim();
+      return uid.isNotEmpty && !excludedUids.contains(uid);
+    }).toList();
+
+    final filterQuery = _friendFilterController.text.trim().toLowerCase();
+    final filteredFriends = filterQuery.isEmpty
+        ? availableFriends
+        : availableFriends.where((friend) {
+            final name = (friend['displayName'] ?? '').toString().toLowerCase();
+            return name.contains(filterQuery);
+          }).toList();
+
+    final selectedFriends = availableFriends.where((friend) {
+      final uid = (friend['uid'] ?? '').toString().trim();
+      return _selectedFriendIds.contains(uid);
+    }).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Invite friends', style: InkType.bodyStrong(tokens.ink)),
+        const SizedBox(height: InkSpacing.s4),
+        Text(
+          'Select saved friends and filter by username.',
+          style: InkType.caption(tokens.inkMuted),
+        ),
+        const SizedBox(height: InkSpacing.s8),
+        InkWell(
+          key: const ValueKey('board_settings_friends_dropdown_trigger'),
+          borderRadius: BorderRadius.circular(10),
+          onTap: () =>
+              setState(() => _friendsDropdownOpen = !_friendsDropdownOpen),
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: InkSpacing.s12,
+              vertical: InkSpacing.s12,
+            ),
+            decoration: BoxDecoration(
+              color: tokens.surfaceDesk,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: _friendsDropdownOpen
+                    ? tokens.accent
+                    : tokens.glassStroke,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(LucideIcons.users, size: 18, color: tokens.inkSecondary),
+                const SizedBox(width: InkSpacing.s8),
+                Expanded(
+                  child: Text(
+                    _selectedFriendIds.isEmpty
+                        ? (availableFriends.isEmpty
+                              ? 'No friends available to invite'
+                              : 'Choose friends (${availableFriends.length})')
+                        : '${_selectedFriendIds.length} friend${_selectedFriendIds.length == 1 ? '' : 's'} selected',
+                    style: InkType.body(
+                      _selectedFriendIds.isEmpty
+                          ? tokens.inkSecondary
+                          : tokens.ink,
+                    ),
+                  ),
+                ),
+                Icon(
+                  _friendsDropdownOpen
+                      ? LucideIcons.chevronUp
+                      : LucideIcons.chevronDown,
+                  size: 18,
+                  color: tokens.inkMuted,
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_friendsDropdownOpen) ...[
+          const SizedBox(height: InkSpacing.s8),
+          Container(
+            decoration: BoxDecoration(
+              color: tokens.paper,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: tokens.glassStroke),
+            ),
+            padding: const EdgeInsets.all(InkSpacing.s12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                InkTextField(
+                  controller: _friendFilterController,
+                  hintText: 'Filter friends by username...',
+                  leadingIcon: LucideIcons.search,
+                  onChanged: (_) => setState(() {}),
+                ),
+                const SizedBox(height: InkSpacing.s8),
+                if (filteredFriends.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: InkSpacing.s12,
+                    ),
+                    child: Center(
+                      child: Text(
+                        availableFriends.isEmpty
+                            ? 'No friends loaded from local storage.'
+                            : 'No friends match "${_friendFilterController.text.trim()}".',
+                        style: InkType.caption(tokens.inkMuted),
+                      ),
+                    ),
+                  )
+                else
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 210),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: filteredFriends.length,
+                      separatorBuilder: (_, _) => Divider(
+                        height: 1,
+                        color: tokens.glassStroke.withValues(alpha: 0.6),
+                      ),
+                      itemBuilder: (context, index) {
+                        final friend = filteredFriends[index];
+                        final uid = (friend['uid'] ?? '').toString().trim();
+                        final displayName =
+                            (friend['displayName'] ?? '').toString().trim();
+                        final email = (friend['email'] ?? '').toString().trim();
+                        final photoUrl = friend['photoURL']?.toString();
+                        final label = displayName.isNotEmpty
+                            ? displayName
+                            : (email.isNotEmpty ? email : uid);
+                        final selected = _selectedFriendIds.contains(uid);
+
+                        return InkWell(
+                          onTap: () {
+                            setState(() {
+                              if (selected) {
+                                _selectedFriendIds.remove(uid);
+                              } else {
+                                _selectedFriendIds.add(uid);
+                              }
+                            });
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              vertical: InkSpacing.s8,
+                              horizontal: InkSpacing.s4,
+                            ),
+                            child: Row(
+                              children: [
+                                InkAvatar(
+                                  id: uid,
+                                  initials: inkInitialsFor(label),
+                                  imageUrl: photoUrl,
+                                  size: 32,
+                                ),
+                                const SizedBox(width: InkSpacing.s12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        label,
+                                        style: InkType.bodyStrong(tokens.ink),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      if (email.isNotEmpty &&
+                                          email != label)
+                                        Text(
+                                          email,
+                                          style: InkType.caption(
+                                            tokens.inkMuted,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                Icon(
+                                  selected
+                                      ? LucideIcons.check
+                                      : LucideIcons.plus,
+                                  size: 18,
+                                  color: selected
+                                      ? tokens.accent
+                                      : tokens.inkMuted,
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+        if (selectedFriends.isNotEmpty) ...[
+          const SizedBox(height: InkSpacing.s12),
+          Wrap(
+            spacing: InkSpacing.s8,
+            runSpacing: InkSpacing.s8,
+            children: selectedFriends.map((friend) {
+              final uid = (friend['uid'] ?? '').toString().trim();
+              final displayName =
+                  (friend['displayName'] ?? '').toString().trim();
+              final email = (friend['email'] ?? '').toString().trim();
+              final label = displayName.isNotEmpty
+                  ? displayName
+                  : (email.isNotEmpty ? email : uid);
+              return InkChip(
+                label: label,
+                selected: true,
+                onDeleted: () {
+                  setState(() => _selectedFriendIds.remove(uid));
+                },
+              );
+            }).toList(),
+          ),
+        ],
+        const SizedBox(height: InkSpacing.s16),
+        Divider(height: 1, color: tokens.glassStroke),
+        const SizedBox(height: InkSpacing.s16),
+        Text(
+          'Invite non-friends by email',
+          style: InkType.bodyStrong(tokens.ink),
+        ),
+        const SizedBox(height: InkSpacing.s8),
+        InkTextField(
+          controller: _inviteController,
+          hintText: 'Emails (comma, space, or newline separated)',
+          leadingIcon: LucideIcons.mail,
+          onChanged: (_) => setState(() {}),
+        ),
+        if (inviteEntries.isNotEmpty) ...[
+          const SizedBox(height: InkSpacing.s12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ...validInviteEmails.map(
+                (email) => _inviteEmailChip(tokens, email, valid: true),
+              ),
+              ...invalidInviteEntries.map(
+                (entry) => _inviteEmailChip(tokens, entry, valid: false),
+              ),
+            ],
+          ),
+          const SizedBox(height: InkSpacing.s8),
+          Text(
+            '${validInviteEmails.length} valid, ${invalidInviteEntries.length} invalid',
+            style: InkType.caption(tokens.inkMuted),
+          ),
+        ],
+        const SizedBox(height: InkSpacing.s16),
+        Text('Invite role', style: InkType.bodyStrong(tokens.ink)),
+        const SizedBox(height: InkSpacing.s8),
+        InkSegmented(
+          labels: const ['Viewer', 'Editor'],
+          selectedIndex: _inviteTargetRole == Board.roleEditor ? 1 : 0,
+          onChanged: (index) {
+            setState(() {
+              _inviteTargetRole = index == 1
+                  ? Board.roleEditor
+                  : Board.roleViewer;
+            });
+          },
+        ),
+        const SizedBox(height: InkSpacing.s16),
+        Text('Invite duration', style: InkType.bodyStrong(tokens.ink)),
+        const SizedBox(height: InkSpacing.s8),
+        InviteExpirationPicker(
+          valueHours: _inviteExpiryHours,
+          enabled: !state.isOperationLoading,
+          onChanged: (hours) {
+            setState(() => _inviteExpiryHours = hours);
+          },
+          onValidityChanged: (isValid) {
+            setState(() => _inviteExpiryValid = isValid);
+          },
+        ),
+        const SizedBox(height: InkSpacing.s16),
+        InkButton.primary(
+          label: 'Send Invites',
+          icon: const Icon(LucideIcons.send),
+          expand: false,
+          onPressed: canSendInvites
+              ? () => _sendInvites(context, validInviteEmails)
+              : null,
+        ),
+        if (state.infoMessage != null ||
+            state.unresolvedInviteEmails.isNotEmpty) ...[
+          const SizedBox(height: InkSpacing.s12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(InkSpacing.s12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: state.unresolvedInviteEmails.isEmpty
+                  ? tokens.success.withValues(alpha: 0.12)
+                  : tokens.pending.withValues(alpha: 0.15),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (state.infoMessage != null)
+                  Text(state.infoMessage!, style: InkType.bodyStrong(tokens.ink)),
+                if (state.unresolvedInviteEmails.isNotEmpty) ...[
+                  const SizedBox(height: InkSpacing.s8),
+                  Text('Unresolved emails', style: InkType.bodyStrong(tokens.ink)),
+                  const SizedBox(height: InkSpacing.s8 - 2),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: state.unresolvedInviteEmails
+                        .map((email) => InkChip(label: email))
+                        .toList(),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ],
     );
   }
 

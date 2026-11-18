@@ -50,7 +50,7 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   @override
-  Stream<User?> get user => _authService.getInstance().authStateChanges();
+  Stream<User?> get user => _authService.getInstance().userChanges();
 
   @override
   User? get currentUser => _authService.getCurrentUser();

@@ -770,7 +770,9 @@ class FirestoreBoardRepository implements BoardRepository {
     );
 
     developer.log(
-      'Board sync: fetched=${fetchResult.docsById.length} missing=${fetchResult.missingIds.length}',
+      'Board sync: fetched=${fetchResult.docsById.length} '
+      'missing=${fetchResult.missingIds.length} '
+      'denied=${fetchResult.deniedIds.length}',
       name: 'BoardRepo',
     );
 
@@ -789,14 +791,31 @@ class FirestoreBoardRepository implements BoardRepository {
       await _syncSingleBoardToLocal(boardId, boardData);
     }
 
-    for (final missingBoardId in fetchResult.missingIds) {
-      _ownedBoardDocs.remove(missingBoardId);
-      _joinedBoardDocs.remove(missingBoardId);
-      await _deleteLocalBoard(missingBoardId);
+    final staleBoardIds = <String>{
+      ...fetchResult.missingIds,
+      ...fetchResult.deniedIds,
+    };
+    final uid = _syncUserId ?? currentUserId;
+    for (final staleBoardId in staleBoardIds) {
+      _ownedBoardDocs.remove(staleBoardId);
+      _joinedBoardDocs.remove(staleBoardId);
+      await _deleteLocalBoard(staleBoardId);
+      if (uid != null && uid.isNotEmpty) {
+        try {
+          await _firestoreService
+              .collection('users')
+              .doc(uid)
+              .collection('boards')
+              .doc(staleBoardId)
+              .delete();
+        } catch (_) {
+          // Best-effort cleanup of stale user board index entries.
+        }
+      }
     }
 
     final prunableBoardIds = Set<String>.from(visibleBoardIds)
-      ..removeAll(fetchResult.missingIds);
+      ..removeAll(staleBoardIds);
     await _pruneLocalBoards(visibleBoardIds: prunableBoardIds);
   }
 
@@ -820,6 +839,7 @@ class FirestoreBoardRepository implements BoardRepository {
   Board _mapLocalBoard(LocalBoard lb) {
     final docData = _ownedBoardDocs[lb.boardId] ?? _joinedBoardDocs[lb.boardId];
     final isArchived = (docData?['isArchived'] as bool?) ?? false;
+    final isPaused = (docData?['isPaused'] as bool?) ?? false;
     final allowMembersToCopy = (docData?['allowMembersToCopy'] as bool?) ?? false;
 
     var previewPath = lb.previewPath;
@@ -847,6 +867,7 @@ class FirestoreBoardRepository implements BoardRepository {
       defaultLinkJoinRole: lb.defaultLinkJoinRole,
       currentUserRole: lb.currentUserRole,
       isArchived: isArchived,
+      isPaused: isPaused,
       allowMembersToCopy: allowMembersToCopy,
       createdAt: lb.createdAt,
       updatedAt: lb.updatedAt,
@@ -912,6 +933,7 @@ class FirestoreBoardRepository implements BoardRepository {
       'joinViaCodeEnabled': joinViaCodeEnabled,
       'joinCode': docRef.id,
       'isArchived': false,
+      'isPaused': false,
       'allowMembersToCopy': allowMembersToCopy,
       'invitePolicy': {
         'whoCanInvite': normalizedWhoCanInvite,
@@ -1158,57 +1180,40 @@ class FirestoreBoardRepository implements BoardRepository {
   }
 
   @override
-  Future<void> archiveBoard(String boardId) async {
-    final uid = currentUserId;
-    if (uid == null) throw Exception('User not authenticated');
-
-    await _firestoreService.collection('boards').doc(boardId).update({
-      'isArchived': true,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-
-    final docData = _ownedBoardDocs[boardId] ?? _joinedBoardDocs[boardId];
-    if (docData != null) {
-      docData['isArchived'] = true;
-    } else {
-      if (_ownedBoardIds.contains(boardId)) {
-        _ownedBoardDocs[boardId] = <String, dynamic>{'isArchived': true};
-      } else {
-        _joinedBoardDocs[boardId] = <String, dynamic>{'isArchived': true};
-      }
-    }
-
-    try {
-      final isar = await _localDatabaseService.database;
-      final localBoard = await isar.localBoards.getByBoardId(boardId);
-      if (localBoard != null) {
-        localBoard.updatedAt = DateTime.now();
-        await isar.writeTxn(() async {
-          await isar.localBoards.putByBoardId(localBoard);
-        });
-      }
-    } catch (_) {}
+  Future<void> archiveBoard(String boardId) {
+    return _setBoardBooleanFlag(boardId, field: 'isArchived', value: true);
   }
 
   @override
-  Future<void> unarchiveBoard(String boardId) async {
+  Future<void> unarchiveBoard(String boardId) {
+    return _setBoardBooleanFlag(boardId, field: 'isArchived', value: false);
+  }
+
+  @override
+  Future<void> setBoardPaused(String boardId, {required bool isPaused}) {
+    return _setBoardBooleanFlag(boardId, field: 'isPaused', value: isPaused);
+  }
+
+  Future<void> _setBoardBooleanFlag(
+    String boardId, {
+    required String field,
+    required bool value,
+  }) async {
     final uid = currentUserId;
     if (uid == null) throw Exception('User not authenticated');
 
     await _firestoreService.collection('boards').doc(boardId).update({
-      'isArchived': false,
+      field: value,
       'updatedAt': FieldValue.serverTimestamp(),
     });
 
     final docData = _ownedBoardDocs[boardId] ?? _joinedBoardDocs[boardId];
     if (docData != null) {
-      docData['isArchived'] = false;
+      docData[field] = value;
+    } else if (_ownedBoardIds.contains(boardId)) {
+      _ownedBoardDocs[boardId] = <String, dynamic>{field: value};
     } else {
-      if (_ownedBoardIds.contains(boardId)) {
-        _ownedBoardDocs[boardId] = <String, dynamic>{'isArchived': false};
-      } else {
-        _joinedBoardDocs[boardId] = <String, dynamic>{'isArchived': false};
-      }
+      _joinedBoardDocs[boardId] = <String, dynamic>{field: value};
     }
 
     try {
@@ -1284,6 +1289,7 @@ class FirestoreBoardRepository implements BoardRepository {
     newBoardData['membersCount'] = 1;
     newBoardData['joinCode'] = newDocRef.id;
     newBoardData['isArchived'] = false;
+    newBoardData['isPaused'] = false;
     newBoardData['allowMembersToCopy'] = false;
     newBoardData['invitePolicy'] = {
       'whoCanInvite': Board.inviteOwnerOnly,

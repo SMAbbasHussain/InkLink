@@ -24,12 +24,21 @@ class CanvasBoardTitleUpdated extends CanvasEvent {
   final String? title;
   final String currentUserRole;
   final bool isArchived;
+  final bool isPaused;
 
   const CanvasBoardTitleUpdated(
     this.title, {
     this.currentUserRole = 'viewer',
     this.isArchived = false,
+    this.isPaused = false,
   });
+}
+
+/// Toggle pause state for the active board (owner-only).
+class CanvasSetBoardPausedRequested extends CanvasEvent {
+  final bool isPaused;
+
+  const CanvasSetBoardPausedRequested(this.isPaused);
 }
 
 /// Board metadata is no longer available (deleted or access lost).
@@ -1289,8 +1298,9 @@ class CanvasDismissTrayTips extends CanvasEvent {
 
 class CanvasSaveBoardPreviewRequested extends CanvasEvent {
   final Uint8List pngBytes;
+  final Completer<void>? completer;
 
-  const CanvasSaveBoardPreviewRequested(this.pngBytes);
+  const CanvasSaveBoardPreviewRequested(this.pngBytes, {this.completer});
 }
 
 /// Revoke a member's access from the board (Owner only)
@@ -1783,6 +1793,13 @@ class CanvasToggleUndoRequestAreaSelection extends CanvasEvent {
 class CanvasUndoRequestsUpdated extends CanvasEvent {
   final List<UndoRequest> requests;
   const CanvasUndoRequestsUpdated(this.requests);
+}
+
+/// The signed-in member's own undo requests changed, so their pending request
+/// can be shown on the canvas (and resubmission blocked) without the owner log.
+class CanvasMyUndoRequestsUpdated extends CanvasEvent {
+  final List<UndoRequest> requests;
+  const CanvasMyUndoRequestsUpdated(this.requests);
 }
 
 /// Internal: a plan-build request failed.

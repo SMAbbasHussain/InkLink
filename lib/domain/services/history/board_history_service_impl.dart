@@ -5,6 +5,7 @@ import 'dart:developer' as developer;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../../../core/services/auth_service.dart';
@@ -698,6 +699,29 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
         'submitUndoRequest failed: $error',
         name: 'BoardHistoryService',
       );
+      // Keep the callable's own reason: "you already have a pending request",
+      // "only editors can request an undo" and validation errors are all
+      // actionable, while a generic failure message is not.
+      if (error is FirebaseFunctionsException) {
+        final reason = (error.message ?? '').trim();
+        final detail = reason.isEmpty ? null : reason;
+        switch (error.code) {
+          case 'failed-precondition':
+            throw HistoryServiceException('pending_exists', detail);
+          case 'permission-denied':
+            throw HistoryServiceException('forbidden', detail);
+          case 'unauthenticated':
+            throw HistoryServiceException('unauthenticated', detail);
+          case 'not-found':
+            throw HistoryServiceException('board_missing', detail);
+          case 'invalid-argument':
+            throw HistoryServiceException('invalid_request', detail);
+          case 'unavailable':
+          case 'deadline-exceeded':
+          case 'internal':
+            throw HistoryServiceException('submit_unavailable', detail);
+        }
+      }
       throw HistoryServiceException('submit_failed', error.toString());
     }
   }

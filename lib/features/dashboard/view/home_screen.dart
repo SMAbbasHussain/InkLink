@@ -658,6 +658,24 @@ class _HomeScreenState extends State<HomeScreen>
                 'Board unarchived.',
               );
             },
+            onPause: () {
+              context.read<DashboardBloc>().add(
+                DashboardPauseBoardRequested(board.id),
+              );
+              AppSnackBar.showSuccess(
+                context,
+                'Board paused. No one can edit until resumed.',
+              );
+            },
+            onResume: () {
+              context.read<DashboardBloc>().add(
+                DashboardResumeBoardRequested(board.id),
+              );
+              AppSnackBar.showSuccess(
+                context,
+                'Board resumed. Editing is enabled.',
+              );
+            },
             onOpenSettings: () {
               Navigator.push(
                 context,

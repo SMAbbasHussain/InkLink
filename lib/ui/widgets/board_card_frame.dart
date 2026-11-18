@@ -20,6 +20,8 @@ class BoardCardFrame extends StatelessWidget {
   final Widget? menuButton;
   final int pendingRequestsCount;
   final VoidCallback? onPendingRequestsTap;
+  final bool isPaused;
+  final DateTime? previewUpdatedAt;
 
   const BoardCardFrame({
     super.key,
@@ -30,17 +32,38 @@ class BoardCardFrame extends StatelessWidget {
     this.menuButton,
     this.pendingRequestsCount = 0,
     this.onPendingRequestsTap,
+    this.isPaused = false,
+    this.previewUpdatedAt,
   });
 
-  bool get _hasPreview =>
-      previewPath != null &&
-      previewPath!.isNotEmpty &&
-      File(previewPath!).existsSync();
+  File? get _validPreviewFile {
+    final path = previewPath;
+    if (path == null || path.isEmpty) return null;
+    try {
+      final file = File(path);
+      if (!file.existsSync() || file.lengthSync() <= 0) {
+        return null;
+      }
+      return file;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _previewVersionKey(File file) {
+    try {
+      final stat = file.statSync();
+      return '${file.path}:${stat.size}:${stat.modified.millisecondsSinceEpoch}';
+    } catch (_) {
+      return '${file.path}:${previewUpdatedAt?.millisecondsSinceEpoch ?? 0}';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
     final isDark = tokens.isDark;
+    final previewFile = _validPreviewFile;
 
     return Container(
       height: 196,
@@ -67,14 +90,15 @@ class BoardCardFrame extends StatelessWidget {
                   painter: _CardDotGridPainter(isDark: isDark),
                 ),
               ),
-              if (_hasPreview)
+              if (previewFile != null)
                 Positioned(
                   top: 0,
                   left: 0,
                   right: 0,
                   height: 132,
                   child: Image.file(
-                    File(previewPath!),
+                    previewFile,
+                    key: ValueKey<String>(_previewVersionKey(previewFile)),
                     fit: BoxFit.cover,
                     gaplessPlayback: true,
                     errorBuilder: (context, error, stackTrace) =>
@@ -138,6 +162,47 @@ class BoardCardFrame extends StatelessWidget {
                           ),
                         ],
                       ),
+                    ),
+                  ),
+                ),
+              if (isPaused)
+                Positioned(
+                  top: 10,
+                  right: 10,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: tokens.pending.withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: tokens.pending.withValues(alpha: 0.3),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          LucideIcons.pause,
+                          size: 11,
+                          color: Colors.white,
+                        ),
+                        SizedBox(width: 4),
+                        Text(
+                          'Paused',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),

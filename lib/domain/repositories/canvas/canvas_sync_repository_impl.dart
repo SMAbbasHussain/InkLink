@@ -1342,6 +1342,10 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     try {
       if (_socket != null && _socket!.connected) {
         for (final local in toSync) {
+          if (local.payloadBase64.isEmpty ||
+              local.payloadBase64.length > _maxPayloadBase64Length) {
+            continue;
+          }
           _logWs(
             'UPDATE SENT',
             boardId,

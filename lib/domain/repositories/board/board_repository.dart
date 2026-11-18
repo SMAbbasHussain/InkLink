@@ -34,6 +34,7 @@ abstract class BoardRepository {
   Future<void> deleteBoard(String boardId);
   Future<void> archiveBoard(String boardId);
   Future<void> unarchiveBoard(String boardId);
+  Future<void> setBoardPaused(String boardId, {required bool isPaused});
   Future<String> duplicateBoard(String boardId, {String? customTitle});
   Future<void> updateBoardTags(String boardId, List<String> tags);
   Future<void> updateBoardSettings({

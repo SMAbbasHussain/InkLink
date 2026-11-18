@@ -331,11 +331,20 @@ class AuthSessionServiceImpl implements AuthSessionService {
         user.displayName ??
         'InkLink Creator';
 
+    // The Firestore avatar is the source of truth: profile uploads write it and
+    // every avatar in the app reads it. Only seed it from the auth provider when
+    // the document has none, otherwise signing in with Google would swap a
+    // user's uploaded photo back to their provider picture.
+    final existingPhotoUrl = (existingData?['photoURL'] as String?)?.trim();
+    final photoURL = (existingPhotoUrl != null && existingPhotoUrl.isNotEmpty)
+        ? existingPhotoUrl
+        : (user.photoURL ?? '');
+
     await _authRepository.upsertUserProfile(
       uid: user.uid,
       email: user.email,
       displayName: finalName,
-      photoURL: user.photoURL ?? '',
+      photoURL: photoURL,
       searchKeywords: generateSearchKeywords(finalName),
       isNewUser: existingData == null,
     );
