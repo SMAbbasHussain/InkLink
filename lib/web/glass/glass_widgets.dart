@@ -187,7 +187,9 @@ class _GlassButtonState extends State<GlassButton> with SingleTickerProviderStat
       height: isIcon ? 38 : 40,
       width: isIcon ? 38 : null,
       padding: isIcon ? null : const EdgeInsets.symmetric(horizontal: 16),
-      alignment: Alignment.center,
+      // `alignment` would make the button fill all available width; center
+      // with widthFactor 1 so it hugs its label instead.
+      alignment: isIcon ? Alignment.center : null,
       decoration: BoxDecoration(
         gradient: primary ? Glass.accentGradient : null,
         color: primary ? null : (_hover ? Glass.bgHover : Glass.bgStrong),
@@ -202,7 +204,7 @@ class _GlassButtonState extends State<GlassButton> with SingleTickerProviderStat
         ),
         boxShadow: primary && (_hover || _focus) && enabled ? Glass.glow() : null,
       ),
-      child: content,
+      child: isIcon ? content : Center(widthFactor: 1, child: content),
     );
 
     Widget result = Opacity(
@@ -329,6 +331,8 @@ class _GlassBadgeState extends State<GlassBadge> with SingleTickerProviderStateM
           decoration: BoxDecoration(
             gradient: Glass.accentGradient,
             borderRadius: BorderRadius.circular(999),
+            // Dark outline keeps the badge visible on the gradient active pill.
+            border: Border.all(color: const Color(0xFF0B0B12), width: 1.5),
             boxShadow: [
               BoxShadow(
                 color: Glass.accentA.withValues(alpha: 0.25 + 0.35 * _pulse.value),

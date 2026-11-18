@@ -542,6 +542,13 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
 
 /// Lets the email-verification screen ask the auth gate to rebuild after
 /// `user.reload()` (Firebase does not emit an auth event for that).
-class WebAuthRefresh extends ChangeNotifier {
-  void refresh() => notifyListeners();
+///
+/// Deliberately not a Listenable itself: Provider rejects Listenables in
+/// debug builds. The gate listens to [listenable] instead.
+class WebAuthRefresh {
+  final _ticks = ValueNotifier<int>(0);
+
+  Listenable get listenable => _ticks;
+
+  void refresh() => _ticks.value++;
 }

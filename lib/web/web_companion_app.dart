@@ -10,6 +10,7 @@ import 'data/web_account.dart';
 import 'data/web_companion_repository.dart';
 import 'screens/home_shell.dart';
 import 'screens/sign_in_screen.dart';
+import 'screens/web_shell_nav.dart';
 
 /// Root of the web companion: theme, services and the sign-in gate.
 class WebCompanionApp extends StatelessWidget {
@@ -18,10 +19,14 @@ class WebCompanionApp extends StatelessWidget {
   final WebCompanionRepository? repository;
   final ThemeMode themeMode;
 
+  /// Section shown first after sign-in (Boards unless the preview asks).
+  final WebSection initialSection;
+
   const WebCompanionApp({
     super.key,
     this.repository,
     this.themeMode = ThemeMode.system,
+    this.initialSection = WebSection.boards,
   });
 
   @override
@@ -45,7 +50,7 @@ class WebCompanionApp extends StatelessWidget {
         theme: InkTheme.light(),
         darkTheme: InkTheme.dark(),
         themeMode: themeMode,
-        home: const _WebAuthGate(),
+        home: _WebAuthGate(initialSection: initialSection),
       ),
     );
   }
@@ -53,13 +58,14 @@ class WebCompanionApp extends StatelessWidget {
 
 /// Signed out → sign-in; unverified email → verify; otherwise the app.
 class _WebAuthGate extends StatelessWidget {
-  const _WebAuthGate();
+  final WebSection initialSection;
+  const _WebAuthGate({required this.initialSection});
 
   @override
   Widget build(BuildContext context) {
     final repo = context.read<WebCompanionRepository>();
     return ListenableBuilder(
-      listenable: context.read<WebAuthRefresh>(),
+      listenable: context.read<WebAuthRefresh>().listenable,
       builder: (context, _) => StreamBuilder<WebAccount?>(
         stream: repo.authChanges,
         initialData: repo.currentUser,
@@ -69,7 +75,7 @@ class _WebAuthGate extends StatelessWidget {
           if (user.usesPassword && !user.emailVerified) {
             return WebVerifyEmailScreen(email: user.email ?? 'your email');
           }
-          return WebHomeShell(key: ValueKey(user.uid));
+          return WebHomeShell(key: ValueKey(user.uid), initialSection: initialSection);
         },
       ),
     );

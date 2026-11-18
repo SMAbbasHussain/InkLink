@@ -43,14 +43,17 @@ const double _sidebarMinWidth = 768;
 /// glass top bar and sidebar (bottom tab bar on narrow screens), live badges
 /// for waiting invites, friend requests and unread notifications.
 class WebHomeShell extends StatefulWidget {
-  const WebHomeShell({super.key});
+  /// Section shown first (the preview opens any section from the URL).
+  final WebSection initialSection;
+
+  const WebHomeShell({super.key, this.initialSection = WebSection.boards});
 
   @override
   State<WebHomeShell> createState() => _WebHomeShellState();
 }
 
 class _WebHomeShellState extends State<WebHomeShell> {
-  WebSection _section = WebSection.boards;
+  late WebSection _section = widget.initialSection;
   final _subs = <StreamSubscription<dynamic>>[];
   int _boardInvites = 0;
   int _workspaceInvites = 0;
