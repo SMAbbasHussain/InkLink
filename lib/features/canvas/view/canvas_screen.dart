@@ -200,6 +200,8 @@ class _CanvasScreenState extends State<CanvasScreen>
   TextEditingController? _textEditingController;
   FocusNode? _textEditingFocusNode;
   Offset? _lastTapWorldPoint;
+  Offset? _lastDoubleTapWorldPoint;
+  bool _suppressTapDeselect = false;
   String? _arrowConnectStartElementId;
   bool _isMarqueeSelecting = false;
   Offset? _marqueeStart;
@@ -4906,18 +4908,22 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 }
                               },
                               onTapDown: (details) {
+                                _suppressTapDeselect = false;
                                 // Tapping the canvas commits whatever was typed.
                                 if (_textEditor != null) {
+                                  _suppressTapDeselect = true;
                                   _commitTextEditing();
                                   return;
                                 }
                                 if (_isTransformingCanvas ||
                                     _rawStrokePointerId != null) {
+                                  _suppressTapDeselect = true;
                                   return;
                                 }
                                 if (state.isViewingHistory ||
                                     state.isSelectingUndoRequestArea ||
                                     state.isSelectingHistoryArea) {
+                                  _suppressTapDeselect = true;
                                   return;
                                 }
 
@@ -4932,6 +4938,7 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 // onDoubleTap is guarded below so editors do
                                 // not open on the same gesture.
                                 if (_isPickingUndoRequestScope(state)) {
+                                  _suppressTapDeselect = true;
                                   final now = DateTime.now();
                                   final last = _lastPickTapDown;
                                   _lastPickTapDown = now;
@@ -4955,6 +4962,7 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 }
 
                                 if (_isEyedropperActive) {
+                                  _suppressTapDeselect = true;
                                   final sampled = sampleCanvasColorAt(
                                     state.elements,
                                     worldPoint,
@@ -4980,6 +4988,7 @@ class _CanvasScreenState extends State<CanvasScreen>
 
                                 // Pin comment placement flow:
                                 if (state.isPlacingComment) {
+                                  _suppressTapDeselect = true;
                                   _promptNewCommentDialog(worldPoint);
                                   return;
                                 }
@@ -4987,6 +4996,7 @@ class _CanvasScreenState extends State<CanvasScreen>
                                 // Text tool: tap an empty spot to type there.
                                 if (state.currentToolMode ==
                                     CanvasToolMode.text) {
+                                  _suppressTapDeselect = true;
                                   _beginTextEditing(null, worldPoint);
                                   return;
                                 }
@@ -4998,6 +5008,7 @@ class _CanvasScreenState extends State<CanvasScreen>
                                     worldPoint,
                                   );
                                   if (hitShapeId != null) {
+                                    _suppressTapDeselect = true;
                                     if (_arrowConnectStartElementId == null) {
                                       setState(() {
                                         _arrowConnectStartElementId =
@@ -5053,28 +5064,21 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   } else {
                                     // Tapped empty canvas: clear start element
                                     if (_arrowConnectStartElementId != null) {
+                                      _suppressTapDeselect = true;
                                       setState(() {
                                         _arrowConnectStartElementId = null;
                                       });
                                     }
                                   }
                                 }
-
-                                if (_isBrushTool(state.currentToolMode)) {
-                                  return;
-                                }
-                                final hitShapeId = _hitTestShape(
-                                  mappedElements,
-                                  worldPoint,
+                              },
+                              onDoubleTapDown: (details) {
+                                _lastDoubleTapWorldPoint = _toWorld(
+                                  details.localPosition,
                                 );
-                                if (hitShapeId != null) return;
-                                if (state.currentToolMode ==
-                                    CanvasToolMode.select) {
-                                  _selectShape(null);
-                                }
                               },
                               onDoubleTap: () {
-                                if (_textEditor != null || !state.canEdit) {
+                                if (_textEditor != null) {
                                   return;
                                 }
                                 if (state.isViewingHistory ||
@@ -5087,13 +5091,32 @@ class _CanvasScreenState extends State<CanvasScreen>
                                     CanvasToolMode.select) {
                                   return;
                                 }
-                                final worldPoint = _lastTapWorldPoint;
+                                final worldPoint =
+                                    _lastDoubleTapWorldPoint ??
+                                    _lastTapWorldPoint;
+                                _lastDoubleTapWorldPoint = null;
                                 if (worldPoint == null) return;
                                 final hitShapeId = _hitTestShape(
                                   mappedElements,
                                   worldPoint,
                                 );
-                                if (hitShapeId == null) return;
+                                final selectedIds =
+                                    state.selectedIds.isNotEmpty
+                                    ? state.selectedIds
+                                    : (state.selectedShapeId != null
+                                          ? <String>{state.selectedShapeId!}
+                                          : <String>{});
+                                if (shouldDeselectOnCanvasDoubleTap(
+                                  tool: state.currentToolMode,
+                                  selectedIds: selectedIds,
+                                  hitElementId: hitShapeId,
+                                )) {
+                                  _selectShape(null);
+                                  return;
+                                }
+                                if (!state.canEdit || hitShapeId == null) {
+                                  return;
+                                }
                                 final hit = mappedElements.firstWhere(
                                   (e) => e.id == hitShapeId,
                                 );
@@ -5136,11 +5159,35 @@ class _CanvasScreenState extends State<CanvasScreen>
                                     details.localPosition,
                                   ),
                               onTap: () {
+                                final suppressDeselect = _suppressTapDeselect;
+                                _suppressTapDeselect = false;
                                 if (state.isViewingHistory ||
                                     state.isSelectingUndoRequestArea ||
                                     state.isSelectingHistoryArea ||
                                     _isPickingUndoRequestScope(state)) {
                                   return;
+                                }
+                                final worldPoint = _lastTapWorldPoint;
+                                if (!suppressDeselect &&
+                                    worldPoint != null &&
+                                    !_isBrushTool(state.currentToolMode)) {
+                                  final hitShapeId = _hitTestShape(
+                                    mappedElements,
+                                    worldPoint,
+                                  );
+                                  final selectedIds =
+                                      state.selectedIds.isNotEmpty
+                                      ? state.selectedIds
+                                      : (state.selectedShapeId != null
+                                            ? <String>{state.selectedShapeId!}
+                                            : <String>{});
+                                  if (shouldDeselectOnCanvasTap(
+                                    tool: state.currentToolMode,
+                                    selectedIds: selectedIds,
+                                    hitElementId: hitShapeId,
+                                  )) {
+                                    _selectShape(null);
+                                  }
                                 }
                                 // If in shape draw mode, tap switches back to doodle unless waiting for 2nd arrow connection
                                 if (state.currentToolMode ==

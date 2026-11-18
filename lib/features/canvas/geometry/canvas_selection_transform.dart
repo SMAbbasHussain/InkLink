@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:ui';
 
 import '../models/canvas_element.dart';
+import '../models/canvas_tool_mode.dart';
 import 'canvas_element_geometry.dart';
 
 /// Serialized payload for [element] scaled from [source] into [target].
@@ -158,4 +159,35 @@ Map<String, dynamic> rotateElementPayload(
     data['rotation'] = element.rotation + radians;
   }
   return data;
+}
+
+/// Returns true when a single tap on the canvas should clear the current
+/// selection:
+/// - when multiple items are selected and the tap lands outside them (either on
+///   clear board or on an unselected element), or
+/// - when the Select tool is active and the tap lands on clear board.
+bool shouldDeselectOnCanvasTap({
+  required CanvasToolMode tool,
+  required Set<String> selectedIds,
+  required String? hitElementId,
+}) {
+  if (selectedIds.isEmpty) return false;
+  final hitSelected =
+      hitElementId != null && selectedIds.contains(hitElementId);
+  if (hitSelected) return false;
+  if (selectedIds.length > 1) return true;
+  return tool == CanvasToolMode.select && hitElementId == null;
+}
+
+/// Returns true when a double tap on the canvas should clear all selected
+/// items: when the Select tool is active, at least one item is selected, and
+/// the double tap lands on clear board (no element under the tap).
+bool shouldDeselectOnCanvasDoubleTap({
+  required CanvasToolMode tool,
+  required Set<String> selectedIds,
+  required String? hitElementId,
+}) {
+  return tool == CanvasToolMode.select &&
+      selectedIds.isNotEmpty &&
+      hitElementId == null;
 }

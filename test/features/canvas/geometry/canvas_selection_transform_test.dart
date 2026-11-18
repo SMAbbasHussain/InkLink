@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/features/canvas/geometry/canvas_selection_transform.dart';
 import 'package:inklink/features/canvas/models/canvas_element.dart';
+import 'package:inklink/features/canvas/models/canvas_tool_mode.dart';
 import 'package:inklink/features/canvas/view/trays/canvas_shape_type.dart';
 
 void main() {
@@ -188,6 +189,110 @@ void main() {
       expect(rotated.points[0].dx, closeTo(0, 1e-6));
       expect(rotated.points[0].dy, closeTo(10, 1e-6));
       expect(rotated.points[1].dx, closeTo(-10, 1e-6));
+    });
+  });
+
+  group('shouldDeselectOnCanvasTap', () {
+    test('deselects multi-selection when tapping clear board or unselected element', () {
+      expect(
+        shouldDeselectOnCanvasTap(
+          tool: CanvasToolMode.select,
+          selectedIds: const {'a', 'b'},
+          hitElementId: null,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldDeselectOnCanvasTap(
+          tool: CanvasToolMode.select,
+          selectedIds: const {'a', 'b'},
+          hitElementId: 'c',
+        ),
+        isTrue,
+      );
+      expect(
+        shouldDeselectOnCanvasTap(
+          tool: CanvasToolMode.hand,
+          selectedIds: const {'a', 'b'},
+          hitElementId: 'c',
+        ),
+        isTrue,
+      );
+    });
+
+    test('keeps multi-selection when tapping one of the selected items', () {
+      expect(
+        shouldDeselectOnCanvasTap(
+          tool: CanvasToolMode.select,
+          selectedIds: const {'a', 'b'},
+          hitElementId: 'a',
+        ),
+        isFalse,
+      );
+    });
+
+    test('deselects single selection on clear board only in select mode', () {
+      expect(
+        shouldDeselectOnCanvasTap(
+          tool: CanvasToolMode.select,
+          selectedIds: const {'a'},
+          hitElementId: null,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldDeselectOnCanvasTap(
+          tool: CanvasToolMode.select,
+          selectedIds: const {'a'},
+          hitElementId: 'b',
+        ),
+        isFalse,
+      );
+      expect(
+        shouldDeselectOnCanvasTap(
+          tool: CanvasToolMode.hand,
+          selectedIds: const {'a'},
+          hitElementId: null,
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('shouldDeselectOnCanvasDoubleTap', () {
+    test('deselects all items on clear board only in select mode', () {
+      expect(
+        shouldDeselectOnCanvasDoubleTap(
+          tool: CanvasToolMode.select,
+          selectedIds: const {'a', 'b'},
+          hitElementId: null,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldDeselectOnCanvasDoubleTap(
+          tool: CanvasToolMode.select,
+          selectedIds: const {'a'},
+          hitElementId: null,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldDeselectOnCanvasDoubleTap(
+          tool: CanvasToolMode.select,
+          selectedIds: const {'a', 'b'},
+          hitElementId: 'a',
+        ),
+        isFalse,
+      );
+      expect(
+        shouldDeselectOnCanvasDoubleTap(
+          tool: CanvasToolMode.doodle,
+          selectedIds: const {'a', 'b'},
+          hitElementId: null,
+        ),
+        isFalse,
+      );
     });
   });
 }
