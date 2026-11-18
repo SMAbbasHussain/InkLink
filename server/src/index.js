@@ -2031,7 +2031,7 @@ io.on('connection', (socket) => {
 
     const isOwner = await isBoardOwner(boardId, uid);
     const isSelf = typeof targetUid === 'string' && targetUid === uid;
-    const isScopedAreaRequest = scopeMode === 'area_state';
+    const isScopedAreaRequest = scopeMode === 'area_state' && (scopeIds || validArea);
     if (!isOwner) {
       if (!isSelf && !isScopedAreaRequest) {
         return historyError(ack, 'forbidden');
@@ -2043,7 +2043,7 @@ io.on('connection', (socket) => {
     const effectiveTargetUid = typeof targetUid === 'string' && targetUid.length > 0
       ? targetUid
       : null;
-    if (!effectiveTargetUid && !scopeIds && !validArea && !isOwner && !isScopedAreaRequest) {
+    if (!effectiveTargetUid && !scopeIds && !validArea && !isOwner) {
       return historyError(ack, 'invalid_payload');
     }
 

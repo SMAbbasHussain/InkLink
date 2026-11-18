@@ -5521,6 +5521,13 @@ class _CanvasScreenState extends State<CanvasScreen>
                               state.isPaused)
                             _buildPausedBanner(state),
 
+                          if (!state.isViewingHistory &&
+                              !state.isArchived &&
+                              !state.isPaused &&
+                              state.currentUserRole == Board.roleOwner &&
+                              state.undoRequests.any((r) => r.isPending))
+                            _buildPendingUndoRequestsBanner(state),
+
                           if (state.isSelectingUndoRequestArea ||
                               state.isSelectingHistoryArea)
                             _buildAreaSelectionHint(state),
@@ -10992,6 +10999,18 @@ class _CanvasScreenState extends State<CanvasScreen>
       onAction: isOwner
           ? () => _canvasBloc.add(const CanvasSetBoardPausedRequested(false))
           : _exitCanvas,
+    );
+  }
+
+  Widget _buildPendingUndoRequestsBanner(CanvasState state) {
+    final pendingCount = state.undoRequests.where((r) => r.isPending).length;
+    return _buildReadOnlyStatusBanner(
+      icon: LucideIcons.history,
+      message: pendingCount == 1
+          ? '1 undo request waiting for your review.'
+          : '$pendingCount undo requests waiting for your review.',
+      actionLabel: 'Review',
+      onAction: _openHistoryScreen,
     );
   }
 

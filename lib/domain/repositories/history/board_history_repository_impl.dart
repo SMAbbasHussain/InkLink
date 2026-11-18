@@ -78,12 +78,13 @@ class BoardHistoryRepositoryImpl implements BoardHistoryRepository {
         .collection('boards')
         .doc(boardId)
         .collection('undo_requests')
-        .orderBy('createdAt', descending: true)
         .snapshots()
         .map(
-          (snapshot) => snapshot.docs
-              .map((doc) => UndoRequest.fromMap(doc.id, doc.data()))
-              .toList(growable: false),
+          (snapshot) => _sortUndoRequestsDescending(
+            snapshot.docs
+                .map((doc) => UndoRequest.fromMap(doc.id, doc.data()))
+                .toList(growable: false),
+          ),
         );
   }
 
@@ -103,16 +104,21 @@ class BoardHistoryRepositoryImpl implements BoardHistoryRepository {
         .collection('undo_requests')
         .where('requesterUid', isEqualTo: uid)
         .snapshots()
-        .map((snapshot) {
-      final requests = snapshot.docs
-          .map((doc) => UndoRequest.fromMap(doc.id, doc.data()))
-          .toList(growable: false);
-      return requests
-        ..sort((a, b) {
-          final aAt = a.createdAt?.millisecondsSinceEpoch ?? 0;
-          final bAt = b.createdAt?.millisecondsSinceEpoch ?? 0;
-          return bAt.compareTo(aAt);
-        });
-    });
+        .map(
+          (snapshot) => _sortUndoRequestsDescending(
+            snapshot.docs
+                .map((doc) => UndoRequest.fromMap(doc.id, doc.data()))
+                .toList(growable: false),
+          ),
+        );
+  }
+
+  List<UndoRequest> _sortUndoRequestsDescending(List<UndoRequest> requests) {
+    return requests
+      ..sort((a, b) {
+        final aAt = a.createdAt?.millisecondsSinceEpoch ?? 0;
+        final bAt = b.createdAt?.millisecondsSinceEpoch ?? 0;
+        return bAt.compareTo(aAt);
+      });
   }
 }

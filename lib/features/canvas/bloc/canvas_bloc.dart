@@ -7602,9 +7602,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       final scopeMode = request?.scopeMode ?? UndoRequestScopeMode.myChanges;
       if (request != null &&
           targetVersion != null &&
-          (scopeIds.isNotEmpty ||
-              (area != null && area.isValid) ||
-              scopeMode == UndoRequestScopeMode.areaState)) {
+          (scopeIds.isNotEmpty || (area != null && area.isValid))) {
         try {
           final timeline = await service.getUserTimeline(
             _boardId,
@@ -7913,9 +7911,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final scopeIds = draft.elementIds;
     final area = draft.area;
     final hasArea = area != null && area.isValid;
-    final isAreaState = draft.scopeMode == UndoRequestScopeMode.areaState;
-    final isWholeBoard = isAreaState && scopeIds.isEmpty && !hasArea;
-    if (scopeIds.isEmpty && !hasArea && !isWholeBoard) {
+    if (scopeIds.isEmpty && !hasArea) {
       emit(state.copyWith(
         error: 'Select at least one element or board area first.',
       ));
@@ -7923,6 +7919,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     final returnTray = state.activeTray;
     final returnUserUid = state.selectedUserUid;
+    final isAreaState = draft.scopeMode == UndoRequestScopeMode.areaState;
     emit(state.copyWith(isHistoryLoading: true, error: null));
     try {
       final timeline = await service.getUserTimeline(
@@ -7945,9 +7942,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       // Virtual first stop: the state before the page's first scoped op.
       final beforeStop = BoardOperation(
         version: timeline.baseVersion,
-        summary: isWholeBoard
-            ? 'Initial board state (v${timeline.baseVersion})'
-            : isAreaState
+        summary: isAreaState
             ? 'Before changes in this area (v${timeline.baseVersion})'
             : 'Before my changes (v${timeline.baseVersion})',
       );
@@ -7970,9 +7965,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         emit: emit,
         returnTray: returnTray,
         returnUserUid: returnUserUid,
-        title: isWholeBoard
-            ? 'Your undo request · Whole board'
-            : isAreaState
+        title: isAreaState
             ? 'Your undo request · Whole area state'
             : 'Your undo request · Only my changes',
         startIndex: 0,
@@ -8015,12 +8008,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       return;
     }
     final hasArea = draft.area != null && draft.area!.isValid;
-    final isWholeBoard =
-        draft.scopeMode == UndoRequestScopeMode.areaState &&
-        draft.elementIds.isEmpty &&
-        !hasArea;
-    if (scrub == null ||
-        (draft.elementIds.isEmpty && !hasArea && !isWholeBoard)) {
+    if (scrub == null || (draft.elementIds.isEmpty && !hasArea)) {
       emit(state.copyWith(error: 'Pick what the owner should restore first.'));
       return;
     }
