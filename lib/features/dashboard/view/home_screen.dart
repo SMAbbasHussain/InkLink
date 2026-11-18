@@ -10,7 +10,6 @@ import '../../board_invitations/view/board_invites_screen.dart';
 import '../../notifications/bloc/notifications_bloc.dart';
 import '../../notifications/view/notifications_route.dart';
 import '../../profile/view/profile_route.dart';
-import '../../theme/bloc/theme_bloc.dart';
 import '../../dashboard/bloc/dashboard_bloc.dart';
 import '../../dashboard/view/create_board_route.dart';
 import '../../dashboard/view/board_settings_route.dart';
@@ -132,7 +131,6 @@ class _HomeScreenState extends State<HomeScreen>
   Widget build(BuildContext context) {
     super.build(context); // Required by AutomaticKeepAliveClientMixin
     final tokens = context.ink;
-    final isDark = tokens.isDark;
     final authState = context.watch<AuthBloc>().state;
     final authUser = authState is Authenticated ? authState : null;
     _syncProfileWatch(authUser?.uid);
@@ -244,7 +242,7 @@ class _HomeScreenState extends State<HomeScreen>
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  _buildHeader(context, tokens, isDark, authUser, photoURL),
+                                  _buildHeader(context, tokens, authUser, photoURL),
                                   const SizedBox(height: InkSpacing.s24),
                                   _buildGreetingRow(context),
                                   const SizedBox(height: InkSpacing.s24),
@@ -323,16 +321,6 @@ class _HomeScreenState extends State<HomeScreen>
                       },
                       trailing: [
                         CommandBarAction(
-                          icon: LucideIcons.compass,
-                          tooltip: 'Explore Public Boards',
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              buildPublicBoardDiscoveryRoute(context),
-                            );
-                          },
-                        ),
-                        CommandBarAction(
                           icon: LucideIcons.logIn,
                           tooltip: 'Join Board',
                           onPressed: _showJoinDialog,
@@ -358,7 +346,6 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildHeader(
     BuildContext context,
     InkTokens tokens,
-    bool isDark,
     Authenticated? authUser,
     String? photoURL,
   ) {
@@ -373,11 +360,6 @@ class _HomeScreenState extends State<HomeScreen>
             const SizedBox(width: InkSpacing.s8),
             Text('InkLink', style: InkType.title(tokens.ink).copyWith(fontSize: 18)),
             const Spacer(),
-            IconButton(
-              tooltip: isDark ? 'Switch to light mode' : 'Switch to dark mode',
-              icon: Icon(isDark ? LucideIcons.sun : LucideIcons.moon, color: tokens.ink),
-              onPressed: () => context.read<ThemeBloc>().add(ToggleTheme(isCurrentlyDark: isDark)),
-            ),
             IconButton(
               tooltip: 'Explore Public Boards',
               icon: Icon(LucideIcons.compass, color: tokens.ink),
