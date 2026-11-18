@@ -1,4 +1,4 @@
-import '../../../core/database/collections/local_crdt_update.dart';
+import '../../models/canvas/crdt_update.dart';
 
 abstract class CanvasSyncRepository {
   String? get currentUserId;

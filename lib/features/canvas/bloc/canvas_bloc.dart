@@ -8,7 +8,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/crdt/canvas_crdt_adapter.dart';
-import '../../../core/database/collections/local_crdt_update.dart';
+import '../../../domain/models/canvas/crdt_update.dart';
 import '../../../domain/models/board.dart';
 import '../../../domain/models/canvas/canvas_board_settings.dart';
 import '../../../domain/models/canvas/canvas_export_options.dart';
