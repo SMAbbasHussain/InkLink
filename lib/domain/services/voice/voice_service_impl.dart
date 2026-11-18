@@ -27,6 +27,7 @@ class VoiceServiceImpl implements VoiceService {
   bool _isInCall = false;
   bool _isMuted = false;
   String? _activeBoardId;
+  String? _presenceBoardId;
   String? _connectedUserId;
   String? _connectingUserId;
   Future<bool>? _connectingFuture;
@@ -38,8 +39,8 @@ class VoiceServiceImpl implements VoiceService {
   VoiceServiceImpl({
     required AuthService authService,
     RtcMediaClient? rtcMediaClient,
-  })  : _authService = authService,
-        _rtcMediaClient = rtcMediaClient ?? DefaultRtcMediaClient() {
+  }) : _authService = authService,
+       _rtcMediaClient = rtcMediaClient ?? DefaultRtcMediaClient() {
     // Drive local speaking state from the RTC engine's volume indication.
     // The server broadcasts `voice_speaking_changed` to the whole voice room
     // (including the sender), but the socket handler below only refreshes the
@@ -59,7 +60,8 @@ class VoiceServiceImpl implements VoiceService {
   bool get isMuted => _isMuted;
 
   @override
-  List<VoiceParticipant> get currentParticipants => List.unmodifiable(_participants);
+  List<VoiceParticipant> get currentParticipants =>
+      List.unmodifiable(_participants);
 
   @override
   String? get agoraAppId => dotenv.env['AGORA_APP_ID'];
@@ -92,14 +94,18 @@ class VoiceServiceImpl implements VoiceService {
     socket.on('voice_participant_joined', (data) {
       try {
         if (data is Map) {
-          final participant =
-              VoiceParticipant.fromMap(Map<String, dynamic>.from(data));
+          final participant = VoiceParticipant.fromMap(
+            Map<String, dynamic>.from(data),
+          );
           _participants.removeWhere((p) => p.uid == participant.uid);
           _participants.add(participant);
           _participantsController.add(List.from(_participants));
         }
       } catch (e) {
-        developer.log('voice_participant_joined error: $e', name: 'VoiceService');
+        developer.log(
+          'voice_participant_joined error: $e',
+          name: 'VoiceService',
+        );
       }
     });
 
@@ -139,14 +145,18 @@ class VoiceServiceImpl implements VoiceService {
     });
 
     socket.on('disconnect', (data) {
-      developer.log('Voice socket disconnected; scheduling reconnect with fresh token',
-          name: 'VoiceService');
+      developer.log(
+        'Voice socket disconnected; scheduling reconnect with fresh token',
+        name: 'VoiceService',
+      );
       _scheduleReconnect();
     });
 
-    socket.on('connect_error', (data) {
-      developer.log('Voice socket connect_error: $data; scheduling reconnect with fresh token',
-          name: 'VoiceService');
+    socket.on('connect_error', (_) {
+      developer.log(
+        'Voice socket connect_error; scheduling reconnect with fresh token',
+        name: 'VoiceService',
+      );
       _scheduleReconnect();
     });
 
@@ -180,7 +190,10 @@ class VoiceServiceImpl implements VoiceService {
     try {
       stale.dispose();
     } catch (e) {
-      developer.log('Stale voice socket dispose failed: $e', name: 'VoiceService');
+      developer.log(
+        'Stale voice socket dispose failed: $e',
+        name: 'VoiceService',
+      );
       try {
         stale.disconnect();
       } catch (_) {}
@@ -273,13 +286,20 @@ class VoiceServiceImpl implements VoiceService {
       _socket = socket;
       _connectedUserId = targetUid;
       _reconnectAttempts = 0;
+      final presenceBoardId = _presenceBoardId;
+      if (presenceBoardId != null) {
+        _subscribePresence(presenceBoardId);
+      }
       // If a call was active while the socket dropped, re-register with the
       // signaling room so participant/speaking events resume.
       final boardId = _activeBoardId;
       if (_isInCall && boardId != null) {
         unawaited(
           joinCall(boardId).catchError((e) {
-            developer.log('Voice rejoin after reconnect failed: $e', name: 'VoiceService');
+            developer.log(
+              'Voice rejoin after reconnect failed: $e',
+              name: 'VoiceService',
+            );
           }),
         );
       }
@@ -289,6 +309,48 @@ class VoiceServiceImpl implements VoiceService {
     _teardownSocket(socket);
     _scheduleReconnect();
     return false;
+  }
+
+  Future<void> _subscribePresence(String boardId) {
+    _socket?.emitWithAck(
+      'subscribe_voice_presence',
+      {'boardId': boardId},
+      ack: (dynamic res) {
+        try {
+          if (res is Map && res['status'] == 'success') {
+            final rawList = (res['participants'] as List?) ?? [];
+            _participants.clear();
+            for (final item in rawList) {
+              if (item is Map) {
+                _participants.add(
+                  VoiceParticipant.fromMap(Map<String, dynamic>.from(item)),
+                );
+              }
+            }
+            _participantsController.add(List.from(_participants));
+          }
+        } catch (_) {}
+      },
+    );
+    return Future.value();
+  }
+
+  @override
+  Future<void> observeBoard(String boardId) async {
+    _presenceBoardId = boardId;
+    final connected = await _ensureConnected();
+    if (!connected || _socket == null || !_socket!.connected) return;
+    await _subscribePresence(boardId);
+  }
+
+  @override
+  Future<void> unobserveBoard(String boardId) async {
+    if (_presenceBoardId == boardId) _presenceBoardId = null;
+    _socket?.emit('unsubscribe_voice_presence', {'boardId': boardId});
+    if (_presenceBoardId == null && !_isInCall) {
+      _participants.clear();
+      _participantsController.add(const []);
+    }
   }
 
   @override
@@ -311,16 +373,14 @@ class VoiceServiceImpl implements VoiceService {
 
     _socket?.emitWithAck(
       'join_voice_call',
-      {
-        'boardId': boardId,
-        'displayName': displayName,
-        'photoUrl': photoUrl,
-      },
+      {'boardId': boardId, 'displayName': displayName, 'photoUrl': photoUrl},
       ack: (dynamic res) async {
         try {
           if (res is Map && res['status'] == 'success') {
-            final appId = res['appId']?.toString() ?? dotenv.env['AGORA_APP_ID'] ?? '';
-            final channelName = res['channelName']?.toString() ?? 'board_$boardId';
+            final appId =
+                res['appId']?.toString() ?? dotenv.env['AGORA_APP_ID'] ?? '';
+            final channelName =
+                res['channelName']?.toString() ?? 'board_$boardId';
             final token = res['token']?.toString() ?? '';
             final currentUid = _authService.getCurrentUserId() ?? '';
 
@@ -354,11 +414,15 @@ class VoiceServiceImpl implements VoiceService {
                 await _rtcMediaClient.setMicrophoneMuted(_isMuted);
               } catch (_) {}
             } catch (mediaErr) {
-              developer.log('RTC media session start error: $mediaErr', name: 'VoiceService');
+              developer.log(
+                'RTC media session start error: $mediaErr',
+                name: 'VoiceService',
+              );
               _isInCall = false;
               _isInCallController.add(false);
               _activeBoardId = null;
               _participants.clear();
+              _participantsController.add(const []);
               _socket?.emit('leave_voice_call', {'boardId': boardId});
               completer.completeError(
                 StateError(
@@ -389,7 +453,9 @@ class VoiceServiceImpl implements VoiceService {
             return;
           }
           completer.completeError(
-            Exception(res is Map ? res['message'] : 'Failed to join voice call'),
+            Exception(
+              res is Map ? res['message'] : 'Failed to join voice call',
+            ),
           );
         } catch (e) {
           completer.completeError(e);
@@ -403,7 +469,13 @@ class VoiceServiceImpl implements VoiceService {
         _isInCall = false;
         _isInCallController.add(false);
         _activeBoardId = null;
-        throw TimeoutException('Failed to join voice call. The server did not respond.');
+        _participants.clear();
+        _participantsController.add(const []);
+        // The server may have registered this user before the ack was lost.
+        _socket?.emit('leave_voice_call', {'boardId': boardId});
+        throw TimeoutException(
+          'Failed to join voice call. The server did not respond.',
+        );
       },
     );
   }
@@ -542,4 +614,3 @@ class VoiceServiceImpl implements VoiceService {
     await _isMutedController.close();
   }
 }
-

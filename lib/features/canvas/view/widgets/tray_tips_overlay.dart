@@ -33,14 +33,14 @@ class TrayTipsOverlay extends StatelessWidget {
               Align(
                 alignment: Alignment.bottomLeft,
                 child: _tipPill(
-                  'Swipe right\nTools',
+                  'Swipe right\nBoard Tools',
                   margin: const EdgeInsets.only(left: 16, bottom: 120),
                 ),
               ),
               Align(
                 alignment: Alignment.bottomRight,
                 child: _tipPill(
-                  'Swipe left\nShapes',
+                  'Swipe left\nCanvas Tools',
                   margin: const EdgeInsets.only(right: 16, bottom: 120),
                 ),
               ),

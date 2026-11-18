@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../domain/models/canvas/canvas_toolbar_action.dart';
 import '../../../domain/services/settings/settings_service.dart';
 import '../../../domain/services/profile/profile_service.dart';
 
@@ -33,6 +34,16 @@ class SettingsBoardPreviewCompressionToggled extends SettingsEvent {
   final bool enabled;
 
   const SettingsBoardPreviewCompressionToggled(this.enabled);
+}
+
+class SettingsBottomBarActionsChanged extends SettingsEvent {
+  final List<CanvasToolbarAction> actions;
+
+  const SettingsBottomBarActionsChanged(this.actions);
+}
+
+class SettingsBottomBarResetRequested extends SettingsEvent {
+  const SettingsBottomBarResetRequested();
 }
 
 class SettingsPrivacyChanged extends SettingsEvent {
@@ -74,6 +85,7 @@ class SettingsState {
   final bool isLoadingTrayTips;
   final String boardPreviewQuality;
   final bool boardPreviewCompressionEnabled;
+  final List<CanvasToolbarAction> bottomBarActions;
   final bool isProfilePublic;
   final bool showOnlineStatus;
   final bool showEmail;
@@ -90,6 +102,7 @@ class SettingsState {
     this.isLoadingTrayTips = true,
     this.boardPreviewQuality = 'medium',
     this.boardPreviewCompressionEnabled = true,
+    this.bottomBarActions = CanvasToolbarAction.defaultBottomBarActions,
     this.isProfilePublic = true,
     this.showOnlineStatus = true,
     this.showEmail = false,
@@ -107,6 +120,7 @@ class SettingsState {
     bool? isLoadingTrayTips,
     String? boardPreviewQuality,
     bool? boardPreviewCompressionEnabled,
+    List<CanvasToolbarAction>? bottomBarActions,
     bool? isProfilePublic,
     bool? showOnlineStatus,
     bool? showEmail,
@@ -124,6 +138,7 @@ class SettingsState {
       boardPreviewQuality: boardPreviewQuality ?? this.boardPreviewQuality,
       boardPreviewCompressionEnabled:
           boardPreviewCompressionEnabled ?? this.boardPreviewCompressionEnabled,
+      bottomBarActions: bottomBarActions ?? this.bottomBarActions,
       isProfilePublic: isProfilePublic ?? this.isProfilePublic,
       showOnlineStatus: showOnlineStatus ?? this.showOnlineStatus,
       showEmail: showEmail ?? this.showEmail,
@@ -159,6 +174,8 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
     on<SettingsBoardPreviewCompressionToggled>(
       _onBoardPreviewCompressionToggled,
     );
+    on<SettingsBottomBarActionsChanged>(_onBottomBarActionsChanged);
+    on<SettingsBottomBarResetRequested>(_onBottomBarResetRequested);
     on<SettingsPrivacyChanged>(_onPrivacyChanged);
     on<SettingsPreferredTagsChanged>(_onPreferredTagsChanged);
     on<SettingsNotificationPreferencesChanged>(_onNotificationPreferencesChanged);
@@ -179,6 +196,7 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
     final quality = await _settingsService.getBoardPreviewQuality();
     final compression =
         await _settingsService.getBoardPreviewCompressionEnabled();
+    final bottomBarActions = await _settingsService.getBottomBarActions();
     final pushEnabled =
         await _settingsService.getPushNotificationsEnabled(currentUid);
     final inviteEnabled =
@@ -237,6 +255,7 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
           showTrayTips: value,
           boardPreviewQuality: quality,
           boardPreviewCompressionEnabled: compression,
+          bottomBarActions: bottomBarActions,
           isLoadingTrayTips: false,
           isProfilePublic: isProfilePublic,
           showOnlineStatus: showOnlineStatus,
@@ -254,6 +273,7 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
           showTrayTips: value,
           boardPreviewQuality: quality,
           boardPreviewCompressionEnabled: compression,
+          bottomBarActions: bottomBarActions,
           isLoadingTrayTips: false,
           isProfilePublic: isProfilePublic,
           showOnlineStatus: showOnlineStatus,
@@ -336,6 +356,48 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
         message: event.enabled
             ? 'Board preview compression enabled.'
             : 'Board preview compression disabled.',
+        isError: false,
+      ),
+    );
+  }
+
+  Future<void> _onBottomBarActionsChanged(
+    SettingsBottomBarActionsChanged event,
+    Emitter<SettingsState> emit,
+  ) async {
+    final normalized = List<CanvasToolbarAction>.unmodifiable(event.actions);
+    emit(
+      state.copyWith(
+        bottomBarActions: normalized,
+        message: null,
+        isError: false,
+      ),
+    );
+    await _settingsService.setBottomBarActions(normalized);
+    emit(
+      state.copyWith(
+        message: 'Default bottom bar updated.',
+        isError: false,
+      ),
+    );
+  }
+
+  Future<void> _onBottomBarResetRequested(
+    SettingsBottomBarResetRequested event,
+    Emitter<SettingsState> emit,
+  ) async {
+    const defaults = CanvasToolbarAction.defaultBottomBarActions;
+    emit(
+      state.copyWith(
+        bottomBarActions: defaults,
+        message: null,
+        isError: false,
+      ),
+    );
+    await _settingsService.setBottomBarActions(defaults);
+    emit(
+      state.copyWith(
+        message: 'Default bottom bar restored.',
         isError: false,
       ),
     );

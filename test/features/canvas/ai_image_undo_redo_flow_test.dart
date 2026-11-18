@@ -60,6 +60,9 @@ class _FakeCanvasService implements CanvasService {
   void setBoardSingleUserStatus(bool isSingleUser) {}
 
   @override
+  Future<bool> retryPendingSync(String boardId) async => true;
+
+  @override
   Future<void> markCrdtUpdateDeleted(String updateId, bool isDeleted) async {}
 
   @override

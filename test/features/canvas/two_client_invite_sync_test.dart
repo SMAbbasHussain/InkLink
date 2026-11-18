@@ -93,6 +93,9 @@ class _ClientCanvasService implements CanvasService {
   bool get canSync => true;
 
   @override
+  Future<bool> retryPendingSync(String boardId) async => true;
+
+  @override
   String? get currentClientId => _uid;
 
   @override

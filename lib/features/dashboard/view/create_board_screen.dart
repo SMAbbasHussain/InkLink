@@ -6,6 +6,7 @@ import 'package:inklink/features/auth/bloc/auth_state.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../domain/models/board.dart';
+import '../../../domain/models/canvas/board_template.dart';
 import '../../../ui/theme/ink_theme.dart';
 import '../../../ui/theme/ink_tokens.dart';
 import '../../../ui/theme/ink_type.dart';
@@ -34,6 +35,7 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
   final List<String> _tags = <String>[];
 
   String? _selectedSourceBoardId;
+  String? _selectedTemplateId;
   bool _allowMembersToCopy = false;
   int _inviteExpiryHours = 72;
   String _visibility = Board.visibilityPrivate;
@@ -149,6 +151,7 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
         allowMembersToCopy: _allowMembersToCopy,
         invitedUserIds: invitees,
         inviteExpiryHours: _inviteExpiryHours,
+        initialTemplateId: _selectedTemplateId,
       ),
     );
 
@@ -385,6 +388,50 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                 ),
                 const SizedBox(height: InkSpacing.s16),
               ],
+              if (_selectedSourceBoardId == null) ...[
+                PaperCard(
+                  padding: const EdgeInsets.all(InkSpacing.s16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Starting template', style: InkType.title(tokens.ink)),
+                      const SizedBox(height: InkSpacing.s4),
+                      Text(
+                        'Optional starter layout added when the board opens.',
+                        style: InkType.caption(tokens.inkMuted),
+                      ),
+                      const SizedBox(height: InkSpacing.s12),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            for (final template in canvasTemplates)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: InkChip(
+                                  label: template.isEmpty
+                                      ? template.name
+                                      : '${template.name} (${template.category})',
+                                  selected: template.isEmpty
+                                      ? _selectedTemplateId == null
+                                      : _selectedTemplateId == template.id,
+                                  onTap: () {
+                                    setState(() {
+                                      _selectedTemplateId = template.isEmpty
+                                          ? null
+                                          : template.id;
+                                    });
+                                  },
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: InkSpacing.s16),
+              ],
               PaperCard(
                 padding: const EdgeInsets.all(InkSpacing.s16),
                 child: Column(
@@ -436,7 +483,8 @@ class _CreateBoardScreenState extends State<CreateBoardScreen> {
                     ],
                     const SizedBox(height: InkSpacing.s16),
                     SwitchListTile.adaptive(
-                      activeColor: tokens.accent,
+                      activeColor: Colors.white,
+                      activeTrackColor: tokens.accent,
                       contentPadding: EdgeInsets.zero,
                       title: Text(
                         'Allow members to copy this board',

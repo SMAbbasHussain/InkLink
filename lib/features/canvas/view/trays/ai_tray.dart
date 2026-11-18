@@ -129,7 +129,10 @@ class AITray extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text('AI Image Generation', style: InkType.label(tokens.inkMuted)),
+                  Text(
+                    'AI Image Generation',
+                    style: InkType.label(tokens.inkMuted),
+                  ),
                   const SizedBox(height: InkSpacing.s8),
                   InkTextField(
                     controller: controller,
@@ -192,7 +195,7 @@ class AITray extends StatelessWidget {
                   ),
                   const SizedBox(height: InkSpacing.s8),
                   InkButton.secondary(
-                    label: 'Add Prompt As Text Note',
+                    label: 'Add Prompt As Text',
                     icon: const Icon(LucideIcons.fileText),
                     onPressed: onAddText,
                   ),

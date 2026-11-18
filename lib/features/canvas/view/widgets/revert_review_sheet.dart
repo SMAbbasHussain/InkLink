@@ -11,6 +11,7 @@ import '../../../../ui/theme/ink_type.dart';
 import '../../../../ui/widgets/glass_panel.dart';
 import '../../../../ui/widgets/ink_button.dart';
 import '../../bloc/canvas_bloc.dart';
+import '../../geometry/canvas_element_geometry.dart';
 
 /// Opens the owner's per-element revert review (D4/D12).
 ///
@@ -717,6 +718,20 @@ Rect? _boundsFor(CanvasElement element) {
         connector.startPoint,
         connector.endPoint,
       ).inflate(12);
+    case FrameElement frame:
+      return Rect.fromCenter(
+        center: frame.center,
+        width: frame.width,
+        height: frame.height,
+      ).inflate(4);
+    case TableElement table:
+      return Rect.fromCenter(
+        center: table.center,
+        width: table.width,
+        height: table.height,
+      ).inflate(4);
+    case LayerElement():
+      return null;
   }
 }
 
@@ -759,6 +774,41 @@ void _paintElement(Canvas canvas, CanvasElement element) {
       );
     case ConnectorElement connector:
       _paintConnector(canvas, connector);
+    case FrameElement frame:
+      final rect = Rect.fromCenter(
+        center: frame.center,
+        width: frame.width,
+        height: frame.height,
+      );
+      final rrect = RRect.fromRectAndRadius(
+        rect,
+        Radius.circular(frame.cornerRadius),
+      );
+      canvas.drawRRect(
+        rrect,
+        Paint()..color = frame.color.withValues(alpha: 0.08),
+      );
+      canvas.drawRRect(
+        rrect,
+        Paint()
+          ..color = frame.color.withValues(alpha: 0.65)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+      );
+      if (frame.title.trim().isNotEmpty) {
+        _paintText(
+          canvas,
+          frame.title,
+          frame.center,
+          frame.color,
+          13,
+          frame.width - 16,
+        );
+      }
+    case TableElement table:
+      paintTableElement(canvas, table);
+    case LayerElement():
+      break;
   }
 }
 

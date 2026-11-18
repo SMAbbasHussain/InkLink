@@ -42,6 +42,34 @@ class BoardHistoryRepositoryImpl implements BoardHistoryRepository {
   }
 
   @override
+  Future<List<BoardActivityBlock>> fetchActivityBlocks(
+    String boardId, {
+    int? beforeFromVersion,
+    int limit = 50,
+  }) async {
+    if (boardId.trim().isEmpty) {
+      return const <BoardActivityBlock>[];
+    }
+    var query = _firestoreService
+        .collection('boards')
+        .doc(boardId)
+        .collection('activity_index')
+        .orderBy('fromVersion', descending: true);
+    if (beforeFromVersion != null) {
+      query = query.where('fromVersion', isLessThan: beforeFromVersion);
+    }
+    final snapshot = await query.limit(limit).get();
+    return snapshot.docs
+        .map(
+          (doc) => BoardActivityBlock.fromMap({
+            'blockId': doc.id,
+            ...doc.data(),
+          }),
+        )
+        .toList(growable: false);
+  }
+
+  @override
   Stream<List<UndoRequest>> watchUndoRequests(String boardId) {
     if (boardId.trim().isEmpty) {
       return Stream.value(const <UndoRequest>[]);

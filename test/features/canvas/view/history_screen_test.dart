@@ -16,10 +16,30 @@ import 'package:inklink/ui/theme/ink_theme.dart';
 
 class _RecordingHistory extends BoardHistoryService {
   int planCalls = 0;
+  int getVersionsCalls = 0;
+  bool lastForceRefresh = false;
+  int? lastBeforeVersion;
+  List<BoardActivityBlock> olderBlocks = const [];
   String? mode;
   int? targetVersion;
   String? requestId;
   Completer<RevertPlan>? planCompleter;
+
+  @override
+  Future<HistoryVersionsPage> getVersions(
+    String boardId, {
+    int? beforeVersion,
+    int limit = 50,
+    bool forceRefresh = false,
+  }) async {
+    getVersionsCalls++;
+    lastForceRefresh = forceRefresh;
+    lastBeforeVersion = beforeVersion;
+    if (beforeVersion != null) {
+      return HistoryVersionsPage(blocks: olderBlocks);
+    }
+    return const HistoryVersionsPage();
+  }
 
   @override
   Future<RevertPlan> planRevert(
@@ -30,6 +50,8 @@ class _RecordingHistory extends BoardHistoryService {
     DateTime? fromTime,
     DateTime? toTime,
     List<String>? elementIds,
+    UndoRequestArea? area,
+    UndoRequestScopeMode? scopeMode,
     List<int>? opVersions,
     int? afterVersion,
     String? requestId,
@@ -74,6 +96,8 @@ class _RecordingHistory extends BoardHistoryService {
     DateTime? toTime,
     int? beforeVersion,
     List<String>? elementIds,
+    UndoRequestArea? area,
+    UndoRequestScopeMode? scopeMode,
     int? afterVersion,
     int limit = 100,
   }) => throw UnimplementedError();
@@ -100,6 +124,7 @@ class _RecordingHistory extends BoardHistoryService {
     required List<String> elementIds,
     required String reason,
     required int targetVersion,
+    UndoRequestScopeMode scopeMode = UndoRequestScopeMode.myChanges,
     UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,
@@ -370,5 +395,63 @@ void main() {
       const Rect.fromLTWH(10, 20, 100, 80),
     );
     expect(bloc.state.historyHighlightElementIds, ['e-1', 'e-2']);
+  });
+
+  testWidgets('refresh button rotates and forces a fresh versions fetch', (
+    tester,
+  ) async {
+    await pumpTray(tester);
+    bloc.add(
+      const CanvasBoardTitleUpdated(null, currentUserRole: Board.roleOwner),
+    );
+    await tester.pumpAndSettle(const Duration(milliseconds: 200));
+    final initialCalls = history.getVersionsCalls;
+
+    await tester.tap(find.byTooltip('Refresh history'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byType(RotationTransition), findsWidgets);
+    await tester.pumpAndSettle(const Duration(milliseconds: 200));
+
+    expect(history.getVersionsCalls, greaterThan(initialCalls));
+    expect(history.lastForceRefresh, isTrue);
+  });
+
+  testWidgets('owner can request previous versions not yet loaded locally', (
+    tester,
+  ) async {
+    history.olderBlocks = [
+      _block(
+        from: 0,
+        to: 0,
+        summary: {
+          'carol': const ContributorSummary(
+            name: 'Carol',
+            ops: 3,
+            adds: 3,
+          ),
+        },
+      ),
+    ];
+    await pumpTray(tester);
+    bloc.add(
+      const CanvasBoardTitleUpdated(null, currentUserRole: Board.roleOwner),
+    );
+    await tester.pumpAndSettle(const Duration(milliseconds: 200));
+
+    final loadOlderBtn = find.textContaining('previous versions');
+    await tester.scrollUntilVisible(
+      loadOlderBtn,
+      120,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(loadOlderBtn);
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(history.lastBeforeVersion, 1);
+    expect(bloc.state.activityBlocks.any((b) => b.blockId == 'block_0'), isTrue);
   });
 }

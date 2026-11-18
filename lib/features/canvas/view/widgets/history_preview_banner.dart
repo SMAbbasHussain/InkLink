@@ -160,6 +160,7 @@ class HistoryPreviewBanner extends StatelessWidget {
                   scrub: scrub!,
                   scrubIndex: scrubIndex,
                   targetName: targetName,
+                  isEvidence: isEvidence,
                   onChanged: onScrubChanged,
                   onRestoreToState: onRestoreToState,
                   onUndoUserAfter: onUndoUserAfter,
@@ -209,6 +210,7 @@ class _ScrubSection extends StatelessWidget {
   final HistoryScrub scrub;
   final int scrubIndex;
   final String? targetName;
+  final bool isEvidence;
   final ValueChanged<int>? onChanged;
   final VoidCallback? onRestoreToState;
   final VoidCallback? onUndoUserAfter;
@@ -220,6 +222,7 @@ class _ScrubSection extends StatelessWidget {
     required this.scrub,
     required this.scrubIndex,
     this.targetName,
+    this.isEvidence = false,
     this.onChanged,
     this.onRestoreToState,
     this.onUndoUserAfter,
@@ -234,7 +237,9 @@ class _ScrubSection extends StatelessWidget {
     final lastIndex = scrub.lastIndex;
     final index = scrubIndex.clamp(0, lastIndex);
     final stop = scrub.stopAt(index);
+    final diff = scrub.diffAt(index);
     final isUserScrub = scrub.targetUid != null;
+    final isAreaScrub = scrub.area != null && scrub.area!.isValid;
     final canStepBack = lastIndex > 0;
     final canUndoAfter = isUserScrub && index < lastIndex;
     final canLoadOlder = index == 0 && scrub.hasMore;
@@ -245,19 +250,30 @@ class _ScrubSection extends StatelessWidget {
         const SizedBox(height: InkSpacing.s4),
         Row(
           children: [
-            Text(
-              'Step ${index + 1} of ${scrub.stops.length}'
-              '  ·  v${stop.version}',
-              style: InkType.caption(tokens.inkSecondary),
+            Expanded(
+              child: Text(
+                'Step ${index + 1} of ${scrub.stops.length}'
+                '  ·  v${stop.version}',
+                style: InkType.caption(tokens.inkSecondary),
+              ),
             ),
-            const Spacer(),
-            if (canLoadOlder && onLoadOlder != null)
+            if (canStepBack && (isEvidence || onSendRequest != null))
+              _DesiredToggle(
+                showsDesired: index < lastIndex,
+                onChanged: onChanged == null
+                    ? null
+                    : (desired) => onChanged!(desired ? 0 : lastIndex),
+                activeLabel: 'Requested',
+              ),
+            if (canLoadOlder && onLoadOlder != null) ...[
+              const SizedBox(width: InkSpacing.s4),
               _BannerAction(
                 icon: LucideIcons.chevronLeft,
                 label: 'Load older',
                 color: tokens.accentText,
                 onTap: onLoadOlder!,
               ),
+            ],
           ],
         ),
         if (canStepBack) ...[
@@ -287,6 +303,27 @@ class _ScrubSection extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
         ],
+        if (diff != null) ...[
+          const SizedBox(height: InkSpacing.s4),
+          Row(
+            children: [
+              Icon(
+                LucideIcons.gitCompare,
+                size: 13,
+                color: tokens.accentText,
+              ),
+              const SizedBox(width: InkSpacing.s4),
+              Expanded(
+                child: Text(
+                  diff.summaryLabel,
+                  style: InkType.caption(tokens.accentText),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ],
         if (hint != null) ...[
           const SizedBox(height: InkSpacing.s4),
           Text(
@@ -312,7 +349,9 @@ class _ScrubSection extends StatelessWidget {
               ),
             if (onRestoreToState != null)
               InkButton.secondary(
-                label: 'Restore to this state',
+                label: isAreaScrub && !isEvidence
+                    ? 'Revert area to this state'
+                    : 'Restore to this state',
                 onPressed: onRestoreToState,
                 compact: true,
                 expand: false,

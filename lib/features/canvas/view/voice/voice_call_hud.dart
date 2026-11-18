@@ -34,7 +34,10 @@ class VoiceCallHud extends StatelessWidget {
           left: 16,
           child: GlassPanel(
             radius: InkRadii.pill,
-            padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s12, vertical: InkSpacing.s8),
+            padding: const EdgeInsets.symmetric(
+              horizontal: InkSpacing.s12,
+              vertical: InkSpacing.s8,
+            ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -44,41 +47,41 @@ class VoiceCallHud extends StatelessWidget {
                   height: 8,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: state.isVoiceCallActive
-                        ? tokens.success
-                        : tokens.pending,
+                    color: tokens.success,
                   ),
                 ),
                 const SizedBox(width: InkSpacing.s8),
 
                 Text(
-                  'Voice Call',
+                  state.isVoiceCallActive
+                      ? 'Voice call'
+                      : 'Voice call · ${state.voiceParticipants.length} in call',
                   style: InkType.label(tokens.ink),
                 ),
                 const SizedBox(width: InkSpacing.s12),
 
                 // Participant Avatars
-                ...state.voiceParticipants.map((p) => _ParticipantAvatar(
-                      participant: p,
-                      tokens: tokens,
-                    )),
+                ...state.voiceParticipants.map(
+                  (p) => _ParticipantAvatar(participant: p, tokens: tokens),
+                ),
 
                 const SizedBox(width: InkSpacing.s8),
 
-                // Mute / Unmute Button
-                IconButton(
-                  icon: Icon(
-                    state.isMicMuted ? LucideIcons.micOff : LucideIcons.mic,
-                    size: 18,
-                    color: state.isMicMuted ? tokens.danger : tokens.ink,
+                // Mute only makes sense while this user is in the call.
+                if (state.isVoiceCallActive)
+                  IconButton(
+                    icon: Icon(
+                      state.isMicMuted ? LucideIcons.micOff : LucideIcons.mic,
+                      size: 18,
+                      color: state.isMicMuted ? tokens.danger : tokens.ink,
+                    ),
+                    tooltip: state.isMicMuted ? 'Unmute Mic' : 'Mute Mic',
+                    onPressed: () {
+                      context.read<CanvasBloc>().add(
+                        const CanvasToggleVoiceMuteRequested(),
+                      );
+                    },
                   ),
-                  tooltip: state.isMicMuted ? 'Unmute Mic' : 'Mute Mic',
-                  onPressed: () {
-                    context
-                        .read<CanvasBloc>()
-                        .add(const CanvasToggleVoiceMuteRequested());
-                  },
-                ),
 
                 // End Call / Join Call Button
                 if (state.isVoiceCallActive)
@@ -90,9 +93,9 @@ class VoiceCallHud extends StatelessWidget {
                     ),
                     tooltip: 'Leave Call',
                     onPressed: () {
-                      context
-                          .read<CanvasBloc>()
-                          .add(const CanvasLeaveVoiceCallRequested());
+                      context.read<CanvasBloc>().add(
+                        const CanvasLeaveVoiceCallRequested(),
+                      );
                     },
                   )
                 else
@@ -104,9 +107,9 @@ class VoiceCallHud extends StatelessWidget {
                     ),
                     tooltip: 'Join Call',
                     onPressed: () {
-                      context
-                          .read<CanvasBloc>()
-                          .add(const CanvasJoinVoiceCallRequested());
+                      context.read<CanvasBloc>().add(
+                        const CanvasJoinVoiceCallRequested(),
+                      );
                     },
                   ),
               ],
@@ -122,10 +125,7 @@ class _ParticipantAvatar extends StatelessWidget {
   final VoiceParticipant participant;
   final InkTokens tokens;
 
-  const _ParticipantAvatar({
-    required this.participant,
-    required this.tokens,
-  });
+  const _ParticipantAvatar({required this.participant, required this.tokens});
 
   @override
   Widget build(BuildContext context) {
@@ -135,7 +135,8 @@ class _ParticipantAvatar extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 3),
       child: Tooltip(
-        message: '${participant.displayName}${isSpeaking ? " (Speaking)" : ""}${isMuted ? " (Muted)" : ""}',
+        message:
+            '${participant.displayName}${isSpeaking ? " (Speaking)" : ""}${isMuted ? " (Muted)" : ""}',
         child: Stack(
           alignment: Alignment.center,
           children: [

@@ -105,14 +105,16 @@ class SlidingTray extends StatelessWidget {
                   onVerticalDragUpdate: (d) {
                     if (direction == TrayDirection.bottom && d.delta.dy > 6) {
                       onClose?.call();
-                    } else if (direction == TrayDirection.top && d.delta.dy < -6) {
+                    } else if (direction == TrayDirection.top &&
+                        d.delta.dy < -6) {
                       onClose?.call();
                     }
                   },
                   onHorizontalDragUpdate: (d) {
                     if (direction == TrayDirection.left && d.delta.dx < -6) {
                       onClose?.call();
-                    } else if (direction == TrayDirection.right && d.delta.dx > 6) {
+                    } else if (direction == TrayDirection.right &&
+                        d.delta.dx > 6) {
                       onClose?.call();
                     }
                   },
@@ -138,7 +140,10 @@ class SlidingTray extends StatelessWidget {
                   child: Row(
                     children: [
                       Expanded(
-                        child: Text(title, style: InkType.bodyStrong(tokens.ink)),
+                        child: Text(
+                          title,
+                          style: InkType.bodyStrong(tokens.ink),
+                        ),
                       ),
                       ?headerActions,
                       if (onClose != null) ...[

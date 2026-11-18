@@ -132,16 +132,21 @@ class JoinWorkspaceRequested extends WorkspaceEvent {
   JoinWorkspaceRequested(this.workspaceId);
 }
 
+typedef WorkspaceInviteDecisionCallback =
+    void Function(bool success, String? error);
+
 class AcceptWorkspaceInviteRequested extends WorkspaceEvent {
   final String inviteId;
+  final WorkspaceInviteDecisionCallback? onCompleted;
 
-  AcceptWorkspaceInviteRequested(this.inviteId);
+  AcceptWorkspaceInviteRequested(this.inviteId, {this.onCompleted});
 }
 
 class RejectWorkspaceInviteRequested extends WorkspaceEvent {
   final String inviteId;
+  final WorkspaceInviteDecisionCallback? onCompleted;
 
-  RejectWorkspaceInviteRequested(this.inviteId);
+  RejectWorkspaceInviteRequested(this.inviteId, {this.onCompleted});
 }
 
 class AddBoardToWorkspaceRequested extends WorkspaceEvent {
@@ -283,7 +288,9 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     on<AddBoardToWorkspaceRequested>(_onAddBoardToWorkspaceRequested);
     on<CreateBoardInWorkspaceRequested>(_onCreateBoardInWorkspaceRequested);
     on<RemoveBoardFromWorkspaceRequested>(_onRemoveBoardFromWorkspaceRequested);
-    on<MoveBoardBetweenWorkspacesRequested>(_onMoveBoardBetweenWorkspacesRequested);
+    on<MoveBoardBetweenWorkspacesRequested>(
+      _onMoveBoardBetweenWorkspacesRequested,
+    );
     on<_OwnedWorkspacesUpdated>(_onOwnedWorkspacesUpdated);
     on<_MemberWorkspacesUpdated>(_onMemberWorkspacesUpdated);
     on<_IncomingInvitesUpdated>(_onIncomingInvitesUpdated);
@@ -359,7 +366,10 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       emit(_emptyLoaded());
     } catch (e) {
       emit(
-        _emptyLoaded().copyWith(actionError: 'Failed to load workspaces: ${AppErrorFormatter.cleanMessage(e)}'),
+        _emptyLoaded().copyWith(
+          actionError:
+              'Failed to load workspaces: ${AppErrorFormatter.cleanMessage(e)}',
+        ),
       );
     }
   }
@@ -514,7 +524,12 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to create workspace: ${AppErrorFormatter.cleanMessage(e)}'));
+        emit(
+          current.copyWith(
+            actionError:
+                'Failed to create workspace: ${AppErrorFormatter.cleanMessage(e)}',
+          ),
+        );
       }
     }
   }
@@ -541,7 +556,12 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to update workspace: ${AppErrorFormatter.cleanMessage(e)}'));
+        emit(
+          current.copyWith(
+            actionError:
+                'Failed to update workspace: ${AppErrorFormatter.cleanMessage(e)}',
+          ),
+        );
       }
     }
   }
@@ -585,7 +605,12 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to delete workspace: ${AppErrorFormatter.cleanMessage(e)}'));
+        emit(
+          current.copyWith(
+            actionError:
+                'Failed to delete workspace: ${AppErrorFormatter.cleanMessage(e)}',
+          ),
+        );
       }
     }
   }
@@ -636,7 +661,8 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
         emit(
           updated.copyWith(
             invitingUserIds: nextInviting,
-            actionError: 'Failed to send invitations: ${AppErrorFormatter.cleanMessage(e)}',
+            actionError:
+                'Failed to send invitations: ${AppErrorFormatter.cleanMessage(e)}',
           ),
         );
       }
@@ -670,7 +696,12 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to leave workspace: ${AppErrorFormatter.cleanMessage(e)}'));
+        emit(
+          current.copyWith(
+            actionError:
+                'Failed to leave workspace: ${AppErrorFormatter.cleanMessage(e)}',
+          ),
+        );
       }
     }
   }
@@ -696,7 +727,12 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to remove member: ${AppErrorFormatter.cleanMessage(e)}'));
+        emit(
+          current.copyWith(
+            actionError:
+                'Failed to remove member: ${AppErrorFormatter.cleanMessage(e)}',
+          ),
+        );
       }
     }
   }
@@ -738,7 +774,8 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       if (current is WorkspaceLoaded) {
         emit(
           current.copyWith(
-            actionError: 'Failed to join workspace: ${AppErrorFormatter.cleanMessage(e)}',
+            actionError:
+                'Failed to join workspace: ${AppErrorFormatter.cleanMessage(e)}',
           ),
         );
       }
@@ -750,7 +787,10 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     Emitter<WorkspaceState> emit,
   ) async {
     final service = _workspaceService;
-    if (service == null) return;
+    if (service == null) {
+      event.onCompleted?.call(false, 'Workspace service is unavailable.');
+      return;
+    }
 
     final current = state;
     if (current is WorkspaceLoaded) {
@@ -784,12 +824,17 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
           ),
         );
       }
+      event.onCompleted?.call(true, null);
     } catch (e, st) {
       _logWorkspaceInviteError(
         action: 'accept',
         inviteId: event.inviteId,
         error: e,
         stackTrace: st,
+      );
+      final message = _buildWorkspaceInviteErrorMessage(
+        action: 'accept',
+        error: e,
       );
       final updated = state;
       if (updated is WorkspaceLoaded) {
@@ -799,13 +844,11 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
         emit(
           updated.copyWith(
             processingInviteDecisionIds: nextProcessing,
-            actionError: _buildWorkspaceInviteErrorMessage(
-              action: 'accept',
-              error: e,
-            ),
+            actionError: message,
           ),
         );
       }
+      event.onCompleted?.call(false, message);
     }
   }
 
@@ -814,7 +857,10 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     Emitter<WorkspaceState> emit,
   ) async {
     final service = _workspaceService;
-    if (service == null) return;
+    if (service == null) {
+      event.onCompleted?.call(false, 'Workspace service is unavailable.');
+      return;
+    }
 
     final current = state;
     if (current is WorkspaceLoaded) {
@@ -848,12 +894,17 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
           ),
         );
       }
+      event.onCompleted?.call(true, null);
     } catch (e, st) {
       _logWorkspaceInviteError(
         action: 'reject',
         inviteId: event.inviteId,
         error: e,
         stackTrace: st,
+      );
+      final message = _buildWorkspaceInviteErrorMessage(
+        action: 'reject',
+        error: e,
       );
       final updated = state;
       if (updated is WorkspaceLoaded) {
@@ -863,13 +914,11 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
         emit(
           updated.copyWith(
             processingInviteDecisionIds: nextProcessing,
-            actionError: _buildWorkspaceInviteErrorMessage(
-              action: 'reject',
-              error: e,
-            ),
+            actionError: message,
           ),
         );
       }
+      event.onCompleted?.call(false, message);
     }
   }
 
@@ -897,7 +946,12 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to add board: ${AppErrorFormatter.cleanMessage(e)}'));
+        emit(
+          current.copyWith(
+            actionError:
+                'Failed to add board: ${AppErrorFormatter.cleanMessage(e)}',
+          ),
+        );
       }
     }
   }
@@ -931,7 +985,12 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to create board: ${AppErrorFormatter.cleanMessage(e)}'));
+        emit(
+          current.copyWith(
+            actionError:
+                'Failed to create board: ${AppErrorFormatter.cleanMessage(e)}',
+          ),
+        );
       }
     }
   }
@@ -960,7 +1019,12 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to remove board: ${AppErrorFormatter.cleanMessage(e)}'));
+        emit(
+          current.copyWith(
+            actionError:
+                'Failed to remove board: ${AppErrorFormatter.cleanMessage(e)}',
+          ),
+        );
       }
     }
   }
@@ -990,7 +1054,12 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     } catch (e) {
       final current = state;
       if (current is WorkspaceLoaded) {
-        emit(current.copyWith(actionError: 'Failed to move board: ${AppErrorFormatter.cleanMessage(e)}'));
+        emit(
+          current.copyWith(
+            actionError:
+                'Failed to move board: ${AppErrorFormatter.cleanMessage(e)}',
+          ),
+        );
       }
     }
   }

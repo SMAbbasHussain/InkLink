@@ -25,6 +25,9 @@ class _FakeCanvasService implements CanvasService {
   bool get canSync => true;
 
   @override
+  Future<bool> retryPendingSync(String boardId) async => true;
+
+  @override
   String? get currentClientId => 'test-client';
 
   @override
@@ -127,6 +130,8 @@ class _FakeHistoryService extends BoardHistoryService {
     DateTime? toTime,
     int? beforeVersion,
     List<String>? elementIds,
+    UndoRequestArea? area,
+    UndoRequestScopeMode? scopeMode,
     int? afterVersion,
     int limit = 100,
   }) => throw UnimplementedError();
@@ -140,6 +145,8 @@ class _FakeHistoryService extends BoardHistoryService {
     DateTime? fromTime,
     DateTime? toTime,
     List<String>? elementIds,
+    UndoRequestArea? area,
+    UndoRequestScopeMode? scopeMode,
     List<int>? opVersions,
     int? afterVersion,
     String? requestId,
@@ -159,6 +166,7 @@ class _FakeHistoryService extends BoardHistoryService {
     required List<String> elementIds,
     required String reason,
     required int targetVersion,
+    UndoRequestScopeMode scopeMode = UndoRequestScopeMode.myChanges,
     UndoRequestArea? area,
     DateTime? fromTime,
     DateTime? toTime,

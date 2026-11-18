@@ -2,6 +2,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const admin = require('../../server/firebase-admin');
 const FirestorePaths = require('../utils/firestore_paths');
 const logger = require('../utils/logger');
+const { updateUserNotificationStatus } = require('../utils/notification_sender');
 
 module.exports = async (request) => {
   const uid = request.auth?.uid;
@@ -51,6 +52,20 @@ module.exports = async (request) => {
       );
 
       return { success: true, inviteId: inviteId.trim() };
+    }).then(async (result) => {
+      await updateUserNotificationStatus({
+        recipientUid: uid,
+        type: 'workspace_invite',
+        targetId: inviteId.trim(),
+        status: 'declined',
+      }).catch((notificationError) => {
+        logger.warn('rejectWorkspaceInvite notification sync failed', {
+          inviteId: inviteId.trim(),
+          uid,
+          errorMessage: notificationError.message,
+        });
+      });
+      return result;
     });
   } catch (error) {
     if (error instanceof HttpsError) throw error;

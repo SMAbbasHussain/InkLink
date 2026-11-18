@@ -17,9 +17,13 @@ const mySecrets = [
     'CLOUDFLARE_R2_HISTORY_BUCKET',
 ];
 
-// AI image functions (src/ai/*) additionally get the Workers AI token and
-// their own runtime options. No other function receives this secret.
-const aiSecrets = [...mySecrets, 'CLOUDFLARE_AI_API_TOKEN'];
+// AI image functions (src/ai/*) additionally get the Workers AI token,
+// dedicated AI account ID, and their own runtime options. No other function receives these secrets.
+const aiSecrets = [
+    ...mySecrets,
+    'CLOUDFLARE_AI_API_TOKEN',
+    'CLOUDFLARE_AI_ACCOUNT_ID',
+];
 const isAiFunctionFile = (filePath) =>
     filePath.replace(/\\/g, '/').startsWith('src/ai/');
 

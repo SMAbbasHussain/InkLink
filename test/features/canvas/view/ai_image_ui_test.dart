@@ -92,7 +92,7 @@ void main() {
 
       // The rest of the tray is unchanged.
       expect(find.text('Upload Image'), findsOneWidget);
-      expect(find.text('Add Prompt As Text Note'), findsOneWidget);
+      expect(find.text('Add Prompt As Text'), findsOneWidget);
     });
 
     testWidgets('editor: Generate is enabled once a prompt is typed', (tester) async {

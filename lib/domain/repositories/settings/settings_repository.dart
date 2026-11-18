@@ -1,3 +1,5 @@
+import '../../models/canvas/canvas_toolbar_action.dart';
+
 abstract class SettingsRepository {
   Future<bool> getShowTrayTips();
   Future<void> setShowTrayTips(bool value);
@@ -5,6 +7,8 @@ abstract class SettingsRepository {
   Future<void> setBoardPreviewQuality(String quality);
   Future<bool> getBoardPreviewCompressionEnabled();
   Future<void> setBoardPreviewCompressionEnabled(bool enabled);
+  Future<List<CanvasToolbarAction>> getBottomBarActions();
+  Future<void> setBottomBarActions(List<CanvasToolbarAction> actions);
   Future<bool> getPushNotificationsEnabled([String? userId]);
   Future<void> setPushNotificationsEnabled(bool value, [String? userId]);
   Future<bool> getInviteAlertsEnabled([String? userId]);

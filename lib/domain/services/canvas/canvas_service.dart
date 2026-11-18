@@ -17,6 +17,11 @@ abstract class CanvasService {
   Stream<List<LocalCrdtUpdate>> listenToCrdtUpdates(String boardId);
   Stream<List<LocalCrdtUpdate>> listenToCanvasPreviews(String boardId);
   Future<void> stopCrdtRemoteSync(String boardId);
+
+  /// Re-send local updates that are still marked unsynced. Returns true when
+  /// every pending update was acknowledged.
+  Future<bool> retryPendingSync(String boardId);
+
   Future<void> pushCrdtUpdate({
     required String boardId,
     required String updateId,
@@ -112,6 +117,13 @@ class CanvasServiceImpl implements CanvasService {
     }
 
     return _syncRepository.watchRemoteCanvasPreviews(boardId);
+  }
+
+  @override
+  Future<bool> retryPendingSync(String boardId) async {
+    final userId = _syncRepository.currentUserId;
+    if (userId == null) return false;
+    return _syncRepository.batchSyncPendingUpdates(boardId, userId);
   }
 
   @override
@@ -224,6 +236,12 @@ class CanvasServiceImpl implements CanvasService {
     if (_remoteSubs.containsKey(boardId)) return;
 
     await _boardRepository.ensureBoardCached(boardId);
+
+    // Pre-join socket room and arm inbound buffering immediately so no live
+    // peer updates are dropped while the baseline history fetch is in flight.
+    try {
+      await _syncRepository.preWatchBoard(boardId);
+    } catch (_) {}
 
     final localUpdates = await _syncRepository.getLocalCrdtUpdates(boardId);
     final useFirestoreFirst = localUpdates.isEmpty;
