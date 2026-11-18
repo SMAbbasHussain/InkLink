@@ -1024,6 +1024,24 @@ class ChatRepositoryImpl implements ChatRepository {
           ..content = newContent
           ..isEdited = true;
         await isar.localChatMessages.put(msg);
+
+        final latest = await isar.localChatMessages
+            .filter()
+            .conversationIdEqualTo(msg.conversationId, caseSensitive: true)
+            .and()
+            .isDeletedEqualTo(false)
+            .sortByTimestampDesc()
+            .findFirst();
+        if (latest != null && latest.messageId == msg.messageId) {
+          final conv = await isar.localChatConversations
+              .filter()
+              .conversationIdEqualTo(msg.conversationId, caseSensitive: true)
+              .findFirst();
+          if (conv != null) {
+            conv.lastMessage = msg.type == 'text' ? newContent : '[${msg.type}]';
+            await isar.localChatConversations.put(conv);
+          }
+        }
       }
     });
   }

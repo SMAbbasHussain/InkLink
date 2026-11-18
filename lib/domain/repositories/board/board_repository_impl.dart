@@ -451,18 +451,29 @@ class FirestoreBoardRepository implements BoardRepository {
 
   @override
   Stream<List<BoardMember>> getBoardMembers(String boardId) async* {
-    try {
-      yield* _watchBoardMembers(boardId);
-    } on FirebaseException catch (e) {
-      // The board document is gone (or no longer readable) — e.g. it was just
-      // deleted while a settings sheet or members tray was open. Rules resolve
-      // canReadBoard() through the board document, so the listener fails with
-      // permission-denied instead of simply ending. Treat that as "no members"
-      // rather than surfacing a Firestore error to the UI.
-      if (e.code != 'permission-denied' && e.code != 'not-found') {
-        rethrow;
+    const retryDelays = [
+      Duration(milliseconds: 500),
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+    ];
+    for (var attempt = 0; attempt <= retryDelays.length; attempt++) {
+      try {
+        yield* _watchBoardMembers(boardId);
+        return;
+      } on FirebaseException catch (e) {
+        // The board document may not be readable yet (e.g. invite acceptance
+        // still propagating) or was deleted. Retry briefly on permission-denied
+        // before treating as "no members".
+        if (e.code == 'permission-denied' && attempt < retryDelays.length) {
+          await Future<void>.delayed(retryDelays[attempt]);
+          continue;
+        }
+        if (e.code != 'permission-denied' && e.code != 'not-found') {
+          rethrow;
+        }
+        yield const <BoardMember>[];
+        return;
       }
-      yield const <BoardMember>[];
     }
   }
 

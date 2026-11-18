@@ -525,6 +525,55 @@ class AgoraChatServiceImpl implements ChatService {
   final Map<String, StreamController<List<ChatMessageModel>>>
       _messagesControllers = {};
   final Map<String, String> _agoraMsgIdToLocalId = {};
+  final Map<String, String> _localIdToAgoraMsgId = {};
+
+  void _recordMessageIdMapping(String agoraMsgId, String localId) {
+    if (agoraMsgId.isEmpty || localId.isEmpty) return;
+    _agoraMsgIdToLocalId[agoraMsgId] = localId;
+    _localIdToAgoraMsgId[localId] = agoraMsgId;
+  }
+
+  Future<String> _resolveAgoraMessageId({
+    required String currentUid,
+    required String conversationId,
+    required String messageId,
+  }) async {
+    final cached = _localIdToAgoraMsgId[messageId];
+    if (cached != null && cached.isNotEmpty) {
+      return cached;
+    }
+
+    try {
+      final convType = await _agoraConversationType(
+        currentUid: currentUid,
+        conversationId: conversationId,
+      );
+      final agoraConvId = convType == ChatConversationType.GroupChat
+          ? conversationId
+          : _sanitizeAgoraUid(conversationId);
+      final conv = await _sdk.getConversation(agoraConvId, type: convType);
+      if (conv != null) {
+        final localMsgs = await conv.loadMessages(loadCount: 100);
+        for (final msg in localMsgs) {
+          final localAttr = msg.attributes?['localMessageId']?.toString();
+          if (localAttr != null &&
+              localAttr.isNotEmpty &&
+              msg.msgId.isNotEmpty) {
+            _recordMessageIdMapping(msg.msgId, localAttr);
+          }
+          if (msg.msgId == messageId || localAttr == messageId) {
+            if (msg.msgId.isNotEmpty) {
+              return msg.msgId;
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // Best-effort lookup in Agora's local conversation store.
+    }
+
+    return messageId;
+  }
   final Map<String, StreamSubscription<UserPresence>> _presenceSubs = {};
   final Map<String, bool> _presenceStates = {};
   final StreamController<ChatConnectionState> _connectionStateController =
@@ -876,7 +925,10 @@ class AgoraChatServiceImpl implements ChatService {
           if (msg.body is ChatTextMessageBody) {
             content = (msg.body as ChatTextMessageBody).content;
           }
-          final targetId = _agoraMsgIdToLocalId[msg.msgId] ?? msg.msgId;
+          final targetId = _agoraMsgIdToLocalId[msg.msgId] ??
+              msg.attributes?['localMessageId']?.toString() ??
+              msg.msgId;
+          _recordMessageIdMapping(msg.msgId, targetId);
           await _chatRepository.updateMessageContent(
             currentUid: activeUid,
             messageId: targetId,
@@ -889,6 +941,7 @@ class AgoraChatServiceImpl implements ChatService {
               newContent: content,
             );
           }
+          await _syncConversationsFromLocal();
           _notifyThreadUpdated(conversationId);
         },
         onMessageReactionDidChange:
@@ -918,6 +971,9 @@ class AgoraChatServiceImpl implements ChatService {
           if (activeUid.isEmpty) return;
           final localId =
               msg.attributes?['localMessageId']?.toString() ?? msgId;
+          if (msg.msgId.isNotEmpty) {
+            _recordMessageIdMapping(msg.msgId, localId);
+          }
           await _updateMessageStatus(
             localId,
             ChatMessageStatus.sent,
@@ -2232,7 +2288,7 @@ class AgoraChatServiceImpl implements ChatService {
       if (localMessageId != null &&
           localMessageId.isNotEmpty &&
           msg.msgId.isNotEmpty) {
-        _agoraMsgIdToLocalId[msg.msgId] = localMessageId;
+        _recordMessageIdMapping(msg.msgId, localMessageId);
       }
 
       final messageId = (!isFromSelf || localMessageId == null)
@@ -2636,7 +2692,7 @@ class AgoraChatServiceImpl implements ChatService {
         try {
           final sent = await _sdk.sendMessage(msg);
           if (sent.msgId.isNotEmpty) {
-            _agoraMsgIdToLocalId[sent.msgId] = local.id;
+            _recordMessageIdMapping(sent.msgId, local.id);
           }
           await _updateMessageStatus(
             local.id,
@@ -2683,7 +2739,7 @@ class AgoraChatServiceImpl implements ChatService {
     try {
       final sent = await _sdk.sendMessage(agoraMsg);
       if (sent.msgId.isNotEmpty) {
-        _agoraMsgIdToLocalId[sent.msgId] = model.id;
+        _recordMessageIdMapping(sent.msgId, model.id);
       }
       final accepted = sent.status != MessageStatus.FAIL;
       await _updateMessageStatus(
@@ -3149,19 +3205,20 @@ class AgoraChatServiceImpl implements ChatService {
     final currentUid = _activeLocalUid();
     if (currentUid.isEmpty) return;
 
-    if (await _isSdkAuthenticatedFor(currentUid)) {
-      try {
-        await _sdk.modifyMessage(
-          messageId: messageId,
-          msgBody: ChatTextMessageBody(content: newContent),
-        );
-      } catch (e) {
-        developer.log(
-          'Agora modifyMessage failed: $e',
-          name: 'AgoraChatService',
-        );
-      }
+    if (!await _isSdkAuthenticatedFor(currentUid)) {
+      throw Exception('Chat is not connected. Please try again.');
     }
+
+    final agoraMessageId = await _resolveAgoraMessageId(
+      currentUid: currentUid,
+      conversationId: conversationId,
+      messageId: messageId,
+    );
+
+    await _sdk.modifyMessage(
+      messageId: agoraMessageId,
+      msgBody: ChatTextMessageBody(content: newContent),
+    );
 
     await _chatRepository.updateMessageContent(
       currentUid: currentUid,
@@ -3169,6 +3226,7 @@ class AgoraChatServiceImpl implements ChatService {
       newContent: newContent,
     );
 
+    await _syncConversationsFromLocal();
     _notifyThreadUpdated(conversationId);
   }
 
@@ -3180,9 +3238,15 @@ class AgoraChatServiceImpl implements ChatService {
     final currentUid = _activeLocalUid();
     if (currentUid.isEmpty) return;
 
+    final agoraMessageId = await _resolveAgoraMessageId(
+      currentUid: currentUid,
+      conversationId: conversationId,
+      messageId: messageId,
+    );
+
     if (await _isSdkAuthenticatedFor(currentUid)) {
       try {
-        await _sdk.recallMessage(messageId);
+        await _sdk.recallMessage(agoraMessageId);
       } catch (e) {
         developer.log(
           'Agora recallMessage fallback (local delete): $e',
@@ -3198,7 +3262,7 @@ class AgoraChatServiceImpl implements ChatService {
               : _sanitizeAgoraUid(conversationId);
           final conv = await _sdk.getConversation(agoraConvId, type: convType);
           if (conv != null) {
-            await conv.deleteMessage(messageId);
+            await conv.deleteMessage(agoraMessageId);
           }
         } catch (_) {}
       }

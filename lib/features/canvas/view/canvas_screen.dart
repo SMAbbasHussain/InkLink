@@ -177,7 +177,8 @@ class _CanvasScreenState extends State<CanvasScreen>
   bool _showTemplateCoachmark = false;
   bool _closedStrokeHintShown = false;
   bool _appliedInitialTemplate = false;
-  final List<Uint8List> _recentImages = <Uint8List>[];
+  final List<({String key, Uint8List bytes})> _recentAiImages =
+      <({String key, Uint8List bytes})>[];
   Map<String, ui.Image> _decodedUiImages = <String, ui.Image>{};
   final Map<String, String> _decodedUiImageKeys = <String, String>{};
   final Set<String> _pendingDecodeImageIds = <String>{};
@@ -1337,6 +1338,13 @@ class _CanvasScreenState extends State<CanvasScreen>
     if (completion != null && completion.sequence > _lastAiCompletionSequence) {
       _lastAiCompletionSequence = completion.sequence;
       final result = completion.result;
+      _recordRecentAiImage(
+        key: result.generationId.isNotEmpty
+            ? result.generationId
+            : result.imageUrl,
+        thumbnailBase64: result.thumbnailBase64,
+        fallbackBytes: aiState.imageBytes[result.imageUrl],
+      );
       final placeholder = completion.placeholder;
       if (placeholder != null) {
         // Follow the real image's aspect ratio (the fallback model is square).
@@ -1384,6 +1392,59 @@ class _CanvasScreenState extends State<CanvasScreen>
 
     // Placeholders, busy overlays and downloaded images all need a repaint.
     setState(() {});
+  }
+
+  void _recordRecentAiImage({
+    required String key,
+    required String thumbnailBase64,
+    Uint8List? fallbackBytes,
+  }) {
+    Uint8List? bytes;
+    if (thumbnailBase64.isNotEmpty) {
+      try {
+        bytes = base64Decode(thumbnailBase64);
+      } catch (_) {}
+    }
+    bytes ??= fallbackBytes;
+    if (bytes == null || bytes.isEmpty) return;
+    _recentAiImages.removeWhere((entry) => entry.key == key);
+    _recentAiImages.insert(0, (key: key, bytes: bytes));
+    if (_recentAiImages.length > 10) {
+      _recentAiImages.removeLast();
+    }
+  }
+
+  List<Uint8List> _collectRecentAiImages(CanvasState state) {
+    final result = <Uint8List>[
+      for (final entry in _recentAiImages) entry.bytes,
+    ];
+    if (result.length >= 10) return result;
+    final seenKeys = <String>{
+      for (final entry in _recentAiImages) entry.key,
+    };
+    final aiBytes = _aiImageBloc?.state.imageBytes;
+    for (final element in state.elements.reversed) {
+      if (element is! ImageElement || !element.isAiImage) continue;
+      final key = (element.generationId != null &&
+              element.generationId!.isNotEmpty)
+          ? element.generationId!
+          : (element.imageUrl ?? element.id);
+      if (!seenKeys.add(key)) continue;
+      final imageUrl = element.imageUrl;
+      Uint8List? bytes = (imageUrl != null && aiBytes != null)
+          ? aiBytes[imageUrl]
+          : null;
+      if (bytes == null && element.imageBase64.isNotEmpty) {
+        try {
+          bytes = base64Decode(element.imageBase64);
+        } catch (_) {}
+      }
+      if (bytes != null && bytes.isNotEmpty) {
+        result.add(bytes);
+        if (result.length >= 10) break;
+      }
+    }
+    return result;
   }
 
   ImageElement? _selectedAiImage(CanvasState state) {
@@ -1706,13 +1767,6 @@ class _CanvasScreenState extends State<CanvasScreen>
         fullSize.height * result.style.crop.height,
       );
       if (!mounted) return;
-
-      setState(() {
-        _recentImages.insert(0, edited);
-        if (_recentImages.length > 10) {
-          _recentImages.removeLast();
-        }
-      });
 
       final maxSide = math.max(sourceSize.width, sourceSize.height);
       final fitScale = maxSide > 280 ? (280 / maxSide) : 1.0;
@@ -10806,9 +10860,8 @@ class _CanvasScreenState extends State<CanvasScreen>
           isOpen: state.activeTray == 'ai',
           controller: _aiPromptController,
           onAddText: _addAiTextElement,
-          onUploadImage: _uploadImageToCanvas,
           onGenerateImage: _onGenerateImagePlaceholder,
-          recentImages: _recentImages,
+          recentImages: _collectRecentAiImages(state),
           onClose: () => _toggleTray('ai'),
           // Null when AI_IMAGE_ENABLED is off: the tray keeps the old stub.
           generation: _aiImageEnabled

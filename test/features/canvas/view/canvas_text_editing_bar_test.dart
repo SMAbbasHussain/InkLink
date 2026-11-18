@@ -5,7 +5,6 @@ import 'package:inklink/core/utils/notification_preferences.dart';
 import 'package:inklink/domain/models/board.dart';
 import 'package:inklink/domain/services/notification/notification_service.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
-import 'package:inklink/features/canvas/models/canvas_element.dart';
 import 'package:inklink/features/canvas/models/canvas_tool_mode.dart';
 import 'package:inklink/features/canvas/view/canvas_screen.dart';
 import 'package:inklink/features/notifications/bloc/notifications_bloc.dart';
@@ -77,12 +76,18 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(wrap(bloc));
     await tester.pump();
+    if (bloc.state.isLoading) {
+      await tester.runAsync(
+        () => bloc.stream.firstWhere((s) => !s.isLoading),
+      );
+      await tester.pump();
+    }
   }
 
   testWidgets(
     'selected text element builds the element editing bar',
     (tester) async {
-      final bloc = await _seedBloc(withText: true);
+      final bloc = (await tester.runAsync(() => _seedBloc(withText: true)))!;
       addTearDown(bloc.close);
       final text = bloc.state.elements.whereType<TextElement>().single;
       expect(bloc.state.currentToolMode, CanvasToolMode.select);
@@ -95,8 +100,8 @@ void main() {
       // view-model only carried {'rotation': …} and the bar re-parsed it,
       // reading data['type'] as String.
       expect(tester.takeException(), isNull);
-      expect(find.text('Edit'), findsOneWidget);
-      expect(find.text('Size'), findsOneWidget);
+      expect(find.byTooltip('Edit'), findsOneWidget);
+      expect(find.byTooltip('Size'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
     },
@@ -105,22 +110,28 @@ void main() {
   testWidgets(
     'finishing new text keeps it selected and leaves its editing bar open',
     (tester) async {
-      final bloc = await _seedBloc();
+      final bloc = (await tester.runAsync(() => _seedBloc()))!;
       addTearDown(bloc.close);
       expect(bloc.state.elements, isEmpty);
 
       await pumpCanvas(tester, bloc);
       bloc.add(const CanvasSetToolMode(CanvasToolMode.text));
+      await tester.runAsync(() => pumpEventQueue());
       await tester.pump();
 
       // Tap empty canvas, type, then finish by tapping elsewhere.
       await tester.tapAt(const Offset(120, 260));
-      await tester.pump();
-      expect(find.byType(TextField), findsOneWidget);
-      await tester.enterText(find.byType(TextField), 'Typed on canvas');
+      await tester.pump(const Duration(milliseconds: 350));
+      final textEditorFinder = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Type text',
+      );
+      expect(textEditorFinder, findsOneWidget);
+      await tester.enterText(textEditorFinder, 'Typed on canvas');
       await tester.pump();
 
       await tester.tapAt(const Offset(120, 900));
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.runAsync(() => pumpEventQueue());
       await tester.pump();
 
       final text = bloc.state.elements.whereType<TextElement>().single;
@@ -131,13 +142,15 @@ void main() {
       expect(bloc.state.selectedIds, {text.id});
       expect(bloc.state.currentToolMode, CanvasToolMode.select);
       expect(tester.takeException(), isNull);
-      expect(find.text('Edit'), findsOneWidget);
+      expect(find.byTooltip('Edit'), findsOneWidget);
 
       // Clicking elsewhere afterwards still deselects as usual.
       await tester.tapAt(const Offset(120, 1100));
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.runAsync(() => pumpEventQueue());
       await tester.pump();
       expect(bloc.state.selectedShapeId, isNull);
-      expect(find.text('Edit'), findsNothing);
+      expect(find.byTooltip('Edit'), findsNothing);
 
       await tester.pumpWidget(const SizedBox.shrink());
     },

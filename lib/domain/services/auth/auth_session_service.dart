@@ -163,42 +163,39 @@ class AuthSessionServiceImpl implements AuthSessionService {
     }
 
     final current = _authService.getCurrentUser();
+    // Run remote cleanup (presence, FCM token, socket logout) in parallel
+    // with a short timeout so slow networks never stall logout.
+    final remoteCleanupFutures = <Future<void>>[
+      _canvasSyncRepository.logoutSocket().catchError((_) {}),
+    ];
     if (current != null) {
-      await _presenceService.setUserOffline();
-
-      String? token;
-      try {
-        token = await _messagingService.getToken();
-      } catch (_) {
-        token = null;
-      }
-
-      try {
-        await _authRepository.removeFcmTokenOnSignOut(
-          current.uid,
-          token: token,
-        );
-      } catch (_) {
-        // Logout must continue even when FCM is unavailable.
-      }
-
-      try {
-        await _messagingService.deleteToken();
-      } catch (_) {
-        // Ignore FCM cleanup failures on devices without Google Play services.
-      }
+      remoteCleanupFutures.add(_presenceService.setUserOffline().catchError((_) {}));
+      remoteCleanupFutures.add(() async {
+        String? token;
+        try {
+          token = await _messagingService.getToken();
+        } catch (_) {
+          token = null;
+        }
+        try {
+          await _authRepository.removeFcmTokenOnSignOut(
+            current.uid,
+            token: token,
+          );
+        } catch (_) {}
+        try {
+          await _messagingService.deleteToken();
+        } catch (_) {}
+      }());
     }
+    await Future.wait(remoteCleanupFutures)
+        .timeout(const Duration(seconds: 2), onTimeout: () => const []);
 
     // Cancel FCM token refresh listener to prevent leaks.
     await _tokenRefreshSub?.cancel();
     _tokenRefreshSub = null;
     _tokenRefreshBound = false;
 
-    // Explicitly inform server of logout so it can clear server-side queues,
-    // then disconnect locally. Do not fail sign-out if logout handshake fails.
-    try {
-      await _canvasSyncRepository.logoutSocket();
-    } catch (_) {}
     await _canvasSyncRepository.disconnectSocket();
 
     // Clear cached shared stream references.
@@ -221,8 +218,16 @@ class AuthSessionServiceImpl implements AuthSessionService {
     developer.log('deleteAccount: start', name: 'AuthSessionService');
 
     // Run pre-signout callbacks
-    // 1. Reauthenticate first to validate user credentials before any destructive action
-    await _authRepository.reauthenticate(password: password);
+    // 1. Validate password credentials up front for email/password accounts.
+    // Google-authenticated accounts already confirmed by typing DELETE and are
+    // deleted via the Admin SDK Cloud Function without an interactive popup.
+    final initialUser = _authService.getCurrentUser();
+    final isPasswordUser =
+        initialUser?.providerData.any((p) => p.providerId == 'password') ??
+            false;
+    if (isPasswordUser || (password != null && password.trim().isNotEmpty)) {
+      await _authRepository.reauthenticate(password: password);
+    }
 
     for (final callback in List.of(_preSignOutCallbacks)) {
       try {
@@ -244,17 +249,18 @@ class AuthSessionServiceImpl implements AuthSessionService {
         await _presenceService.setUserOffline();
       } catch (_) {}
 
-      // Attempt to invoke deleteUserAccount Cloud Function with a short 3s timeout
+      // Attempt to invoke deleteUserAccount Cloud Function (allow enough time
+      // for cold start + Firestore/R2/Redis purge so client fallback doesn't race it).
       if (_cloudFunctionsService != null) {
         try {
           await _cloudFunctionsService
               .httpsCallable('deleteUserAccount')
               .call()
-              .timeout(const Duration(seconds: 3));
+              .timeout(const Duration(seconds: 30));
           cloudDeleted = true;
           developer.log('deleteUserAccount Cloud Function succeeded', name: 'AuthSessionService');
         } catch (e) {
-          developer.log('deleteUserAccount Cloud Function skipped or timed out: $e', name: 'AuthSessionService');
+          developer.log('deleteUserAccount Cloud Function failed or timed out: $e', name: 'AuthSessionService');
         }
       }
     }

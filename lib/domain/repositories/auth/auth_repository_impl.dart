@@ -294,7 +294,13 @@ class FirebaseAuthRepository implements AuthRepository {
         }
       } else if (isGoogleUser) {
         await _ensureGoogleInitialized();
-        final GoogleSignInAccount googleUser = await _googleSignIn.authenticate();
+        GoogleSignInAccount? googleUser;
+        try {
+          googleUser = await _googleSignIn.attemptLightweightAuthentication();
+        } catch (_) {
+          googleUser = null;
+        }
+        googleUser ??= await _googleSignIn.authenticate();
         final GoogleSignInAuthentication googleAuth = googleUser.authentication;
         if (googleAuth.idToken == null) {
           throw 'Google re-authentication failed: missing ID token.';
@@ -536,8 +542,16 @@ class FirebaseAuthRepository implements AuthRepository {
       }
 
       // 10. Delete Firebase Auth user
-      await _authService.deleteAccount();
-      developer.log('Successfully deleted Firebase Auth user $uid', name: 'AuthRepository');
+      try {
+        await _authService.deleteAccount();
+        developer.log('Successfully deleted Firebase Auth user $uid', name: 'AuthRepository');
+      } on FirebaseAuthException catch (e) {
+        if (e.code == 'user-not-found') {
+          developer.log('Firebase Auth user $uid already deleted', name: 'AuthRepository');
+        } else {
+          rethrow;
+        }
+      }
 
     } on FirebaseAuthException catch (e) {
       if (e.code == 'requires-recent-login') {

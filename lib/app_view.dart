@@ -117,9 +117,10 @@ class _AppViewState extends State<AppView> {
           (previous is! Authenticated && current is Authenticated) ||
           (previous is Authenticated && current is! Authenticated) ||
           current is AuthEmailUnverified ||
-          current is AuthDeletingAccount,
+          current is AuthDeletingAccount ||
+          current is AuthLoggingOut,
       listener: (context, state) async {
-        if (state is AuthDeletingAccount) {
+        if (state is AuthDeletingAccount || state is AuthLoggingOut) {
           Navigator.of(context, rootNavigator: true)
               .popUntil((route) => route.isFirst);
         } else if (state is AuthEmailUnverified) {
@@ -161,6 +162,36 @@ class _AppViewState extends State<AppView> {
                     const SizedBox(height: 8),
                     Text(
                       "Permanently purging boards, memberships, and profile",
+                      style: TextStyle(fontSize: 13, color: tokens.inkSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        if (state is AuthLoggingOut) {
+          final tokens = context.ink;
+          return Scaffold(
+            body: DeskBackground(
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(color: tokens.accent),
+                    const SizedBox(height: 24),
+                    Text(
+                      "Logging out...",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: tokens.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Closing your session safely",
                       style: TextStyle(fontSize: 13, color: tokens.inkSecondary),
                     ),
                   ],

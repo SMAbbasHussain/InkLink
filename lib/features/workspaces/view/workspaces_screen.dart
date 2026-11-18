@@ -1,6 +1,10 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../domain/models/workspace.dart';
 import '../../../ui/theme/ink_theme.dart';
@@ -30,14 +34,75 @@ class WorkspacesScreen extends StatefulWidget {
 
 class _WorkspacesScreenState extends State<WorkspacesScreen>
     with AutomaticKeepAliveClientMixin {
+  static const String _activityPrefsKey = 'workspace_activity_timestamps';
+  final Map<String, int> _workspaceActivityMs = <String, int>{};
+  bool _hasSeededInitialWorkspaces = false;
+
   @override
   bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
+    unawaited(_loadWorkspaceActivity());
     context.read<WorkspaceBloc>().add(LoadWorkspacesRequested());
     context.read<WorkspaceBloc>().add(LoadIncomingInvitesRequested());
+  }
+
+  Future<void> _loadWorkspaceActivity() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_activityPrefsKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final loaded = <String, int>{};
+      for (final entry in decoded.entries) {
+        final ms = entry.value;
+        if (ms is num) {
+          loaded[entry.key.toString()] = ms.toInt();
+        }
+      }
+      if (!mounted || loaded.isEmpty) return;
+      setState(() {
+        for (final entry in loaded.entries) {
+          _workspaceActivityMs.putIfAbsent(entry.key, () => entry.value);
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _persistWorkspaceActivity() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_activityPrefsKey, jsonEncode(_workspaceActivityMs));
+    } catch (_) {}
+  }
+
+  void _recordWorkspaceOpened(String workspaceId) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    setState(() {
+      _workspaceActivityMs[workspaceId] = nowMs;
+    });
+    unawaited(_persistWorkspaceActivity());
+  }
+
+  void _syncWorkspaceActivity(WorkspaceLoaded state) {
+    final all = [...state.ownedWorkspaces, ...state.memberWorkspaces];
+    if (all.isEmpty) return;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    var changed = false;
+    for (final ws in all) {
+      if (_workspaceActivityMs.containsKey(ws.id)) continue;
+      _workspaceActivityMs[ws.id] = _hasSeededInitialWorkspaces
+          ? nowMs
+          : ws.updatedAt.millisecondsSinceEpoch;
+      changed = true;
+    }
+    _hasSeededInitialWorkspaces = true;
+    if (changed) {
+      unawaited(_persistWorkspaceActivity());
+    }
   }
 
   void _showCreateWorkspaceDialog() {
@@ -120,13 +185,26 @@ class _WorkspacesScreenState extends State<WorkspacesScreen>
     }
   }
 
-  /// Newest workspaces first, owned before the ones the user only joined.
+  /// Most recently opened or newly joined workspaces first.
   List<Workspace> _orderWorkspaces(WorkspaceLoaded state) {
-    final owned = [...state.ownedWorkspaces]
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    final member = [...state.memberWorkspaces]
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return [...owned, ...member];
+    final byId = <String, Workspace>{};
+    for (final ws in state.ownedWorkspaces) {
+      byId[ws.id] = ws;
+    }
+    for (final ws in state.memberWorkspaces) {
+      byId.putIfAbsent(ws.id, () => ws);
+    }
+    final ordered = byId.values.toList(growable: false)
+      ..sort((a, b) {
+        final aMs =
+            _workspaceActivityMs[a.id] ?? a.updatedAt.millisecondsSinceEpoch;
+        final bMs =
+            _workspaceActivityMs[b.id] ?? b.updatedAt.millisecondsSinceEpoch;
+        final cmp = bMs.compareTo(aMs);
+        if (cmp != 0) return cmp;
+        return b.createdAt.compareTo(a.createdAt);
+      });
+    return ordered;
   }
 
   Future<void> _confirmLeave(String workspaceId) async {
@@ -253,6 +331,7 @@ class _WorkspacesScreenState extends State<WorkspacesScreen>
                         );
                       }
 
+                      _syncWorkspaceActivity(state);
                       final workspaces = _orderWorkspaces(state);
 
                       return Column(
@@ -293,6 +372,9 @@ class _WorkspacesScreenState extends State<WorkspacesScreen>
                                                     .id] ??
                                                 const [],
                                             onTap: () async {
+                                              _recordWorkspaceOpened(
+                                                workspace.id,
+                                              );
                                               await Navigator.push(
                                                 context,
                                                 buildWorkspaceDetailRoute(

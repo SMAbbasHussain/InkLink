@@ -171,6 +171,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
     on<LogoutRequested>((event, emit) async {
       developer.log('LogoutRequested: start', name: 'AuthBloc');
+      emit(AuthLoggingOut());
       await authService.signOut();
       developer.log('LogoutRequested: emitting Unauthenticated', name: 'AuthBloc');
       emit(Unauthenticated());
@@ -210,7 +211,8 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       }
       if (current is AuthLoading ||
           current is AuthEmailUnverified ||
-          current is AuthDeletingAccount) {
+          current is AuthDeletingAccount ||
+          current is AuthLoggingOut) {
         developer.log('AuthenticatedUserAvailable: skipping (state=${state.runtimeType})', name: 'AuthBloc');
         return;
       }

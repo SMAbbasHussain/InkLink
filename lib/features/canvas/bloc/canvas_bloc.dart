@@ -491,12 +491,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     try {
       if (isClosed) return;
       _startBoardMetadataListener();
-      await _ensureCrdtReady();
-      if (isClosed) return;
-      _startCrdtUpdatesListener();
-      _startPreviewUpdatesListener();
-      _startCommunicationListeners(event.boardId);
-      _refreshFromCrdtAdapter(emit);
+      if (_canSync) {
+        await _ensureCrdtReady();
+        if (isClosed) return;
+        _startCrdtUpdatesListener();
+        _startPreviewUpdatesListener();
+        _startCommunicationListeners(event.boardId);
+        _refreshFromCrdtAdapter(emit);
+      } else if (_crdtAdapter != null) {
+        _refreshFromCrdtAdapter(emit);
+      }
       if (!isClosed) {
         emit(
           state.copyWith(

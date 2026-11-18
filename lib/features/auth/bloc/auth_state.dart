@@ -53,3 +53,6 @@ class PasswordResetSent extends AuthState {
 /// Emitted while cascade deletion of account and data is in progress
 class AuthDeletingAccount extends AuthState {}
 
+/// Emitted while signing out and tearing down active sessions
+class AuthLoggingOut extends AuthState {}
+

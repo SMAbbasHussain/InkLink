@@ -35,7 +35,6 @@ class AITray extends StatelessWidget {
   final bool isOpen;
   final TextEditingController controller;
   final VoidCallback onAddText;
-  final VoidCallback onUploadImage;
   final VoidCallback onGenerateImage;
   final List<Uint8List> recentImages;
   final VoidCallback? onClose;
@@ -49,7 +48,6 @@ class AITray extends StatelessWidget {
     required this.isOpen,
     required this.controller,
     required this.onAddText,
-    required this.onUploadImage,
     required this.onGenerateImage,
     required this.recentImages,
     this.onClose,
@@ -157,7 +155,7 @@ class AITray extends StatelessWidget {
                   const SizedBox(height: InkSpacing.s12),
                   Divider(height: 1, color: tokens.glassStroke),
                   const SizedBox(height: InkSpacing.s12),
-                  Text('Recent Uploads', style: InkType.label(tokens.inkMuted)),
+                  Text('Recent AI Images', style: InkType.label(tokens.inkMuted)),
                   const SizedBox(height: InkSpacing.s8),
                   SizedBox(
                     height: 64,
@@ -165,7 +163,7 @@ class AITray extends StatelessWidget {
                         ? Container(
                             alignment: Alignment.centerLeft,
                             child: Text(
-                              'No recent images yet.',
+                              'No recent AI images yet.',
                               style: InkType.caption(tokens.inkMuted),
                             ),
                           )
@@ -188,12 +186,6 @@ class AITray extends StatelessWidget {
                           ),
                   ),
                   const SizedBox(height: InkSpacing.s12),
-                  InkButton.secondary(
-                    label: 'Upload Image',
-                    icon: const Icon(LucideIcons.upload),
-                    onPressed: onUploadImage,
-                  ),
-                  const SizedBox(height: InkSpacing.s8),
                   InkButton.secondary(
                     label: 'Add Prompt As Text',
                     icon: const Icon(LucideIcons.fileText),

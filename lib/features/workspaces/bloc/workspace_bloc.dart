@@ -936,15 +936,23 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     }
 
     _inFlightInviteDecisionIds.add(event.inviteId);
-    // Drop the tile and report success immediately: the spinner only covers
-    // handing the decision to the function, not the function's answer.
-    _hideInviteDecision(event.inviteId, emit, 'Invite accepted.');
-    event.onCompleted?.call(true, null);
+    final current = state;
+    if (current is WorkspaceLoaded) {
+      emit(
+        current.copyWith(
+          processingInviteDecisionIds: Set<String>.unmodifiable(
+            _inFlightInviteDecisionIds,
+          ),
+        ),
+      );
+    }
 
     try {
       await service.acceptWorkspaceInvite(event.inviteId);
       _inFlightInviteDecisionIds.remove(event.inviteId);
+      _hideInviteDecision(event.inviteId, emit, 'Invite accepted.');
       _optimisticInviteRemovals.remove(event.inviteId);
+      event.onCompleted?.call(true, null);
     } catch (e, st) {
       _inFlightInviteDecisionIds.remove(event.inviteId);
       _logWorkspaceInviteError(
@@ -957,7 +965,6 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
         action: 'accept',
         error: e,
       );
-      // The invite was never accepted: put it back and report the error.
       _restoreInviteDecision(event.inviteId, emit, message);
       event.onCompleted?.call(false, message);
     }
@@ -979,13 +986,23 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     }
 
     _inFlightInviteDecisionIds.add(event.inviteId);
-    _hideInviteDecision(event.inviteId, emit, 'Invite rejected.');
-    event.onCompleted?.call(true, null);
+    final current = state;
+    if (current is WorkspaceLoaded) {
+      emit(
+        current.copyWith(
+          processingInviteDecisionIds: Set<String>.unmodifiable(
+            _inFlightInviteDecisionIds,
+          ),
+        ),
+      );
+    }
 
     try {
       await service.rejectWorkspaceInvite(event.inviteId);
       _inFlightInviteDecisionIds.remove(event.inviteId);
+      _hideInviteDecision(event.inviteId, emit, 'Invite rejected.');
       _optimisticInviteRemovals.remove(event.inviteId);
+      event.onCompleted?.call(true, null);
     } catch (e, st) {
       _inFlightInviteDecisionIds.remove(event.inviteId);
       _logWorkspaceInviteError(

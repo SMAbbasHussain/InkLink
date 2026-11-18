@@ -258,29 +258,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     }
 
     _inFlightAccessRequestIds.add(event.notificationId);
-    Object? previousStatus;
-    for (final item in _rawNotifications) {
-      if (item['id']?.toString() == event.notificationId) {
-        previousStatus = item['status'];
-        break;
-      }
-    }
-
-    // Resolve the request in the inbox right away so the owner does not wait
-    // on the Cloud Function round trip for a visual answer.
-    _rawNotifications = _rawNotifications
-        .map(
-          (item) => item['id']?.toString() == event.notificationId
-              ? {
-                  ...item,
-                  'status': event.action == 'accept' ? 'accepted' : 'declined',
-                }
-              : item,
-        )
-        .toList();
-    _inFlightAccessRequestIds.remove(event.notificationId);
     _emitSortedNotifications(emit);
-    event.onCompleted?.call(true, null);
 
     try {
       await boardService.respondToBoardAccessRequest(
@@ -290,15 +268,20 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
         action: event.action,
         requestType: event.requestType,
       );
-    } catch (e) {
-      // Restore the request so the owner can retry, and report the late error.
       _rawNotifications = _rawNotifications
           .map(
             (item) => item['id']?.toString() == event.notificationId
-                ? {...item, 'status': previousStatus ?? 'pending'}
+                ? {
+                    ...item,
+                    'status': event.action == 'accept' ? 'accepted' : 'declined',
+                  }
                 : item,
           )
           .toList();
+      _inFlightAccessRequestIds.remove(event.notificationId);
+      _emitSortedNotifications(emit);
+      event.onCompleted?.call(true, null);
+    } catch (e) {
       final cleanError = AppErrorFormatter.cleanMessage(e);
       _inFlightAccessRequestIds.remove(event.notificationId);
       _emitSortedNotifications(emit);

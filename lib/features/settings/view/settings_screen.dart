@@ -29,14 +29,11 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  // Reused dialog controllers, disposed with the State (see dispose()).
-  final TextEditingController _deletePasswordController =
-      TextEditingController();
   final TextEditingController _customTagController = TextEditingController();
+  bool _lastKnownIsPasswordUser = false;
 
   @override
   void dispose() {
-    _deletePasswordController.dispose();
     _customTagController.dispose();
     super.dispose();
   }
@@ -91,6 +88,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: BlocBuilder<AuthBloc, AuthState>(
         builder: (context, authState) {
           final authUser = authState is Authenticated ? authState : null;
+          if (authUser != null) {
+            _lastKnownIsPasswordUser = authUser.isPasswordProvider;
+          }
 
           return BlocBuilder<SettingsBloc, SettingsState>(
             builder: (context, settingsState) {
@@ -445,80 +445,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _buildSectionHeader(tokens, 'Account'),
                     PaperCard(
                       padding: EdgeInsets.zero,
-                      child: Column(
-                        children: [
-                          InkWell(
-                            borderRadius: const BorderRadius.vertical(top: Radius.circular(InkRadii.card)),
-                            onTap: () => _showLogoutDialog(context),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: InkSpacing.s16,
-                                vertical: InkSpacing.s12,
-                              ),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 34,
-                                    height: 34,
-                                    decoration: BoxDecoration(
-                                      color: tokens.accent.withValues(alpha: 0.1),
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: Icon(LucideIcons.logOut, size: 18, color: tokens.accent),
-                                  ),
-                                  const SizedBox(width: InkSpacing.s12),
-                                  Text(
-                                    'Logout',
-                                    style: InkType.bodyStrong(tokens.accent),
-                                  ),
-                                ],
-                              ),
-                            ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(InkRadii.card),
+                        onTap: () => _showLogoutDialog(context),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: InkSpacing.s16,
+                            vertical: InkSpacing.s12,
                           ),
-                          Divider(height: 1, color: tokens.glassStroke),
-                          InkWell(
-                            borderRadius: const BorderRadius.vertical(bottom: Radius.circular(InkRadii.card)),
-                            onTap: () => _showDeleteAccountDialog(
-                              context,
-                              isPasswordUser: authUser?.isPasswordProvider ?? false,
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: InkSpacing.s16,
-                                vertical: InkSpacing.s12,
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 34,
+                                height: 34,
+                                decoration: BoxDecoration(
+                                  color: tokens.accent.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(LucideIcons.logOut, size: 18, color: tokens.accent),
                               ),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 34,
-                                    height: 34,
-                                    decoration: BoxDecoration(
-                                      color: tokens.danger.withValues(alpha: 0.1),
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: Icon(LucideIcons.trash2, size: 18, color: tokens.danger),
-                                  ),
-                                  const SizedBox(width: InkSpacing.s12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          'Delete Account',
-                                          style: InkType.bodyStrong(tokens.danger),
-                                        ),
-                                        Text(
-                                          'Permanently erase your account, boards, and data',
-                                          style: InkType.caption(tokens.danger.withValues(alpha: 0.8)),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
+                              const SizedBox(width: InkSpacing.s12),
+                              Text(
+                                'Logout',
+                                style: InkType.bodyStrong(tokens.accent),
                               ),
-                            ),
+                            ],
                           ),
-                        ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: InkSpacing.s24),
+                    _buildSectionHeader(tokens, 'Danger Zone'),
+                    PaperCard(
+                      padding: EdgeInsets.zero,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(InkRadii.card),
+                        onTap: () => _showDeleteAccountDialog(
+                          context,
+                          isPasswordUser: authUser?.isPasswordProvider ?? _lastKnownIsPasswordUser,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: InkSpacing.s16,
+                            vertical: InkSpacing.s12,
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 34,
+                                height: 34,
+                                decoration: BoxDecoration(
+                                  color: tokens.danger.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(LucideIcons.trash2, size: 18, color: tokens.danger),
+                              ),
+                              const SizedBox(width: InkSpacing.s12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Delete Account',
+                                      style: InkType.bodyStrong(tokens.danger),
+                                    ),
+                                    Text(
+                                      'Permanently erase your account, boards, and data',
+                                      style: InkType.caption(tokens.danger.withValues(alpha: 0.8)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 32),
@@ -636,108 +636,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     BuildContext context, {
     required bool isPasswordUser,
   }) {
-    final passwordController = _deletePasswordController..clear();
-    bool obscurePassword = true;
-    String? errorMessage;
-
+    final authBloc = context.read<AuthBloc>();
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (innerContext) {
-        final tokens = innerContext.ink;
-        return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
-            return InkDialog(
-              title: "Delete Account",
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Are you sure you want to permanently delete your account?\n\n"
-                      "This action is irreversible. All your boards, workspaces, and profile will be permanently erased.",
-                      style: InkType.body(tokens.ink),
-                    ),
-                    if (isPasswordUser) ...[
-                      const SizedBox(height: InkSpacing.s16),
-                      Text(
-                        "Please enter your password to confirm:",
-                        style: InkType.bodyStrong(tokens.ink),
-                      ),
-                      const SizedBox(height: InkSpacing.s8),
-                      InkTextField(
-                        controller: passwordController,
-                        obscureText: obscurePassword,
-                        hintText: "Your password",
-                        leadingIcon: LucideIcons.lock,
-                        trailingIcon: obscurePassword ? LucideIcons.eyeOff : LucideIcons.eye,
-                        onTrailingIconPressed: () {
-                          setDialogState(() {
-                            obscurePassword = !obscurePassword;
-                          });
-                        },
-                      ),
-                    ],
-                    if (errorMessage != null) ...[
-                      const SizedBox(height: InkSpacing.s12),
-                      Container(
-                        padding: const EdgeInsets.all(InkSpacing.s8),
-                        decoration: BoxDecoration(
-                          color: tokens.danger.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: tokens.danger.withValues(alpha: 0.3)),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(LucideIcons.circleAlert, color: tokens.danger, size: 18),
-                            const SizedBox(width: InkSpacing.s8),
-                            Expanded(
-                              child: Text(
-                                errorMessage!,
-                                style: InkType.caption(tokens.danger),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                InkButton.secondary(
-                  label: "Cancel",
-                  compact: true,
-                  expand: false,
-                  onPressed: () => Navigator.pop(innerContext),
-                ),
-                InkButton.dangerConfirm(
-                  label: "Delete Permanently",
-                  compact: true,
-                  expand: false,
-                  onPressed: () {
-                    final passwordText = passwordController.text.trim();
-                    if (isPasswordUser && passwordText.isEmpty) {
-                      setDialogState(() {
-                        errorMessage = "Password is required to confirm deletion.";
-                      });
-                      return;
-                    }
-
-                    Navigator.pop(dialogContext);
-                    context.read<AuthBloc>().add(
-                          DeleteAccountRequested(
-                            password: passwordText.isNotEmpty ? passwordText : null,
-                          ),
-                        );
-                  },
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (_) => _DeleteAccountDialog(
+        isPasswordUser: isPasswordUser,
+        onConfirm: (password) {
+          authBloc.add(DeleteAccountRequested(password: password));
+        },
+      ),
     );
   }
 
@@ -856,6 +764,164 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 20, 4, 8),
       child: Text(title.toUpperCase(), style: InkType.label(tokens.inkMuted)),
+    );
+  }
+}
+
+class _DeleteAccountDialog extends StatefulWidget {
+  final bool isPasswordUser;
+  final ValueChanged<String?> onConfirm;
+
+  const _DeleteAccountDialog({
+    required this.isPasswordUser,
+    required this.onConfirm,
+  });
+
+  @override
+  State<_DeleteAccountDialog> createState() => _DeleteAccountDialogState();
+}
+
+class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
+  final TextEditingController _confirmController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  bool _obscurePassword = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _confirmController.addListener(_onInputChanged);
+    _passwordController.addListener(_onInputChanged);
+  }
+
+  void _onInputChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _confirmController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  bool get _canConfirm {
+    if (_confirmController.text.trim() != 'DELETE') return false;
+    if (widget.isPasswordUser && _passwordController.text.trim().isEmpty) {
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return InkDialog(
+      title: 'Delete Account',
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Are you sure you want to permanently delete your account?\n\n'
+              'This action is irreversible. All your boards, workspaces, and profile will be permanently erased.',
+              style: InkType.body(tokens.ink),
+            ),
+            const SizedBox(height: InkSpacing.s16),
+            Text(
+              'Type DELETE to confirm:',
+              style: InkType.bodyStrong(tokens.ink),
+            ),
+            const SizedBox(height: InkSpacing.s8),
+            InkTextField(
+              controller: _confirmController,
+              hintText: 'DELETE',
+              leadingIcon: LucideIcons.shieldAlert,
+            ),
+            if (widget.isPasswordUser) ...[
+              const SizedBox(height: InkSpacing.s16),
+              Text(
+                'Please enter your password to confirm:',
+                style: InkType.bodyStrong(tokens.ink),
+              ),
+              const SizedBox(height: InkSpacing.s8),
+              InkTextField(
+                controller: _passwordController,
+                obscureText: _obscurePassword,
+                hintText: 'Your password',
+                leadingIcon: LucideIcons.lock,
+                trailingIcon: _obscurePassword
+                    ? LucideIcons.eyeOff
+                    : LucideIcons.eye,
+                onTrailingIconPressed: () {
+                  setState(() => _obscurePassword = !_obscurePassword);
+                },
+              ),
+            ],
+            if (_errorMessage != null) ...[
+              const SizedBox(height: InkSpacing.s12),
+              Container(
+                padding: const EdgeInsets.all(InkSpacing.s8),
+                decoration: BoxDecoration(
+                  color: tokens.danger.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: tokens.danger.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(LucideIcons.circleAlert, color: tokens.danger, size: 18),
+                    const SizedBox(width: InkSpacing.s8),
+                    Expanded(
+                      child: Text(
+                        _errorMessage!,
+                        style: InkType.caption(tokens.danger),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        InkButton.secondary(
+          label: 'Cancel',
+          compact: true,
+          expand: false,
+          onPressed: () => Navigator.pop(context),
+        ),
+        InkButton.dangerConfirm(
+          label: 'Delete Permanently',
+          compact: true,
+          expand: false,
+          onPressed: !_canConfirm
+              ? null
+              : () {
+                  if (_confirmController.text.trim() != 'DELETE') {
+                    setState(() {
+                      _errorMessage = 'Please type DELETE to confirm.';
+                    });
+                    return;
+                  }
+                  final passwordText = _passwordController.text.trim();
+                  if (widget.isPasswordUser && passwordText.isEmpty) {
+                    setState(() {
+                      _errorMessage =
+                          'Password is required to confirm deletion.';
+                    });
+                    return;
+                  }
+                  Navigator.pop(context);
+                  widget.onConfirm(
+                    passwordText.isNotEmpty ? passwordText : null,
+                  );
+                },
+        ),
+      ],
     );
   }
 }

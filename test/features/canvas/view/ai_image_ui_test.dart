@@ -45,6 +45,7 @@ void main() {
     Widget tray({
       AiTrayGeneration? generation,
       VoidCallback? onGenerateImage,
+      List<Uint8List> recentImages = const [],
       bool dark = false,
     }) {
       return _host(
@@ -52,9 +53,8 @@ void main() {
           isOpen: true,
           controller: controller,
           onAddText: () {},
-          onUploadImage: () {},
           onGenerateImage: onGenerateImage ?? () {},
-          recentImages: const [],
+          recentImages: recentImages,
           generation: generation,
         ),
         dark: dark,
@@ -90,9 +90,31 @@ void main() {
       await tester.tap(find.text('Generate Image (Soon)'));
       expect(stubTapped, 1);
 
-      // The rest of the tray is unchanged.
-      expect(find.text('Upload Image'), findsOneWidget);
+      // Upload Image is removed from the AI tray; Add Prompt As Text stays.
+      expect(find.text('Upload Image'), findsNothing);
+      expect(find.text('Recent AI Images'), findsOneWidget);
+      expect(find.text('No recent AI images yet.'), findsOneWidget);
       expect(find.text('Add Prompt As Text'), findsOneWidget);
+    });
+
+    testWidgets('shows recent generated AI images below Generate Image', (tester) async {
+      final png1x1 = Uint8List.fromList([
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+        0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+        0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+      ]);
+      await tester.pumpWidget(
+        tray(generation: generation(), recentImages: [png1x1]),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Recent AI Images'), findsOneWidget);
+      expect(find.text('No recent AI images yet.'), findsNothing);
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.text('Upload Image'), findsNothing);
     });
 
     testWidgets('editor: Generate is enabled once a prompt is typed', (tester) async {

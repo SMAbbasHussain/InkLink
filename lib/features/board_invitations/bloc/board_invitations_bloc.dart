@@ -249,27 +249,49 @@ class BoardInvitationsBloc
     Emitter<BoardInvitationsState> emit,
   ) async {
     if (event.inviteId.isEmpty ||
+        _inFlightInviteIds.contains(event.inviteId) ||
         _optimisticInvites.containsKey(event.inviteId)) {
       return;
     }
 
-    _hideInvite(
-      event.inviteId,
-      emit,
-      message: 'Invite accepted.',
-      openedBoardId: event.boardId,
-    );
-    event.onCompleted?.call(true, null);
+    _inFlightInviteIds.add(event.inviteId);
+    final current = state;
+    if (current is BoardInvitationsLoaded) {
+      emit(
+        current.copyWith(
+          processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
+        ),
+      );
+    }
 
     try {
       await _invitationService.acceptInvite(event.inviteId);
+      _inFlightInviteIds.remove(event.inviteId);
+      _hideInvite(
+        event.inviteId,
+        emit,
+        message: 'Invite accepted.',
+        openedBoardId: event.boardId,
+      );
       _optimisticInvites.remove(event.inviteId);
+      event.onCompleted?.call(true, null);
     } catch (e) {
+      _inFlightInviteIds.remove(event.inviteId);
       if (_looksOffline(e)) {
         _isOffline = true;
       }
       final message = AppErrorFormatter.cleanMessage(e);
-      _restoreInvite(event.inviteId, emit, message);
+      final latest = state;
+      if (latest is BoardInvitationsLoaded) {
+        emit(
+          latest.copyWith(
+            processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
+            message: message,
+            isError: true,
+            isOffline: _isOffline,
+          ),
+        );
+      }
       event.onCompleted?.call(false, message);
     }
   }
@@ -279,6 +301,7 @@ class BoardInvitationsBloc
     Emitter<BoardInvitationsState> emit,
   ) async {
     if (event.inviteId.isEmpty ||
+        _inFlightInviteIds.contains(event.inviteId) ||
         _optimisticInvites.containsKey(event.inviteId)) {
       return;
     }
