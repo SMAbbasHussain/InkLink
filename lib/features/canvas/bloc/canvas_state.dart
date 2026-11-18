@@ -67,6 +67,7 @@ class CanvasState {
   final List<VoiceParticipant> voiceParticipants;
   final bool isVoiceCallActive;
   final bool isMicMuted;
+  final bool isSpeakerOn;
   final bool isChatDrawerOpen;
   final bool isCommentsTrayOpen;
   final String? activeCommentId;
@@ -206,6 +207,7 @@ class CanvasState {
     this.voiceParticipants = const [],
     this.isVoiceCallActive = false,
     this.isMicMuted = false,
+    this.isSpeakerOn = false,
     this.isChatDrawerOpen = false,
     this.isCommentsTrayOpen = false,
     this.activeCommentId,
@@ -297,6 +299,7 @@ class CanvasState {
     List<VoiceParticipant>? voiceParticipants,
     bool? isVoiceCallActive,
     bool? isMicMuted,
+    bool? isSpeakerOn,
     bool? isChatDrawerOpen,
     bool? isCommentsTrayOpen,
     Object? activeCommentId = _unset,
@@ -413,6 +416,7 @@ class CanvasState {
       voiceParticipants: voiceParticipants ?? this.voiceParticipants,
       isVoiceCallActive: isVoiceCallActive ?? this.isVoiceCallActive,
       isMicMuted: isMicMuted ?? this.isMicMuted,
+      isSpeakerOn: isSpeakerOn ?? this.isSpeakerOn,
       isChatDrawerOpen: isChatDrawerOpen ?? this.isChatDrawerOpen,
       isCommentsTrayOpen: isCommentsTrayOpen ?? this.isCommentsTrayOpen,
       activeCommentId: activeCommentId == _unset
@@ -566,6 +570,7 @@ class CanvasState {
           voiceParticipants == other.voiceParticipants &&
           isVoiceCallActive == other.isVoiceCallActive &&
           isMicMuted == other.isMicMuted &&
+          isSpeakerOn == other.isSpeakerOn &&
           isChatDrawerOpen == other.isChatDrawerOpen &&
           isCommentsTrayOpen == other.isCommentsTrayOpen &&
           activeCommentId == other.activeCommentId &&
@@ -655,6 +660,7 @@ class CanvasState {
       voiceParticipants.hashCode ^
       isVoiceCallActive.hashCode ^
       isMicMuted.hashCode ^
+      isSpeakerOn.hashCode ^
       isChatDrawerOpen.hashCode ^
       isCommentsTrayOpen.hashCode ^
       activeCommentId.hashCode ^

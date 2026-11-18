@@ -1374,6 +1374,12 @@ class CanvasVoiceMuteStatusChanged extends CanvasEvent {
   const CanvasVoiceMuteStatusChanged(this.isMuted);
 }
 
+/// Voice call speaker status changed
+class CanvasVoiceSpeakerStatusChanged extends CanvasEvent {
+  final bool isSpeakerOn;
+  const CanvasVoiceSpeakerStatusChanged(this.isSpeakerOn);
+}
+
 /// Toggle chat drawer open/close
 class CanvasToggleChatDrawer extends CanvasEvent {
   const CanvasToggleChatDrawer();
@@ -1440,6 +1446,11 @@ class CanvasLeaveVoiceCallRequested extends CanvasEvent {
 /// Toggle mic mute
 class CanvasToggleVoiceMuteRequested extends CanvasEvent {
   const CanvasToggleVoiceMuteRequested();
+}
+
+/// Toggle speakerphone output
+class CanvasToggleVoiceSpeakerRequested extends CanvasEvent {
+  const CanvasToggleVoiceSpeakerRequested();
 }
 
 /// Report speaking activity

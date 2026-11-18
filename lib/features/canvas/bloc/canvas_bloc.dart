@@ -89,6 +89,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   StreamSubscription<List<VoiceParticipant>>? _voiceParticipantsSub;
   StreamSubscription<bool>? _voiceCallStatusSub;
   StreamSubscription<bool>? _voiceMuteStatusSub;
+  StreamSubscription<bool>? _voiceSpeakerStatusSub;
   StreamSubscription<List<BoardActivityBlock>>? _historyFeedSub;
   StreamSubscription<List<UndoRequest>>? _undoRequestsSub;
   List<BoardActivityBlock> _archivedBlocks = const [];
@@ -310,6 +311,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasVoiceParticipantsUpdated>(_onCanvasVoiceParticipantsUpdated);
     on<CanvasVoiceCallStatusChanged>(_onCanvasVoiceCallStatusChanged);
     on<CanvasVoiceMuteStatusChanged>(_onCanvasVoiceMuteStatusChanged);
+    on<CanvasVoiceSpeakerStatusChanged>(_onCanvasVoiceSpeakerStatusChanged);
     on<CanvasToggleChatDrawer>(_onCanvasToggleChatDrawer);
     on<CanvasToggleCommentsTray>(_onCanvasToggleCommentsTray);
     on<CanvasToggleCommentPlacementMode>(_onCanvasToggleCommentPlacementMode);
@@ -321,6 +323,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasJoinVoiceCallRequested>(_onCanvasJoinVoiceCallRequested);
     on<CanvasLeaveVoiceCallRequested>(_onCanvasLeaveVoiceCallRequested);
     on<CanvasToggleVoiceMuteRequested>(_onCanvasToggleVoiceMuteRequested);
+    on<CanvasToggleVoiceSpeakerRequested>(_onCanvasToggleVoiceSpeakerRequested);
     on<CanvasVoiceSpeakingChanged>(_onCanvasVoiceSpeakingChanged);
     on<CanvasHistoryFeedRequested>(_onHistoryFeedRequested);
     on<CanvasHistoryLoadOlderVersionsRequested>(
@@ -8797,6 +8800,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _voiceParticipantsSub?.cancel();
     _voiceCallStatusSub?.cancel();
     _voiceMuteStatusSub?.cancel();
+    _voiceSpeakerStatusSub?.cancel();
 
     final commentsService = _boardCommentsService;
     if (commentsService != null) {
@@ -8833,6 +8837,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       }, onError: (_) {});
       _voiceMuteStatusSub = voiceService.watchIsMuted().listen((isMuted) {
         if (!isClosed) add(CanvasVoiceMuteStatusChanged(isMuted));
+      }, onError: (_) {});
+      _voiceSpeakerStatusSub = voiceService.watchIsSpeakerOn().listen((
+        isSpeakerOn,
+      ) {
+        if (!isClosed) add(CanvasVoiceSpeakerStatusChanged(isSpeakerOn));
       }, onError: (_) {});
       // Presence is separate from joining: keep the board observing the voice
       // room so a call started by another member is visible immediately.
@@ -8895,6 +8904,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     emit(state.copyWith(isMicMuted: event.isMuted));
+  }
+
+  void _onCanvasVoiceSpeakerStatusChanged(
+    CanvasVoiceSpeakerStatusChanged event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(isSpeakerOn: event.isSpeakerOn));
   }
 
   void _onCanvasToggleChatDrawer(
@@ -9083,6 +9099,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     } catch (_) {}
   }
 
+  Future<void> _onCanvasToggleVoiceSpeakerRequested(
+    CanvasToggleVoiceSpeakerRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final voiceService = _voiceService;
+    if (voiceService == null || _boardId.isEmpty) return;
+    try {
+      await voiceService.toggleSpeaker();
+    } catch (_) {}
+  }
+
   Future<void> _onCanvasVoiceSpeakingChanged(
     CanvasVoiceSpeakingChanged event,
     Emitter<CanvasState> emit,
@@ -9119,6 +9146,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _voiceCallStatusSub = null;
     await _voiceMuteStatusSub?.cancel();
     _voiceMuteStatusSub = null;
+    await _voiceSpeakerStatusSub?.cancel();
+    _voiceSpeakerStatusSub = null;
     if (_boardId.isNotEmpty && state.isVoiceCallActive) {
       _voiceService?.leaveCall(_boardId);
     }

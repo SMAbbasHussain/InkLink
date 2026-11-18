@@ -4,9 +4,11 @@ abstract class VoiceService {
   Stream<List<VoiceParticipant>> watchParticipants(String boardId);
   Stream<bool> watchIsInCall();
   Stream<bool> watchIsMuted();
+  Stream<bool> watchIsSpeakerOn();
 
   bool get isInCall;
   bool get isMuted;
+  bool get isSpeakerOn;
   List<VoiceParticipant> get currentParticipants;
   String? get agoraAppId;
 
@@ -18,6 +20,7 @@ abstract class VoiceService {
   Future<void> joinCall(String boardId);
   Future<void> leaveCall(String boardId);
   Future<void> toggleMute(String boardId);
+  Future<void> toggleSpeaker();
   Future<void> setSpeaking({required String boardId, required bool isSpeaking});
   Future<void> disconnect();
   Future<void> dispose();

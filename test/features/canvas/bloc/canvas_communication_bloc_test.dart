@@ -83,6 +83,14 @@ void main() {
       bloc.add(const CanvasVoiceMuteStatusChanged(true));
       await Future<void>.delayed(Duration.zero);
       expect(bloc.state.isMicMuted, isTrue);
+
+      bloc.add(const CanvasVoiceSpeakerStatusChanged(true));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.isSpeakerOn, isTrue);
+
+      bloc.add(const CanvasVoiceSpeakerStatusChanged(false));
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.isSpeakerOn, isFalse);
     });
 
     test('toggles comment placement mode', () async {
