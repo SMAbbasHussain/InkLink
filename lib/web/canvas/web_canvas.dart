@@ -120,17 +120,19 @@ class WebCanvasServices {
   }
 }
 
-/// Opens [boardId] in the mobile canvas, styled with the mobile app's own
-/// theme (not the companion's glass look). Back returns to the companion.
+/// Opens [boardId] in the mobile canvas with the light Ink theme and the
+/// desktop browser layout (not the companion's glass look). Back returns
+/// to the companion.
 Route<void> buildWebCanvasRoute(
   WebCanvasServices services, {
   required String boardId,
 }) {
   return MaterialPageRoute<void>(
     builder: (context) {
-      final dark = Theme.of(context).brightness == Brightness.dark;
+      // Always the light theme: white floating bars on the white board, as
+      // in desktop whiteboard apps (the companion pages keep their own look).
       return Theme(
-        data: dark ? InkTheme.dark() : InkTheme.light(),
+        data: InkTheme.light(),
         child: _WebCanvasPage(services: services, boardId: boardId),
       );
     },

@@ -198,6 +198,9 @@ class SlidingTray extends StatelessWidget {
   // There is no swipe handle (mouse users close with the X).
 
   static const double _webEdge = 16;
+
+  /// Left trays open beside the board's tool rail, not over it.
+  static const double _webLeftEdge = 84;
   static const double _webTopBar = 76; // clears the board's top bar
   static const double _webToolbar = 84; // clears the bottom toolbar
   static const double _webBottomTrayWidth = 320;
@@ -222,7 +225,7 @@ class SlidingTray extends StatelessWidget {
             (bottomOffset ?? _webToolbar);
         final hidden = -trayWidth - 24;
         if (direction == TrayDirection.left) {
-          left = isOpen ? _webEdge : hidden;
+          left = isOpen ? _webLeftEdge : hidden;
         } else {
           right = isOpen ? _webEdge : hidden;
         }
@@ -242,7 +245,7 @@ class SlidingTray extends StatelessWidget {
             .toDouble();
         maxHeight = screen.height - _webTopBar - _webEdge;
         top = _webTopBar;
-        left = isOpen ? _webEdge : -trayWidth - 24;
+        left = isOpen ? _webLeftEdge : -trayWidth - 24;
         break;
     }
     // The tray's own height, but never taller than the visible space.
