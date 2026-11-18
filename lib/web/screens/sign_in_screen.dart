@@ -295,8 +295,8 @@ class _WebIntroPanel extends StatelessWidget {
         Text('InkLink, on any computer', style: InkType.display(ink.ink)),
         const SizedBox(height: InkSpacing.s8),
         Text(
-          'Keep up with your boards and people from the browser. '
-          'Drawing and live editing stay in the InkLink mobile app.',
+          'Open your boards, draw together live and keep up with your '
+          'people, right from the browser.',
           style: InkType.body(ink.inkSecondary),
         ),
         const SizedBox(height: InkSpacing.s24),
@@ -308,7 +308,7 @@ class _WebIntroPanel extends StatelessWidget {
               color: InkColors.stickyButter,
               icon: LucideIcons.layoutGrid,
               title: 'Your boards',
-              text: 'Search, filter and jump into any board on your phone.',
+              text: 'Open any board and draw with your team in real time.',
               tiltId: 'web-intro-boards',
             ),
             _IntroNote(

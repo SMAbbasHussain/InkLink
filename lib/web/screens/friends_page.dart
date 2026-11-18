@@ -4,15 +4,17 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../domain/models/friends/friend.dart';
 import '../../domain/models/friends/friend_request.dart';
+import '../../ui/theme/ink_theme.dart';
+import '../../ui/theme/ink_tokens.dart';
+import '../../ui/theme/ink_type.dart';
 import '../../ui/widgets/ink_avatar.dart';
+import '../../ui/widgets/paper_card.dart';
 import '../data/web_companion_repository.dart';
 import '../data/web_mappers.dart';
-import '../glass/glass_tokens.dart';
-import '../glass/glass_widgets.dart';
 import '../widgets/web_widgets.dart';
-import 'home_shell.dart' show GlassAvatarRing;
 
-/// Incoming friend requests (accept/decline) and the friends list.
+/// Incoming friend requests (accept/decline) and the friends list, as the
+/// phone shows them: paper cards with avatars.
 class WebFriendsPage extends StatefulWidget {
   const WebFriendsPage({super.key});
 
@@ -22,13 +24,20 @@ class WebFriendsPage extends StatefulWidget {
 
 class _WebFriendsPageState extends State<WebFriendsPage> {
   late final _repo = context.read<WebCompanionRepository>();
-  late final Stream<List<FriendRequest>> _requests = _repo.watchIncomingFriendRequests();
+  late final Stream<List<FriendRequest>> _requests = _repo
+      .watchIncomingFriendRequests();
   late final Stream<List<Friend>> _friends = _repo.watchFriends();
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(28, 28, 28, 40),
+      padding: const EdgeInsets.fromLTRB(
+        InkSpacing.s16,
+        InkSpacing.s24,
+        InkSpacing.s16,
+        110,
+      ),
       children: [
         WebReadableWidth(
           child: Column(
@@ -36,7 +45,8 @@ class _WebFriendsPageState extends State<WebFriendsPage> {
             children: [
               const WebPageHeader(
                 title: 'Friends',
-                subtitle: 'To add new friends or chat, use the InkLink mobile app.',
+                subtitle:
+                    'To add new friends or chat, use the InkLink mobile app.',
               ),
               const WebSectionLabel('Friend requests'),
               WebStreamList<FriendRequest>(
@@ -47,76 +57,75 @@ class _WebFriendsPageState extends State<WebFriendsPage> {
                 builder: (context, requests) => Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    for (var i = 0; i < requests.length; i++)
-                      GlassEntrance(
-                        key: ValueKey(requests[i].id),
-                        index: i,
-                        child: Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: GlassPanel(
-                            padding: const EdgeInsets.all(16),
-                            child: Row(
-                              children: [
-                                GlassAvatarRing(
-                                  child: InkAvatar(
-                                    id: requests[i].fromUid,
-                                    imageUrl: requests[i].senderPic,
-                                    initials: initialsOf(requests[i].senderName),
-                                    size: 38,
-                                  ),
+                    for (final r in requests)
+                      Padding(
+                        key: ValueKey(r.id),
+                        padding: const EdgeInsets.only(bottom: InkSpacing.s12),
+                        child: PaperCard(
+                          padding: const EdgeInsets.all(InkSpacing.s12),
+                          child: Row(
+                            children: [
+                              InkAvatar(
+                                imageUrl: r.senderPic,
+                                initials: initialsOf(r.senderName),
+                                id: r.fromUid,
+                                size: 48,
+                              ),
+                              const SizedBox(width: InkSpacing.s12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      r.senderName,
+                                      style: InkType.bodyStrong(tokens.ink),
+                                    ),
+                                    Text(
+                                      'Wants to be friends · '
+                                      '${timeAgo(r.timestamp)}',
+                                      style: InkType.caption(tokens.inkMuted),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(requests[i].senderName, style: Glass.strong()),
-                                      Text(
-                                        'wants to be friends · ${timeAgo(requests[i].timestamp)}',
-                                        style: Glass.small(),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                WebAcceptDecline(
-                                  onAccept: () => _repo.acceptFriendRequest(requests[i].id),
-                                  onDecline: () => _repo.declineFriendRequest(requests[i].id),
-                                  acceptedMessage:
-                                      'You and ${requests[i].senderName} are now friends.',
-                                  declinedMessage: 'Request declined.',
-                                ),
-                              ],
-                            ),
+                              ),
+                              WebAcceptDecline(
+                                onAccept: () => _repo.acceptFriendRequest(r.id),
+                                onDecline: () =>
+                                    _repo.declineFriendRequest(r.id),
+                                acceptedMessage:
+                                    'You and ${r.senderName} are now friends.',
+                                declinedMessage: 'Request declined.',
+                              ),
+                            ],
                           ),
                         ),
                       ),
                   ],
                 ),
               ),
+              const SizedBox(height: InkSpacing.s16),
               const WebSectionLabel('Your friends'),
               WebStreamList<Friend>(
                 stream: _friends,
                 emptyIcon: LucideIcons.users,
                 emptyText: 'No friends yet',
                 emptySubtitle: 'Add friends in the InkLink mobile app.',
-                builder: (context, friends) => LayoutBuilder(
-                  builder: (context, constraints) {
-                    final columns = constraints.maxWidth >= 520 ? 2 : 1;
-                    const gap = 12.0;
-                    final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
-                    return Wrap(
-                      spacing: gap,
-                      runSpacing: gap,
-                      children: [
-                        for (var i = 0; i < friends.length; i++)
-                          SizedBox(
-                            key: ValueKey(friends[i].uid),
-                            width: width,
-                            child: GlassEntrance(index: i, child: _FriendCard(friend: friends[i])),
-                          ),
+                builder: (context, friends) => PaperCard(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: InkSpacing.s12,
+                  ),
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < friends.length; i++) ...[
+                        if (i > 0)
+                          Divider(height: 1, color: tokens.glassStroke),
+                        _FriendRow(
+                          key: ValueKey(friends[i].uid),
+                          friend: friends[i],
+                        ),
                       ],
-                    );
-                  },
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -127,69 +136,46 @@ class _WebFriendsPageState extends State<WebFriendsPage> {
   }
 }
 
-class _FriendCard extends StatefulWidget {
+class _FriendRow extends StatelessWidget {
   final Friend friend;
-  const _FriendCard({required this.friend});
-
-  @override
-  State<_FriendCard> createState() => _FriendCardState();
-}
-
-class _FriendCardState extends State<_FriendCard> {
-  bool _hover = false;
+  const _FriendRow({super.key, required this.friend});
 
   @override
   Widget build(BuildContext context) {
-    final f = widget.friend;
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: AnimatedContainer(
-        duration: Glass.fast,
-        transform: Matrix4.translationValues(0, _hover ? -3 : 0, 0),
-        child: GlassPanel(
-          padding: const EdgeInsets.all(16),
-          borderColor: _hover ? Glass.borderBright : null,
-          shadow: _hover ? Glass.shadow : null,
-          child: Row(
-            children: [
-              GlassAvatarRing(
-                child: InkAvatar(
-                  id: f.uid,
-                  imageUrl: f.photoURL,
-                  initials: initialsOf(f.displayName),
-                  size: 42,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      f.displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Glass.strong(),
-                    ),
-                    const SizedBox(height: 5),
-                    Row(
-                      children: [
-                        const Icon(LucideIcons.layoutGrid, size: 13, color: Glass.textMuted),
-                        const SizedBox(width: 4),
-                        Text('${f.boardCount}', style: Glass.small(color: Glass.textSecondary)),
-                        const SizedBox(width: 12),
-                        const Icon(LucideIcons.users, size: 13, color: Glass.textMuted),
-                        const SizedBox(width: 4),
-                        Text('${f.friendCount}', style: Glass.small(color: Glass.textSecondary)),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
+    final tokens = context.ink;
+    final f = friend;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: InkSpacing.s12),
+      child: Row(
+        children: [
+          InkAvatar(
+            imageUrl: f.photoURL,
+            initials: initialsOf(f.displayName),
+            id: f.uid,
+            size: 44,
           ),
-        ),
+          const SizedBox(width: InkSpacing.s12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  f.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: InkType.bodyStrong(tokens.ink),
+                ),
+                Text(
+                  '${f.boardCount} '
+                  '${f.boardCount == 1 ? 'board' : 'boards'} · '
+                  '${f.friendCount} '
+                  '${f.friendCount == 1 ? 'friend' : 'friends'}',
+                  style: InkType.caption(tokens.inkMuted),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

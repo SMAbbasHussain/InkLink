@@ -4,13 +4,19 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../domain/models/board.dart';
 import '../../ui/theme/ink_theme.dart';
+import '../../ui/theme/ink_tokens.dart';
 import '../../ui/theme/ink_type.dart';
+import '../../ui/widgets/empty_state.dart';
+import '../../ui/widgets/ink_button.dart';
+import '../../ui/widgets/ink_dialog.dart';
+import '../../ui/widgets/paper_card.dart';
 import '../data/web_mappers.dart';
-import '../glass/glass_tokens.dart';
-import '../glass/glass_widgets.dart';
 
-/// Shows a short message at the bottom of the page (works in the glass
-/// shell and on the sign-in screen).
+// Shared pieces of the web companion, built from the mobile app's Ink design
+// system (lib/ui) so the web looks like the phone.
+
+/// Shows a short message at the bottom of the page, like the phone's
+/// snackbars.
 void showWebMessage(
   BuildContext context,
   String message, {
@@ -23,10 +29,10 @@ void showWebMessage(
       SnackBar(
         behavior: SnackBarBehavior.floating,
         width: 420,
-        backgroundColor: isError ? ink.danger : null,
+        backgroundColor: isError ? ink.danger : ink.ink,
         content: Text(
           message,
-          style: isError ? InkType.body(Colors.white) : Glass.body(color: Glass.text),
+          style: InkType.body(isError ? Colors.white : ink.paper),
         ),
       ),
     );
@@ -39,18 +45,25 @@ String webErrorText(Object error) {
   return text.startsWith('Exception: ') ? text.substring(11) : text;
 }
 
-/// Page title (40px, tight tracking) with an optional subtitle and action.
+/// Page title with an optional subtitle and action (the phone's screen
+/// title style).
 class WebPageHeader extends StatelessWidget {
   final String title;
   final String? subtitle;
   final Widget? trailing;
 
-  const WebPageHeader({super.key, required this.title, this.subtitle, this.trailing});
+  const WebPageHeader({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.trailing,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final tokens = context.ink;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 20),
+      padding: const EdgeInsets.only(bottom: InkSpacing.s20),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -58,10 +71,13 @@ class WebPageHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Semantics(header: true, child: Text(title, style: Glass.title())),
+                Semantics(
+                  header: true,
+                  child: Text(title, style: InkType.headline(tokens.ink)),
+                ),
                 if (subtitle != null) ...[
-                  const SizedBox(height: 6),
-                  Text(subtitle!, style: Glass.body(color: Glass.textMuted)),
+                  const SizedBox(height: InkSpacing.s4),
+                  Text(subtitle!, style: InkType.body(tokens.inkSecondary)),
                 ],
               ],
             ),
@@ -73,8 +89,8 @@ class WebPageHeader extends StatelessWidget {
   }
 }
 
-/// Keeps lists and forms at a readable width, aligned with the page title,
-/// instead of stretching across very wide screens.
+/// Keeps lists and forms at a readable width instead of stretching across
+/// very wide screens.
 class WebReadableWidth extends StatelessWidget {
   final double maxWidth;
   final Widget child;
@@ -82,34 +98,43 @@ class WebReadableWidth extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Align(
-        alignment: Alignment.topLeft,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: maxWidth),
-          child: child,
-        ),
-      );
+    alignment: Alignment.topLeft,
+    child: ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: child,
+    ),
+  );
 }
 
-/// "Nothing here" state: a centered glass panel with an icon in a
-/// gradient-ringed circle.
+/// "Nothing here": the phone's sticky-note empty state.
 class WebEmptyHint extends StatelessWidget {
   final IconData icon;
   final String text;
   final String? subtitle;
-  const WebEmptyHint({super.key, required this.icon, required this.text, this.subtitle});
+  const WebEmptyHint({
+    super.key,
+    required this.icon,
+    required this.text,
+    this.subtitle,
+  });
 
   @override
-  Widget build(BuildContext context) =>
-      GlassEmptyState(icon: icon, title: text, subtitle: subtitle);
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: InkSpacing.s16),
+    child: EmptyState(icon: icon, text: text, subtitle: subtitle),
+  );
 }
 
-/// Section label: uppercase with letter-spacing and a gradient divider.
+/// Small section label above a group of items.
 class WebSectionLabel extends StatelessWidget {
   final String text;
   const WebSectionLabel(this.text, {super.key});
 
   @override
-  Widget build(BuildContext context) => GlassSectionHeader(text);
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: InkSpacing.s8, bottom: InkSpacing.s12),
+    child: Text(text, style: InkType.subhead(context.ink.inkSecondary)),
+  );
 }
 
 /// Builds a live list with loading, error and empty states.
@@ -120,8 +145,7 @@ class WebStreamList<T> extends StatelessWidget {
   final String emptyText;
   final String? emptySubtitle;
 
-  /// Kept for compatibility: both sizes now use the glass empty state, with
-  /// more breathing room when the whole page is this list.
+  /// Less room around the empty state when the list is one of several.
   final bool compactEmpty;
 
   const WebStreamList({
@@ -142,23 +166,18 @@ class WebStreamList<T> extends StatelessWidget {
         if (snapshot.hasError) {
           return WebErrorBox(message: webErrorText(snapshot.error!));
         }
-        if (!snapshot.hasData) {
-          return const Padding(
-            padding: EdgeInsets.all(32),
-            child: Center(
-              child: SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Glass.accentText),
-              ),
-            ),
-          );
-        }
+        if (!snapshot.hasData) return const WebLoading();
         final items = snapshot.data!;
         if (items.isEmpty) {
           return Padding(
-            padding: EdgeInsets.symmetric(vertical: compactEmpty ? 4 : 32),
-            child: GlassEmptyState(icon: emptyIcon, title: emptyText, subtitle: emptySubtitle),
+            padding: EdgeInsets.symmetric(
+              vertical: compactEmpty ? 0 : InkSpacing.s24,
+            ),
+            child: WebEmptyHint(
+              icon: emptyIcon,
+              text: emptyText,
+              subtitle: emptySubtitle,
+            ),
           );
         }
         return builder(context, items);
@@ -167,111 +186,124 @@ class WebStreamList<T> extends StatelessWidget {
   }
 }
 
-class WebErrorBox extends StatelessWidget {
-  final String message;
-  const WebErrorBox({super.key, required this.message});
+/// The phone's loading spinner, centred.
+class WebLoading extends StatelessWidget {
+  const WebLoading({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return GlassPanel(
-      padding: const EdgeInsets.all(14),
-      borderColor: Glass.danger.withValues(alpha: 0.35),
-      child: Row(
-        children: [
-          const Icon(LucideIcons.triangleAlert, color: Glass.danger, size: 18),
-          const SizedBox(width: 10),
-          Expanded(child: Text(message, style: Glass.body(color: Glass.danger))),
-        ],
-      ),
-    );
-  }
-}
-
-/// Details for a board, with links that open it in the phone app.
-Future<void> showOpenInAppDialog(BuildContext context, Board board) {
-  final link = boardAppLink(board.id);
-  return showDialog<void>(
-    context: context,
-    barrierColor: const Color(0x99000000),
-    builder: (dialogContext) => Dialog(
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
-        child: GlassPanel(
-          blur: true,
-          radius: Glass.r20,
-          shadow: Glass.shadowLifted,
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(board.title, style: Glass.heading(size: 22)),
-              const SizedBox(height: 8),
-              Text(
-                'Drawing and editing happen in the InkLink mobile app. '
-                'Open this link on your phone to jump straight into the board.',
-                style: Glass.body(),
-              ),
-              const SizedBox(height: 16),
-              GlassPanel(
-                strong: true,
-                radius: 12,
-                padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
-                child: Row(
-                  children: [
-                    Expanded(child: SelectableText(link, style: Glass.body(color: Glass.text))),
-                    GlassButton.icon(
-                      icon: LucideIcons.copy,
-                      tooltip: 'Copy link',
-                      onPressed: () async {
-                        await Clipboard.setData(ClipboardData(text: link));
-                        if (dialogContext.mounted) showWebMessage(dialogContext, 'Link copied');
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  GlassPill(
-                    icon: LucideIcons.users,
-                    text: '${board.membersCount} ${board.membersCount == 1 ? 'member' : 'members'}',
-                  ),
-                  GlassPill(
-                    icon: board.visibility == 'public' ? LucideIcons.globe : LucideIcons.lock,
-                    text: board.visibility == 'public' ? 'Public' : 'Private',
-                  ),
-                  if (board.isArchived) const GlassPill(icon: LucideIcons.archive, text: 'Archived'),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Align(
-                alignment: Alignment.centerRight,
-                child: GlassButton.ghost(
-                  label: 'Close',
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                ),
-              ),
-            ],
-          ),
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.all(InkSpacing.s32),
+    child: Center(
+      child: SizedBox(
+        width: 24,
+        height: 24,
+        child: CircularProgressIndicator(
+          strokeWidth: 2.4,
+          color: context.ink.accent,
         ),
       ),
     ),
   );
 }
 
-/// Accept (gradient, glows on hover) / Decline (ghost glass) pair used by
-/// invites and friend requests.
+class WebErrorBox extends StatelessWidget {
+  final String message;
+  const WebErrorBox({super.key, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return PaperCard(
+      padding: const EdgeInsets.all(InkSpacing.s16),
+      child: Row(
+        children: [
+          Icon(LucideIcons.triangleAlert, color: tokens.danger, size: 18),
+          const SizedBox(width: InkSpacing.s12),
+          Expanded(child: Text(message, style: InkType.body(tokens.danger))),
+        ],
+      ),
+    );
+  }
+}
+
+/// Details for a board, with links that open it in the phone app (preview
+/// mode and tests; the real web app opens the canvas instead).
+Future<void> showOpenInAppDialog(BuildContext context, Board board) {
+  final link = boardAppLink(board.id);
+  return showDialog<void>(
+    context: context,
+    builder: (dialogContext) {
+      final tokens = dialogContext.ink;
+      return InkDialog(
+        title: board.title,
+        icon: LucideIcons.layoutGrid,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Open this link on your phone to jump straight into the board.',
+              style: InkType.body(tokens.inkSecondary),
+            ),
+            const SizedBox(height: InkSpacing.s12),
+            Container(
+              padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+              decoration: BoxDecoration(
+                color: tokens.field,
+                borderRadius: BorderRadius.circular(InkRadii.input),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      link,
+                      style: InkType.body(tokens.ink),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Copy link',
+                    icon: Icon(LucideIcons.copy, size: 18, color: tokens.ink),
+                    onPressed: () async {
+                      await Clipboard.setData(ClipboardData(text: link));
+                      if (dialogContext.mounted) {
+                        showWebMessage(dialogContext, 'Link copied');
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: InkSpacing.s12),
+            Text(
+              '${board.membersCount} '
+              '${board.membersCount == 1 ? 'member' : 'members'} · '
+              '${board.visibility == 'public' ? 'Public' : 'Private'}'
+              '${board.isArchived ? ' · Archived' : ''}',
+              style: InkType.caption(tokens.inkMuted),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+/// Decline / Accept pair used by invites and friend requests (the phone's
+/// secondary and primary buttons).
 class WebAcceptDecline extends StatefulWidget {
   final Future<void> Function() onAccept;
   final Future<void> Function() onDecline;
   final String acceptedMessage;
   final String declinedMessage;
+
+  /// Fill the available width (sticky-note invites), or stay compact.
+  final bool expand;
 
   const WebAcceptDecline({
     super.key,
@@ -279,6 +311,7 @@ class WebAcceptDecline extends StatefulWidget {
     required this.onDecline,
     required this.acceptedMessage,
     required this.declinedMessage,
+    this.expand = false,
   });
 
   @override
@@ -302,20 +335,32 @@ class _WebAcceptDeclineState extends State<WebAcceptDecline> {
 
   @override
   Widget build(BuildContext context) {
+    final decline = InkButton.secondary(
+      label: 'Decline',
+      expand: widget.expand,
+      compact: !widget.expand,
+      onPressed: _busy
+          ? null
+          : () => _run(widget.onDecline, widget.declinedMessage),
+    );
+    final accept = InkButton.primary(
+      label: 'Accept',
+      expand: widget.expand,
+      compact: !widget.expand,
+      isLoading: _busy,
+      onPressed: _busy
+          ? null
+          : () => _run(widget.onAccept, widget.acceptedMessage),
+    );
     return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        GlassButton.ghost(
-          label: 'Decline',
-          onPressed: _busy ? null : () => _run(widget.onDecline, widget.declinedMessage),
-        ),
-        const SizedBox(width: 8),
-        GlassButton.primary(
-          label: 'Accept',
-          loading: _busy,
-          onPressed: _busy ? null : () => _run(widget.onAccept, widget.acceptedMessage),
-        ),
-      ],
+      mainAxisSize: widget.expand ? MainAxisSize.max : MainAxisSize.min,
+      children: widget.expand
+          ? [
+              Expanded(child: decline),
+              const SizedBox(width: InkSpacing.s12),
+              Expanded(child: accept),
+            ]
+          : [decline, const SizedBox(width: InkSpacing.s8), accept],
     );
   }
 }

@@ -1,20 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../domain/models/board.dart';
-import '../../domain/models/user_model.dart';
+import '../../ui/theme/ink_colors.dart';
+import '../../ui/theme/ink_theme.dart';
+import '../../ui/theme/ink_tokens.dart';
+import '../../ui/theme/ink_type.dart';
+import '../../ui/widgets/board_card_frame.dart';
+import '../../ui/widgets/command_bar.dart';
+import '../../ui/widgets/ink_segmented.dart';
+import '../../ui/widgets/sticky_note.dart';
 import '../data/web_companion_repository.dart';
 import '../data/web_mappers.dart';
-import '../glass/glass_tokens.dart';
-import '../glass/glass_widgets.dart';
-import '../widgets/board_card.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
 
-enum _BoardFilter { all, owned, joined, archived }
+/// Room under the page content for the floating search bar and nav bar.
+const double _floatingBarsRoom = 180;
 
-/// The user's boards (live), with a greeting, quick stats, search and filters.
+enum _BoardTab { mine, joined, archived }
+
+/// The user's boards (live), laid out like the phone's home screen: the
+/// greeting, a sticky note for waiting invites, the My Boards / Joined /
+/// Archived switch, board cards and the floating search bar.
 class WebBoardsPage extends StatefulWidget {
   const WebBoardsPage({super.key});
 
@@ -25,9 +35,9 @@ class WebBoardsPage extends StatefulWidget {
 class _WebBoardsPageState extends State<WebBoardsPage> {
   late final _repo = context.read<WebCompanionRepository>();
   late final Stream<List<Board>> _boards = _repo.watchMyBoards();
-  late final Stream<UserModel?> _profile = _repo.watchMyProfile();
+  late final _boardInvites = _repo.watchBoardInvites();
   final _search = TextEditingController();
-  _BoardFilter _filter = _BoardFilter.all;
+  _BoardTab _tab = _BoardTab.mine;
 
   @override
   void dispose() {
@@ -38,251 +48,283 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
   List<Board> _apply(List<Board> boards, String? uid) {
     final query = _search.text.trim().toLowerCase();
     return boards.where((b) {
-      final matchesFilter = switch (_filter) {
-        _BoardFilter.all => !b.isArchived,
-        _BoardFilter.owned => !b.isArchived && b.ownerId == uid,
-        _BoardFilter.joined => !b.isArchived && b.ownerId != uid,
-        _BoardFilter.archived => b.isArchived,
+      final inTab = switch (_tab) {
+        _BoardTab.mine => !b.isArchived && b.ownerId == uid,
+        _BoardTab.joined => !b.isArchived && b.ownerId != uid,
+        _BoardTab.archived => b.isArchived,
       };
-      if (!matchesFilter) return false;
+      if (!inTab) return false;
       if (query.isEmpty) return true;
       return b.title.toLowerCase().contains(query) ||
-          b.tags.any((t) => t.toLowerCase().contains(query));
+          b.tags.any((t) => t.toLowerCase().contains(query)) ||
+          b.id.toLowerCase().contains(query);
     }).toList();
   }
 
   @override
   Widget build(BuildContext context) {
     final uid = _repo.currentUser?.uid;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(28, 28, 28, 40),
+    final nav = WebShellNav.maybeOf(context);
+    return Stack(
       children: [
-        StreamBuilder<UserModel?>(
-          stream: _profile,
-          builder: (context, snap) => _Greeting(
-            firstName: firstNameOf(snap.data?.displayName ?? _repo.currentUser?.displayName),
+        ListView(
+          padding: const EdgeInsets.fromLTRB(
+            InkSpacing.s16,
+            InkSpacing.s24,
+            InkSpacing.s16,
+            _floatingBarsRoom,
           ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Everything you own or joined. Open a board on your phone to draw.',
-          style: Glass.body(color: Glass.textMuted),
-        ),
-        const SizedBox(height: 18),
-        const _QuickStats(),
-        const SizedBox(height: 26),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            SizedBox(
-              width: 360,
-              child: GlassSearchField(
-                controller: _search,
-                hintText: 'Search by title or tag',
-                shortcutHint: '⌘K',
-                onChanged: (_) => setState(() {}),
+            StreamBuilder(
+              stream: _boardInvites,
+              builder: (context, snapshot) => _GreetingRow(
+                inviteCount: snapshot.data?.length ?? 0,
+                onReviewInvites: nav == null
+                    ? null
+                    : () => nav.goTo(WebSection.invites),
               ),
             ),
-            GlassSegmented<_BoardFilter>(
-              values: _BoardFilter.values,
-              selected: _filter,
-              labelOf: (f) => switch (f) {
-                _BoardFilter.all => 'All',
-                _BoardFilter.owned => 'Owned',
-                _BoardFilter.joined => 'Joined',
-                _BoardFilter.archived => 'Archived',
+            const SizedBox(height: InkSpacing.s24),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 460),
+                child: InkSegmented(
+                  labels: const ['My Boards', 'Joined', 'Archived'],
+                  selectedIndex: _tab.index,
+                  onChanged: (i) => setState(() => _tab = _BoardTab.values[i]),
+                ),
+              ),
+            ),
+            const SizedBox(height: InkSpacing.s24),
+            WebStreamList<Board>(
+              stream: _boards,
+              compactEmpty: false,
+              emptyIcon: LucideIcons.layoutGrid,
+              emptyText: 'No boards created yet.',
+              emptySubtitle: 'Create a board in the InkLink mobile app.',
+              builder: (context, boards) {
+                final visible = _apply(boards, uid);
+                if (visible.isEmpty) {
+                  final query = _search.text.trim();
+                  if (query.isNotEmpty) {
+                    return WebEmptyHint(
+                      icon: LucideIcons.searchX,
+                      text: 'No boards match "$query"',
+                    );
+                  }
+                  return WebEmptyHint(
+                    icon: _tab == _BoardTab.archived
+                        ? LucideIcons.archive
+                        : LucideIcons.layoutGrid,
+                    text: switch (_tab) {
+                      _BoardTab.mine => 'No boards created yet.',
+                      _BoardTab.joined => 'No boards joined yet.',
+                      _BoardTab.archived => 'No archived boards.',
+                    },
+                  );
+                }
+                return WebBoardCardGrid(
+                  boards: visible,
+                  captionFor: (b) => b.tags.isNotEmpty
+                      ? '${b.tags.map((t) => '#$t').join(' ')} • '
+                            'Edited ${timeAgo(b.updatedAt)}'
+                      : 'Edited ${timeAgo(b.updatedAt)}',
+                );
               },
-              onChanged: (f) => setState(() => _filter = f),
             ),
           ],
         ),
-        const SizedBox(height: 22),
-        WebStreamList<Board>(
-          stream: _boards,
-          compactEmpty: false,
-          emptyIcon: LucideIcons.layoutGrid,
-          emptyText: 'No boards yet',
-          emptySubtitle: 'Create a board in the InkLink mobile app and it will show up here.',
-          builder: (context, boards) {
-            final visible = _apply(boards, uid);
-            if (visible.isEmpty) {
-              return const WebEmptyHint(
-                icon: LucideIcons.searchX,
-                text: 'No boards match this search or filter.',
-              );
-            }
-            return WebBoardGrid(
-              boards: visible,
-              currentUid: uid,
-              allJoined: true,
-              onOpen: (b) => context.read<WebBoardOpener>().open(context, b),
-            );
-          },
+        // The phone's floating search bar, above the nav bar.
+        Positioned(
+          left: InkSpacing.s12,
+          right: InkSpacing.s12,
+          bottom: 92,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: CommandBar(
+                controller: _search,
+                hintText: 'Search boards...',
+                onChanged: (_) => setState(() {}),
+                onClear: () => setState(() {}),
+                trailing: [
+                  if (nav != null)
+                    CommandBarAction(
+                      icon: LucideIcons.compass,
+                      tooltip: 'Explore Public Boards',
+                      onPressed: () => nav.goTo(WebSection.discover),
+                    ),
+                ],
+              ),
+            ),
+          ),
         ),
       ],
     );
   }
 }
 
-/// "Good evening, Fahad" with the name in a subtle gradient.
-class _Greeting extends StatelessWidget {
-  final String? firstName;
-  const _Greeting({required this.firstName});
+/// "Ready to bring your ideas to life?" and, when invites are waiting, the
+/// tilted sticky note that opens them (as on the phone).
+class _GreetingRow extends StatelessWidget {
+  final int inviteCount;
+  final VoidCallback? onReviewInvites;
+
+  const _GreetingRow({required this.inviteCount, this.onReviewInvites});
 
   @override
   Widget build(BuildContext context) {
-    final greeting = greetingFor(DateTime.now());
-    return Semantics(
-      header: true,
-      label: firstName == null ? greeting : '$greeting, $firstName',
-      excludeSemantics: true,
-      child: Text.rich(
-        TextSpan(
-          children: [
-            TextSpan(text: firstName == null ? greeting : '$greeting, '),
-            if (firstName != null)
-              WidgetSpan(
-                alignment: PlaceholderAlignment.baseline,
-                baseline: TextBaseline.alphabetic,
-                child: ShaderMask(
-                  blendMode: BlendMode.srcIn,
-                  shaderCallback: (rect) => const LinearGradient(
-                    colors: [Color(0xFFE9E3FF), Color(0xFFB9A6FF), Color(0xFF8B9BFF)],
-                  ).createShader(rect),
-                  child: Text(firstName!, style: Glass.title()),
+    final tokens = context.ink;
+    final greeting = ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 360),
+      child: Semantics(
+        header: true,
+        child: Text(
+          'Ready to bring your ideas to life?',
+          style: InkType.display(tokens.ink),
+        ),
+      ),
+    );
+    if (inviteCount == 0) return greeting;
+
+    final ink = InkColors.stickyInkFor(InkColors.stickyButter);
+    return Wrap(
+      spacing: InkSpacing.s24,
+      runSpacing: InkSpacing.s16,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        greeting,
+        Padding(
+          padding: const EdgeInsets.all(InkSpacing.s8),
+          child: Transform.rotate(
+            angle: 5 * 3.1415926535 / 180,
+            child: SizedBox(
+              width: 160,
+              child: StickyNote(
+                color: InkColors.stickyButter,
+                showTape: true,
+                padding: const EdgeInsets.all(InkSpacing.s12),
+                onTap: onReviewInvites,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      inviteCount == 1
+                          ? "You've been invited to a board!"
+                          : 'You have $inviteCount board invites waiting!',
+                      style: InkType.label(ink),
+                    ),
+                    const SizedBox(height: InkSpacing.s8),
+                    Row(
+                      children: [
+                        Text('Review', style: InkType.bodyStrong(ink)),
+                        const SizedBox(width: 4),
+                        Icon(LucideIcons.chevronRight, size: 14, color: ink),
+                      ],
+                    ),
+                  ],
                 ),
               ),
-          ],
-        ),
-        style: Glass.title(),
-      ),
-    );
-  }
-}
-
-/// Small clickable summary: boards, waiting invites, friends.
-class _QuickStats extends StatefulWidget {
-  const _QuickStats();
-
-  @override
-  State<_QuickStats> createState() => _QuickStatsState();
-}
-
-class _QuickStatsState extends State<_QuickStats> {
-  late final _repo = context.read<WebCompanionRepository>();
-  late final _boards = _repo.watchMyBoards();
-  late final _boardInvites = _repo.watchBoardInvites();
-  late final _wsInvites = _repo.watchWorkspaceInvites();
-  late final _friends = _repo.watchFriends();
-
-  @override
-  Widget build(BuildContext context) {
-    final nav = WebShellNav.maybeOf(context);
-    return StreamBuilder(
-      stream: _boards,
-      builder: (context, boards) => StreamBuilder(
-        stream: _boardInvites,
-        builder: (context, bi) => StreamBuilder(
-          stream: _wsInvites,
-          builder: (context, wi) => StreamBuilder(
-            stream: _friends,
-            builder: (context, fr) {
-              final boardCount = boards.data?.where((b) => !b.isArchived).length;
-              final invites = (bi.data?.length ?? 0) + (wi.data?.length ?? 0);
-              final friends = fr.data?.length;
-              return Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  _StatChip(
-                    icon: LucideIcons.layoutGrid,
-                    value: boardCount,
-                    label: boardCount == 1 ? 'board' : 'boards',
-                  ),
-                  _StatChip(
-                    icon: LucideIcons.mailOpen,
-                    value: invites,
-                    label: invites == 1 ? 'invite waiting' : 'invites waiting',
-                    highlight: invites > 0,
-                    onTap: nav == null ? null : () => nav.goTo(WebSection.invites),
-                  ),
-                  _StatChip(
-                    icon: LucideIcons.users,
-                    value: friends,
-                    label: friends == 1 ? 'friend' : 'friends',
-                    onTap: nav == null ? null : () => nav.goTo(WebSection.friends),
-                  ),
-                ],
-              );
-            },
+            ),
           ),
         ),
-      ),
+      ],
     );
   }
 }
 
-class _StatChip extends StatelessWidget {
-  final IconData icon;
-  final int? value;
-  final String label;
-  final bool highlight;
-  final VoidCallback? onTap;
+/// Boards as the phone's cards (frame with a glass label), as many per row
+/// as fit. Clicking a card opens the board.
+class WebBoardCardGrid extends StatelessWidget {
+  final List<Board> boards;
+  final String Function(Board board) captionFor;
 
-  const _StatChip({
-    required this.icon,
-    required this.value,
-    required this.label,
-    this.highlight = false,
-    this.onTap,
+  const WebBoardCardGrid({
+    super.key,
+    required this.boards,
+    required this.captionFor,
   });
 
   @override
   Widget build(BuildContext context) {
-    const radius = BorderRadius.all(Radius.circular(999));
-    Widget chip = Material(
-      type: MaterialType.transparency,
-      child: InkWell(
-        borderRadius: radius,
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          decoration: BoxDecoration(
-            color: highlight ? const Color(0x268B5CF6) : Glass.bg,
-            borderRadius: radius,
-            border: Border.all(color: highlight ? const Color(0x598B5CF6) : Glass.border),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 15, color: highlight ? Glass.accentText : Glass.textMuted),
-              const SizedBox(width: 8),
-              Text(
-                value?.toString() ?? '–',
-                style: Glass.strong(color: highlight ? Glass.accentText : Glass.text),
+    final opener = context.read<WebBoardOpener>();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = InkSpacing.s12;
+        final columns = (constraints.maxWidth / 270).floor().clamp(1, 5);
+        final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final board in boards)
+              SizedBox(
+                key: ValueKey(board.id),
+                width: width,
+                child: Semantics(
+                  button: true,
+                  label: board.title,
+                  child: BoardCardFrame(
+                    // The web has no local preview images.
+                    previewPath: null,
+                    title: board.title,
+                    caption: captionFor(board),
+                    onTap: () => opener.open(context, board),
+                    menuButton: _BoardMenu(board: board),
+                  ),
+                ),
               ),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                style: Glass.body(color: highlight ? Glass.accentText : Glass.textSecondary),
-              ),
-              if (onTap != null) ...[
-                const SizedBox(width: 6),
-                const Icon(LucideIcons.chevronRight, size: 14, color: Glass.textMuted),
-              ],
-            ],
-          ),
-        ),
-      ),
+          ],
+        );
+      },
     );
-    if (highlight) chip = GlassShimmerOnce(borderRadius: radius, child: chip);
-    return chip;
   }
 }
 
-/// Public boards with search and tag filters.
+class _BoardMenu extends StatelessWidget {
+  final Board board;
+  const _BoardMenu({required this.board});
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return PopupMenuButton<String>(
+      tooltip: 'Board options',
+      icon: Icon(LucideIcons.ellipsisVertical, size: 18, color: tokens.ink),
+      onSelected: (value) {
+        if (value == 'open') {
+          context.read<WebBoardOpener>().open(context, board);
+        } else if (value == 'copy') {
+          Clipboard.setData(ClipboardData(text: board.id));
+          showWebMessage(context, 'Join Code (Board ID) copied to clipboard!');
+        }
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: 'open',
+          child: _row(LucideIcons.squareArrowOutUpRight, 'Open board', tokens),
+        ),
+        PopupMenuItem(
+          value: 'copy',
+          child: _row(LucideIcons.copy, 'Copy Join Code', tokens),
+        ),
+      ],
+    );
+  }
+
+  Widget _row(IconData icon, String label, InkTokens tokens) => Row(
+    children: [
+      Icon(icon, size: 18, color: tokens.ink),
+      const SizedBox(width: 10),
+      Text(label, style: InkType.body(tokens.ink)),
+    ],
+  );
+}
+
+/// Public boards, like the phone's "Explore Public Boards": search, tag
+/// chips and board cards.
 class WebDiscoverPage extends StatefulWidget {
   const WebDiscoverPage({super.key});
 
@@ -304,21 +346,25 @@ class _WebDiscoverPageState extends State<WebDiscoverPage> {
 
   @override
   Widget build(BuildContext context) {
-    final uid = _repo.currentUser?.uid;
+    final tokens = context.ink;
     return FutureBuilder<List<Board>>(
       future: _future,
       builder: (context, snapshot) {
         final loading = snapshot.connectionState != ConnectionState.done;
         return ListView(
-          padding: const EdgeInsets.fromLTRB(28, 28, 28, 40),
+          padding: const EdgeInsets.fromLTRB(
+            InkSpacing.s16,
+            InkSpacing.s24,
+            InkSpacing.s16,
+            _floatingBarsRoom - 70,
+          ),
           children: [
             WebPageHeader(
-              title: 'Discover',
-              subtitle: 'Public boards from the InkLink community.',
-              trailing: GlassButton.icon(
-                icon: LucideIcons.refreshCw,
+              title: 'Explore Public Boards',
+              subtitle: 'Boards shared with the InkLink community.',
+              trailing: IconButton(
                 tooltip: 'Refresh',
-                spinIcon: loading,
+                icon: Icon(LucideIcons.rotateCw, color: tokens.inkSecondary),
                 onPressed: loading
                     ? null
                     : () => setState(() => _future = _repo.loadPublicBoards()),
@@ -327,25 +373,17 @@ class _WebDiscoverPageState extends State<WebDiscoverPage> {
             if (snapshot.hasError)
               WebErrorBox(message: webErrorText(snapshot.error!))
             else if (!snapshot.hasData)
-              const Padding(
-                padding: EdgeInsets.all(32),
-                child: Center(
-                  child: SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Glass.accentText),
-                  ),
-                ),
-              )
+              const WebLoading()
             else
-              _buildResults(snapshot.data!, uid),
+              _buildResults(snapshot.data!),
           ],
         );
       },
     );
   }
 
-  Widget _buildResults(List<Board> boards, String? uid) {
+  Widget _buildResults(List<Board> boards) {
+    final tokens = context.ink;
     final tags = topTags(boards.map((b) => b.tags));
     final query = _search.text.trim().toLowerCase();
     final visible = boards.where((b) {
@@ -355,45 +393,86 @@ class _WebDiscoverPageState extends State<WebDiscoverPage> {
           b.tags.any((t) => t.toLowerCase().contains(query));
     }).toList();
 
+    Widget chip(String label, bool selected, VoidCallback onTap) => ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      showCheckmark: false,
+      onSelected: (_) => onTap(),
+      selectedColor: tokens.accent,
+      backgroundColor: tokens.paper,
+      labelStyle: InkType.caption(
+        selected ? Colors.white : tokens.inkSecondary,
+      ),
+      side: BorderSide(color: selected ? tokens.accent : tokens.glassStroke),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 10,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            SizedBox(
-              width: 320,
-              child: GlassSearchField(
-                controller: _search,
-                hintText: 'Search public boards',
-                onChanged: (_) => setState(() {}),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: TextField(
+              controller: _search,
+              onChanged: (_) => setState(() {}),
+              style: InkType.body(tokens.ink),
+              decoration: InputDecoration(
+                hintText: 'Search by title, topic, or keyword...',
+                hintStyle: InkType.body(tokens.inkMuted),
+                prefixIcon: Icon(
+                  LucideIcons.search,
+                  size: 20,
+                  color: tokens.inkSecondary,
+                ),
+                filled: true,
+                fillColor: tokens.isDark ? tokens.paper : Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(InkRadii.input),
+                  borderSide: BorderSide(color: tokens.glassStroke),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(InkRadii.input),
+                  borderSide: BorderSide(color: tokens.glassStroke),
+                ),
               ),
             ),
-            const SizedBox(width: 4),
-            GlassChoicePill(label: 'All', selected: _tag == null, onTap: () => setState(() => _tag = null)),
+          ),
+        ),
+        const SizedBox(height: InkSpacing.s12),
+        Wrap(
+          spacing: InkSpacing.s8,
+          runSpacing: InkSpacing.s8,
+          children: [
+            chip('All', _tag == null, () => setState(() => _tag = null)),
             for (final t in tags)
-              GlassChoicePill(
-                label: '#$t',
-                selected: _tag == t,
-                onTap: () => setState(() => _tag = _tag == t ? null : t),
+              chip(
+                '#$t',
+                _tag == t,
+                () => setState(() => _tag = _tag == t ? null : t),
               ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: InkSpacing.s20),
         if (boards.isEmpty)
-          const WebEmptyHint(icon: LucideIcons.compass, text: 'No public boards yet.')
+          const WebEmptyHint(
+            icon: LucideIcons.compass,
+            text: 'No public boards yet.',
+          )
         else if (visible.isEmpty)
           const WebEmptyHint(
             icon: LucideIcons.searchX,
             text: 'No public boards match this search or tag.',
           )
         else
-          WebBoardGrid(
+          WebBoardCardGrid(
             boards: visible,
-            currentUid: uid,
-            onOpen: (b) => context.read<WebBoardOpener>().open(context, b),
+            captionFor: (b) => b.tags.isNotEmpty
+                ? b.tags.take(3).map((t) => '#$t').join(' ')
+                : (b.membersCount == 1
+                      ? '1 member'
+                      : '${b.membersCount} members'),
           ),
       ],
     );

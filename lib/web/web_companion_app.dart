@@ -12,9 +12,11 @@ import 'screens/home_shell.dart';
 import 'screens/sign_in_screen.dart';
 import 'screens/web_shell_nav.dart';
 import 'widgets/web_widgets.dart';
+import 'web_theme.dart';
 
-/// Root of the web companion: theme, services and the sign-in gate.
-class WebCompanionApp extends StatelessWidget {
+/// Root of the web companion: theme, services and the sign-in gate. Uses the
+/// mobile app's Ink theme (light and dark) so both look the same.
+class WebCompanionApp extends StatefulWidget {
   /// Preview mode and tests inject a sample-data repository; the real app
   /// builds the Firebase one.
   final WebCompanionRepository? repository;
@@ -36,12 +38,23 @@ class WebCompanionApp extends StatelessWidget {
   });
 
   @override
+  State<WebCompanionApp> createState() => _WebCompanionAppState();
+}
+
+class _WebCompanionAppState extends State<WebCompanionApp> {
+  // A fixed mode (preview URLs, tests) is not overridden by a saved choice.
+  late final WebThemeController _theme = WebThemeController(
+    widget.themeMode,
+    persist: widget.themeMode == ThemeMode.system,
+  );
+
+  @override
   Widget build(BuildContext context) {
     return MultiRepositoryProvider(
       providers: [
         RepositoryProvider<WebCompanionRepository>(
           create: (_) =>
-              repository ??
+              widget.repository ??
               FirebaseWebCompanionRepository(
                 authService: AuthServiceImpl(),
                 firestoreService: FirestoreServiceImpl(),
@@ -50,16 +63,20 @@ class WebCompanionApp extends StatelessWidget {
         ),
         RepositoryProvider<WebAuthRefresh>(create: (_) => WebAuthRefresh()),
         RepositoryProvider<WebBoardOpener>.value(
-          value: boardOpener ?? WebBoardOpener.appLinks,
+          value: widget.boardOpener ?? WebBoardOpener.appLinks,
         ),
+        RepositoryProvider<WebThemeController>.value(value: _theme),
       ],
-      child: MaterialApp(
-        title: 'InkLink',
-        debugShowCheckedModeBanner: false,
-        theme: InkTheme.light(),
-        darkTheme: InkTheme.dark(),
-        themeMode: themeMode,
-        home: _WebAuthGate(initialSection: initialSection),
+      child: ValueListenableBuilder<ThemeMode>(
+        valueListenable: _theme.mode,
+        builder: (context, mode, _) => MaterialApp(
+          title: 'InkLink',
+          debugShowCheckedModeBanner: false,
+          theme: InkTheme.light(),
+          darkTheme: InkTheme.dark(),
+          themeMode: mode,
+          home: _WebAuthGate(initialSection: widget.initialSection),
+        ),
       ),
     );
   }
@@ -84,7 +101,10 @@ class _WebAuthGate extends StatelessWidget {
           if (user.usesPassword && !user.emailVerified) {
             return WebVerifyEmailScreen(email: user.email ?? 'your email');
           }
-          return WebHomeShell(key: ValueKey(user.uid), initialSection: initialSection);
+          return WebHomeShell(
+            key: ValueKey(user.uid),
+            initialSection: initialSection,
+          );
         },
       ),
     );
