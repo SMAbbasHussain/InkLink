@@ -117,7 +117,7 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
               boards: visible,
               currentUid: uid,
               allJoined: true,
-              onOpen: (b) => showOpenInAppDialog(context, b),
+              onOpen: (b) => context.read<WebBoardOpener>().open(context, b),
             );
           },
         ),
@@ -393,7 +393,7 @@ class _WebDiscoverPageState extends State<WebDiscoverPage> {
           WebBoardGrid(
             boards: visible,
             currentUid: uid,
-            onOpen: (b) => showOpenInAppDialog(context, b),
+            onOpen: (b) => context.read<WebBoardOpener>().open(context, b),
           ),
       ],
     );

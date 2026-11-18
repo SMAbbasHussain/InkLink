@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -61,8 +62,9 @@ class AppSnackBar {
     // Guaranteed fallback timer: if route changes freeze Flutter's internal timer,
     // this ensures the popup closes cleanly after the specified duration.
     // In widget test environments, ScaffoldMessenger manages dismissal timers cleanly.
+    // `Platform` is not available on the web; there it is never a test run.
     final isTestEnvironment =
-        Platform.environment.containsKey('FLUTTER_TEST');
+        !kIsWeb && Platform.environment.containsKey('FLUTTER_TEST');
     if (!isTestEnvironment) {
       Timer? fallbackTimer;
       fallbackTimer = Timer(duration + const Duration(milliseconds: 150), () {

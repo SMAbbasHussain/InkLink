@@ -19,7 +19,6 @@ import 'package:flutter/material.dart'
 import 'package:flutter/services.dart'
     show MissingPluginException, PlatformException;
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
@@ -28,6 +27,7 @@ import '../../models/canvas/canvas_element.dart';
 import '../../models/canvas/canvas_board_settings.dart';
 import '../../models/canvas/canvas_export_options.dart';
 import 'canvas_geometry.dart';
+import 'export_directories.dart';
 import '../../models/canvas/canvas_shape_type.dart';
 
 import '../../models/canvas/board_export_format.dart';

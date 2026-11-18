@@ -37,8 +37,6 @@ import '../../../ui/widgets/ink_avatar.dart';
 import '../../../ui/widgets/ink_button.dart';
 import '../../../ui/widgets/ink_dialog.dart';
 import '../../../ui/widgets/ink_text_field.dart';
-import '../../dashboard/bloc/dashboard_bloc.dart';
-import '../../dashboard/view/board_settings_route.dart';
 import '../../dashboard/view/board_edit_requests_screen.dart';
 import '../../notifications/bloc/notifications_bloc.dart';
 import '../bloc/ai_image_bloc.dart';
@@ -54,6 +52,8 @@ import '../models/board_template.dart';
 import '../models/brush_preset.dart';
 import '../models/canvas_tool_mode.dart';
 import 'ai_repaint_screen.dart';
+import 'board_settings_opener.dart'
+    if (dart.library.js_interop) 'board_settings_opener_web.dart';
 import 'media_editor_screen.dart';
 import 'trays/ai_tray.dart';
 import 'trays/brush_tray.dart';
@@ -2953,39 +2953,10 @@ class _CanvasScreenState extends State<CanvasScreen>
   }
 
   void _openSettings(String currentTitle) {
-    final dashboardBloc = context.read<DashboardBloc>();
-    final dashboardState = dashboardBloc.state;
-    Board? board;
-
-    if (dashboardState is DashboardLoaded) {
-      for (final b in dashboardState.ownedBoards) {
-        if (b.id == widget.boardId) {
-          board = b;
-          break;
-        }
-      }
-      if (board == null) {
-        for (final b in dashboardState.joinedBoards) {
-          if (b.id == widget.boardId) {
-            board = b;
-            break;
-          }
-        }
-      }
-    }
-
-    final fallback = Board(
-      id: widget.boardId,
-      title: currentTitle,
-      ownerId: '',
-      members: const [],
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-    );
-
-    Navigator.push(
+    openBoardSettings(
       context,
-      buildBoardSettingsRoute(context, board: board ?? fallback),
+      boardId: widget.boardId,
+      currentTitle: currentTitle,
     );
   }
 
@@ -4206,7 +4177,8 @@ class _CanvasScreenState extends State<CanvasScreen>
             AppSnackBar.showSuccess(
               context,
               msg,
-              action: path != null
+              // The web has no export file to share (the download is it).
+              action: path != null && !kIsWeb
                   ? SnackBarAction(
                       label: 'Share',
                       textColor: Colors.white,

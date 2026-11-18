@@ -319,3 +319,16 @@ class _WebAcceptDeclineState extends State<WebAcceptDecline> {
     );
   }
 }
+
+/// How the companion opens a board. The web app opens the mobile canvas;
+/// preview mode and tests (no Firebase) show the "open in the app" details.
+class WebBoardOpener {
+  final void Function(BuildContext context, Board board) open;
+
+  const WebBoardOpener(this.open);
+
+  /// The details dialog with links to the phone app.
+  static final WebBoardOpener appLinks = WebBoardOpener(
+    (context, board) => showOpenInAppDialog(context, board),
+  );
+}

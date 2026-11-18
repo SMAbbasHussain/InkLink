@@ -11,6 +11,7 @@ import 'data/web_companion_repository.dart';
 import 'screens/home_shell.dart';
 import 'screens/sign_in_screen.dart';
 import 'screens/web_shell_nav.dart';
+import 'widgets/web_widgets.dart';
 
 /// Root of the web companion: theme, services and the sign-in gate.
 class WebCompanionApp extends StatelessWidget {
@@ -22,11 +23,16 @@ class WebCompanionApp extends StatelessWidget {
   /// Section shown first after sign-in (Boards unless the preview asks).
   final WebSection initialSection;
 
+  /// What a board card does. The web app (main_web.dart) opens the canvas;
+  /// without one, cards show the "open in the app" details.
+  final WebBoardOpener? boardOpener;
+
   const WebCompanionApp({
     super.key,
     this.repository,
     this.themeMode = ThemeMode.system,
     this.initialSection = WebSection.boards,
+    this.boardOpener,
   });
 
   @override
@@ -43,6 +49,9 @@ class WebCompanionApp extends StatelessWidget {
               ),
         ),
         RepositoryProvider<WebAuthRefresh>(create: (_) => WebAuthRefresh()),
+        RepositoryProvider<WebBoardOpener>.value(
+          value: boardOpener ?? WebBoardOpener.appLinks,
+        ),
       ],
       child: MaterialApp(
         title: 'InkLink',

@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../../core/utils/app_snackbar.dart';
 import '../../../../domain/models/board.dart';
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_tokens.dart';
@@ -94,6 +96,14 @@ class _MembersTrayState extends State<MembersTray> {
                   children: [
                     IconButton(
                       onPressed: () {
+                        if (kIsWeb) {
+                          AppSnackBar.showMessage(
+                            context,
+                            'Voice calls are available in the InkLink '
+                            'mobile app.',
+                          );
+                          return;
+                        }
                         final bloc = context.read<CanvasBloc>();
                         if (bloc.state.isVoiceCallActive) {
                           bloc.add(const CanvasLeaveVoiceCallRequested());
