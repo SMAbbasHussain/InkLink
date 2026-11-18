@@ -2104,7 +2104,7 @@ io.on('connection', (socket) => {
     if (!(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
     try {
       let opts;
-      if (requestId && !payload.mode) {
+      if (requestId && (!payload.mode || (payload.mode === 'user' && !payload.targetUid))) {
         const reqDoc = await db.collection('boards').doc(boardId)
           .collection('undo_requests').doc(String(requestId)).get();
         if (!reqDoc.exists) return historyError(ack, 'not_found');
