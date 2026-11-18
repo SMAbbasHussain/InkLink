@@ -65,6 +65,7 @@ import 'history_screen.dart';
 import 'trays/tools_tray.dart';
 import 'widgets/history_preview_banner.dart';
 import 'widgets/shapes_picker_popup.dart';
+import 'widgets/sliding_tray.dart';
 import 'widgets/revert_review_sheet.dart';
 import 'widgets/undo_request_sheet.dart';
 import 'chat/board_chat_drawer.dart';
@@ -7942,7 +7943,9 @@ class _CanvasScreenState extends State<CanvasScreen>
       }
       final brushTrayOpen = current.activeTray == 'brushes';
       _canvasBloc.add(CanvasSetToolMode(mode, keepTray: brushTrayOpen));
-      if (!brushTrayOpen) {
+      // In a desktop browser, picking a tool only selects it; clicking the
+      // active tool again opens its settings (above). Phones also open them.
+      if (!brushTrayOpen && !SlidingTray.useWebLayout(context)) {
         _canvasBloc.add(const CanvasToggleTray('brushes'));
       }
       return;
