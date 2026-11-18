@@ -195,7 +195,6 @@ GitHub Actions workflow (`.github/workflows/architecture-guardrails.yml`) automa
 
 ## Documentation Sub-Guides
 
-- [Master Project & Viva Guide](doc.md)
 - [Flutter Client Architecture & Module Map](lib/README.md)
 - [Node.js WebSocket & Agora Relay Server](server/README.md)
 - [Firebase Cloud Functions Specification](functions/README.md)
