@@ -109,88 +109,279 @@ class _WebHomeShellState extends State<WebHomeShell> {
     if (i >= 0) _lastNavIndex = i;
   });
 
+  int _badgeFor(WebSection s) => switch (s) {
+    WebSection.invites => _boardInvites + _workspaceInvites,
+    WebSection.friends => _friendRequests,
+    WebSection.notifications => _unread,
+    _ => 0,
+  };
+
   @override
   Widget build(BuildContext context) {
-    final navIndex = _navSections.indexOf(_section);
+    final wide = MediaQuery.sizeOf(context).width >= webSidebarMinWidth;
     return WebShellNav(
       goTo: _goTo,
       child: Scaffold(
         body: DeskBackground(
-          child: SafeArea(
-            child: Stack(
-              children: [
-                Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(
-                        InkSpacing.s16,
-                        InkSpacing.s12,
-                        InkSpacing.s16,
-                        0,
-                      ),
-                      child: Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 1180),
-                          child: _Header(
-                            unread: _unread,
-                            onNotifications: () =>
-                                _goTo(WebSection.notifications),
-                            onProfile: () => _goTo(WebSection.profile),
-                          ),
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.topCenter,
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 1180),
-                          child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 220),
-                            child: KeyedSubtree(
-                              key: ValueKey(_section),
-                              child: _pageFor(_section),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+          child: SafeArea(child: wide ? _buildWide() : _buildNarrow()),
+        ),
+      ),
+    );
+  }
+
+  /// Desktop: a full-width top bar and a labelled sidebar, in the mobile
+  /// app's colours and components.
+  Widget _buildWide() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            InkSpacing.s16,
+            InkSpacing.s12,
+            InkSpacing.s16,
+            0,
+          ),
+          child: _Header(
+            unread: _unread,
+            showName: true,
+            onNotifications: () => _goTo(WebSection.notifications),
+            onProfile: () => _goTo(WebSection.profile),
+          ),
+        ),
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  InkSpacing.s16,
+                  InkSpacing.s16,
+                  0,
+                  InkSpacing.s16,
                 ),
-                Align(
-                  alignment: Alignment.bottomCenter,
+                child: _SideNav(
+                  selected: _section,
+                  badgeFor: _badgeFor,
+                  onSelect: _goTo,
+                ),
+              ),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.topCenter,
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 440),
-                    child: GlassNavBar(
-                      currentIndex: navIndex < 0 ? _lastNavIndex : navIndex,
-                      onTap: (i) => _goTo(_navSections[i]),
-                      items: [
-                        const GlassNavItem(
-                          activeIcon: LucideIcons.house,
-                          inactiveIcon: LucideIcons.house,
-                          label: 'Home',
-                        ),
-                        const GlassNavItem(
-                          activeIcon: LucideIcons.compass,
-                          inactiveIcon: LucideIcons.compass,
-                          label: 'Discover',
-                        ),
-                        GlassNavItem(
-                          activeIcon: LucideIcons.mailOpen,
-                          inactiveIcon: LucideIcons.mail,
-                          label: 'Invites',
-                          badge: _boardInvites + _workspaceInvites,
-                        ),
-                        GlassNavItem(
-                          activeIcon: LucideIcons.users,
-                          inactiveIcon: LucideIcons.users,
-                          label: 'Friends',
-                          badge: _friendRequests,
-                        ),
-                      ],
+                    constraints: const BoxConstraints(maxWidth: 1180),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      child: KeyedSubtree(
+                        key: ValueKey(_section),
+                        child: _pageFor(_section),
+                      ),
                     ),
                   ),
                 ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Small windows: the phone's header and floating nav bar.
+  Widget _buildNarrow() {
+    final navIndex = _navSections.indexOf(_section);
+    return Stack(
+      children: [
+        Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                InkSpacing.s16,
+                InkSpacing.s12,
+                InkSpacing.s16,
+                0,
+              ),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1180),
+                  child: _Header(
+                    unread: _unread,
+                    onNotifications: () => _goTo(WebSection.notifications),
+                    onProfile: () => _goTo(WebSection.profile),
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1180),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    child: KeyedSubtree(
+                      key: ValueKey(_section),
+                      child: _pageFor(_section),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        Align(
+          alignment: Alignment.bottomCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: GlassNavBar(
+              currentIndex: navIndex < 0 ? _lastNavIndex : navIndex,
+              onTap: (i) => _goTo(_navSections[i]),
+              items: [
+                const GlassNavItem(
+                  activeIcon: LucideIcons.house,
+                  inactiveIcon: LucideIcons.house,
+                  label: 'Home',
+                ),
+                const GlassNavItem(
+                  activeIcon: LucideIcons.compass,
+                  inactiveIcon: LucideIcons.compass,
+                  label: 'Discover',
+                ),
+                GlassNavItem(
+                  activeIcon: LucideIcons.mailOpen,
+                  inactiveIcon: LucideIcons.mail,
+                  label: 'Invites',
+                  badge: _boardInvites + _workspaceInvites,
+                ),
+                GlassNavItem(
+                  activeIcon: LucideIcons.users,
+                  inactiveIcon: LucideIcons.users,
+                  label: 'Friends',
+                  badge: _friendRequests,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Left sidebar for wide windows: every section with its icon, label and
+/// count, the selected one in the mobile nav bar's soft accent pill.
+class _SideNav extends StatelessWidget {
+  final WebSection selected;
+  final int Function(WebSection) badgeFor;
+  final ValueChanged<WebSection> onSelect;
+
+  const _SideNav({
+    required this.selected,
+    required this.badgeFor,
+    required this.onSelect,
+  });
+
+  static const _items = <(WebSection, IconData, String)>[
+    (WebSection.boards, LucideIcons.house, 'Home'),
+    (WebSection.discover, LucideIcons.compass, 'Discover'),
+    (WebSection.invites, LucideIcons.mail, 'Invites'),
+    (WebSection.friends, LucideIcons.users, 'Friends'),
+    (WebSection.notifications, LucideIcons.bell, 'Notifications'),
+    (WebSection.profile, LucideIcons.user, 'Profile'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return SizedBox(
+      width: 216,
+      child: GlassPanel(
+        radius: 20,
+        padding: const EdgeInsets.all(InkSpacing.s8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final (section, icon, label) in _items)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: _SideNavItem(
+                  icon: icon,
+                  label: label,
+                  badge: badgeFor(section),
+                  selected: section == selected,
+                  onTap: () => onSelect(section),
+                  tokens: tokens,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SideNavItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final int badge;
+  final bool selected;
+  final VoidCallback onTap;
+  final InkTokens tokens;
+
+  const _SideNavItem({
+    required this.icon,
+    required this.label,
+    required this.badge,
+    required this.selected,
+    required this.onTap,
+    required this.tokens,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? tokens.accentText : tokens.inkSecondary;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: badge > 0 ? '$label, $badge new' : label,
+      excludeSemantics: true,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            height: 46,
+            padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s12),
+            decoration: BoxDecoration(
+              color: selected ? tokens.accentSoft : Colors.transparent,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, size: 20, color: color),
+                const SizedBox(width: InkSpacing.s12),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: selected
+                        ? InkType.bodyStrong(color)
+                        : InkType.body(color),
+                  ),
+                ),
+                if (badge > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: tokens.accent,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text('$badge', style: InkType.caption(Colors.white)),
+                  ),
               ],
             ),
           ),
@@ -207,10 +398,14 @@ class _Header extends StatefulWidget {
   final VoidCallback onNotifications;
   final VoidCallback onProfile;
 
+  /// Desktop: show the name next to the avatar.
+  final bool showName;
+
   const _Header({
     required this.unread,
     required this.onNotifications,
     required this.onProfile,
+    this.showName = false,
   });
 
   @override
@@ -320,12 +515,27 @@ class _HeaderState extends State<_Header> {
                       ),
                     ),
                   ],
-                  child: InkAvatar(
-                    imageUrl: profile?.photoURL,
-                    initials: initialsOf(name),
-                    id: _repo.currentUser?.uid ?? 'me',
-                    size: 36,
-                    ring: true,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      InkAvatar(
+                        imageUrl: profile?.photoURL,
+                        initials: initialsOf(name),
+                        id: _repo.currentUser?.uid ?? 'me',
+                        size: 36,
+                        ring: true,
+                      ),
+                      if (widget.showName) ...[
+                        const SizedBox(width: InkSpacing.s8),
+                        Text(name, style: InkType.bodyStrong(tokens.ink)),
+                        const SizedBox(width: 2),
+                        Icon(
+                          LucideIcons.chevronDown,
+                          size: 16,
+                          color: tokens.inkMuted,
+                        ),
+                      ],
+                    ],
                   ),
                 );
               },

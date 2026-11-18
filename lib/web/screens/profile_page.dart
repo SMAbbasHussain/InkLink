@@ -14,6 +14,7 @@ import '../../ui/widgets/paper_card.dart';
 import '../data/web_companion_repository.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
+import 'web_shell_nav.dart';
 
 /// View and edit the display name and bio, laid out like the phone's
 /// profile: centred avatar over the desk, name, stat cards and the bio.
@@ -76,11 +77,11 @@ class _WebProfilePageState extends State<WebProfilePage> {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        InkSpacing.s16,
+      padding: EdgeInsets.fromLTRB(
         InkSpacing.s24,
-        InkSpacing.s16,
-        110,
+        InkSpacing.s24,
+        InkSpacing.s24,
+        webPageBottomPadding(context),
       ),
       children: [
         StreamBuilder<UserModel?>(
@@ -114,12 +115,33 @@ class _WebProfilePageState extends State<WebProfilePage> {
           height: 180 + 48,
           child: Stack(
             children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(InkRadii.card),
-                child: const SizedBox(
-                  height: 180,
-                  width: double.infinity,
-                  child: DeskBackground(),
+              // The phone's desk-dot cover, tinted so it stands out on the
+              // page (which is itself the desk).
+              Container(
+                height: 180,
+                width: double.infinity,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(InkRadii.card),
+                  border: Border.all(color: tokens.glassStroke),
+                ),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    const DeskBackground(),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            tokens.accent.withValues(alpha: 0.28),
+                            tokens.accentSoft.withValues(alpha: 0.6),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               Positioned(

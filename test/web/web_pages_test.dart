@@ -5,8 +5,8 @@ import 'package:inklink/web/web_companion_app.dart';
 
 /// Renders the web companion's signed-in pages from sample data (no
 /// Firebase) on a desktop-sized screen and checks the main content. The
-/// pages use the mobile app's design (Ink theme, desk background, glass nav
-/// bar), so navigation is by the nav bar and header buttons' tooltips.
+/// pages use the mobile app's design (Ink theme, desk background, cards) in
+/// a desktop layout: top bar and labelled sidebar.
 void main() {
   Future<void> pumpApp(WidgetTester tester, {bool signedIn = true}) async {
     tester.view.physicalSize = const Size(1440, 900);
@@ -21,18 +21,9 @@ void main() {
     await settle(tester);
   }
 
-  Finder tooltipStartingWith(String text) => find.byWidgetPredicate(
-    (w) => w is Tooltip && (w.message ?? '').startsWith(text),
-  );
-
+  // Desktop width: sections are in the labelled sidebar.
   Future<void> openSection(WidgetTester tester, String label) async {
-    if (label == 'Profile') {
-      await tester.tap(find.byTooltip('Account'));
-      await settle(tester);
-      await tester.tap(find.text('Your profile'));
-    } else {
-      await tester.tap(tooltipStartingWith(label).first);
-    }
+    await tester.tap(find.text(label).first);
     await settle(tester);
   }
 
@@ -131,6 +122,25 @@ void main() {
     await tester.tap(find.text('Save'));
     await settle(tester);
     expect(find.text('Hello from the web'), findsOneWidget);
+  });
+
+  testWidgets('small windows use the phone nav bar instead of the sidebar', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(600, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      WebCompanionApp(
+        repository: SampleWebCompanionRepository(),
+        themeMode: ThemeMode.light,
+      ),
+    );
+    await settle(tester);
+    expect(find.text('Notifications'), findsNothing); // no sidebar labels
+    await tester.tap(find.byTooltip('Discover'));
+    await settle(tester);
+    expect(find.text('Explore Public Boards'), findsOneWidget);
   });
 
   testWidgets('the header switches between light and dark', (tester) async {

@@ -12,6 +12,7 @@ import '../../ui/widgets/paper_card.dart';
 import '../data/web_companion_repository.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
+import 'web_shell_nav.dart';
 
 /// Incoming friend requests (accept/decline) and the friends list, as the
 /// phone shows them: paper cards with avatars.
@@ -32,11 +33,11 @@ class _WebFriendsPageState extends State<WebFriendsPage> {
   Widget build(BuildContext context) {
     final tokens = context.ink;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        InkSpacing.s16,
+      padding: EdgeInsets.fromLTRB(
         InkSpacing.s24,
-        InkSpacing.s16,
-        110,
+        InkSpacing.s24,
+        InkSpacing.s24,
+        webPageBottomPadding(context),
       ),
       children: [
         WebReadableWidth(

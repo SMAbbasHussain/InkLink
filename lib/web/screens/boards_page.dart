@@ -9,22 +9,17 @@ import '../../ui/theme/ink_theme.dart';
 import '../../ui/theme/ink_tokens.dart';
 import '../../ui/theme/ink_type.dart';
 import '../../ui/widgets/board_card_frame.dart';
-import '../../ui/widgets/command_bar.dart';
 import '../../ui/widgets/ink_segmented.dart';
-import '../../ui/widgets/sticky_note.dart';
 import '../data/web_companion_repository.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
 
-/// Room under the page content for the floating search bar and nav bar.
-const double _floatingBarsRoom = 180;
-
 enum _BoardTab { mine, joined, archived }
 
-/// The user's boards (live), laid out like the phone's home screen: the
-/// greeting, a sticky note for waiting invites, the My Boards / Joined /
-/// Archived switch, board cards and the floating search bar.
+/// The user's boards (live) as a desktop page in the mobile app's style:
+/// title with search, a note when invites are waiting, the My Boards /
+/// Joined / Archived switch and the board cards.
 class WebBoardsPage extends StatefulWidget {
   const WebBoardsPage({super.key});
 
@@ -65,172 +60,136 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
   Widget build(BuildContext context) {
     final uid = _repo.currentUser?.uid;
     final nav = WebShellNav.maybeOf(context);
-    return Stack(
+    return ListView(
+      padding: EdgeInsets.fromLTRB(
+        InkSpacing.s24,
+        InkSpacing.s24,
+        InkSpacing.s24,
+        webPageBottomPadding(context),
+      ),
       children: [
-        ListView(
-          padding: const EdgeInsets.fromLTRB(
-            InkSpacing.s16,
-            InkSpacing.s24,
-            InkSpacing.s16,
-            _floatingBarsRoom,
+        WebPageHeader(
+          title: 'Ready to bring your ideas to life?',
+          subtitle: 'Your boards and the boards you joined.',
+          trailing: SizedBox(
+            width: 300,
+            child: WebSearchField(
+              controller: _search,
+              hintText: 'Search boards...',
+              onChanged: (_) => setState(() {}),
+            ),
           ),
-          children: [
-            StreamBuilder(
-              stream: _boardInvites,
-              builder: (context, snapshot) => _GreetingRow(
-                inviteCount: snapshot.data?.length ?? 0,
-                onReviewInvites: nav == null
+        ),
+        StreamBuilder(
+          stream: _boardInvites,
+          builder: (context, snapshot) {
+            final count = snapshot.data?.length ?? 0;
+            if (count == 0) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(bottom: InkSpacing.s20),
+              child: _InviteNotice(
+                count: count,
+                onReview: nav == null
                     ? null
                     : () => nav.goTo(WebSection.invites),
               ),
-            ),
-            const SizedBox(height: InkSpacing.s24),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 460),
-                child: InkSegmented(
-                  labels: const ['My Boards', 'Joined', 'Archived'],
-                  selectedIndex: _tab.index,
-                  onChanged: (i) => setState(() => _tab = _BoardTab.values[i]),
-                ),
-              ),
-            ),
-            const SizedBox(height: InkSpacing.s24),
-            WebStreamList<Board>(
-              stream: _boards,
-              compactEmpty: false,
-              emptyIcon: LucideIcons.layoutGrid,
-              emptyText: 'No boards created yet.',
-              emptySubtitle: 'Create a board in the InkLink mobile app.',
-              builder: (context, boards) {
-                final visible = _apply(boards, uid);
-                if (visible.isEmpty) {
-                  final query = _search.text.trim();
-                  if (query.isNotEmpty) {
-                    return WebEmptyHint(
-                      icon: LucideIcons.searchX,
-                      text: 'No boards match "$query"',
-                    );
-                  }
-                  return WebEmptyHint(
-                    icon: _tab == _BoardTab.archived
-                        ? LucideIcons.archive
-                        : LucideIcons.layoutGrid,
-                    text: switch (_tab) {
-                      _BoardTab.mine => 'No boards created yet.',
-                      _BoardTab.joined => 'No boards joined yet.',
-                      _BoardTab.archived => 'No archived boards.',
-                    },
-                  );
-                }
-                return WebBoardCardGrid(
-                  boards: visible,
-                  captionFor: (b) => b.tags.isNotEmpty
-                      ? '${b.tags.map((t) => '#$t').join(' ')} • '
-                            'Edited ${timeAgo(b.updatedAt)}'
-                      : 'Edited ${timeAgo(b.updatedAt)}',
-                );
-              },
-            ),
-          ],
+            );
+          },
         ),
-        // The phone's floating search bar, above the nav bar.
-        Positioned(
-          left: InkSpacing.s12,
-          right: InkSpacing.s12,
-          bottom: 92,
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: CommandBar(
-                controller: _search,
-                hintText: 'Search boards...',
-                onChanged: (_) => setState(() {}),
-                onClear: () => setState(() {}),
-                trailing: [
-                  if (nav != null)
-                    CommandBarAction(
-                      icon: LucideIcons.compass,
-                      tooltip: 'Explore Public Boards',
-                      onPressed: () => nav.goTo(WebSection.discover),
-                    ),
-                ],
-              ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: InkSegmented(
+              labels: const ['My Boards', 'Joined', 'Archived'],
+              selectedIndex: _tab.index,
+              onChanged: (i) => setState(() => _tab = _BoardTab.values[i]),
             ),
           ),
+        ),
+        const SizedBox(height: InkSpacing.s20),
+        WebStreamList<Board>(
+          stream: _boards,
+          compactEmpty: false,
+          emptyIcon: LucideIcons.layoutGrid,
+          emptyText: 'No boards created yet.',
+          emptySubtitle: 'Create a board in the InkLink mobile app.',
+          builder: (context, boards) {
+            final visible = _apply(boards, uid);
+            if (visible.isEmpty) {
+              final query = _search.text.trim();
+              if (query.isNotEmpty) {
+                return WebEmptyHint(
+                  icon: LucideIcons.searchX,
+                  text: 'No boards match "$query"',
+                );
+              }
+              return WebEmptyHint(
+                icon: _tab == _BoardTab.archived
+                    ? LucideIcons.archive
+                    : LucideIcons.layoutGrid,
+                text: switch (_tab) {
+                  _BoardTab.mine => 'No boards created yet.',
+                  _BoardTab.joined => 'No boards joined yet.',
+                  _BoardTab.archived => 'No archived boards.',
+                },
+              );
+            }
+            return WebBoardCardGrid(
+              boards: visible,
+              captionFor: (b) => b.tags.isNotEmpty
+                  ? '${b.tags.map((t) => '#$t').join(' ')} • '
+                        'Edited ${timeAgo(b.updatedAt)}'
+                  : 'Edited ${timeAgo(b.updatedAt)}',
+            );
+          },
         ),
       ],
     );
   }
 }
 
-/// "Ready to bring your ideas to life?" and, when invites are waiting, the
-/// tilted sticky note that opens them (as on the phone).
-class _GreetingRow extends StatelessWidget {
-  final int inviteCount;
-  final VoidCallback? onReviewInvites;
+/// A slim butter-yellow note (the mobile sticky-note colour) when board
+/// invites are waiting.
+class _InviteNotice extends StatelessWidget {
+  final int count;
+  final VoidCallback? onReview;
 
-  const _GreetingRow({required this.inviteCount, this.onReviewInvites});
+  const _InviteNotice({required this.count, this.onReview});
 
   @override
   Widget build(BuildContext context) {
-    final tokens = context.ink;
-    final greeting = ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 360),
-      child: Semantics(
-        header: true,
-        child: Text(
-          'Ready to bring your ideas to life?',
-          style: InkType.display(tokens.ink),
-        ),
-      ),
-    );
-    if (inviteCount == 0) return greeting;
-
     final ink = InkColors.stickyInkFor(InkColors.stickyButter);
-    return Wrap(
-      spacing: InkSpacing.s24,
-      runSpacing: InkSpacing.s16,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        greeting,
-        Padding(
-          padding: const EdgeInsets.all(InkSpacing.s8),
-          child: Transform.rotate(
-            angle: 5 * 3.1415926535 / 180,
-            child: SizedBox(
-              width: 160,
-              child: StickyNote(
-                color: InkColors.stickyButter,
-                showTape: true,
-                padding: const EdgeInsets.all(InkSpacing.s12),
-                onTap: onReviewInvites,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      inviteCount == 1
-                          ? "You've been invited to a board!"
-                          : 'You have $inviteCount board invites waiting!',
-                      style: InkType.label(ink),
-                    ),
-                    const SizedBox(height: InkSpacing.s8),
-                    Row(
-                      children: [
-                        Text('Review', style: InkType.bodyStrong(ink)),
-                        const SizedBox(width: 4),
-                        Icon(LucideIcons.chevronRight, size: 14, color: ink),
-                      ],
-                    ),
-                  ],
+    return Material(
+      color: InkColors.stickyButter,
+      borderRadius: BorderRadius.circular(InkRadii.card),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(InkRadii.card),
+        onTap: onReview,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: InkSpacing.s16,
+            vertical: InkSpacing.s12,
+          ),
+          child: Row(
+            children: [
+              Icon(LucideIcons.mailOpen, size: 18, color: ink),
+              const SizedBox(width: InkSpacing.s12),
+              Expanded(
+                child: Text(
+                  count == 1
+                      ? "You've been invited to a board!"
+                      : 'You have $count board invites waiting!',
+                  style: InkType.bodyStrong(ink),
                 ),
               ),
-            ),
+              Text('Review', style: InkType.bodyStrong(ink)),
+              const SizedBox(width: 4),
+              Icon(LucideIcons.chevronRight, size: 16, color: ink),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }
@@ -352,22 +311,41 @@ class _WebDiscoverPageState extends State<WebDiscoverPage> {
       builder: (context, snapshot) {
         final loading = snapshot.connectionState != ConnectionState.done;
         return ListView(
-          padding: const EdgeInsets.fromLTRB(
-            InkSpacing.s16,
+          padding: EdgeInsets.fromLTRB(
             InkSpacing.s24,
-            InkSpacing.s16,
-            _floatingBarsRoom - 70,
+            InkSpacing.s24,
+            InkSpacing.s24,
+            webPageBottomPadding(context),
           ),
           children: [
             WebPageHeader(
               title: 'Explore Public Boards',
               subtitle: 'Boards shared with the InkLink community.',
-              trailing: IconButton(
-                tooltip: 'Refresh',
-                icon: Icon(LucideIcons.rotateCw, color: tokens.inkSecondary),
-                onPressed: loading
-                    ? null
-                    : () => setState(() => _future = _repo.loadPublicBoards()),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 300,
+                    child: WebSearchField(
+                      controller: _search,
+                      hintText: 'Search by title, topic or tag...',
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                  const SizedBox(width: InkSpacing.s8),
+                  IconButton(
+                    tooltip: 'Refresh',
+                    icon: Icon(
+                      LucideIcons.rotateCw,
+                      color: tokens.inkSecondary,
+                    ),
+                    onPressed: loading
+                        ? null
+                        : () => setState(
+                            () => _future = _repo.loadPublicBoards(),
+                          ),
+                  ),
+                ],
               ),
             ),
             if (snapshot.hasError)
@@ -410,37 +388,6 @@ class _WebDiscoverPageState extends State<WebDiscoverPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 560),
-            child: TextField(
-              controller: _search,
-              onChanged: (_) => setState(() {}),
-              style: InkType.body(tokens.ink),
-              decoration: InputDecoration(
-                hintText: 'Search by title, topic, or keyword...',
-                hintStyle: InkType.body(tokens.inkMuted),
-                prefixIcon: Icon(
-                  LucideIcons.search,
-                  size: 20,
-                  color: tokens.inkSecondary,
-                ),
-                filled: true,
-                fillColor: tokens.isDark ? tokens.paper : Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(InkRadii.input),
-                  borderSide: BorderSide(color: tokens.glassStroke),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(InkRadii.input),
-                  borderSide: BorderSide(color: tokens.glassStroke),
-                ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: InkSpacing.s12),
         Wrap(
           spacing: InkSpacing.s8,
           runSpacing: InkSpacing.s8,

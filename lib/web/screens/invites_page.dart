@@ -12,6 +12,7 @@ import '../../ui/widgets/sticky_note.dart';
 import '../data/web_companion_repository.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
+import 'web_shell_nav.dart';
 
 /// Pending board and workspace invites as the phone shows them: tilted
 /// sticky notes with Decline / Accept (same Cloud Functions as mobile).
@@ -32,11 +33,11 @@ class _WebInvitesPageState extends State<WebInvitesPage> {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        InkSpacing.s16,
+      padding: EdgeInsets.fromLTRB(
         InkSpacing.s24,
-        InkSpacing.s16,
-        110,
+        InkSpacing.s24,
+        InkSpacing.s24,
+        webPageBottomPadding(context),
       ),
       children: [
         const WebPageHeader(

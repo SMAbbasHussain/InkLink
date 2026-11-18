@@ -377,3 +377,67 @@ class WebBoardOpener {
     (context, board) => showOpenInAppDialog(context, board),
   );
 }
+
+/// Search box in the mobile app's style (white or paper field, soft border),
+/// for page headers.
+class WebSearchField extends StatelessWidget {
+  final TextEditingController controller;
+  final String hintText;
+  final ValueChanged<String> onChanged;
+
+  const WebSearchField({
+    super.key,
+    required this.controller,
+    required this.hintText,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(InkRadii.input),
+      borderSide: BorderSide(color: tokens.glassStroke),
+    );
+    return TextField(
+      controller: controller,
+      onChanged: onChanged,
+      style: InkType.body(tokens.ink),
+      decoration: InputDecoration(
+        hintText: hintText,
+        hintStyle: InkType.body(tokens.inkMuted),
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(vertical: 14),
+        prefixIcon: Icon(
+          LucideIcons.search,
+          size: 18,
+          color: tokens.inkSecondary,
+        ),
+        suffixIcon: ValueListenableBuilder<TextEditingValue>(
+          valueListenable: controller,
+          builder: (context, value, _) => value.text.isEmpty
+              ? const SizedBox.shrink()
+              : IconButton(
+                  tooltip: 'Clear search',
+                  icon: Icon(
+                    LucideIcons.x,
+                    size: 16,
+                    color: tokens.inkSecondary,
+                  ),
+                  onPressed: () {
+                    controller.clear();
+                    onChanged('');
+                  },
+                ),
+        ),
+        filled: true,
+        fillColor: tokens.isDark ? tokens.paper : Colors.white,
+        border: border,
+        enabledBorder: border,
+        focusedBorder: border.copyWith(
+          borderSide: BorderSide(color: tokens.accent, width: 1.5),
+        ),
+      ),
+    );
+  }
+}
