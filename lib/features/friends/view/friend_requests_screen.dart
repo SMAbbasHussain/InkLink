@@ -27,6 +27,8 @@ class FriendRequestsScreen extends StatefulWidget {
 class _FriendRequestsScreenState extends State<FriendRequestsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
+  final Set<String> _localAcceptingIds = <String>{};
+  final Set<String> _localDecliningIds = <String>{};
 
   @override
   void initState() {
@@ -101,6 +103,12 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen>
         if (state.isOffline) _buildOfflineBanner(context),
         ...incoming.map((req) {
           final requestId = req['id']?.toString() ?? '';
+          final isAccepting =
+              state.acceptingRequestIds.contains(requestId) ||
+              _localAcceptingIds.contains(requestId);
+          final isDeclining =
+              state.decliningRequestIds.contains(requestId) ||
+              _localDecliningIds.contains(requestId);
           return GestureDetector(
             onTap: () => Navigator.push(
               context,
@@ -108,30 +116,55 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen>
             ),
             child: RequestCard(
               request: req,
-              isAccepting: state.acceptingRequestIds.contains(requestId),
-              isDeclining: state.decliningRequestIds.contains(requestId),
+              isAccepting: isAccepting,
+              isDeclining: isDeclining,
               onAccept: () {
+                if (requestId.isEmpty || isAccepting || isDeclining) return;
                 final name = req['fromName']?.toString() ??
                     req['fromEmail']?.toString() ??
                     'User';
+                setState(() => _localAcceptingIds.add(requestId));
                 context.read<FriendsBloc>().add(
-                  AcceptFriendRequestRequested(req['id'], req['fromUid']),
-                );
-                AppSnackBar.showSuccess(
-                  context,
-                  'Friend request from $name accepted!',
+                  AcceptFriendRequestRequested(
+                    requestId,
+                    req['fromUid'],
+                    onCompleted: (success, error) {
+                      if (!mounted) return;
+                      setState(() => _localAcceptingIds.remove(requestId));
+                      if (success) {
+                        AppSnackBar.showSuccess(
+                          context,
+                          'Friend request from $name accepted!',
+                        );
+                      } else if (error != null && error.isNotEmpty) {
+                        AppSnackBar.showError(context, error);
+                      }
+                    },
+                  ),
                 );
               },
               onDecline: () {
+                if (requestId.isEmpty || isAccepting || isDeclining) return;
                 final name = req['fromName']?.toString() ??
                     req['fromEmail']?.toString() ??
                     'User';
+                setState(() => _localDecliningIds.add(requestId));
                 context.read<FriendsBloc>().add(
-                  DeclineFriendRequestRequested(req['id']),
-                );
-                AppSnackBar.showMessage(
-                  context,
-                  'Friend request from $name declined.',
+                  DeclineFriendRequestRequested(
+                    requestId,
+                    onCompleted: (success, error) {
+                      if (!mounted) return;
+                      setState(() => _localDecliningIds.remove(requestId));
+                      if (success) {
+                        AppSnackBar.showMessage(
+                          context,
+                          'Friend request from $name declined.',
+                        );
+                      } else if (error != null && error.isNotEmpty) {
+                        AppSnackBar.showError(context, error);
+                      }
+                    },
+                  ),
                 );
               },
             ),

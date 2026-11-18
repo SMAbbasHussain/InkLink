@@ -67,6 +67,16 @@ class _WorkspaceMembersUpdated extends WorkspaceEvent {
   _WorkspaceMembersUpdated({required this.workspaceId, required this.members});
 }
 
+class _WorkspacePendingInvitesUpdated extends WorkspaceEvent {
+  final String workspaceId;
+  final Set<String> userIds;
+
+  _WorkspacePendingInvitesUpdated({
+    required this.workspaceId,
+    required this.userIds,
+  });
+}
+
 class CreateWorkspaceRequested extends WorkspaceEvent {
   final String name;
   final String description;
@@ -100,10 +110,12 @@ class DeleteWorkspaceRequested extends WorkspaceEvent {
 class InviteToWorkspaceRequested extends WorkspaceEvent {
   final String workspaceId;
   final List<String> invitedUserIds;
+  final void Function(bool success)? onCompleted;
 
   InviteToWorkspaceRequested({
     required this.workspaceId,
     required this.invitedUserIds,
+    this.onCompleted,
   });
 }
 
@@ -206,6 +218,7 @@ class WorkspaceLoaded extends WorkspaceState {
   final Map<String, List<Board>> previewBoardsByWorkspace;
   final Map<String, List<Board>> boardsByWorkspace;
   final Map<String, List<WorkspaceMember>> membersByWorkspace;
+  final Map<String, Set<String>> pendingInviteUserIdsByWorkspace;
   final Set<String> processingInviteDecisionIds;
   final Set<String> invitingUserIds;
   final String? actionError;
@@ -218,6 +231,7 @@ class WorkspaceLoaded extends WorkspaceState {
     required this.previewBoardsByWorkspace,
     required this.boardsByWorkspace,
     required this.membersByWorkspace,
+    this.pendingInviteUserIdsByWorkspace = const {},
     this.processingInviteDecisionIds = const <String>{},
     this.invitingUserIds = const <String>{},
     this.actionError,
@@ -231,6 +245,7 @@ class WorkspaceLoaded extends WorkspaceState {
     Map<String, List<Board>>? previewBoardsByWorkspace,
     Map<String, List<Board>>? boardsByWorkspace,
     Map<String, List<WorkspaceMember>>? membersByWorkspace,
+    Map<String, Set<String>>? pendingInviteUserIdsByWorkspace,
     Set<String>? processingInviteDecisionIds,
     Set<String>? invitingUserIds,
     Object? actionError = _unset,
@@ -244,6 +259,9 @@ class WorkspaceLoaded extends WorkspaceState {
           previewBoardsByWorkspace ?? this.previewBoardsByWorkspace,
       boardsByWorkspace: boardsByWorkspace ?? this.boardsByWorkspace,
       membersByWorkspace: membersByWorkspace ?? this.membersByWorkspace,
+      pendingInviteUserIdsByWorkspace:
+          pendingInviteUserIdsByWorkspace ??
+          this.pendingInviteUserIdsByWorkspace,
       processingInviteDecisionIds:
           processingInviteDecisionIds ?? this.processingInviteDecisionIds,
       invitingUserIds: invitingUserIds ?? this.invitingUserIds,
@@ -268,6 +286,10 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
   final Map<String, StreamSubscription<List<Board>>> _workspaceBoardSubs = {};
   final Map<String, StreamSubscription<List<WorkspaceMember>>>
   _workspaceMemberSubs = {};
+  final Map<String, StreamSubscription<Set<String>>>
+  _workspacePendingInvitesSubs = {};
+  final Set<String> _inFlightInviteDecisionIds = <String>{};
+  final Set<String> _inFlightInviteSendKeys = <String>{};
 
   WorkspaceBloc({WorkspaceService? workspaceService})
     : _workspaceService = workspaceService,
@@ -297,6 +319,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     on<_WorkspacePreviewBoardsUpdated>(_onWorkspacePreviewBoardsUpdated);
     on<_WorkspaceBoardsUpdated>(_onWorkspaceBoardsUpdated);
     on<_WorkspaceMembersUpdated>(_onWorkspaceMembersUpdated);
+    on<_WorkspacePendingInvitesUpdated>(_onWorkspacePendingInvitesUpdated);
   }
 
   /// Imported boards the current user can keep when leaving
@@ -400,21 +423,33 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     Emitter<WorkspaceState> emit,
   ) async {
     final service = _workspaceService;
-    if (service == null ||
-        _workspaceMemberSubs.containsKey(event.workspaceId)) {
-      return;
+    if (service == null) return;
+
+    if (!_workspaceMemberSubs.containsKey(event.workspaceId)) {
+      _workspaceMemberSubs[event.workspaceId] = service
+          .getWorkspaceMembers(event.workspaceId)
+          .listen((members) {
+            add(
+              _WorkspaceMembersUpdated(
+                workspaceId: event.workspaceId,
+                members: members,
+              ),
+            );
+          });
     }
 
-    _workspaceMemberSubs[event.workspaceId] = service
-        .getWorkspaceMembers(event.workspaceId)
-        .listen((members) {
-          add(
-            _WorkspaceMembersUpdated(
-              workspaceId: event.workspaceId,
-              members: members,
-            ),
-          );
-        });
+    if (!_workspacePendingInvitesSubs.containsKey(event.workspaceId)) {
+      _workspacePendingInvitesSubs[event.workspaceId] = service
+          .getPendingSentWorkspaceInviteUserIds(event.workspaceId)
+          .listen((userIds) {
+            add(
+              _WorkspacePendingInvitesUpdated(
+                workspaceId: event.workspaceId,
+                userIds: userIds,
+              ),
+            );
+          });
+    }
   }
 
   void _onOwnedWorkspacesUpdated(
@@ -456,7 +491,13 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     final current = state is WorkspaceLoaded
         ? state as WorkspaceLoaded
         : _emptyLoaded();
-    emit(current.copyWith(incomingInvites: event.invites));
+    emit(
+      current.copyWith(
+        incomingInvites: event.invites,
+        actionError: null,
+        actionInfo: null,
+      ),
+    );
   }
 
   void _onWorkspacePreviewBoardsUpdated(
@@ -497,6 +538,27 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     );
     nextMap[event.workspaceId] = event.members;
     emit(current.copyWith(membersByWorkspace: nextMap));
+  }
+
+  void _onWorkspacePendingInvitesUpdated(
+    _WorkspacePendingInvitesUpdated event,
+    Emitter<WorkspaceState> emit,
+  ) {
+    final current = state is WorkspaceLoaded
+        ? state as WorkspaceLoaded
+        : _emptyLoaded();
+    final existing =
+        current.pendingInviteUserIdsByWorkspace[event.workspaceId] ??
+        const <String>{};
+    final preservedEmails = existing.where((id) => id.contains('@'));
+    final nextMap = Map<String, Set<String>>.from(
+      current.pendingInviteUserIdsByWorkspace,
+    );
+    nextMap[event.workspaceId] = Set<String>.unmodifiable({
+      ...event.userIds,
+      ...preservedEmails,
+    });
+    emit(current.copyWith(pendingInviteUserIdsByWorkspace: nextMap));
   }
 
   Future<void> _onCreateWorkspaceRequested(
@@ -615,17 +677,58 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     }
   }
 
+  String _inviteSendKey(String workspaceId, String identifier) {
+    final trimmed = identifier.trim();
+    final normalized = trimmed.contains('@') ? trimmed.toLowerCase() : trimmed;
+    return '${workspaceId.trim()}::$normalized';
+  }
+
   Future<void> _onInviteToWorkspaceRequested(
     InviteToWorkspaceRequested event,
     Emitter<WorkspaceState> emit,
   ) async {
     final service = _workspaceService;
-    if (service == null) return;
+    if (service == null) {
+      event.onCompleted?.call(false);
+      return;
+    }
 
     final current = state;
+    final alreadyPending = current is WorkspaceLoaded
+        ? (current.pendingInviteUserIdsByWorkspace[event.workspaceId] ??
+              const <String>{})
+        : const <String>{};
+
+    final targetIds = <String>[];
+    final seenTargets = <String>{};
+    final sendKeys = <String>[];
+    for (final rawId in event.invitedUserIds) {
+      final trimmed = rawId.trim();
+      if (trimmed.isEmpty) continue;
+      final normalizedTarget = trimmed.contains('@')
+          ? trimmed.toLowerCase()
+          : trimmed;
+      final sendKey = _inviteSendKey(event.workspaceId, trimmed);
+      if (!seenTargets.add(normalizedTarget) ||
+          _inFlightInviteSendKeys.contains(sendKey) ||
+          alreadyPending.contains(trimmed) ||
+          alreadyPending.contains(normalizedTarget)) {
+        continue;
+      }
+      targetIds.add(trimmed);
+      sendKeys.add(sendKey);
+    }
+
+    if (targetIds.isEmpty) {
+      event.onCompleted?.call(true);
+      return;
+    }
+
+    _inFlightInviteSendKeys.addAll(sendKeys);
+
     if (current is WorkspaceLoaded) {
       final nextInviting = Set<String>.from(current.invitingUserIds)
-        ..addAll(event.invitedUserIds);
+        ..addAll(targetIds);
       emit(
         current.copyWith(
           invitingUserIds: nextInviting,
@@ -638,26 +741,41 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     try {
       await service.inviteToWorkspace(
         workspaceId: event.workspaceId,
-        invitedUserIds: event.invitedUserIds,
+        invitedUserIds: targetIds,
       );
+      _inFlightInviteSendKeys.removeAll(sendKeys);
       final updated = state;
       if (updated is WorkspaceLoaded) {
         final nextInviting = Set<String>.from(updated.invitingUserIds)
-          ..removeAll(event.invitedUserIds);
+          ..removeAll(targetIds);
+        final nextPendingMap = Map<String, Set<String>>.from(
+          updated.pendingInviteUserIdsByWorkspace,
+        );
+        final sentEntries = targetIds
+            .map((id) => id.contains('@') ? id.toLowerCase() : id)
+            .toSet();
+        nextPendingMap[event.workspaceId] = Set<String>.unmodifiable({
+          ...(nextPendingMap[event.workspaceId] ?? const <String>{}),
+          ...targetIds,
+          ...sentEntries,
+        });
         emit(
           updated.copyWith(
             invitingUserIds: nextInviting,
+            pendingInviteUserIdsByWorkspace: nextPendingMap,
             actionInfo:
-                'Invitations sent to ${event.invitedUserIds.length} user(s).',
+                'Invitations sent to ${targetIds.length} user(s).',
             actionError: null,
           ),
         );
       }
+      event.onCompleted?.call(true);
     } catch (e) {
+      _inFlightInviteSendKeys.removeAll(sendKeys);
       final updated = state;
       if (updated is WorkspaceLoaded) {
         final nextInviting = Set<String>.from(updated.invitingUserIds)
-          ..removeAll(event.invitedUserIds);
+          ..removeAll(targetIds);
         emit(
           updated.copyWith(
             invitingUserIds: nextInviting,
@@ -666,6 +784,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
           ),
         );
       }
+      event.onCompleted?.call(false);
     }
   }
 
@@ -786,11 +905,18 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     AcceptWorkspaceInviteRequested event,
     Emitter<WorkspaceState> emit,
   ) async {
+    if (event.inviteId.isEmpty ||
+        _inFlightInviteDecisionIds.contains(event.inviteId)) {
+      return;
+    }
+
     final service = _workspaceService;
     if (service == null) {
       event.onCompleted?.call(false, 'Workspace service is unavailable.');
       return;
     }
+
+    _inFlightInviteDecisionIds.add(event.inviteId);
 
     final current = state;
     if (current is WorkspaceLoaded) {
@@ -808,6 +934,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
 
     try {
       await service.acceptWorkspaceInvite(event.inviteId);
+      _inFlightInviteDecisionIds.remove(event.inviteId);
       final updated = state;
       if (updated is WorkspaceLoaded) {
         final nextProcessing = Set<String>.from(
@@ -826,6 +953,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       }
       event.onCompleted?.call(true, null);
     } catch (e, st) {
+      _inFlightInviteDecisionIds.remove(event.inviteId);
       _logWorkspaceInviteError(
         action: 'accept',
         inviteId: event.inviteId,
@@ -856,11 +984,18 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     RejectWorkspaceInviteRequested event,
     Emitter<WorkspaceState> emit,
   ) async {
+    if (event.inviteId.isEmpty ||
+        _inFlightInviteDecisionIds.contains(event.inviteId)) {
+      return;
+    }
+
     final service = _workspaceService;
     if (service == null) {
       event.onCompleted?.call(false, 'Workspace service is unavailable.');
       return;
     }
+
+    _inFlightInviteDecisionIds.add(event.inviteId);
 
     final current = state;
     if (current is WorkspaceLoaded) {
@@ -878,6 +1013,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
 
     try {
       await service.rejectWorkspaceInvite(event.inviteId);
+      _inFlightInviteDecisionIds.remove(event.inviteId);
       final updated = state;
       if (updated is WorkspaceLoaded) {
         final nextProcessing = Set<String>.from(
@@ -896,6 +1032,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       }
       event.onCompleted?.call(true, null);
     } catch (e, st) {
+      _inFlightInviteDecisionIds.remove(event.inviteId);
       _logWorkspaceInviteError(
         action: 'reject',
         inviteId: event.inviteId,
@@ -1118,6 +1255,12 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       await sub.cancel();
     }
     _workspaceMemberSubs.clear();
+    for (final sub in _workspacePendingInvitesSubs.values) {
+      await sub.cancel();
+    }
+    _workspacePendingInvitesSubs.clear();
+    _inFlightInviteDecisionIds.clear();
+    _inFlightInviteSendKeys.clear();
 
     await _workspaceService?.stopWorkspacSync();
   }

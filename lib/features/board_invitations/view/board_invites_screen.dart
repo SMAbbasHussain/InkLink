@@ -17,7 +17,10 @@ import '../../../core/utils/app_snackbar.dart';
 import '../bloc/board_invitations_bloc.dart';
 
 class BoardInvitesScreen extends StatefulWidget {
-  const BoardInvitesScreen({super.key});
+  final Route<void> Function(BuildContext context, String boardId)?
+  canvasRouteBuilder;
+
+  const BoardInvitesScreen({super.key, this.canvasRouteBuilder});
 
   @override
   State<BoardInvitesScreen> createState() => _BoardInvitesScreenState();
@@ -25,6 +28,7 @@ class BoardInvitesScreen extends StatefulWidget {
 
 class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
   bool _loadRequested = false;
+  final Set<String> _localProcessingInviteIds = <String>{};
 
   @override
   void initState() {
@@ -41,9 +45,58 @@ class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
     }
   }
 
+  void _handleDecision({
+    required String inviteId,
+    String? boardId,
+    required bool accept,
+  }) {
+    if (inviteId.isEmpty || _localProcessingInviteIds.contains(inviteId)) {
+      return;
+    }
+    if (accept && (boardId == null || boardId.isEmpty)) return;
+    final boardInvitesBloc = context.read<BoardInvitationsBloc>();
+    final state = boardInvitesBloc.state;
+    if (state is BoardInvitationsLoaded &&
+        state.processingInviteIds.contains(inviteId)) {
+      return;
+    }
+
+    setState(() {
+      _localProcessingInviteIds.add(inviteId);
+    });
+
+    void onCompleted(bool _, String? _) {
+      if (!mounted) return;
+      setState(() {
+        _localProcessingInviteIds.remove(inviteId);
+      });
+    }
+
+    context.read<BoardInvitationsBloc>().add(
+      accept
+          ? BoardInvitationAcceptRequested(
+              inviteId,
+              boardId: boardId,
+              onCompleted: onCompleted,
+            )
+          : BoardInvitationDeclineRequested(
+              inviteId,
+              onCompleted: onCompleted,
+            ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return BlocConsumer<BoardInvitationsBloc, BoardInvitationsState>(
+      listenWhen: (prev, curr) {
+        if (curr is! BoardInvitationsLoaded || curr.message == null) {
+          return false;
+        }
+        if (prev is! BoardInvitationsLoaded) return true;
+        return prev.message != curr.message ||
+            prev.openedBoardId != curr.openedBoardId;
+      },
       listener: (context, state) {
         if (state is BoardInvitationsLoaded && state.message != null) {
           if (state.isError) {
@@ -53,13 +106,15 @@ class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
           }
 
           if (state.openedBoardId != null && !state.isError) {
+            final boardId = state.openedBoardId!;
             Navigator.push(
               context,
-              buildCanvasRoute(
-                context,
-                boardId: state.openedBoardId!,
-                showTrayTipsOnEntry: true,
-              ),
+              widget.canvasRouteBuilder?.call(context, boardId) ??
+                  buildCanvasRoute(
+                    context,
+                    boardId: boardId,
+                    showTrayTipsOnEntry: true,
+                  ),
             );
           }
         }
@@ -143,6 +198,9 @@ class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
                               'InkLink User';
                           final senderPic = invite['senderPic']?.toString();
                           final expiresAt = invite['expiresAt'];
+                          final isProcessing =
+                              loaded.processingInviteIds.contains(inviteId) ||
+                              _localProcessingInviteIds.contains(inviteId);
 
                           final angleDeg = index.isEven ? 3.0 : -3.0;
 
@@ -200,41 +258,30 @@ class _BoardInvitesScreenState extends State<BoardInvitesScreen> {
                                       Expanded(
                                         child: InkButton.secondary(
                                           label: 'Decline',
-                                          onPressed: inviteId.isEmpty
+                                          onPressed:
+                                              inviteId.isEmpty || isProcessing
                                               ? null
-                                              : () {
-                                                  context
-                                                      .read<
-                                                        BoardInvitationsBloc
-                                                      >()
-                                                      .add(
-                                                        BoardInvitationDeclineRequested(
-                                                          inviteId,
-                                                        ),
-                                                      );
-                                                },
+                                              : () => _handleDecision(
+                                                  inviteId: inviteId,
+                                                  accept: false,
+                                                ),
                                         ),
                                       ),
                                       const SizedBox(width: InkSpacing.s12),
                                       Expanded(
                                         child: InkButton.primary(
                                           label: 'Accept',
+                                          isLoading: isProcessing,
                                           onPressed:
                                               inviteId.isEmpty ||
-                                                  boardId.isEmpty
+                                                  boardId.isEmpty ||
+                                                  isProcessing
                                               ? null
-                                              : () {
-                                                  context
-                                                      .read<
-                                                        BoardInvitationsBloc
-                                                      >()
-                                                      .add(
-                                                        BoardInvitationAcceptRequested(
-                                                          inviteId,
-                                                          boardId: boardId,
-                                                        ),
-                                                      );
-                                                },
+                                              : () => _handleDecision(
+                                                  inviteId: inviteId,
+                                                  boardId: boardId,
+                                                  accept: true,
+                                                ),
                                         ),
                                       ),
                                     ],

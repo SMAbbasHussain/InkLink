@@ -142,6 +142,7 @@ class _WorkspacesScreenState extends State<WorkspacesScreen>
           (previous.actionError != current.actionError ||
               previous.actionInfo != current.actionInfo),
       listener: (context, state) {
+        if (ModalRoute.of(context)?.isCurrent != true) return;
         if (state is WorkspaceLoaded) {
           if (state.actionError != null) {
             AppSnackBar.show(

@@ -228,7 +228,8 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
 
     on<AcceptFriendRequestRequested>((event, emit) async {
       if (event.requestId.isEmpty ||
-          _acceptingRequestIds.contains(event.requestId)) {
+          _acceptingRequestIds.contains(event.requestId) ||
+          _decliningRequestIds.contains(event.requestId)) {
         return;
       }
       _acceptingRequestIds = Set<String>.from(_acceptingRequestIds)
@@ -249,29 +250,39 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
         if (_isOffline) {
           add(FriendsConnectivityUpdated(false));
         }
-        // Success! The stream from Firestore will automatically update the list.
-      } catch (e) {
-        if (_looksOffline(e)) {
-          add(FriendsConnectivityUpdated(true));
-        }
-        // Restore previous state so the list doesn't vanish
-        if (currentState is FriendsLoaded) {
-          emit(currentState.copyWith(isOffline: _isOffline));
-        }
-        emit(FriendsError(AppErrorFormatter.cleanMessage(e)));
-      } finally {
         _acceptingRequestIds = Set<String>.from(_acceptingRequestIds)
           ..remove(event.requestId);
         final current = state;
         if (current is FriendsLoaded) {
           emit(current.copyWith(acceptingRequestIds: _acceptingRequestIds));
         }
+        event.onCompleted?.call(true, null);
+        // Success! The stream from Firestore will automatically update the list.
+      } catch (e) {
+        _acceptingRequestIds = Set<String>.from(_acceptingRequestIds)
+          ..remove(event.requestId);
+        if (_looksOffline(e)) {
+          add(FriendsConnectivityUpdated(true));
+        }
+        final message = AppErrorFormatter.cleanMessage(e);
+        // Restore previous state so the list doesn't vanish
+        if (currentState is FriendsLoaded) {
+          emit(
+            currentState.copyWith(
+              isOffline: _isOffline,
+              acceptingRequestIds: _acceptingRequestIds,
+            ),
+          );
+        }
+        emit(FriendsError(message));
+        event.onCompleted?.call(false, message);
       }
     });
 
     on<DeclineFriendRequestRequested>((event, emit) async {
       if (event.requestId.isEmpty ||
-          _decliningRequestIds.contains(event.requestId)) {
+          _decliningRequestIds.contains(event.requestId) ||
+          _acceptingRequestIds.contains(event.requestId)) {
         return;
       }
       _decliningRequestIds = Set<String>.from(_decliningRequestIds)
@@ -286,18 +297,26 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
         if (_isOffline) {
           add(FriendsConnectivityUpdated(false));
         }
-      } catch (e) {
-        if (_looksOffline(e)) {
-          add(FriendsConnectivityUpdated(true));
-        }
-        emit(FriendsError("Request declined"));
-      } finally {
         _decliningRequestIds = Set<String>.from(_decliningRequestIds)
           ..remove(event.requestId);
         final current = state;
         if (current is FriendsLoaded) {
           emit(current.copyWith(decliningRequestIds: _decliningRequestIds));
         }
+        event.onCompleted?.call(true, null);
+      } catch (e) {
+        _decliningRequestIds = Set<String>.from(_decliningRequestIds)
+          ..remove(event.requestId);
+        if (_looksOffline(e)) {
+          add(FriendsConnectivityUpdated(true));
+        }
+        final message = AppErrorFormatter.cleanMessage(e);
+        final current = state;
+        if (current is FriendsLoaded) {
+          emit(current.copyWith(decliningRequestIds: _decliningRequestIds));
+        }
+        emit(FriendsError(message));
+        event.onCompleted?.call(false, message);
       }
     });
 

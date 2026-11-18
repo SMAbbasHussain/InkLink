@@ -43,7 +43,10 @@ class NotificationsScreen extends StatefulWidget {
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
   _NotificationFilter _filter = _NotificationFilter.all;
-  String? _pendingWorkspaceInviteId;
+  final Set<String> _pendingWorkspaceInviteIds = <String>{};
+  final Set<String> _pendingBoardInviteIds = <String>{};
+  final Set<String> _pendingFriendRequestIds = <String>{};
+  final Set<String> _pendingAccessRequestIds = <String>{};
 
   void _decideWorkspaceInvite(
     BuildContext context, {
@@ -51,20 +54,27 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     required String notificationId,
     required String status,
   }) {
-    if (inviteId.isEmpty || _pendingWorkspaceInviteId != null) return;
-    final notificationsBloc = context.read<NotificationsBloc>();
+    if (inviteId.isEmpty || _pendingWorkspaceInviteIds.contains(inviteId)) {
+      return;
+    }
     final workspaceBloc = context.read<WorkspaceBloc>();
+    final wsState = workspaceBloc.state;
+    if (wsState is WorkspaceLoaded &&
+        wsState.processingInviteDecisionIds.contains(inviteId)) {
+      return;
+    }
+    final notificationsBloc = context.read<NotificationsBloc>();
     if (notificationId.isNotEmpty) {
       notificationsBloc.markNotificationRead(notificationId);
     }
     setState(() {
-      _pendingWorkspaceInviteId = inviteId;
+      _pendingWorkspaceInviteIds.add(inviteId);
     });
 
     void complete(bool success, String? error) {
       if (!mounted) return;
       setState(() {
-        _pendingWorkspaceInviteId = null;
+        _pendingWorkspaceInviteIds.remove(inviteId);
       });
       if (!success) {
         AppSnackBar.showError(
@@ -91,6 +101,164 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
+  void _decideBoardInvite(
+    BuildContext context, {
+    required String inviteId,
+    required String boardId,
+    required String notificationId,
+    required bool accept,
+  }) {
+    if (inviteId.isEmpty || _pendingBoardInviteIds.contains(inviteId)) return;
+    if (accept && boardId.isEmpty) return;
+    final boardInvitesBloc = context.read<BoardInvitationsBloc>();
+    final biState = boardInvitesBloc.state;
+    if (biState is BoardInvitationsLoaded &&
+        biState.processingInviteIds.contains(inviteId)) {
+      return;
+    }
+    if (notificationId.isNotEmpty) {
+      context.read<NotificationsBloc>().add(
+        NotificationMarkReadRequested(notificationId),
+      );
+    }
+    setState(() {
+      _pendingBoardInviteIds.add(inviteId);
+    });
+
+    void complete(bool _, String? _) {
+      if (!mounted) return;
+      setState(() {
+        _pendingBoardInviteIds.remove(inviteId);
+      });
+    }
+
+    boardInvitesBloc.add(
+      accept
+          ? BoardInvitationAcceptRequested(
+              inviteId,
+              boardId: boardId,
+              onCompleted: complete,
+            )
+          : BoardInvitationDeclineRequested(inviteId, onCompleted: complete),
+    );
+  }
+
+  void _decideFriendRequest(
+    BuildContext context, {
+    required String requestId,
+    required String senderUid,
+    required String notificationId,
+    required bool accept,
+  }) {
+    if (requestId.isEmpty || _pendingFriendRequestIds.contains(requestId)) {
+      return;
+    }
+    final friendsBloc = context.read<FriendsBloc>();
+    final fState = friendsBloc.state;
+    if (fState is FriendsLoaded &&
+        (fState.acceptingRequestIds.contains(requestId) ||
+            fState.decliningRequestIds.contains(requestId))) {
+      return;
+    }
+    if (notificationId.isNotEmpty) {
+      context.read<NotificationsBloc>().add(
+        NotificationMarkReadRequested(notificationId),
+      );
+    }
+    setState(() {
+      _pendingFriendRequestIds.add(requestId);
+    });
+
+    void complete(bool success, String? error) {
+      if (!mounted) return;
+      setState(() {
+        _pendingFriendRequestIds.remove(requestId);
+      });
+      if (!success) {
+        AppSnackBar.showError(
+          context,
+          error ?? 'Failed to process friend request.',
+        );
+        return;
+      }
+      if (accept) {
+        AppSnackBar.showSuccess(context, 'Friend request accepted!');
+      } else {
+        AppSnackBar.showMessage(context, 'Friend request declined.');
+      }
+    }
+
+    friendsBloc.add(
+      accept
+          ? AcceptFriendRequestRequested(
+              requestId,
+              senderUid,
+              onCompleted: complete,
+            )
+          : DeclineFriendRequestRequested(requestId, onCompleted: complete),
+    );
+  }
+
+  void _decideAccessRequest(
+    BuildContext context, {
+    required String notificationId,
+    required String boardId,
+    required String requesterUid,
+    required String action,
+    required String requestType,
+    required String senderName,
+  }) {
+    if (notificationId.isEmpty ||
+        boardId.isEmpty ||
+        requesterUid.isEmpty ||
+        _pendingAccessRequestIds.contains(notificationId)) {
+      return;
+    }
+    final notificationsBloc = context.read<NotificationsBloc>();
+    final nState = notificationsBloc.state;
+    if (nState is NotificationsLoaded &&
+        nState.processingAccessRequestIds.contains(notificationId)) {
+      return;
+    }
+    notificationsBloc.markNotificationRead(notificationId);
+    setState(() {
+      _pendingAccessRequestIds.add(notificationId);
+    });
+
+    notificationsBloc.add(
+      NotificationRespondToAccessRequest(
+        notificationId: notificationId,
+        boardId: boardId,
+        requesterUid: requesterUid,
+        action: action,
+        requestType: requestType,
+        onCompleted: (success, error) {
+          if (!mounted) return;
+          setState(() {
+            _pendingAccessRequestIds.remove(notificationId);
+          });
+          if (!success) {
+            AppSnackBar.showError(
+              context,
+              error ?? 'Failed to process request.',
+            );
+            return;
+          }
+          if (action == 'accept') {
+            AppSnackBar.showSuccess(
+              context,
+              requestType == 'edit'
+                  ? 'Edit access approved for $senderName.'
+                  : 'Join request approved for $senderName.',
+            );
+          } else {
+            AppSnackBar.showMessage(context, 'Request declined.');
+          }
+        },
+      ),
+    );
+  }
+
   bool _matchesFilter(Map<String, dynamic> item) {
     final type = item['type']?.toString() ?? '';
     return switch (_filter) {
@@ -106,6 +274,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   @override
   Widget build(BuildContext context) {
     return BlocListener<BoardInvitationsBloc, BoardInvitationsState>(
+      listenWhen: (prev, curr) {
+        if (curr is! BoardInvitationsLoaded || curr.message == null) {
+          return false;
+        }
+        if (prev is! BoardInvitationsLoaded) return true;
+        return prev.message != curr.message ||
+            prev.openedBoardId != curr.openedBoardId;
+      },
       listener: (context, state) {
         if (state is! BoardInvitationsLoaded) return;
         if (state.message != null) {
@@ -244,9 +420,59 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                 item['targetId']?.toString() ??
                                 item['id']?.toString() ??
                                 '';
+                            final workspaceState =
+                                context.watch<WorkspaceBloc>().state;
                             final workspaceInvitePending =
                                 type == 'workspace_invite' &&
-                                _pendingWorkspaceInviteId == workspaceInviteId;
+                                (_pendingWorkspaceInviteIds.contains(
+                                      workspaceInviteId,
+                                    ) ||
+                                    (workspaceState is WorkspaceLoaded &&
+                                        workspaceState
+                                            .processingInviteDecisionIds
+                                            .contains(workspaceInviteId)));
+                            final boardInviteId =
+                                item['extraData']?['inviteId']?.toString() ??
+                                item['targetId']?.toString() ??
+                                item['id']?.toString() ??
+                                '';
+                            final boardInvitesState =
+                                context.watch<BoardInvitationsBloc>().state;
+                            final boardInvitePending =
+                                type == 'board_invite' &&
+                                (_pendingBoardInviteIds.contains(
+                                      boardInviteId,
+                                    ) ||
+                                    (boardInvitesState
+                                            is BoardInvitationsLoaded &&
+                                        boardInvitesState.processingInviteIds
+                                            .contains(boardInviteId)));
+                            final friendRequestId =
+                                item['extraData']?['requestId']?.toString() ??
+                                item['targetId']?.toString() ??
+                                item['id']?.toString() ??
+                                '';
+                            final friendsState =
+                                context.watch<FriendsBloc>().state;
+                            final friendRequestPending =
+                                type == 'friend_request' &&
+                                (_pendingFriendRequestIds.contains(
+                                      friendRequestId,
+                                    ) ||
+                                    (friendsState is FriendsLoaded &&
+                                        (friendsState.acceptingRequestIds
+                                                .contains(friendRequestId) ||
+                                            friendsState.decliningRequestIds
+                                                .contains(friendRequestId))));
+                            final accessRequestPending =
+                                (type == 'board_access_request' ||
+                                    type == 'board_edit_request') &&
+                                (_pendingAccessRequestIds.contains(
+                                      notificationId,
+                                    ) ||
+                                    state.processingAccessRequestIds.contains(
+                                      notificationId,
+                                    ));
 
                             final timestamp = _readTimestamp(item);
                             final timeLabel = _formatTimeLabel(timestamp);
@@ -521,179 +747,94 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                               const Spacer(),
                                               if (isActionablePending &&
                                                   type == 'board_invite') ...[
-                                                _actionButton(
-                                                  icon: LucideIcons.check,
-                                                  color: tokens.success,
-                                                  onTap: () {
-                                                    final inviteId =
-                                                        item['extraData']?['inviteId']
-                                                            ?.toString() ??
-                                                        item['targetId']
-                                                            ?.toString() ??
-                                                        item['id']
-                                                            ?.toString() ??
-                                                        '';
-                                                    final boardId =
-                                                        item['extraData']?['boardId']
-                                                            ?.toString() ??
-                                                        item['targetId']
-                                                            ?.toString() ??
-                                                        '';
-                                                    if (inviteId.isEmpty ||
-                                                        boardId.isEmpty) {
-                                                      return;
-                                                    }
-                                                    context
-                                                        .read<
-                                                          NotificationsBloc
-                                                        >()
-                                                        .markNotificationRead(
-                                                          notificationId,
-                                                        );
-                                                    context
-                                                        .read<
-                                                          BoardInvitationsBloc
-                                                        >()
-                                                        .add(
-                                                          BoardInvitationAcceptRequested(
-                                                            inviteId,
-                                                            boardId: boardId,
-                                                          ),
-                                                        );
-                                                  },
-                                                ),
-                                                const SizedBox(
-                                                  width: InkSpacing.s8,
-                                                ),
-                                                _actionButton(
-                                                  icon: LucideIcons.x,
-                                                  color: tokens.danger,
-                                                  onTap: () {
-                                                    final inviteId =
-                                                        item['extraData']?['inviteId']
-                                                            ?.toString() ??
-                                                        item['targetId']
-                                                            ?.toString() ??
-                                                        item['id']
-                                                            ?.toString() ??
-                                                        '';
-                                                    if (inviteId.isEmpty) {
-                                                      return;
-                                                    }
-                                                    context
-                                                        .read<
-                                                          NotificationsBloc
-                                                        >()
-                                                        .markNotificationRead(
-                                                          notificationId,
-                                                        );
-                                                    context
-                                                        .read<
-                                                          BoardInvitationsBloc
-                                                        >()
-                                                        .add(
-                                                          BoardInvitationDeclineRequested(
-                                                            inviteId,
-                                                          ),
-                                                        );
-                                                  },
-                                                ),
+                                                if (boardInvitePending)
+                                                  _pendingSpinner(tokens)
+                                                else ...[
+                                                  _actionButton(
+                                                    icon: LucideIcons.check,
+                                                    color: tokens.success,
+                                                    onTap: () {
+                                                      final boardId =
+                                                          item['extraData']?['boardId']
+                                                              ?.toString() ??
+                                                          item['targetId']
+                                                              ?.toString() ??
+                                                          '';
+                                                      _decideBoardInvite(
+                                                        context,
+                                                        inviteId: boardInviteId,
+                                                        boardId: boardId,
+                                                        notificationId:
+                                                            notificationId,
+                                                        accept: true,
+                                                      );
+                                                    },
+                                                  ),
+                                                  const SizedBox(
+                                                    width: InkSpacing.s8,
+                                                  ),
+                                                  _actionButton(
+                                                    icon: LucideIcons.x,
+                                                    color: tokens.danger,
+                                                    onTap: () =>
+                                                        _decideBoardInvite(
+                                                          context,
+                                                          inviteId:
+                                                              boardInviteId,
+                                                          boardId: '',
+                                                          notificationId:
+                                                              notificationId,
+                                                          accept: false,
+                                                        ),
+                                                  ),
+                                                ],
                                               ] else if (isActionablePending &&
                                                   type == 'friend_request') ...[
-                                                _actionButton(
-                                                  icon: LucideIcons.check,
-                                                  color: tokens.success,
-                                                  onTap: () {
-                                                    final requestId =
-                                                        item['extraData']?['requestId']
-                                                            ?.toString() ??
-                                                        item['targetId']
-                                                            ?.toString() ??
-                                                        item['id']
-                                                            ?.toString() ??
-                                                        '';
-                                                    final senderUid =
-                                                        item['fromUid']
-                                                            ?.toString() ??
-                                                        '';
-                                                    if (requestId.isEmpty) {
-                                                      return;
-                                                    }
-                                                    context
-                                                        .read<
-                                                          NotificationsBloc
-                                                        >()
-                                                        .markNotificationRead(
-                                                          notificationId,
-                                                        );
-                                                    context.read<FriendsBloc>().add(
-                                                      AcceptFriendRequestRequested(
-                                                        requestId,
-                                                        senderUid,
-                                                      ),
-                                                    );
-                                                    AppSnackBar.showSuccess(
-                                                      context,
-                                                      'Friend request accepted!',
-                                                    );
-                                                  },
-                                                ),
-                                                const SizedBox(
-                                                  width: InkSpacing.s8,
-                                                ),
-                                                _actionButton(
-                                                  icon: LucideIcons.x,
-                                                  color: tokens.danger,
-                                                  onTap: () {
-                                                    final requestId =
-                                                        item['extraData']?['requestId']
-                                                            ?.toString() ??
-                                                        item['targetId']
-                                                            ?.toString() ??
-                                                        item['id']
-                                                            ?.toString() ??
-                                                        '';
-                                                    if (requestId.isEmpty) {
-                                                      return;
-                                                    }
-                                                    context
-                                                        .read<
-                                                          NotificationsBloc
-                                                        >()
-                                                        .markNotificationRead(
-                                                          notificationId,
-                                                        );
-                                                    context.read<FriendsBloc>().add(
-                                                      DeclineFriendRequestRequested(
-                                                        requestId,
-                                                      ),
-                                                    );
-                                                    AppSnackBar.showMessage(
-                                                      context,
-                                                      'Friend request declined.',
-                                                    );
-                                                  },
-                                                ),
+                                                if (friendRequestPending)
+                                                  _pendingSpinner(tokens)
+                                                else ...[
+                                                  _actionButton(
+                                                    icon: LucideIcons.check,
+                                                    color: tokens.success,
+                                                    onTap: () {
+                                                      final senderUid =
+                                                          item['fromUid']
+                                                              ?.toString() ??
+                                                          '';
+                                                      _decideFriendRequest(
+                                                        context,
+                                                        requestId:
+                                                            friendRequestId,
+                                                        senderUid: senderUid,
+                                                        notificationId:
+                                                            notificationId,
+                                                        accept: true,
+                                                      );
+                                                    },
+                                                  ),
+                                                  const SizedBox(
+                                                    width: InkSpacing.s8,
+                                                  ),
+                                                  _actionButton(
+                                                    icon: LucideIcons.x,
+                                                    color: tokens.danger,
+                                                    onTap: () =>
+                                                        _decideFriendRequest(
+                                                          context,
+                                                          requestId:
+                                                              friendRequestId,
+                                                          senderUid: '',
+                                                          notificationId:
+                                                              notificationId,
+                                                          accept: false,
+                                                        ),
+                                                  ),
+                                                ],
                                               ] else if (isActionablePending &&
                                                   type ==
                                                       'workspace_invite') ...[
                                                 if (workspaceInvitePending)
-                                                  Padding(
-                                                    padding:
-                                                        const EdgeInsets.symmetric(
-                                                          horizontal: 10,
-                                                        ),
-                                                    child: SizedBox(
-                                                      width: 18,
-                                                      height: 18,
-                                                      child:
-                                                          CircularProgressIndicator(
-                                                            strokeWidth: 2,
-                                                            color:
-                                                                tokens.accent,
-                                                          ),
-                                                    ),
-                                                  )
+                                                  _pendingSpinner(tokens)
                                                 else ...[
                                                   _actionButton(
                                                     icon: LucideIcons.check,
@@ -730,133 +871,87 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                                           'board_access_request' ||
                                                       type ==
                                                           'board_edit_request')) ...[
-                                                _actionButton(
-                                                  icon: LucideIcons.check,
-                                                  color: tokens.success,
-                                                  onTap: () {
-                                                    final boardId =
-                                                        item['extraData']?['boardId']
-                                                            ?.toString() ??
-                                                        item['targetId']
-                                                            ?.toString() ??
-                                                        '';
-                                                    final requesterUid =
-                                                        item['extraData']?['requesterUid']
-                                                            ?.toString() ??
-                                                        item['fromUid']
-                                                            ?.toString() ??
-                                                        '';
-                                                    final requestType =
-                                                        item['extraData']?['requestType']
-                                                            ?.toString() ??
-                                                        (type ==
-                                                                'board_edit_request'
-                                                            ? 'edit'
-                                                            : 'join');
-                                                    if (boardId.isEmpty ||
-                                                        requesterUid.isEmpty) {
-                                                      return;
-                                                    }
-                                                    context
-                                                        .read<
-                                                          NotificationsBloc
-                                                        >()
-                                                        .markNotificationRead(
-                                                          notificationId,
-                                                        );
-                                                    context
-                                                        .read<
-                                                          NotificationsBloc
-                                                        >()
-                                                        .add(
-                                                          NotificationRespondToAccessRequest(
-                                                            notificationId:
-                                                                notificationId,
-                                                            boardId: boardId,
-                                                            requesterUid:
-                                                                requesterUid,
-                                                            action: 'accept',
-                                                            requestType:
-                                                                requestType,
-                                                          ),
-                                                        );
-                                                    ScaffoldMessenger.of(
-                                                      context,
-                                                    ).showSnackBar(
-                                                      SnackBar(
-                                                        content: Text(
-                                                          requestType == 'edit'
-                                                              ? 'Edit access approved for $senderName.'
-                                                              : 'Join request approved for $senderName.',
-                                                        ),
-                                                      ),
-                                                    );
-                                                  },
-                                                ),
-                                                const SizedBox(
-                                                  width: InkSpacing.s8,
-                                                ),
-                                                _actionButton(
-                                                  icon: LucideIcons.x,
-                                                  color: tokens.danger,
-                                                  onTap: () {
-                                                    final boardId =
-                                                        item['extraData']?['boardId']
-                                                            ?.toString() ??
-                                                        item['targetId']
-                                                            ?.toString() ??
-                                                        '';
-                                                    final requesterUid =
-                                                        item['extraData']?['requesterUid']
-                                                            ?.toString() ??
-                                                        item['fromUid']
-                                                            ?.toString() ??
-                                                        '';
-                                                    final requestType =
-                                                        item['extraData']?['requestType']
-                                                            ?.toString() ??
-                                                        (type ==
-                                                                'board_edit_request'
-                                                            ? 'edit'
-                                                            : 'join');
-                                                    if (boardId.isEmpty ||
-                                                        requesterUid.isEmpty) {
-                                                      return;
-                                                    }
-                                                    context
-                                                        .read<
-                                                          NotificationsBloc
-                                                        >()
-                                                        .markNotificationRead(
-                                                          notificationId,
-                                                        );
-                                                    context
-                                                        .read<
-                                                          NotificationsBloc
-                                                        >()
-                                                        .add(
-                                                          NotificationRespondToAccessRequest(
-                                                            notificationId:
-                                                                notificationId,
-                                                            boardId: boardId,
-                                                            requesterUid:
-                                                                requesterUid,
-                                                            action: 'decline',
-                                                            requestType:
-                                                                requestType,
-                                                          ),
-                                                        );
-                                                    ScaffoldMessenger.of(
-                                                      context,
-                                                    ).showSnackBar(
-                                                      const SnackBar(
-                                                        content: Text(
-                                                          'Request declined.',
-                                                        ),
-                                                      ),
-                                                    );
-                                                  },
-                                                ),
+                                                if (accessRequestPending)
+                                                  _pendingSpinner(tokens)
+                                                else ...[
+                                                  _actionButton(
+                                                    icon: LucideIcons.check,
+                                                    color: tokens.success,
+                                                    onTap: () {
+                                                      final boardId =
+                                                          item['extraData']?['boardId']
+                                                              ?.toString() ??
+                                                          item['targetId']
+                                                              ?.toString() ??
+                                                          '';
+                                                      final requesterUid =
+                                                          item['extraData']?['requesterUid']
+                                                              ?.toString() ??
+                                                          item['fromUid']
+                                                              ?.toString() ??
+                                                          '';
+                                                      final requestType =
+                                                          item['extraData']?['requestType']
+                                                              ?.toString() ??
+                                                          (type ==
+                                                                  'board_edit_request'
+                                                              ? 'edit'
+                                                              : 'join');
+                                                      _decideAccessRequest(
+                                                        context,
+                                                        notificationId:
+                                                            notificationId,
+                                                        boardId: boardId,
+                                                        requesterUid:
+                                                            requesterUid,
+                                                        action: 'accept',
+                                                        requestType:
+                                                            requestType,
+                                                        senderName: senderName,
+                                                      );
+                                                    },
+                                                  ),
+                                                  const SizedBox(
+                                                    width: InkSpacing.s8,
+                                                  ),
+                                                  _actionButton(
+                                                    icon: LucideIcons.x,
+                                                    color: tokens.danger,
+                                                    onTap: () {
+                                                      final boardId =
+                                                          item['extraData']?['boardId']
+                                                              ?.toString() ??
+                                                          item['targetId']
+                                                              ?.toString() ??
+                                                          '';
+                                                      final requesterUid =
+                                                          item['extraData']?['requesterUid']
+                                                              ?.toString() ??
+                                                          item['fromUid']
+                                                              ?.toString() ??
+                                                          '';
+                                                      final requestType =
+                                                          item['extraData']?['requestType']
+                                                              ?.toString() ??
+                                                          (type ==
+                                                                  'board_edit_request'
+                                                              ? 'edit'
+                                                              : 'join');
+                                                      _decideAccessRequest(
+                                                        context,
+                                                        notificationId:
+                                                            notificationId,
+                                                        boardId: boardId,
+                                                        requesterUid:
+                                                            requesterUid,
+                                                        action: 'decline',
+                                                        requestType:
+                                                            requestType,
+                                                        senderName: senderName,
+                                                      );
+                                                    },
+                                                  ),
+                                                ],
                                               ],
                                             ],
                                           ),
@@ -1027,6 +1122,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             style: InkType.caption(color).copyWith(fontWeight: FontWeight.w700),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _pendingSpinner(InkTokens tokens) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(strokeWidth: 2, color: tokens.accent),
       ),
     );
   }

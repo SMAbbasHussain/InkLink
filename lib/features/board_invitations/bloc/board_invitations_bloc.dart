@@ -14,17 +14,26 @@ class BoardInvitationsLoadRequested extends BoardInvitationsEvent {
   const BoardInvitationsLoadRequested();
 }
 
+typedef BoardInviteDecisionCallback =
+    void Function(bool success, String? error);
+
 class BoardInvitationAcceptRequested extends BoardInvitationsEvent {
   final String inviteId;
   final String? boardId;
+  final BoardInviteDecisionCallback? onCompleted;
 
-  const BoardInvitationAcceptRequested(this.inviteId, {this.boardId});
+  const BoardInvitationAcceptRequested(
+    this.inviteId, {
+    this.boardId,
+    this.onCompleted,
+  });
 }
 
 class BoardInvitationDeclineRequested extends BoardInvitationsEvent {
   final String inviteId;
+  final BoardInviteDecisionCallback? onCompleted;
 
-  const BoardInvitationDeclineRequested(this.inviteId);
+  const BoardInvitationDeclineRequested(this.inviteId, {this.onCompleted});
 }
 
 class _BoardInvitationsUpdated extends BoardInvitationsEvent {
@@ -53,6 +62,7 @@ class BoardInvitationsLoading extends BoardInvitationsState {
 
 class BoardInvitationsLoaded extends BoardInvitationsState {
   final List<Map<String, dynamic>> invites;
+  final Set<String> processingInviteIds;
   final String? message;
   final bool isError;
   final String? openedBoardId;
@@ -60,6 +70,7 @@ class BoardInvitationsLoaded extends BoardInvitationsState {
 
   const BoardInvitationsLoaded({
     required this.invites,
+    this.processingInviteIds = const <String>{},
     this.message,
     this.isError = false,
     this.openedBoardId,
@@ -68,6 +79,7 @@ class BoardInvitationsLoaded extends BoardInvitationsState {
 
   BoardInvitationsLoaded copyWith({
     List<Map<String, dynamic>>? invites,
+    Set<String>? processingInviteIds,
     Object? message = _unset,
     bool? isError,
     Object? openedBoardId = _unset,
@@ -75,6 +87,7 @@ class BoardInvitationsLoaded extends BoardInvitationsState {
   }) {
     return BoardInvitationsLoaded(
       invites: invites ?? this.invites,
+      processingInviteIds: processingInviteIds ?? this.processingInviteIds,
       message: message == _unset ? this.message : message as String?,
       isError: isError ?? this.isError,
       openedBoardId: openedBoardId == _unset
@@ -97,6 +110,7 @@ class BoardInvitationsBloc
     extends Bloc<BoardInvitationsEvent, BoardInvitationsState> {
   final InvitationService _invitationService;
   StreamSubscription<List<Map<String, dynamic>>>? _invitesSub;
+  final Set<String> _inFlightInviteIds = <String>{};
   bool _isOffline = false;
 
   BoardInvitationsBloc({required InvitationService invitationService})
@@ -137,7 +151,13 @@ class BoardInvitationsBloc
     _BoardInvitationsUpdated event,
     Emitter<BoardInvitationsState> emit,
   ) {
-    emit(BoardInvitationsLoaded(invites: event.invites, isOffline: _isOffline));
+    emit(
+      BoardInvitationsLoaded(
+        invites: event.invites,
+        processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
+        isOffline: _isOffline,
+      ),
+    );
   }
 
   void _onStreamFailed(
@@ -151,34 +171,61 @@ class BoardInvitationsBloc
     BoardInvitationAcceptRequested event,
     Emitter<BoardInvitationsState> emit,
   ) async {
+    if (event.inviteId.isEmpty ||
+        _inFlightInviteIds.contains(event.inviteId)) {
+      return;
+    }
+    _inFlightInviteIds.add(event.inviteId);
+
+    final before = state;
+    if (before is BoardInvitationsLoaded) {
+      emit(
+        before.copyWith(
+          processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
+          message: null,
+          openedBoardId: null,
+        ),
+      );
+    }
+
     try {
       await _invitationService.acceptInvite(event.inviteId);
+      _inFlightInviteIds.remove(event.inviteId);
       final current = state;
       if (current is BoardInvitationsLoaded) {
         emit(
           current.copyWith(
+            invites: current.invites
+                .where((i) => i['id']?.toString() != event.inviteId)
+                .toList(),
+            processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
             message: 'Invite accepted.',
             isError: false,
             openedBoardId: event.boardId,
           ),
         );
       }
+      event.onCompleted?.call(true, null);
     } catch (e) {
+      _inFlightInviteIds.remove(event.inviteId);
       if (_looksOffline(e)) {
         _isOffline = true;
       }
+      final message = AppErrorFormatter.cleanMessage(e);
       final current = state;
       if (current is BoardInvitationsLoaded) {
         emit(
           current.copyWith(
-            message: AppErrorFormatter.cleanMessage(e),
+            processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
+            message: message,
             isError: true,
             isOffline: _isOffline,
           ),
         );
       } else {
-        emit(BoardInvitationsError(AppErrorFormatter.cleanMessage(e)));
+        emit(BoardInvitationsError(message));
       }
+      event.onCompleted?.call(false, message);
     }
   }
 
@@ -186,28 +233,60 @@ class BoardInvitationsBloc
     BoardInvitationDeclineRequested event,
     Emitter<BoardInvitationsState> emit,
   ) async {
+    if (event.inviteId.isEmpty ||
+        _inFlightInviteIds.contains(event.inviteId)) {
+      return;
+    }
+    _inFlightInviteIds.add(event.inviteId);
+
+    final before = state;
+    if (before is BoardInvitationsLoaded) {
+      emit(
+        before.copyWith(
+          processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
+          message: null,
+          openedBoardId: null,
+        ),
+      );
+    }
+
     try {
       await _invitationService.declineInvite(event.inviteId);
-      final current = state;
-      if (current is BoardInvitationsLoaded) {
-        emit(current.copyWith(message: 'Invite declined.', isError: false));
-      }
-    } catch (e) {
-      if (_looksOffline(e)) {
-        _isOffline = true;
-      }
+      _inFlightInviteIds.remove(event.inviteId);
       final current = state;
       if (current is BoardInvitationsLoaded) {
         emit(
           current.copyWith(
-            message: AppErrorFormatter.cleanMessage(e),
+            invites: current.invites
+                .where((i) => i['id']?.toString() != event.inviteId)
+                .toList(),
+            processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
+            message: 'Invite declined.',
+            isError: false,
+          ),
+        );
+      }
+      event.onCompleted?.call(true, null);
+    } catch (e) {
+      _inFlightInviteIds.remove(event.inviteId);
+      if (_looksOffline(e)) {
+        _isOffline = true;
+      }
+      final message = AppErrorFormatter.cleanMessage(e);
+      final current = state;
+      if (current is BoardInvitationsLoaded) {
+        emit(
+          current.copyWith(
+            processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
+            message: message,
             isError: true,
             isOffline: _isOffline,
           ),
         );
       } else {
-        emit(BoardInvitationsError(AppErrorFormatter.cleanMessage(e)));
+        emit(BoardInvitationsError(message));
       }
+      event.onCompleted?.call(false, message);
     }
   }
 
@@ -225,6 +304,7 @@ class BoardInvitationsBloc
   Future<void> stopForLogout() async {
     await _invitesSub?.cancel();
     _invitesSub = null;
+    _inFlightInviteIds.clear();
     _isOffline = false;
   }
 }

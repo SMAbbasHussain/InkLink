@@ -14,15 +14,24 @@ class SendFriendRequestRequested extends FriendsEvent {
   SendFriendRequestRequested(this.targetUid);
 }
 
+typedef FriendRequestDecisionCallback =
+    void Function(bool success, String? error);
+
 class AcceptFriendRequestRequested extends FriendsEvent {
   final String requestId;
   final String senderUid;
-  AcceptFriendRequestRequested(this.requestId, this.senderUid);
+  final FriendRequestDecisionCallback? onCompleted;
+  AcceptFriendRequestRequested(
+    this.requestId,
+    this.senderUid, {
+    this.onCompleted,
+  });
 }
 
 class DeclineFriendRequestRequested extends FriendsEvent {
   final String requestId;
-  DeclineFriendRequestRequested(this.requestId);
+  final FriendRequestDecisionCallback? onCompleted;
+  DeclineFriendRequestRequested(this.requestId, {this.onCompleted});
 }
 
 class CancelFriendRequestRequested extends FriendsEvent {

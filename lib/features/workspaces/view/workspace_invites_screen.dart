@@ -23,13 +23,69 @@ class WorkspaceInvitesScreen extends StatefulWidget {
 }
 
 class _WorkspaceInvitesScreenState extends State<WorkspaceInvitesScreen> {
-  String? _pendingDecisionInviteId;
-  String? _pendingDecisionStatus;
+  final Set<String> _localProcessingInviteIds = <String>{};
 
   @override
   void initState() {
     super.initState();
     context.read<WorkspaceBloc>().add(LoadIncomingInvitesRequested());
+  }
+
+  void _submitDecision({
+    required String inviteId,
+    required String workspaceId,
+    required String fromUid,
+    required bool accept,
+  }) {
+    if (inviteId.isEmpty || _localProcessingInviteIds.contains(inviteId)) {
+      return;
+    }
+    final workspaceBloc = context.read<WorkspaceBloc>();
+    final state = workspaceBloc.state;
+    if (state is WorkspaceLoaded &&
+        state.processingInviteDecisionIds.contains(inviteId)) {
+      return;
+    }
+
+    developer.log(
+      '${accept ? 'Accept' : 'Reject'} invite tapped | inviteId=$inviteId | workspaceId=$workspaceId | fromUid=$fromUid',
+      name: 'WorkspaceInvitesScreen',
+    );
+
+    setState(() {
+      _localProcessingInviteIds.add(inviteId);
+    });
+
+    final notificationsBloc = context.read<NotificationsBloc>();
+    void onCompleted(bool success, String? error) {
+      if (!mounted) return;
+      setState(() {
+        _localProcessingInviteIds.remove(inviteId);
+      });
+      if (!success) {
+        AppSnackBar.showError(
+          context,
+          error ?? 'Failed to ${accept ? 'accept' : 'reject'} invite.',
+        );
+        return;
+      }
+      notificationsBloc.add(
+        NotificationWorkspaceInviteResolved(
+          inviteId: inviteId,
+          status: accept ? 'accepted' : 'declined',
+        ),
+      );
+      AppSnackBar.showSuccess(
+        context,
+        accept ? 'Invite accepted.' : 'Invite rejected.',
+      );
+    }
+
+    context.read<WorkspaceBloc>().add(
+      accept
+          ? AcceptWorkspaceInviteRequested(inviteId, onCompleted: onCompleted)
+          : RejectWorkspaceInviteRequested(inviteId, onCompleted: onCompleted),
+    );
   }
 
   @override
@@ -43,36 +99,7 @@ class _WorkspaceInvitesScreenState extends State<WorkspaceInvitesScreen> {
         title: Text('Workspace Invitations', style: InkType.title(tokens.ink)),
       ),
       body: SafeArea(
-        child: BlocConsumer<WorkspaceBloc, WorkspaceState>(
-          listener: (context, state) {
-            if (state is! WorkspaceLoaded) return;
-
-            if (state.actionError != null && state.actionError!.isNotEmpty) {
-              developer.log(
-                'WorkspaceInvitesScreen actionError: ${state.actionError}',
-                name: 'WorkspaceInvitesScreen',
-              );
-              _pendingDecisionInviteId = null;
-              _pendingDecisionStatus = null;
-              AppSnackBar.showError(context, state.actionError!);
-            }
-
-            if (state.actionInfo != null && state.actionInfo!.isNotEmpty) {
-              final inviteId = _pendingDecisionInviteId;
-              final status = _pendingDecisionStatus;
-              if (inviteId != null && status != null) {
-                context.read<NotificationsBloc>().add(
-                  NotificationWorkspaceInviteResolved(
-                    inviteId: inviteId,
-                    status: status,
-                  ),
-                );
-                _pendingDecisionInviteId = null;
-                _pendingDecisionStatus = null;
-              }
-              AppSnackBar.showSuccess(context, state.actionInfo!);
-            }
-          },
+        child: BlocBuilder<WorkspaceBloc, WorkspaceState>(
           builder: (context, state) {
             if (state is! WorkspaceLoaded) {
               return Center(
@@ -96,9 +123,9 @@ class _WorkspaceInvitesScreenState extends State<WorkspaceInvitesScreen> {
               itemCount: pendingInvites.length,
               itemBuilder: (context, index) {
                 final invite = pendingInvites[index];
-                final isProcessing = state.processingInviteDecisionIds.contains(
-                  invite.id,
-                );
+                final isProcessing =
+                    state.processingInviteDecisionIds.contains(invite.id) ||
+                    _localProcessingInviteIds.contains(invite.id);
                 return Padding(
                   padding: const EdgeInsets.only(bottom: InkSpacing.s16),
                   child: PaperCard(
@@ -154,19 +181,12 @@ class _WorkspaceInvitesScreenState extends State<WorkspaceInvitesScreen> {
                                     : const Icon(LucideIcons.x),
                                 onPressed: isProcessing
                                     ? null
-                                    : () {
-                                        developer.log(
-                                          'Reject invite tapped | inviteId=${invite.id} | workspaceId=${invite.workspaceId} | fromUid=${invite.fromUid}',
-                                          name: 'WorkspaceInvitesScreen',
-                                        );
-                                        _pendingDecisionInviteId = invite.id;
-                                        _pendingDecisionStatus = 'declined';
-                                        context.read<WorkspaceBloc>().add(
-                                          RejectWorkspaceInviteRequested(
-                                            invite.id,
-                                          ),
-                                        );
-                                      },
+                                    : () => _submitDecision(
+                                        inviteId: invite.id,
+                                        workspaceId: invite.workspaceId,
+                                        fromUid: invite.fromUid,
+                                        accept: false,
+                                      ),
                               ),
                             ),
                             const SizedBox(width: InkSpacing.s8 + 2),
@@ -187,19 +207,12 @@ class _WorkspaceInvitesScreenState extends State<WorkspaceInvitesScreen> {
                                     : const Icon(LucideIcons.check),
                                 onPressed: isProcessing
                                     ? null
-                                    : () {
-                                        developer.log(
-                                          'Accept invite tapped | inviteId=${invite.id} | workspaceId=${invite.workspaceId} | fromUid=${invite.fromUid}',
-                                          name: 'WorkspaceInvitesScreen',
-                                        );
-                                        _pendingDecisionInviteId = invite.id;
-                                        _pendingDecisionStatus = 'accepted';
-                                        context.read<WorkspaceBloc>().add(
-                                          AcceptWorkspaceInviteRequested(
-                                            invite.id,
-                                          ),
-                                        );
-                                      },
+                                    : () => _submitDecision(
+                                        inviteId: invite.id,
+                                        workspaceId: invite.workspaceId,
+                                        fromUid: invite.fromUid,
+                                        accept: true,
+                                      ),
                               ),
                             ),
                           ],

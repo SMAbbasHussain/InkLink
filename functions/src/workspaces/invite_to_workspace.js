@@ -4,163 +4,272 @@ const FirestorePaths = require('../utils/firestore_paths');
 const { sendUserNotification } = require('../utils/notification_sender');
 const logger = require('../utils/logger');
 
-module.exports = async (request) => {
-  const uid = request.auth?.uid;
-  const workspaceId = request.data?.workspaceId;
-  const invitedUserIds = request.data?.invitedUserIds;
+function createInviteToWorkspaceHandler(deps = {}) {
+  const getFirestore = deps.getFirestore || (() => admin.firestore());
+  const notifyUser = deps.sendUserNotification || sendUserNotification;
+  const serverTimestamp =
+    deps.serverTimestamp || (() => admin.firestore.FieldValue.serverTimestamp());
+  const log = deps.logger || logger;
 
-  try {
-    if (!uid) {
-      throw new HttpsError('unauthenticated', 'User must be logged in.');
-    }
+  return async (request) => {
+    const uid = request.auth?.uid;
+    const workspaceId = request.data?.workspaceId;
+    const invitedUserIds = request.data?.invitedUserIds;
 
-    if (typeof workspaceId !== 'string' || workspaceId.trim().length === 0) {
-      throw new HttpsError('invalid-argument', 'workspaceId is required.');
-    }
+    try {
+      if (!uid) {
+        throw new HttpsError('unauthenticated', 'User must be logged in.');
+      }
 
-    if (!Array.isArray(invitedUserIds) || invitedUserIds.length === 0) {
-      throw new HttpsError('invalid-argument', 'invitedUserIds must be a non-empty array.');
-    }
+      if (typeof workspaceId !== 'string' || workspaceId.trim().length === 0) {
+        throw new HttpsError('invalid-argument', 'workspaceId is required.');
+      }
 
-    const firestore = admin.firestore();
-    const workspaceRef = firestore.collection(FirestorePaths.WORKSPACES).doc(workspaceId.trim());
-    const workspaceDoc = await workspaceRef.get();
+      if (!Array.isArray(invitedUserIds) || invitedUserIds.length === 0) {
+        throw new HttpsError(
+          'invalid-argument',
+          'invitedUserIds must be a non-empty array.',
+        );
+      }
 
-    if (!workspaceDoc.exists) {
-      throw new HttpsError('not-found', 'Workspace not found.');
-    }
+      const trimmedWorkspaceId = workspaceId.trim();
+      const firestore = getFirestore();
+      const workspaceRef = firestore
+        .collection(FirestorePaths.WORKSPACES)
+        .doc(trimmedWorkspaceId);
+      const workspaceDoc = await workspaceRef.get();
 
-    const workspaceData = workspaceDoc.data() || {};
-    if (workspaceData.ownerId !== uid) {
-      throw new HttpsError('permission-denied', 'Only workspace owner can invite users.');
-    }
+      if (!workspaceDoc.exists) {
+        throw new HttpsError('not-found', 'Workspace not found.');
+      }
 
-    const senderDoc = await firestore.collection(FirestorePaths.USERS).doc(uid).get();
-    const senderData = senderDoc.data() || {};
-    const senderName = senderData.displayName || 'InkLink User';
-    const senderPhotoUrl = senderData.photoURL || null;
-    const workspaceName = (workspaceData[FirestorePaths.NAME] || '').toString().trim() || 'workspace';
+      const workspaceData = workspaceDoc.data() || {};
+      if (workspaceData.ownerId !== uid) {
+        throw new HttpsError(
+          'permission-denied',
+          'Only workspace owner can invite users.',
+        );
+      }
 
-    const inviteIdentifiers = [...new Set(invitedUserIds)]
-      .filter((value) => typeof value === 'string' && value.trim().length > 0)
-      .map((value) => value.trim())
-      .filter((value) => value !== uid);
+      const senderDoc = await firestore
+        .collection(FirestorePaths.USERS)
+        .doc(uid)
+        .get();
+      const senderData = senderDoc.data() || {};
+      const senderName = senderData.displayName || 'InkLink User';
+      const senderPhotoUrl = senderData.photoURL || null;
+      const workspaceName =
+        (workspaceData[FirestorePaths.NAME] || '').toString().trim() ||
+        'workspace';
 
-    const resolvedRecipientUids = [];
-    const unresolvedEmails = [];
-    const unresolvedUids = [];
+      const inviteIdentifiers = [...new Set(invitedUserIds)]
+        .filter((value) => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => value.trim())
+        .filter((value) => value !== uid);
 
-    for (const identifier of inviteIdentifiers) {
-      if (identifier.includes('@')) {
-        const normalizedEmail = identifier.toLowerCase();
+      const resolvedRecipientUids = [];
+      const unresolvedEmails = [];
+      const unresolvedUids = [];
 
-        const userByEmail = await firestore
-          .collection(FirestorePaths.USERS)
-          .where(FirestorePaths.EMAIL, '==', normalizedEmail)
-          .limit(1)
-          .get();
+      for (const identifier of inviteIdentifiers) {
+        if (identifier.includes('@')) {
+          const normalizedEmail = identifier.toLowerCase();
 
-        if (userByEmail.docs.length === 0) {
-          // If migration has not yet run, record unresolved email for operator review.
-          unresolvedEmails.push(identifier);
+          let userByEmail = await firestore
+            .collection(FirestorePaths.USERS)
+            .where(FirestorePaths.EMAIL, '==', normalizedEmail)
+            .limit(1)
+            .get();
+
+          if (userByEmail.docs.length === 0 && identifier !== normalizedEmail) {
+            userByEmail = await firestore
+              .collection(FirestorePaths.USERS)
+              .where(FirestorePaths.EMAIL, '==', identifier)
+              .limit(1)
+              .get();
+          }
+
+          if (userByEmail.docs.length === 0) {
+            // If migration has not yet run, record unresolved email for operator review.
+            unresolvedEmails.push(identifier);
+            continue;
+          }
+
+          resolvedRecipientUids.push(userByEmail.docs[0].id);
           continue;
         }
 
-        resolvedRecipientUids.push(userByEmail.docs[0].id);
-        continue;
+        const targetUserDoc = await firestore
+          .collection(FirestorePaths.USERS)
+          .doc(identifier)
+          .get();
+
+        if (!targetUserDoc.exists) {
+          unresolvedUids.push(identifier);
+          continue;
+        }
+
+        resolvedRecipientUids.push(identifier);
       }
 
-      const targetUserDoc = await firestore
-        .collection(FirestorePaths.USERS)
-        .doc(identifier)
-        .get();
+      const uniqueTargetUids = [...new Set(resolvedRecipientUids)].filter(
+        (id) => id && id !== uid,
+      );
 
-      if (!targetUserDoc.exists) {
-        unresolvedUids.push(identifier);
-        continue;
-      }
+      const existingMemberIds = new Set(
+        Array.isArray(workspaceData.memberIds) ? workspaceData.memberIds : [],
+      );
 
-      resolvedRecipientUids.push(identifier);
-    }
+      // Phase 1: Atomically inspect membership/existing invites and write only
+      // new invites so concurrent or repeated calls remain strictly idempotent.
+      let newlyInvitedTargets = [];
+      let alreadyInvitedUids = [];
+      let alreadyMemberUids = [];
 
-    const results = [];
-    const failedRecipients = [];
-    const uniqueTargetUids = [...new Set(resolvedRecipientUids)]
-      .filter((id) => id && id !== uid);
-
-    // Phase 1: Batch write all invite docs
-    const batch = firestore.batch();
-    const inviteRefs = {};
-    for (const targetUid of uniqueTargetUids) {
-      const inviteRef = firestore
-        .collection(FirestorePaths.WORKSPACE_INVITES)
-        .doc(`${workspaceId.trim()}_${targetUid}`);
-      inviteRefs[targetUid] = inviteRef;
-      batch.set(inviteRef, {
-        workspaceId: workspaceId.trim(),
-        [FirestorePaths.FROM_UID]: uid,
-        [FirestorePaths.TO_UID]: targetUid,
-        [FirestorePaths.SENDER_NAME]: senderName,
-        [FirestorePaths.SENDER_PIC]: senderPhotoUrl,
-        [FirestorePaths.NAME]: workspaceName,
-        [FirestorePaths.STATUS]: 'pending',
-        [FirestorePaths.TIMESTAMP]: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-    }
-
-    try {
-      await batch.commit();
-    } catch (batchError) {
-      logger.error('inviteToWorkspace batch commit failed', batchError);
-      throw new HttpsError('internal', 'Failed to create workspace invites.');
-    }
-
-    // Phase 2: Send notifications in parallel
-    const notificationPromises = uniqueTargetUids.map(async (targetUid) => {
       try {
-        await sendUserNotification({
-          recipientUid: targetUid,
-          title: `${senderName} invited you to a workspace`,
-          body: `Invitation to join "${workspaceName}"`,
-          type: 'workspace_invite',
-          action: 'open_workspace_invites',
-          targetId: inviteRefs[targetUid].id,
-          senderUid: uid,
-          senderName,
-          senderPhotoUrl,
-          groupingKey: `workspace_invite:${uid}:${targetUid}`,
-          extraData: {
-            workspaceId: workspaceId.trim(),
-            workspaceName,
-            inviteId: inviteRefs[targetUid].id,
-          },
+        const txResult = await firestore.runTransaction(async (transaction) => {
+          const pendingReads = [];
+          for (const targetUid of uniqueTargetUids) {
+            const memberRef = workspaceRef
+              .collection(FirestorePaths.WORKSPACE_MEMBERS_SUBCOLLECTION)
+              .doc(targetUid);
+            const inviteRef = firestore
+              .collection(FirestorePaths.WORKSPACE_INVITES)
+              .doc(`${trimmedWorkspaceId}_${targetUid}`);
+            pendingReads.push({
+              targetUid,
+              memberRef,
+              inviteRef,
+              memberPromise: transaction.get(memberRef),
+              invitePromise: transaction.get(inviteRef),
+            });
+          }
+
+          const readResults = await Promise.all(
+            pendingReads.map(async (entry) => ({
+              targetUid: entry.targetUid,
+              inviteRef: entry.inviteRef,
+              memberDoc: await entry.memberPromise,
+              inviteDoc: await entry.invitePromise,
+            })),
+          );
+
+          const toCreate = [];
+          const skippedPending = [];
+          const skippedMembers = [];
+
+          for (const entry of readResults) {
+            const { targetUid, inviteRef, memberDoc, inviteDoc } = entry;
+            if (memberDoc.exists || existingMemberIds.has(targetUid)) {
+              skippedMembers.push(targetUid);
+              continue;
+            }
+
+            const existingInvite = inviteDoc.exists ? inviteDoc.data() || {} : null;
+            const existingStatus = existingInvite
+              ? (existingInvite[FirestorePaths.STATUS] || 'pending')
+                  .toString()
+                  .trim()
+                  .toLowerCase()
+              : null;
+
+            if (inviteDoc.exists && existingStatus === 'pending') {
+              skippedPending.push(targetUid);
+              continue;
+            }
+
+            transaction.set(
+              inviteRef,
+              {
+                workspaceId: trimmedWorkspaceId,
+                [FirestorePaths.FROM_UID]: uid,
+                [FirestorePaths.TO_UID]: targetUid,
+                [FirestorePaths.SENDER_NAME]: senderName,
+                [FirestorePaths.SENDER_PIC]: senderPhotoUrl,
+                [FirestorePaths.NAME]: workspaceName,
+                [FirestorePaths.STATUS]: 'pending',
+                [FirestorePaths.TIMESTAMP]: serverTimestamp(),
+              },
+              { merge: true },
+            );
+
+            toCreate.push({ targetUid, inviteId: inviteRef.id });
+          }
+
+          return { toCreate, skippedPending, skippedMembers };
         });
-        results.push({ targetUid, inviteId: inviteRefs[targetUid].id });
-      } catch (notifError) {
-        logger.warn('inviteToWorkspace notification failed', {
-          workspaceId: workspaceId.trim(),
-          senderUid: uid,
-          targetUid,
-          errorMessage: notifError instanceof Error ? notifError.message : String(notifError),
-        });
-        failedRecipients.push(targetUid);
+
+        newlyInvitedTargets = txResult.toCreate;
+        alreadyInvitedUids = txResult.skippedPending;
+        alreadyMemberUids = txResult.skippedMembers;
+      } catch (txError) {
+        log.error('inviteToWorkspace transaction failed', txError);
+        throw new HttpsError('internal', 'Failed to create workspace invites.');
       }
-    });
 
-    await Promise.all(notificationPromises);
+      // Phase 2: Send notifications ONLY for newly created invites.
+      const results = [];
+      const failedRecipients = [];
+      const notificationPromises = newlyInvitedTargets.map(
+        async ({ targetUid, inviteId }) => {
+          try {
+            await notifyUser({
+              recipientUid: targetUid,
+              title: `${senderName} invited you to a workspace`,
+              body: `Invitation to join "${workspaceName}"`,
+              type: 'workspace_invite',
+              action: 'open_workspace_invites',
+              targetId: inviteId,
+              senderUid: uid,
+              senderName,
+              senderPhotoUrl,
+              groupingKey: `workspace_invite:${uid}:${targetUid}`,
+              extraData: {
+                workspaceId: trimmedWorkspaceId,
+                workspaceName,
+                inviteId,
+              },
+            });
+            results.push({ targetUid, inviteId });
+          } catch (notifError) {
+            log.warn('inviteToWorkspace notification failed', {
+              workspaceId: trimmedWorkspaceId,
+              senderUid: uid,
+              targetUid,
+              errorMessage:
+                notifError instanceof Error
+                  ? notifError.message
+                  : String(notifError),
+            });
+            failedRecipients.push(targetUid);
+          }
+        },
+      );
 
-    return {
-      success: true,
-      workspaceId: workspaceId.trim(),
-      invitedCount: results.length,
-      results,
-      unresolvedEmails,
-      unresolvedUids,
-      failedRecipients,
-    };
-  } catch (error) {
-    if (error instanceof HttpsError) throw error;
-    logger.error('inviteToWorkspace failed', error);
-    throw new HttpsError('internal', 'Failed to invite users to workspace.');
-  }
-};
+      await Promise.all(notificationPromises);
+
+      return {
+        success: true,
+        workspaceId: trimmedWorkspaceId,
+        invitedCount: results.length,
+        alreadyInvitedCount: alreadyInvitedUids.length,
+        alreadyMemberCount: alreadyMemberUids.length,
+        results,
+        alreadyInvited: alreadyInvitedUids,
+        alreadyMembers: alreadyMemberUids,
+        unresolvedEmails,
+        unresolvedUids,
+        failedRecipients,
+      };
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      log.error('inviteToWorkspace failed', error);
+      throw new HttpsError('internal', 'Failed to invite users to workspace.');
+    }
+  };
+}
+
+const inviteToWorkspace = createInviteToWorkspaceHandler();
+inviteToWorkspace.createInviteToWorkspaceHandler = createInviteToWorkspaceHandler;
+
+module.exports = inviteToWorkspace;

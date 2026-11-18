@@ -88,6 +88,15 @@ class _BoardEditRequestsScreenState extends State<BoardEditRequestsScreen> {
   }) async {
     final requesterName = request.requesterName;
     final notificationId = request.id;
+    if (notificationId.isEmpty || _processingIds.contains(notificationId)) {
+      return;
+    }
+    final notifBloc = context.read<NotificationsBloc>();
+    final notifState = notifBloc.state;
+    if (notifState is NotificationsLoaded &&
+        notifState.processingAccessRequestIds.contains(notificationId)) {
+      return;
+    }
 
     if (action == 'decline') {
       final confirmed = await showInkConfirmDialog(
@@ -99,47 +108,47 @@ class _BoardEditRequestsScreenState extends State<BoardEditRequestsScreen> {
         destructive: true,
       );
       if (!confirmed || !mounted) return;
+      if (_processingIds.contains(notificationId)) return;
     }
 
     setState(() {
       _processingIds.add(notificationId);
     });
 
-    try {
-      if (notificationId.isNotEmpty) {
-        context.read<NotificationsBloc>().add(
-              NotificationMarkReadRequested(notificationId),
+    notifBloc.add(NotificationMarkReadRequested(notificationId));
+    notifBloc.add(
+      NotificationRespondToAccessRequest(
+        notificationId: notificationId,
+        boardId: widget.boardId,
+        requesterUid: request.requesterUid,
+        action: action,
+        requestType: 'edit',
+        onCompleted: (success, error) {
+          if (!mounted) return;
+          setState(() {
+            _processingIds.remove(notificationId);
+          });
+          if (!success) {
+            AppSnackBar.showError(
+              context,
+              error ?? 'Failed to process request.',
             );
-        context.read<NotificationsBloc>().add(
-              NotificationRespondToAccessRequest(
-                notificationId: notificationId,
-                boardId: widget.boardId,
-                requesterUid: request.requesterUid,
-                action: action,
-                requestType: 'edit',
-              ),
+            return;
+          }
+          if (action == 'accept') {
+            AppSnackBar.showSuccess(
+              context,
+              'Edit access granted to $requesterName.',
             );
-      }
-
-      if (action == 'accept') {
-        AppSnackBar.showSuccess(
-          context,
-          'Edit access granted to $requesterName.',
-        );
-      } else {
-        AppSnackBar.showMessage(
-          context,
-          'Edit request from $requesterName declined.',
-        );
-      }
-    } catch (_) {
-    } finally {
-      if (mounted) {
-        setState(() {
-          _processingIds.remove(notificationId);
-        });
-      }
-    }
+          } else {
+            AppSnackBar.showMessage(
+              context,
+              'Edit request from $requesterName declined.',
+            );
+          }
+        },
+      ),
+    );
   }
 
   String _formatTimeAgo(DateTime d) {
@@ -312,7 +321,11 @@ class _BoardEditRequestsScreenState extends State<BoardEditRequestsScreen> {
     required dynamic tokens,
     required BoardEditRequest request,
   }) {
-    final isProcessing = _processingIds.contains(request.id);
+    final notifState = BlocProvider.of<NotificationsBloc>(context).state;
+    final isProcessing =
+        _processingIds.contains(request.id) ||
+        (notifState is NotificationsLoaded &&
+            notifState.processingAccessRequestIds.contains(request.id));
     final timeLabel = _formatTimeAgo(request.createdAt);
 
     return PaperCard(

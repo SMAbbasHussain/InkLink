@@ -26,6 +26,9 @@ abstract class WorkspaceService {
     required String workspaceId,
     required List<String> invitedUserIds,
   });
+  Stream<Set<String>> getPendingSentWorkspaceInviteUserIds(
+    String workspaceId,
+  ) => Stream.value(const <String>{});
   Future<void> leaveWorkspace({
     String? workspaceId,
     List<String>? importedBoardsToKeep,
@@ -142,6 +145,11 @@ class WorkspaceServiceImpl implements WorkspaceService {
       'invitedUserIds': invitedUserIds,
     });
   }
+
+  @override
+  Stream<Set<String>> getPendingSentWorkspaceInviteUserIds(
+    String workspaceId,
+  ) => _repository.getPendingSentWorkspaceInviteUserIds(workspaceId);
 
   @override
   Future<void> leaveWorkspace({

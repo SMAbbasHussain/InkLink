@@ -701,6 +701,48 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
   }
 
   @override
+  Stream<Set<String>> getPendingSentWorkspaceInviteUserIds(String workspaceId) {
+    final uid = currentUserId;
+    final trimmedWorkspaceId = workspaceId.trim();
+    if (uid == null || trimmedWorkspaceId.isEmpty) {
+      return Stream.value(const <String>{});
+    }
+
+    return _firestoreService
+        .collection(FirestorePaths.workspaceInvites)
+        .where(FirestorePaths.fromUid, isEqualTo: uid)
+        .snapshots()
+        .handleError((_) {})
+        .map((snapshot) {
+          try {
+            return snapshot.docs
+                .where((doc) {
+                  final data = doc.data();
+                  final docWorkspaceId =
+                      (data[FirestorePaths.workspaceId] as String?)?.trim() ??
+                      '';
+                  final status =
+                      (data[FirestorePaths.status] as String?)
+                          ?.trim()
+                          .toLowerCase() ??
+                      'pending';
+                  return docWorkspaceId == trimmedWorkspaceId &&
+                      status == 'pending';
+                })
+                .map(
+                  (doc) =>
+                      (doc.data()[FirestorePaths.toUid] as String?)?.trim() ??
+                      '',
+                )
+                .where((id) => id.isNotEmpty)
+                .toSet();
+          } catch (_) {
+            return const <String>{};
+          }
+        });
+  }
+
+  @override
   Stream<List<WorkspaceInvite>> getIncomingWorkspaceInvites() {
     final uid = currentUserId;
     if (uid == null) return Stream.value([]);
