@@ -333,7 +333,8 @@ class GlassAvatarRing extends StatelessWidget {
 // Sidebar
 // ─────────────────────────────────────────────────────────────────────────────
 
-const double _railItemHeight = 66;
+const double _railItemHeight = 64;
+const double _railWidth = 100; // room for "Notifications"
 
 class _SideRail extends StatelessWidget {
   final WebSection selected;
@@ -351,24 +352,48 @@ class _SideRail extends StatelessWidget {
       shadow: Glass.shadow,
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
       child: SizedBox(
-        width: 80,
+        width: _railWidth,
         height: _railItemHeight * WebSection.values.length,
         child: Stack(
           children: [
-            // Gradient "active" pill that slides between items.
+            // Soft glass highlight with a thin gradient bar, sliding
+            // between items (calmer than a solid gradient block).
             AnimatedPositioned(
               duration: Glass.reduceMotion(context) ? Duration.zero : Glass.ui,
               curve: Curves.easeOutCubic,
-              top: index * _railItemHeight + 4,
-              left: 4,
-              right: 4,
-              height: _railItemHeight - 8,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: Glass.accentGradient,
-                  borderRadius: BorderRadius.circular(Glass.r14),
-                  boxShadow: Glass.glow(),
-                ),
+              top: index * _railItemHeight + 3,
+              left: 0,
+              right: 0,
+              height: _railItemHeight - 6,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0x148B5CF6),
+                        borderRadius: BorderRadius.circular(Glass.r14),
+                        border: Border.all(color: const Color(0x338B5CF6)),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    top: 14,
+                    bottom: 14,
+                    width: 3,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Glass.accentA, Glass.accentB],
+                        ),
+                        borderRadius: BorderRadius.circular(3),
+                        boxShadow: Glass.glow(),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             Column(
@@ -410,7 +435,8 @@ class _NavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final info = _sections[section]!;
-    final color = selected ? Colors.white : Glass.textSecondary;
+    final iconColor = selected ? Glass.accentText : Glass.textMuted;
+    final labelColor = selected ? Glass.text : Glass.textMuted;
     return Semantics(
       selected: selected,
       button: true,
@@ -430,20 +456,19 @@ class _NavItem extends StatelessWidget {
                 Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    Icon(info.icon, size: 21, color: color),
+                    Icon(info.icon, size: 20, color: iconColor),
                     if (badge > 0)
-                      Positioned(right: -12, top: -9, child: GlassBadge(count: badge)),
+                      Positioned(right: -11, top: -7, child: GlassBadge(count: badge)),
                   ],
                 ),
                 if (showLabel) ...[
-                  const SizedBox(height: 5),
+                  const SizedBox(height: 6),
                   Text(
                     info.label,
                     maxLines: 1,
-                    overflow: TextOverflow.fade,
-                    softWrap: false,
-                    style: Glass.small(color: color, weight: FontWeight.w600)
-                        .copyWith(fontSize: 11.5),
+                    overflow: TextOverflow.ellipsis,
+                    style: Glass.small(color: labelColor, weight: FontWeight.w600)
+                        .copyWith(fontSize: 11.5, letterSpacing: 0.1),
                   ),
                 ],
               ],
@@ -491,9 +516,9 @@ class _BottomTabs extends StatelessWidget {
                   bottom: 0,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      gradient: Glass.accentGradient,
+                      color: const Color(0x148B5CF6),
                       borderRadius: BorderRadius.circular(Glass.r14),
-                      boxShadow: Glass.glow(0.8),
+                      border: Border.all(color: const Color(0x338B5CF6)),
                     ),
                   ),
                 ),
