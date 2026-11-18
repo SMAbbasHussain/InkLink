@@ -258,17 +258,29 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     }
 
     _inFlightAccessRequestIds.add(event.notificationId);
-    final before = state;
-    if (before is NotificationsLoaded) {
-      emit(
-        NotificationsLoaded(
-          before.notifications,
-          processingAccessRequestIds: Set<String>.unmodifiable(
-            _inFlightAccessRequestIds,
-          ),
-        ),
-      );
+    Object? previousStatus;
+    for (final item in _rawNotifications) {
+      if (item['id']?.toString() == event.notificationId) {
+        previousStatus = item['status'];
+        break;
+      }
     }
+
+    // Resolve the request in the inbox right away so the owner does not wait
+    // on the Cloud Function round trip for a visual answer.
+    _rawNotifications = _rawNotifications
+        .map(
+          (item) => item['id']?.toString() == event.notificationId
+              ? {
+                  ...item,
+                  'status': event.action == 'accept' ? 'accepted' : 'declined',
+                }
+              : item,
+        )
+        .toList();
+    _inFlightAccessRequestIds.remove(event.notificationId);
+    _emitSortedNotifications(emit);
+    event.onCompleted?.call(true, null);
 
     try {
       await boardService.respondToBoardAccessRequest(
@@ -278,50 +290,36 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
         action: event.action,
         requestType: event.requestType,
       );
-
-      _inFlightAccessRequestIds.remove(event.notificationId);
-      final updatedRaw = _rawNotifications.map((item) {
-        if (item['id']?.toString() == event.notificationId) {
-          return {
-            ...item,
-            'status': event.action == 'accept' ? 'accepted' : 'declined',
-          };
-        }
-        return item;
-      }).toList();
-      _rawNotifications = updatedRaw;
-      final normalized = _normalizeNotifications(_rawNotifications);
-      final sorted = List<Map<String, dynamic>>.from(normalized)
-        ..sort(
-          (left, right) => _timestampOf(right).compareTo(_timestampOf(left)),
-        );
-      emit(
-        NotificationsLoaded(
-          sorted,
-          processingAccessRequestIds: Set<String>.unmodifiable(
-            _inFlightAccessRequestIds,
-          ),
-        ),
-      );
-      event.onCompleted?.call(true, null);
     } catch (e) {
-      _inFlightAccessRequestIds.remove(event.notificationId);
+      // Restore the request so the owner can retry, and report the late error.
+      _rawNotifications = _rawNotifications
+          .map(
+            (item) => item['id']?.toString() == event.notificationId
+                ? {...item, 'status': previousStatus ?? 'pending'}
+                : item,
+          )
+          .toList();
       final cleanError = AppErrorFormatter.cleanMessage(e);
-      final current = state;
-      if (current is NotificationsLoaded) {
-        emit(
-          NotificationsLoaded(
-            current.notifications,
-            processingAccessRequestIds: Set<String>.unmodifiable(
-              _inFlightAccessRequestIds,
-            ),
-          ),
-        );
-      } else {
-        emit(NotificationsError('Failed to process request: $cleanError'));
-      }
+      _inFlightAccessRequestIds.remove(event.notificationId);
+      _emitSortedNotifications(emit);
       event.onCompleted?.call(false, cleanError);
     }
+  }
+
+  void _emitSortedNotifications(Emitter<NotificationsState> emit) {
+    final normalized = _normalizeNotifications(_rawNotifications);
+    final sorted = List<Map<String, dynamic>>.from(normalized)
+      ..sort(
+        (left, right) => _timestampOf(right).compareTo(_timestampOf(left)),
+      );
+    emit(
+      NotificationsLoaded(
+        sorted,
+        processingAccessRequestIds: Set<String>.unmodifiable(
+          _inFlightAccessRequestIds,
+        ),
+      ),
+    );
   }
 
   List<Map<String, dynamic>> _normalizeNotifications(

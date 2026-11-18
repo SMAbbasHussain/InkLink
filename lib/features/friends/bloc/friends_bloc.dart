@@ -19,6 +19,16 @@ class _BlockedUsersUpdated extends FriendsEvent {
   _BlockedUsersUpdated(this.blockedUsers);
 }
 
+/// An incoming friend request hidden from the list while its accept/decline
+/// call is on the wire. Keeping the original request and its position lets a
+/// failed decision put the tile back exactly where it was.
+class _OptimisticFriendRequest {
+  final Map<String, dynamic> request;
+  final int index;
+
+  const _OptimisticFriendRequest(this.request, this.index);
+}
+
 class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
   final FriendsService friendsService;
   StreamSubscription? _friendsSubscription;
@@ -28,6 +38,8 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
   Set<String> _acceptingRequestIds = <String>{};
   Set<String> _decliningRequestIds = <String>{};
   Set<String> _cancelingRequestIds = <String>{};
+  final Map<String, _OptimisticFriendRequest> _optimisticIncomingRemovals =
+      <String, _OptimisticFriendRequest>{};
   bool _isOffline = false;
 
   FriendsBloc({required this.friendsService}) : super(FriendsInitial()) {
@@ -78,6 +90,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
       _acceptingRequestIds = <String>{};
       _decliningRequestIds = <String>{};
       _cancelingRequestIds = <String>{};
+      _optimisticIncomingRemovals.clear();
       _isOffline = false;
       emit(FriendsInitial());
     });
@@ -125,7 +138,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
       emit(
         FriendsLoaded(
           friends: sanitizedFriends,
-          incomingRequests: event.incomingRequests,
+          incomingRequests: _visibleIncomingRequests(event.incomingRequests),
           outgoingRequests: event.outgoingRequests,
           sendingRequestTargetUids: _sendingRequestTargetUids,
           acceptingRequestIds: _acceptingRequestIds,
@@ -228,94 +241,55 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
 
     on<AcceptFriendRequestRequested>((event, emit) async {
       if (event.requestId.isEmpty ||
-          _acceptingRequestIds.contains(event.requestId) ||
-          _decliningRequestIds.contains(event.requestId)) {
+          _optimisticIncomingRemovals.containsKey(event.requestId)) {
         return;
       }
-      _acceptingRequestIds = Set<String>.from(_acceptingRequestIds)
-        ..add(event.requestId);
-      final before = state;
-      if (before is FriendsLoaded) {
-        emit(before.copyWith(acceptingRequestIds: _acceptingRequestIds));
-      }
-
-      // Capture current state to restore it if needed
-      final currentState = state;
+      // Resolve the tile immediately: the spinner is only for handing the
+      // decision to the function, not for the owner's answer.
+      _hideIncomingRequest(event.requestId, emit);
+      event.onCompleted?.call(true, null);
 
       try {
         await friendsService.acceptFriendRequest(
           event.requestId,
           event.senderUid,
         );
+        _optimisticIncomingRemovals.remove(event.requestId);
         if (_isOffline) {
           add(FriendsConnectivityUpdated(false));
         }
-        _acceptingRequestIds = Set<String>.from(_acceptingRequestIds)
-          ..remove(event.requestId);
-        final current = state;
-        if (current is FriendsLoaded) {
-          emit(current.copyWith(acceptingRequestIds: _acceptingRequestIds));
-        }
-        event.onCompleted?.call(true, null);
-        // Success! The stream from Firestore will automatically update the list.
       } catch (e) {
-        _acceptingRequestIds = Set<String>.from(_acceptingRequestIds)
-          ..remove(event.requestId);
         if (_looksOffline(e)) {
           add(FriendsConnectivityUpdated(true));
         }
         final message = AppErrorFormatter.cleanMessage(e);
-        // Restore previous state so the list doesn't vanish
-        if (currentState is FriendsLoaded) {
-          emit(
-            currentState.copyWith(
-              isOffline: _isOffline,
-              acceptingRequestIds: _acceptingRequestIds,
-            ),
-          );
-        }
-        emit(FriendsError(message));
+        // Nothing changed on the server: put the request back and tell the
+        // member now that the earlier success was only optimistic.
+        _restoreIncomingRequest(event.requestId, emit);
         event.onCompleted?.call(false, message);
       }
     });
 
     on<DeclineFriendRequestRequested>((event, emit) async {
       if (event.requestId.isEmpty ||
-          _decliningRequestIds.contains(event.requestId) ||
-          _acceptingRequestIds.contains(event.requestId)) {
+          _optimisticIncomingRemovals.containsKey(event.requestId)) {
         return;
       }
-      _decliningRequestIds = Set<String>.from(_decliningRequestIds)
-        ..add(event.requestId);
-      final before = state;
-      if (before is FriendsLoaded) {
-        emit(before.copyWith(decliningRequestIds: _decliningRequestIds));
-      }
+      _hideIncomingRequest(event.requestId, emit);
+      event.onCompleted?.call(true, null);
 
       try {
         await friendsService.declineFriendRequest(event.requestId);
+        _optimisticIncomingRemovals.remove(event.requestId);
         if (_isOffline) {
           add(FriendsConnectivityUpdated(false));
         }
-        _decliningRequestIds = Set<String>.from(_decliningRequestIds)
-          ..remove(event.requestId);
-        final current = state;
-        if (current is FriendsLoaded) {
-          emit(current.copyWith(decliningRequestIds: _decliningRequestIds));
-        }
-        event.onCompleted?.call(true, null);
       } catch (e) {
-        _decliningRequestIds = Set<String>.from(_decliningRequestIds)
-          ..remove(event.requestId);
         if (_looksOffline(e)) {
           add(FriendsConnectivityUpdated(true));
         }
         final message = AppErrorFormatter.cleanMessage(e);
-        final current = state;
-        if (current is FriendsLoaded) {
-          emit(current.copyWith(decliningRequestIds: _decliningRequestIds));
-        }
-        emit(FriendsError(message));
+        _restoreIncomingRequest(event.requestId, emit);
         event.onCompleted?.call(false, message);
       }
     });
@@ -445,6 +419,70 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     });
   }
 
+  String _incomingRequestId(Map<String, dynamic> request) =>
+      (request['id'] ?? request['requestId'] ?? '').toString();
+
+  /// Incoming requests with optimistic decisions removed. Firestore snapshot
+  /// updates are filtered through this so a tile cannot flash back while the
+  /// Cloud Function is still running.
+  List<Map<String, dynamic>> _visibleIncomingRequests(
+    List<Map<String, dynamic>> requests,
+  ) {
+    return requests
+        .where(
+          (request) => !_optimisticIncomingRemovals.containsKey(
+            _incomingRequestId(request),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  /// Drops the request from the visible list right away and remembers it so a
+  /// failed decision can restore it at its original position.
+  void _hideIncomingRequest(
+    String requestId,
+    Emitter<FriendsState> emit,
+  ) {
+    final current = state;
+    if (current is! FriendsLoaded) return;
+    final index = current.incomingRequests.indexWhere(
+      (request) => _incomingRequestId(request) == requestId,
+    );
+    _optimisticIncomingRemovals[requestId] = _OptimisticFriendRequest(
+      index >= 0
+          ? current.incomingRequests[index]
+          : <String, dynamic>{'id': requestId},
+      index < 0 ? 0 : index,
+    );
+    emit(
+      current.copyWith(
+        incomingRequests: current.incomingRequests
+            .where((request) => _incomingRequestId(request) != requestId)
+            .toList(growable: false),
+        acceptingRequestIds: const <String>{},
+        decliningRequestIds: const <String>{},
+      ),
+    );
+  }
+
+  void _restoreIncomingRequest(String requestId, Emitter<FriendsState> emit) {
+    final removal = _optimisticIncomingRemovals.remove(requestId);
+    if (removal == null) return;
+    final current = state;
+    if (current is! FriendsLoaded) return;
+    if (current.incomingRequests.any(
+      (request) => _incomingRequestId(request) == requestId,
+    )) {
+      return;
+    }
+    final requests = List<Map<String, dynamic>>.from(current.incomingRequests);
+    requests.insert(
+      removal.index.clamp(0, requests.length),
+      removal.request,
+    );
+    emit(current.copyWith(incomingRequests: requests, isOffline: _isOffline));
+  }
+
   Future<void> _refreshConnectivity() async {
     final isOnline = await friendsService.isOnline();
     add(FriendsConnectivityUpdated(!isOnline));
@@ -469,6 +507,7 @@ class FriendsBloc extends Bloc<FriendsEvent, FriendsState> {
     _acceptingRequestIds = <String>{};
     _decliningRequestIds = <String>{};
     _cancelingRequestIds = <String>{};
+    _optimisticIncomingRemovals.clear();
     _isOffline = false;
   }
 

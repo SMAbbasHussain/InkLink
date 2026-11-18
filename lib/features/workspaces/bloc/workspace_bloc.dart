@@ -293,6 +293,12 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
   final Map<String, StreamSubscription<Set<String>>>
   _workspacePendingInvitesSubs = {};
   final Set<String> _inFlightInviteDecisionIds = <String>{};
+
+  /// Invites removed from the list the moment the member decides. The original
+  /// invite and its position let a failed decision restore the tile.
+  final Map<String, ({WorkspaceInvite? invite, int index})>
+  _optimisticInviteRemovals =
+      <String, ({WorkspaceInvite? invite, int index})>{};
   final Set<String> _inFlightInviteSendKeys = <String>{};
 
   WorkspaceBloc({WorkspaceService? workspaceService})
@@ -502,7 +508,11 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
         : _emptyLoaded();
     emit(
       current.copyWith(
-        incomingInvites: event.invites,
+        incomingInvites: event.invites
+            .where(
+              (invite) => !_optimisticInviteRemovals.containsKey(invite.id),
+            )
+            .toList(growable: false),
         actionError: null,
         actionInfo: null,
       ),
@@ -926,41 +936,15 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     }
 
     _inFlightInviteDecisionIds.add(event.inviteId);
-
-    final current = state;
-    if (current is WorkspaceLoaded) {
-      final nextProcessing = Set<String>.from(
-        current.processingInviteDecisionIds,
-      )..add(event.inviteId);
-      emit(
-        current.copyWith(
-          processingInviteDecisionIds: nextProcessing,
-          actionError: null,
-          actionInfo: null,
-        ),
-      );
-    }
+    // Drop the tile and report success immediately: the spinner only covers
+    // handing the decision to the function, not the function's answer.
+    _hideInviteDecision(event.inviteId, emit, 'Invite accepted.');
+    event.onCompleted?.call(true, null);
 
     try {
       await service.acceptWorkspaceInvite(event.inviteId);
       _inFlightInviteDecisionIds.remove(event.inviteId);
-      final updated = state;
-      if (updated is WorkspaceLoaded) {
-        final nextProcessing = Set<String>.from(
-          updated.processingInviteDecisionIds,
-        )..remove(event.inviteId);
-        emit(
-          updated.copyWith(
-            processingInviteDecisionIds: nextProcessing,
-            incomingInvites: updated.incomingInvites
-                .where((i) => i.id != event.inviteId)
-                .toList(),
-            actionInfo: 'Invite accepted.',
-            actionError: null,
-          ),
-        );
-      }
-      event.onCompleted?.call(true, null);
+      _optimisticInviteRemovals.remove(event.inviteId);
     } catch (e, st) {
       _inFlightInviteDecisionIds.remove(event.inviteId);
       _logWorkspaceInviteError(
@@ -973,18 +957,8 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
         action: 'accept',
         error: e,
       );
-      final updated = state;
-      if (updated is WorkspaceLoaded) {
-        final nextProcessing = Set<String>.from(
-          updated.processingInviteDecisionIds,
-        )..remove(event.inviteId);
-        emit(
-          updated.copyWith(
-            processingInviteDecisionIds: nextProcessing,
-            actionError: message,
-          ),
-        );
-      }
+      // The invite was never accepted: put it back and report the error.
+      _restoreInviteDecision(event.inviteId, emit, message);
       event.onCompleted?.call(false, message);
     }
   }
@@ -1005,41 +979,13 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     }
 
     _inFlightInviteDecisionIds.add(event.inviteId);
-
-    final current = state;
-    if (current is WorkspaceLoaded) {
-      final nextProcessing = Set<String>.from(
-        current.processingInviteDecisionIds,
-      )..add(event.inviteId);
-      emit(
-        current.copyWith(
-          processingInviteDecisionIds: nextProcessing,
-          actionError: null,
-          actionInfo: null,
-        ),
-      );
-    }
+    _hideInviteDecision(event.inviteId, emit, 'Invite rejected.');
+    event.onCompleted?.call(true, null);
 
     try {
       await service.rejectWorkspaceInvite(event.inviteId);
       _inFlightInviteDecisionIds.remove(event.inviteId);
-      final updated = state;
-      if (updated is WorkspaceLoaded) {
-        final nextProcessing = Set<String>.from(
-          updated.processingInviteDecisionIds,
-        )..remove(event.inviteId);
-        emit(
-          updated.copyWith(
-            processingInviteDecisionIds: nextProcessing,
-            incomingInvites: updated.incomingInvites
-                .where((i) => i.id != event.inviteId)
-                .toList(),
-            actionInfo: 'Invite rejected.',
-            actionError: null,
-          ),
-        );
-      }
-      event.onCompleted?.call(true, null);
+      _optimisticInviteRemovals.remove(event.inviteId);
     } catch (e, st) {
       _inFlightInviteDecisionIds.remove(event.inviteId);
       _logWorkspaceInviteError(
@@ -1052,20 +998,65 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
         action: 'reject',
         error: e,
       );
-      final updated = state;
-      if (updated is WorkspaceLoaded) {
-        final nextProcessing = Set<String>.from(
-          updated.processingInviteDecisionIds,
-        )..remove(event.inviteId);
-        emit(
-          updated.copyWith(
-            processingInviteDecisionIds: nextProcessing,
-            actionError: message,
-          ),
-        );
-      }
+      _restoreInviteDecision(event.inviteId, emit, message);
       event.onCompleted?.call(false, message);
     }
+  }
+
+  /// Removes the invite from the list right away and records where it was, so
+  /// a later failure can restore it without waiting for a reload.
+  void _hideInviteDecision(
+    String inviteId,
+    Emitter<WorkspaceState> emit,
+    String actionInfo,
+  ) {
+    final current = state;
+    if (current is! WorkspaceLoaded) return;
+    final index = current.incomingInvites.indexWhere((i) => i.id == inviteId);
+    _optimisticInviteRemovals[inviteId] = (
+      invite: index >= 0 ? current.incomingInvites[index] : null,
+      index: index < 0 ? 0 : index,
+    );
+    emit(
+      current.copyWith(
+        processingInviteDecisionIds: Set<String>.from(
+          current.processingInviteDecisionIds,
+        )..remove(inviteId),
+        incomingInvites: current.incomingInvites
+            .where((invite) => invite.id != inviteId)
+            .toList(growable: false),
+        actionInfo: actionInfo,
+        actionError: null,
+      ),
+    );
+  }
+
+  void _restoreInviteDecision(
+    String inviteId,
+    Emitter<WorkspaceState> emit,
+    String message,
+  ) {
+    final removal = _optimisticInviteRemovals.remove(inviteId);
+    final current = state;
+    if (current is! WorkspaceLoaded) return;
+    final invites = List<WorkspaceInvite>.from(current.incomingInvites);
+    final invite = removal?.invite;
+    if (invite != null && !invites.any((i) => i.id == inviteId)) {
+      invites.insert(
+        (removal?.index ?? 0).clamp(0, invites.length),
+        invite,
+      );
+    }
+    emit(
+      current.copyWith(
+        processingInviteDecisionIds: Set<String>.from(
+          current.processingInviteDecisionIds,
+        )..remove(inviteId),
+        incomingInvites: invites,
+        actionInfo: null,
+        actionError: message,
+      ),
+    );
   }
 
   Future<void> _onAddBoardToWorkspaceRequested(
@@ -1295,6 +1286,7 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
     }
     _workspacePendingInvitesSubs.clear();
     _inFlightInviteDecisionIds.clear();
+    _optimisticInviteRemovals.clear();
     _inFlightInviteSendKeys.clear();
 
     await _workspaceService?.stopWorkspacSync();

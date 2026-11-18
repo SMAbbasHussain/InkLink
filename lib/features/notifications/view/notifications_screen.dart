@@ -77,6 +77,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _pendingWorkspaceInviteIds.remove(inviteId);
       });
       if (!success) {
+        // The decision was only optimistic: put the invite tile back so the
+        // member can retry.
+        notificationsBloc.add(
+          NotificationWorkspaceInviteResolved(
+            inviteId: inviteId,
+            status: 'pending',
+          ),
+        );
         AppSnackBar.showError(
           context,
           error ?? 'Could not update the workspace invite.',

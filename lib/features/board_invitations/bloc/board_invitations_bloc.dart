@@ -106,11 +106,22 @@ class BoardInvitationsError extends BoardInvitationsState {
 
 const Object _unset = Object();
 
+/// An invite hidden from the list while its accept/decline call is on the wire.
+/// The original row and its position let a failed decision restore the tile.
+class _OptimisticInvite {
+  final Map<String, dynamic> invite;
+  final int index;
+
+  const _OptimisticInvite(this.invite, this.index);
+}
+
 class BoardInvitationsBloc
     extends Bloc<BoardInvitationsEvent, BoardInvitationsState> {
   final InvitationService _invitationService;
   StreamSubscription<List<Map<String, dynamic>>>? _invitesSub;
   final Set<String> _inFlightInviteIds = <String>{};
+  final Map<String, _OptimisticInvite> _optimisticInvites =
+      <String, _OptimisticInvite>{};
   bool _isOffline = false;
 
   BoardInvitationsBloc({required InvitationService invitationService})
@@ -153,7 +164,13 @@ class BoardInvitationsBloc
   ) {
     emit(
       BoardInvitationsLoaded(
-        invites: event.invites,
+        invites: event.invites
+            .where(
+              (invite) => !_optimisticInvites.containsKey(
+                invite['id']?.toString() ?? '',
+              ),
+            )
+            .toList(growable: false),
         processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
         isOffline: _isOffline,
       ),
@@ -167,64 +184,92 @@ class BoardInvitationsBloc
     emit(BoardInvitationsError(event.message));
   }
 
+  /// Hides the invite right away and reports success, so the tile never waits
+  /// for the Cloud Function's answer.
+  void _hideInvite(
+    String inviteId,
+    Emitter<BoardInvitationsState> emit, {
+    required String message,
+    String? openedBoardId,
+  }) {
+    final current = state;
+    if (current is! BoardInvitationsLoaded) return;
+    final index = current.invites.indexWhere(
+      (invite) => invite['id']?.toString() == inviteId,
+    );
+    _optimisticInvites[inviteId] = _OptimisticInvite(
+      index >= 0
+          ? current.invites[index]
+          : <String, dynamic>{'id': inviteId},
+      index < 0 ? 0 : index,
+    );
+    emit(
+      current.copyWith(
+        invites: current.invites
+            .where((invite) => invite['id']?.toString() != inviteId)
+            .toList(growable: false),
+        processingInviteIds: const <String>{},
+        message: message,
+        isError: false,
+        openedBoardId: openedBoardId,
+      ),
+    );
+  }
+
+  /// Puts a failed decision's invite back where it was and reports the error.
+  void _restoreInvite(
+    String inviteId,
+    Emitter<BoardInvitationsState> emit,
+    String message,
+  ) {
+    final removal = _optimisticInvites.remove(inviteId);
+    final current = state;
+    if (current is! BoardInvitationsLoaded) return;
+    final invites = List<Map<String, dynamic>>.from(current.invites);
+    if (removal != null &&
+        !invites.any((invite) => invite['id']?.toString() == inviteId)) {
+      invites.insert(
+        removal.index.clamp(0, invites.length),
+        removal.invite,
+      );
+    }
+    emit(
+      current.copyWith(
+        invites: invites,
+        processingInviteIds: const <String>{},
+        message: message,
+        isError: true,
+        isOffline: _isOffline,
+      ),
+    );
+  }
+
   Future<void> _onAcceptRequested(
     BoardInvitationAcceptRequested event,
     Emitter<BoardInvitationsState> emit,
   ) async {
     if (event.inviteId.isEmpty ||
-        _inFlightInviteIds.contains(event.inviteId)) {
+        _optimisticInvites.containsKey(event.inviteId)) {
       return;
     }
-    _inFlightInviteIds.add(event.inviteId);
 
-    final before = state;
-    if (before is BoardInvitationsLoaded) {
-      emit(
-        before.copyWith(
-          processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
-          message: null,
-          openedBoardId: null,
-        ),
-      );
-    }
+    _hideInvite(
+      event.inviteId,
+      emit,
+      message: 'Invite accepted.',
+      openedBoardId: event.boardId,
+    );
+    event.onCompleted?.call(true, null);
 
     try {
       await _invitationService.acceptInvite(event.inviteId);
-      _inFlightInviteIds.remove(event.inviteId);
-      final current = state;
-      if (current is BoardInvitationsLoaded) {
-        emit(
-          current.copyWith(
-            invites: current.invites
-                .where((i) => i['id']?.toString() != event.inviteId)
-                .toList(),
-            processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
-            message: 'Invite accepted.',
-            isError: false,
-            openedBoardId: event.boardId,
-          ),
-        );
-      }
-      event.onCompleted?.call(true, null);
+      _optimisticInvites.remove(event.inviteId);
     } catch (e) {
-      _inFlightInviteIds.remove(event.inviteId);
       if (_looksOffline(e)) {
         _isOffline = true;
       }
       final message = AppErrorFormatter.cleanMessage(e);
-      final current = state;
-      if (current is BoardInvitationsLoaded) {
-        emit(
-          current.copyWith(
-            processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
-            message: message,
-            isError: true,
-            isOffline: _isOffline,
-          ),
-        );
-      } else {
-        emit(BoardInvitationsError(message));
-      }
+      _restoreInvite(event.inviteId, emit, message);
       event.onCompleted?.call(false, message);
     }
   }
@@ -234,58 +279,22 @@ class BoardInvitationsBloc
     Emitter<BoardInvitationsState> emit,
   ) async {
     if (event.inviteId.isEmpty ||
-        _inFlightInviteIds.contains(event.inviteId)) {
+        _optimisticInvites.containsKey(event.inviteId)) {
       return;
     }
-    _inFlightInviteIds.add(event.inviteId);
 
-    final before = state;
-    if (before is BoardInvitationsLoaded) {
-      emit(
-        before.copyWith(
-          processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
-          message: null,
-          openedBoardId: null,
-        ),
-      );
-    }
+    _hideInvite(event.inviteId, emit, message: 'Invite declined.');
+    event.onCompleted?.call(true, null);
 
     try {
       await _invitationService.declineInvite(event.inviteId);
-      _inFlightInviteIds.remove(event.inviteId);
-      final current = state;
-      if (current is BoardInvitationsLoaded) {
-        emit(
-          current.copyWith(
-            invites: current.invites
-                .where((i) => i['id']?.toString() != event.inviteId)
-                .toList(),
-            processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
-            message: 'Invite declined.',
-            isError: false,
-          ),
-        );
-      }
-      event.onCompleted?.call(true, null);
+      _optimisticInvites.remove(event.inviteId);
     } catch (e) {
-      _inFlightInviteIds.remove(event.inviteId);
       if (_looksOffline(e)) {
         _isOffline = true;
       }
       final message = AppErrorFormatter.cleanMessage(e);
-      final current = state;
-      if (current is BoardInvitationsLoaded) {
-        emit(
-          current.copyWith(
-            processingInviteIds: Set<String>.unmodifiable(_inFlightInviteIds),
-            message: message,
-            isError: true,
-            isOffline: _isOffline,
-          ),
-        );
-      } else {
-        emit(BoardInvitationsError(message));
-      }
+      _restoreInvite(event.inviteId, emit, message);
       event.onCompleted?.call(false, message);
     }
   }
@@ -305,6 +314,7 @@ class BoardInvitationsBloc
     await _invitesSub?.cancel();
     _invitesSub = null;
     _inFlightInviteIds.clear();
+    _optimisticInvites.clear();
     _isOffline = false;
   }
 }

@@ -63,6 +63,14 @@ class _WorkspaceInvitesScreenState extends State<WorkspaceInvitesScreen> {
         _localProcessingInviteIds.remove(inviteId);
       });
       if (!success) {
+        // The invite is back in the list, so reopen its inbox notification
+        // too instead of leaving it resolved as if the decision went through.
+        notificationsBloc.add(
+          NotificationWorkspaceInviteResolved(
+            inviteId: inviteId,
+            status: 'pending',
+          ),
+        );
         AppSnackBar.showError(
           context,
           error ?? 'Failed to ${accept ? 'accept' : 'reject'} invite.',
