@@ -192,15 +192,15 @@ class SlidingTray extends StatelessWidget {
   //
   // Phones never reach this: it only runs on the web in a window at least
   // [_webMinWidth] wide. Trays become compact floating panels that never
-  // cover the whole canvas: bottom trays (Brush & Color) float above the
-  // toolbar at a fixed width instead of spanning the screen, and every
+  // cover the whole canvas: bottom trays (Brush & Color) dock on the left
+  // under the top bar at a fixed width instead of spanning the screen, and every
   // tray is capped to the visible height so its content scrolls inside.
   // There is no swipe handle (mouse users close with the X).
 
   static const double _webEdge = 16;
   static const double _webTopBar = 76; // clears the board's top bar
   static const double _webToolbar = 84; // clears the bottom toolbar
-  static const double _webBottomTrayWidth = 380;
+  static const double _webBottomTrayWidth = 320;
 
   Widget _buildWeb(BuildContext context) {
     final tokens = context.ink;
@@ -234,12 +234,15 @@ class SlidingTray extends StatelessWidget {
         left = (screen.width - trayWidth) / 2;
         break;
       case TrayDirection.bottom:
+        // Docked on the left under the top bar (like a properties panel),
+        // clear of the centred toolbar, so the middle of the board stays
+        // visible while drawing.
         trayWidth = _webBottomTrayWidth
             .clamp(0, screen.width - 2 * _webEdge)
             .toDouble();
-        maxHeight = screen.height - _webTopBar - _webToolbar;
-        left = (screen.width - trayWidth) / 2;
-        bottom = isOpen ? _webToolbar : -height - 24;
+        maxHeight = screen.height - _webTopBar - _webEdge;
+        top = _webTopBar;
+        left = isOpen ? _webEdge : -trayWidth - 24;
         break;
     }
     // The tray's own height, but never taller than the visible space.
