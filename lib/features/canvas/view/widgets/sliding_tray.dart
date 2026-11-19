@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -40,7 +40,12 @@ class SlidingTray extends StatelessWidget {
 
   /// Browser window wide enough for the desktop tray layout.
   static bool useWebLayout(BuildContext context) =>
-      kIsWeb && MediaQuery.sizeOf(context).width >= _webMinWidth;
+      (debugWebLayoutOverride ?? kIsWeb) &&
+      MediaQuery.sizeOf(context).width >= _webMinWidth;
+
+  /// Tests only: pretend to run (or not) in a browser. Null in the app.
+  @visibleForTesting
+  static bool? debugWebLayoutOverride;
 
   static const double _webMinWidth = 700;
 

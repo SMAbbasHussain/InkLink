@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show BrowserContextMenu;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -150,6 +152,20 @@ class _WebCanvasPage extends StatefulWidget {
 }
 
 class _WebCanvasPageState extends State<_WebCanvasPage> {
+  // Right-click opens the canvas menu, so the browser's own menu is off
+  // while a board is open (and back on when you leave it).
+  @override
+  void initState() {
+    super.initState();
+    if (kIsWeb) BrowserContextMenu.disableContextMenu();
+  }
+
+  @override
+  void dispose() {
+    if (kIsWeb) BrowserContextMenu.enableContextMenu();
+    super.dispose();
+  }
+
   late final Future<
     ({
       String quality,

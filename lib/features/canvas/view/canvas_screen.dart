@@ -278,6 +278,15 @@ class _CanvasScreenState extends State<CanvasScreen>
   /// Desktop browser layout: whether the minimap is shown.
   bool _webMinimapVisible = true;
 
+  /// Desktop browser: holds keyboard focus for the board's shortcuts
+  /// (canvas_screen_web.dart). Unused on phones.
+  final FocusNode _webKeyFocus = FocusNode(debugLabel: 'canvas web keys');
+
+  /// Desktop browser: the mouse pointer panning with the middle button.
+  int? _webMiddlePanPointer;
+
+  void _closeShapesPopup() => setState(() => _isShapesPopupOpen = false);
+
   void _toggleWebMinimap() =>
       setState(() => _webMinimapVisible = !_webMinimapVisible);
   bool _isShapesPopupOpen = false;
@@ -870,6 +879,9 @@ class _CanvasScreenState extends State<CanvasScreen>
       kind == PointerDeviceKind.invertedStylus;
 
   void _handleCanvasPointerDown(PointerDownEvent event, CanvasState state) {
+    // Desktop browser only: clicking the board gives it the keyboard
+    // shortcuts, and the middle mouse button pans.
+    if (SlidingTray.useWebLayout(context) && _webPointerDown(event)) return;
     final kind = event.kind;
     final stylus = _isStylusKind(kind);
     if (stylus) {
@@ -930,6 +942,13 @@ class _CanvasScreenState extends State<CanvasScreen>
   }
 
   void _handleCanvasPointerMove(PointerMoveEvent event) {
+    if (event.pointer == _webMiddlePanPointer) {
+      _applyViewportTransform(
+        scale: _viewportScale,
+        offset: _viewportOffset + event.delta,
+      );
+      return;
+    }
     if (!_activePointerKinds.containsKey(event.pointer)) return;
     _activeCanvasPointers[event.pointer] = event.localPosition;
     if (event.pointer != _rawStrokePointerId) return;
@@ -941,6 +960,10 @@ class _CanvasScreenState extends State<CanvasScreen>
   }
 
   void _handleCanvasPointerEnd(PointerEvent event) {
+    if (event.pointer == _webMiddlePanPointer) {
+      _webMiddlePanPointer = null;
+      return;
+    }
     _activeCanvasPointers.remove(event.pointer);
     _activePointerKinds.remove(event.pointer);
     _stylusPointers.remove(event.pointer);
@@ -4424,6 +4447,15 @@ class _CanvasScreenState extends State<CanvasScreen>
                             onPointerCancel: _handleCanvasPointerEnd,
                             onPointerSignal: _handleViewportPointerSignal,
                             child: GestureDetector(
+                              // Desktop browser: right-click opens the
+                              // canvas menu (long-press on phones).
+                              onSecondaryTapUp: webLayout
+                                  ? (details) => _showCanvasContextMenu(
+                                      state,
+                                      mappedElements,
+                                      details.localPosition,
+                                    )
+                                  : null,
                               onScaleStart: (details) {
                                 // The in-place text editor owns the gesture while
                                 // it is open; drawing/panning resumes on commit.
@@ -5238,6 +5270,7 @@ class _CanvasScreenState extends State<CanvasScreen>
                           // Desktop browser: corner bars and a tool rail
                           // (canvas_screen_web.dart). Phones: unchanged.
                           if (webLayout) ...[
+                            _buildWebKeyboardFocus(state),
                             if (!state.isViewingHistory)
                               _buildWebToolRail(state),
                             if (!state.isViewingHistory)
@@ -11767,6 +11800,7 @@ class _CanvasScreenState extends State<CanvasScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _webKeyFocus.dispose();
     _shapeEditDebounceTimer?.cancel();
     _scrubDebounce?.cancel();
     for (final controller in _shapeLabelControllers.values) {

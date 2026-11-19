@@ -569,4 +569,133 @@ extension _CanvasWebLayout on _CanvasScreenState {
       ),
     );
   }
+
+  // ── Keyboard and mouse ────────────────────────────────────────────────
+
+  /// An invisible focus target for the board's keyboard shortcuts. It only
+  /// acts while it holds focus, so typing in text boxes and dialogs is
+  /// never affected.
+  Widget _buildWebKeyboardFocus(CanvasState state) {
+    return Focus(
+      focusNode: _webKeyFocus,
+      autofocus: true,
+      onKeyEvent: (_, event) => _handleWebKey(event),
+      child: const SizedBox.shrink(),
+    );
+  }
+
+  /// A press on the board: take keyboard focus, and pan with the middle
+  /// mouse button. Returns true when the press is fully handled here.
+  bool _webPointerDown(PointerDownEvent event) {
+    if (_textEditor == null && !_webKeyFocus.hasFocus) {
+      _webKeyFocus.requestFocus();
+    }
+    if (event.kind == PointerDeviceKind.mouse &&
+        (event.buttons & kMiddleMouseButton) != 0) {
+      _webMiddlePanPointer = event.pointer;
+      return true;
+    }
+    return false;
+  }
+
+  Set<String> _webSelection(CanvasState state) => state.selectedIds.isNotEmpty
+      ? state.selectedIds
+      : {?state.selectedShapeId};
+
+  KeyEventResult _handleWebKey(KeyEvent event) {
+    if (event is KeyUpEvent) return KeyEventResult.ignored;
+    if (_textEditor != null || !_webKeyFocus.hasPrimaryFocus) {
+      return KeyEventResult.ignored;
+    }
+    final state = _canvasBloc.state;
+    final key = event.logicalKey;
+    final keyboard = HardwareKeyboard.instance;
+    final command = keyboard.isControlPressed || keyboard.isMetaPressed;
+    final shift = keyboard.isShiftPressed;
+    final selection = _webSelection(state);
+
+    if (command) {
+      if (key == LogicalKeyboardKey.keyZ) {
+        shift ? _redo() : _undo();
+      } else if (key == LogicalKeyboardKey.keyY) {
+        _redo();
+      } else if (key == LogicalKeyboardKey.keyC) {
+        if (selection.isEmpty) return KeyEventResult.ignored;
+        _canvasBloc.add(const CanvasCopySelection());
+      } else if (key == LogicalKeyboardKey.keyV) {
+        if (!state.canEdit || !state.hasClipboard) {
+          return KeyEventResult.ignored;
+        }
+        _canvasBloc.add(const CanvasPasteSelection());
+      } else if (key == LogicalKeyboardKey.keyD) {
+        if (!state.canEdit || selection.isEmpty) return KeyEventResult.handled;
+        _canvasBloc.add(CanvasDuplicateElements(selection));
+      } else if (key == LogicalKeyboardKey.keyA) {
+        _onToolbarToolSelected(CanvasToolMode.select);
+        _canvasBloc.add(
+          CanvasSelectElements({
+            for (final e in state.elements)
+              if (!e.hidden && !e.locked) e.id,
+          }),
+        );
+      } else if (key == LogicalKeyboardKey.equal ||
+          key == LogicalKeyboardKey.add ||
+          key == LogicalKeyboardKey.numpadAdd) {
+        _zoomFromCenter(1.25);
+      } else if (key == LogicalKeyboardKey.minus ||
+          key == LogicalKeyboardKey.numpadSubtract) {
+        _zoomFromCenter(1 / 1.25);
+      } else if (key == LogicalKeyboardKey.digit0 ||
+          key == LogicalKeyboardKey.numpad0) {
+        _toggleResetView();
+      } else {
+        return KeyEventResult.ignored;
+      }
+      return KeyEventResult.handled;
+    }
+
+    if (key == LogicalKeyboardKey.delete ||
+        key == LogicalKeyboardKey.backspace) {
+      if (!state.canEdit || selection.isEmpty) return KeyEventResult.ignored;
+      _canvasBloc.add(CanvasDeleteElements(selection));
+      _selectShape(null);
+      return KeyEventResult.handled;
+    }
+
+    if (key == LogicalKeyboardKey.escape) {
+      if (_isShapesPopupOpen) {
+        _closeShapesPopup();
+      } else if (state.activeTray != null) {
+        _canvasBloc.add(CanvasToggleTray(state.activeTray!));
+      } else if (selection.isNotEmpty) {
+        _selectShape(null);
+      } else if (state.currentToolMode != CanvasToolMode.select) {
+        _onToolbarToolSelected(CanvasToolMode.select);
+      } else {
+        return KeyEventResult.ignored;
+      }
+      return KeyEventResult.handled;
+    }
+
+    // Single-key tool shortcuts (no modifiers), as in desktop whiteboards.
+    if (keyboard.isAltPressed || shift) return KeyEventResult.ignored;
+    final tool = switch (key) {
+      LogicalKeyboardKey.keyV => CanvasToolbarAction.select,
+      LogicalKeyboardKey.keyH => CanvasToolbarAction.hand,
+      LogicalKeyboardKey.keyP => CanvasToolbarAction.pen,
+      LogicalKeyboardKey.keyE => CanvasToolbarAction.eraser,
+      LogicalKeyboardKey.keyT => CanvasToolbarAction.text,
+      LogicalKeyboardKey.keyS => CanvasToolbarAction.shape,
+      _ => null,
+    };
+    if (tool == null) return KeyEventResult.ignored;
+    if (event is KeyRepeatEvent) return KeyEventResult.handled;
+    // Picking the tool already in use would toggle its settings; skip.
+    if (_isRailToolActive(state, tool) && tool != CanvasToolbarAction.shape) {
+      return KeyEventResult.handled;
+    }
+    if (!state.canEdit && tool.requiresEdit) return KeyEventResult.handled;
+    _executeToolbarAction(tool);
+    return KeyEventResult.handled;
+  }
 }
