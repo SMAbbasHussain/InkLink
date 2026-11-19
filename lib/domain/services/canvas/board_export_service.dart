@@ -60,6 +60,32 @@ abstract class BoardExportService {
     required String boardTitle,
     Rect? sharePositionOrigin,
   });
+
+  /// Renders an export to bytes without writing a file (the web has no
+  /// file system; [saveExportAsDownload] hands it to the browser).
+  Future<ExportedCanvasFile> renderCanvasExport({
+    required String boardTitle,
+    required List<CanvasElement> elements,
+    required CanvasExportOptions options,
+    CanvasBoardSettings settings = const CanvasBoardSettings(),
+    Set<String> selectedIds = const {},
+  });
+
+  /// Web: saves [file] as a browser download.
+  Future<void> saveExportAsDownload(ExportedCanvasFile file);
+}
+
+/// A rendered export: what to call it, its type and its bytes.
+class ExportedCanvasFile {
+  final String fileName;
+  final String mimeType;
+  final Uint8List bytes;
+
+  const ExportedCanvasFile({
+    required this.fileName,
+    required this.mimeType,
+    required this.bytes,
+  });
 }
 
 class BoardExportServiceImpl implements BoardExportService {
@@ -236,6 +262,87 @@ class BoardExportServiceImpl implements BoardExportService {
         await file.writeAsString(svgString, flush: true);
         return file;
     }
+  }
+
+  @override
+  Future<ExportedCanvasFile> renderCanvasExport({
+    required String boardTitle,
+    required List<CanvasElement> elements,
+    required CanvasExportOptions options,
+    CanvasBoardSettings settings = const CanvasBoardSettings(),
+    Set<String> selectedIds = const {},
+  }) async {
+    // Same plan, renderers and name as [exportCanvas], without a file.
+    final plan = buildExportPlan(
+      elements: elements,
+      options: options,
+      selectedIds: selectedIds,
+      settings: settings,
+    );
+    final rawSuffix = options.suffix?.trim();
+    final suffix = rawSuffix == null || rawSuffix.isEmpty
+        ? ''
+        : '_${sanitizeExportFileName(rawSuffix)}';
+    final fileBase =
+        '${sanitizeExportFileName(boardTitle)}${suffix}_'
+        '${DateTime.now().millisecondsSinceEpoch}';
+
+    switch (options.format) {
+      case BoardExportFormat.png:
+        return ExportedCanvasFile(
+          fileName: '$fileBase.png',
+          mimeType: 'image/png',
+          bytes: await renderToPng(
+            plan.elements,
+            scale: plan.scale,
+            settings: settings,
+            exportBounds: plan.bounds,
+            transparentBackground: options.hasTransparentBackground,
+            includePattern: options.includePattern,
+          ),
+        );
+      case BoardExportFormat.pdf:
+        return ExportedCanvasFile(
+          fileName: '$fileBase.pdf',
+          mimeType: 'application/pdf',
+          bytes: await renderToPdf(
+            boardTitle,
+            plan.elements,
+            settings: settings,
+            exportBounds: plan.bounds,
+            transparentBackground: options.hasTransparentBackground,
+            includePattern: options.includePattern,
+            scale: plan.scale,
+          ),
+        );
+      case BoardExportFormat.svg:
+        return ExportedCanvasFile(
+          fileName: '$fileBase.svg',
+          mimeType: 'image/svg+xml',
+          bytes: Uint8List.fromList(
+            utf8.encode(
+              renderToSvg(
+                boardTitle,
+                plan.elements,
+                settings: settings,
+                exportBounds: plan.bounds,
+                transparentBackground: options.hasTransparentBackground,
+                includePattern: options.includePattern,
+              ),
+            ),
+          ),
+        );
+    }
+  }
+
+  @override
+  Future<void> saveExportAsDownload(ExportedCanvasFile file) {
+    // In a browser, XFile.saveTo downloads the bytes under this name.
+    return XFile.fromData(
+      file.bytes,
+      mimeType: file.mimeType,
+      name: file.fileName,
+    ).saveTo(file.fileName);
   }
 
   /// Resolves the crop box and element subset for [options].

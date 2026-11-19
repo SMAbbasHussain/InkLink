@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:uuid/uuid.dart';
@@ -6932,6 +6933,30 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       final boardTitle = state.boardTitle ?? 'Board';
       final options =
           event.options ?? CanvasExportOptions(format: event.format);
+
+      // Web: no files or share sheet; the export becomes a browser
+      // download (sharing included). Phones continue below, unchanged.
+      if (kIsWeb) {
+        final exported = await _boardExportService.renderCanvasExport(
+          boardTitle: boardTitle,
+          elements: state.elements,
+          options: options,
+          settings: state.boardSettings,
+          selectedIds: state.selectedIds,
+        );
+        await _boardExportService.saveExportAsDownload(exported);
+        _activeExportCount = math.max(0, _activeExportCount - 1);
+        emit(
+          state.copyWith(
+            isExporting: _activeExportCount > 0,
+            exportSuccessMessage:
+                'Board downloaded as ${options.format.name.toUpperCase()} '
+                '(${exported.fileName}).',
+          ),
+        );
+        return;
+      }
+
       final file = await _boardExportService.exportCanvas(
         boardTitle: boardTitle,
         elements: state.elements,
