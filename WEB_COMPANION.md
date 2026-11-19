@@ -1,67 +1,63 @@
-# InkLink web companion
+# InkLink on the web
 
-A small browser version of InkLink for managing your account from a computer. **Drawing and editing boards stay in the mobile app.**
+The browser version of InkLink: your boards, invites, friends, notifications and profile, and **the board itself** (drawing and live editing, see [WEB_CANVAS.md](WEB_CANVAS.md)).
 
-It is a **separate entry point** (`lib/web/main_web.dart`). It reuses only the web-safe parts of the codebase (Firebase wrappers, data models, the Ink design system) and never imports the mobile app's offline database (Isar), screens or Agora Chat. **No existing file was changed**, so the phone app builds and behaves exactly as before. See WEB_AUDIT.md for why the full app can't run on the web as-is.
+It is a **separate entry point** (`lib/web/main_web.dart`). The phone app (`lib/main.dart`) builds and behaves as before: web code never imports the phone's offline database (Isar), `path_provider` or Agora, and the few shared files that changed only add web-only branches or behaviour-preserving refactors (listed in WEB_CANVAS_PLAN.md and the commit messages).
 
-## What it does
+## Pages
 
 | Page | What you can do |
 |---|---|
-| **Sign in** | Email/password (with email verification and password reset), or Google via a browser popup. Only **existing** InkLink accounts; new accounts are created in the mobile app |
-| **Boards** | Your owned and joined boards, live, with search by title/tag and All / Owned / Joined / Archived filters. Opening a board shows a link that opens it in the phone app |
-| **Discover** | Public boards (the newest 40) |
+| **Sign in** | Email/password (with email verification and password reset), or Google. Only **existing** accounts; new accounts are created in the mobile app |
+| **Home** | Your boards, live: My Boards / Joined / Archived, search, and a note when invites are waiting. Click a board to open it |
+| **Discover** | Public boards with search and tag filters |
 | **Invites** | Accept or decline board and workspace invites (same Cloud Functions as the app) |
 | **Friends** | Accept or decline friend requests; see your friends |
 | **Notifications** | The in-app feed (newest 100, chat messages hidden, as on mobile); remove items |
-| **Profile** | View, and edit name and bio (the same fields the app writes). The photo is changed in the app |
+| **Profile** | View, and edit name and bio. The photo is changed in the app |
 
-Not on the web: drawing and editing boards, AI images, chat, voice, push notifications, creating accounts, offline use. It works **online only**.
+Not on the web: creating accounts and boards, chat (direct messages), voice calls, push notifications, offline use.
 
-Layout: a side rail on wide screens, a bottom bar on narrow ones, light and dark mode following the system.
+## Design
 
-Design: the same "Desk" look as the mobile app, reusing its widgets without changing them: the dot-grid desk background, the live-board hero (strokes and collaborator cursors), the app-icon logo tile, the gradient sign-in button and the real Google logo. On wide screens, sign-in is two columns, with sticky notes on the left explaining what the web version does. Screen-reader support is on from the start (`ensureSemantics()` in `main_web.dart`), so every field and button has a label.
+The mobile app's look (Ink theme, desk background, board cards, sticky notes, paper cards, light and dark mode with a switch in the top bar), laid out for desktop: a top bar with your account, and a labelled sidebar with counts. Small windows get the phone's floating nav bar instead. Screen-reader support is on from the start (`ensureSemantics()`).
 
 ## Run and build
 
 ```bash
-# Run locally in Chrome
-flutter run -d chrome -t lib/web/main_web.dart
+flutter run -d chrome -t lib/web/main_web.dart --web-port 3000
+flutter build web --release -t lib/web/main_web.dart    # -> build/web
 
-# Production build -> build/web
-flutter build web --release -t lib/web/main_web.dart
+# Sample data, no Firebase (design preview): ?light / ?dark / ?signedOut /
+# ?section=discover|invites|friends|notifications|profile
+flutter run -d chrome -t lib/web/preview/main_web_preview.dart
 ```
 
-Always pass `-t lib/web/main_web.dart`. Without it, Flutter builds the mobile entry point (`lib/main.dart`), which **cannot** compile for the web (Isar).
+Always pass `-t`. `.env` is bundled into the web build and is **publicly downloadable**: non-secret values only.
 
-`.env` is bundled into the web build and is **publicly downloadable**. It must only ever hold non-secret values (as today: Firebase web API keys, the server URL, feature flags).
-
-## Code layout (all new files)
+## Code layout
 
 ```
 lib/web/
-├── main_web.dart                 Entry point: dotenv, Firebase, runApp
-├── web_companion_app.dart        Theme, services, sign-in gate
-├── data/
-│   ├── web_companion_repository.dart   Firestore reads + Cloud Function calls
-│   └── web_mappers.dart                Pure helpers (tested)
-├── screens/                      sign_in, home_shell, boards (+ discover),
-│                                 invites, friends, notifications, profile
-└── widgets/web_widgets.dart      Shared tiles, lists, dialogs
-test/web/
-├── web_mappers_test.dart
-└── web_companion_imports_test.dart   Fails if lib/web ever reaches Isar,
-                                      path_provider or Agora Chat
+├── main_web.dart                 Entry point: dotenv, Firebase, canvas services
+├── web_companion_app.dart        Ink theme (light/dark), services, sign-in gate
+├── web_theme.dart                Light/dark switch, remembered in the browser
+├── canvas/                       The board on the web (see WEB_CANVAS.md)
+├── data/                         Firestore reads + Cloud Function calls, mappers
+├── preview/                      Sample-data preview entry
+├── screens/                      sign_in, home_shell (top bar, sidebar), boards
+│                                 (+ discover), invites, friends, notifications,
+│                                 profile
+└── widgets/web_widgets.dart      Shared headers, lists, empty states, dialogs
+test/web/                         Page tests, mappers, import guard
 ```
 
 ## Before putting it online (needs the project Owner)
 
-1. **Firebase Hosting:** add a `hosting` block to `firebase.json` pointing at `build/web` (with a rewrite of `**` to `/index.html`), then `firebase deploy --only hosting`.
-2. **Firebase Auth → Settings → Authorized domains:** add the hosting domain (for Google sign-in popups). `localhost` already works for testing.
-3. **R2 CORS (optional):** profile photos are loaded by the browser. If avatars show initials instead of photos on the web, add a CORS rule on the R2 bucket allowing the web origin.
+Firebase Hosting, Firebase Auth authorized domains, the sync server's `CORS_ORIGIN`, and R2 CORS: see [WEB_CANVAS.md](WEB_CANVAS.md#before-putting-it-online-needs-the-project-owner).
 
 ## Known limitations
-- `web/index.html` and `web/manifest.json` (web-only files; phone builds don't use them) now carry the "InkLink" name, description and brand colors. The splash-screen CSS in `index.html` is managed by `flutter_native_splash`, so re-running that generator may reset it.
-- Board previews (thumbnails) are stored on each phone, not in the cloud, so the web shows board cards without previews.
-- The "open in the app" link (`https://inklink.app/board/<id>`) opens the board on a phone with InkLink installed and app links verified.
-- Role for joined boards is shown as "Member" (the exact role lives in a subcollection the companion doesn't read).
+
+- Board previews (thumbnails) are stored on each phone, so web board cards show a placeholder.
+- Role for joined boards is shown without the exact role (it lives in a subcollection the list doesn't read); inside a board the real role is used.
+- `web/index.html` splash CSS is managed by `flutter_native_splash`; re-running that generator may reset it.
