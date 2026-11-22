@@ -675,6 +675,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     // Separate snapshot from regular updates
     List<LocalCrdtUpdate> snapshotUpdate = [];
     List<LocalCrdtUpdate> regularUpdates = [];
+    var appliedAny = false;
 
     for (final update in event.updates) {
       if (update.updateId.startsWith('__snapshot__')) {
@@ -695,6 +696,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         final bytes = base64Decode(snapshot.payloadBase64);
         if (bytes.isEmpty) continue;
         adapter.applyUpdate(bytes, origin: 'remote');
+        appliedAny = true;
         // A full-state hydration replaces the board, so the local stack is
         // meaningless afterwards (D14).
         adapter.clearLocalHistory();
@@ -713,11 +715,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
     // Then apply remaining deltas in order
     for (final update in regularUpdates) {
-      if (update.elementId != null) {
+      if (update.elementId != null &&
+          _remotePreviewElements.containsKey(update.elementId)) {
+        appliedAny = true;
+        _forgetPreviews(update.elementId!);
+      } else if (update.elementId != null) {
         _forgetPreviews(update.elementId!);
       }
       if (update.affectedElementIds != null) {
         for (final id in update.affectedElementIds!) {
+          if (_remotePreviewElements.containsKey(id)) appliedAny = true;
           _forgetPreviews(id);
         }
       }
@@ -737,6 +744,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           continue;
         }
         adapter.applyUpdate(bytes, origin: 'remote');
+        appliedAny = true;
         // D14: an owner's revert/restore/clear is authoritative locally — the
         // member may redraw but cannot resurrect the reverted work via Ctrl+Z.
         if (update.sourceClientId != state.currentUserId) {
@@ -780,7 +788,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       for (final id in materialized.keys) {
         _forgetPreviews(id);
       }
+      appliedAny = true;
     }
+    if (!appliedAny) return;
     _refreshFromCrdtAdapter(emit);
     if (regularUpdates.isNotEmpty || snapshotUpdate.isNotEmpty) {
       _scheduleLiveTailRefresh();
@@ -1216,7 +1226,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   Map<String, dynamic>? _committedElementPayload(String elementId) {
     final adapter = _crdtAdapter;
     if (adapter != null) {
-      final payload = adapter.materializeElements()[elementId];
+      final payload = adapter.materializeElement(elementId);
       if (payload != null) return Map<String, dynamic>.from(payload);
     }
     for (final element in state.elements) {
@@ -1231,6 +1241,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     String elementId,
     Map<String, dynamic> data,
   ) async {
+    await _publishSelectedShapePreviewLazy(elementId, () => data);
+  }
+
+  Future<void> _publishSelectedShapePreviewLazy(
+    String elementId,
+    Map<String, dynamic> Function() dataBuilder,
+  ) async {
     final canvasService = _canvasService;
     if (canvasService == null || _boardId.isEmpty) return;
     final preview = _pendingPreviewPublishes.putIfAbsent(
@@ -1239,7 +1256,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
     preview.previewId = _uuid.v4();
     preview.elementId = elementId;
-    preview.payload = Uint8List.fromList(utf8.encode(jsonEncode(data)));
+    preview.payloadBuilder = dataBuilder;
     preview.dirty = true;
     if (preview.timer != null) return;
     _flushQueuedPreviewPublish(elementId);
@@ -1254,6 +1271,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       return;
     }
     preview.dirty = false;
+    final builder = preview.payloadBuilder;
+    if (builder != null) {
+      preview.payload = Uint8List.fromList(utf8.encode(jsonEncode(builder())));
+      preview.payloadBuilder = null;
+    }
     unawaited(
       canvasService.publishCanvasPreview(
         boardId: _boardId,
@@ -1743,7 +1765,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         ? [event.point]
         : _strokeStabilizer!.add(event.point, elapsed: _strokeClock.elapsed);
     final updated = List<Offset>.from(state.currentStroke)..addAll(points);
-    final pressure = state.stylusPressureEnabled ? event.pressure : 1.0;
+    final allowPressure =
+        state.stylusPressureEnabled ||
+        (state.boardSettings.inkSpillEnabled && event.pressure > 1.0);
+    final pressure = allowPressure ? event.pressure : 1.0;
     final updatedPressures = List<double>.from(state.currentStrokePressures)
       ..addAll([
         if (points.length == 2) state.currentStrokePressures.last,
@@ -1773,21 +1798,28 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     final strokeId = _activeStrokeId;
     if (canvasService == null || strokeId == null || _boardId.isEmpty) return;
-    final previewData = {
-      'type': 'stroke',
-      'z': _nextZIndex(),
-      'color': state.selectedColor.value,
-      'strokeWidth': state.strokeWidth,
-      'opacity': state.brushOpacity,
-      'brushType': state.brushType,
-      'brushId': state.brushType,
-      'pressures': updatedPressures,
-      'tilts': updatedTilts,
-      'points': updated
-          .map((p) => {'x': p.dx, 'y': p.dy})
-          .toList(growable: false),
-    };
-    await _publishSelectedShapePreview(strokeId, previewData);
+    final z = _nextZIndex();
+    final colorValue = state.selectedColor.value;
+    final strokeWidth = state.strokeWidth;
+    final brushOpacity = state.brushOpacity;
+    final brushType = state.brushType;
+    await _publishSelectedShapePreviewLazy(
+      strokeId,
+      () => {
+        'type': 'stroke',
+        'z': z,
+        'color': colorValue,
+        'strokeWidth': strokeWidth,
+        'opacity': brushOpacity,
+        'brushType': brushType,
+        'brushId': brushType,
+        'pressures': updatedPressures,
+        'tilts': updatedTilts,
+        'points': updated
+            .map((p) => {'x': p.dx, 'y': p.dy})
+            .toList(growable: false),
+      },
+    );
   }
 
   Future<void> _onEndStroke(
@@ -1820,8 +1852,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       );
       return;
     }
-    var usePressures = state.stylusPressureEnabled
-        ? event.pressures ?? state.currentStrokePressures
+    final rawCandidatePressures =
+        event.pressures ?? state.currentStrokePressures;
+    final hasSpillPressure =
+        state.boardSettings.inkSpillEnabled &&
+        rawCandidatePressures.any((p) => p > 1.0);
+    var usePressures = (state.stylusPressureEnabled || hasSpillPressure)
+        ? rawCandidatePressures
         : List<double>.filled(usePoints.length, 1.0);
     if (usePressures.length != usePoints.length) {
       if (usePressures.isEmpty) {
@@ -2158,7 +2195,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   /// Compared against a text element's box width to tell a box the user
   /// resized from one that still auto-fits its text.
   double _naturalTextWidth(TextElement element) {
-    return CanvasTextLayout.layout(
+    final layout = CanvasTextLayout.layout(
       text: element.text,
       fontSize: element.fontSize,
       fontWeight: element.fontWeight,
@@ -2168,7 +2205,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       maxWidth: 1e6,
       maxLines: 0,
       color: element.color,
-    ).size.width;
+    );
+    try {
+      return layout.size.width;
+    } finally {
+      layout.dispose();
+    }
   }
 
   /// Rewrites the measured width/height from the element's real text style.
@@ -2178,6 +2220,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   /// wide until the text itself changes.
   TextElement _measureText(TextElement element, {bool keepWidth = false}) {
     final layout = CanvasTextLayout.forElement(element);
+    final size = layout.size;
+    layout.dispose();
     return TextElement(
       id: element.id,
       z: element.z,
@@ -2190,8 +2234,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       color: element.color,
       width: keepWidth && element.width > 0
           ? element.width
-          : layout.size.width,
-      height: layout.size.height,
+          : size.width,
+      height: size.height,
       fontSize: element.fontSize,
       fontWeight: element.fontWeight,
       fontFamily: element.fontFamily,
@@ -3098,11 +3142,37 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       final candidate = elements[i];
       if (candidate is FrameElement &&
           !candidate.hidden &&
-          frameOverlapsElement(candidate, element)) {
+          _shouldAttachToFrame(candidate, element)) {
         return candidate;
       }
     }
     return null;
+  }
+
+  /// Whether an unattached [element] was placed inside [frame] (as opposed to
+  /// merely enclosing or passing across a small frame at low zoom).
+  bool _shouldAttachToFrame(FrameElement frame, CanvasElement element) {
+    final rect = frameRect(frame);
+    final bounds = elementBounds(element);
+    if (bounds == null || !rect.overlaps(bounds)) return false;
+    if (element is StrokeElement) {
+      if (element.points.isEmpty) return false;
+      if (rect.contains(element.points.first)) return true;
+      var insideCount = 0;
+      for (final point in element.points) {
+        if (rect.contains(point)) insideCount++;
+      }
+      return insideCount * 2 >= element.points.length;
+    }
+    final intersection = rect.intersect(bounds);
+    if (intersection.width <= 0 || intersection.height <= 0) {
+      return rect.contains(bounds.center) &&
+          bounds.width <= rect.width &&
+          bounds.height <= rect.height;
+    }
+    final boundsArea = bounds.width * bounds.height;
+    if (boundsArea <= 0) return rect.contains(bounds.center);
+    return intersection.width * intersection.height * 2 >= boundsArea;
   }
 
   CanvasElement _attachOrDetachFrame(
@@ -3570,11 +3640,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   List<String> _myCommitConflicts(Set<String> ids) {
     final adapter = _crdtAdapter;
     if (adapter == null) return const [];
-    final live = adapter.materializeElements();
     final conflicts = <String>[];
     for (final id in ids) {
       final recorded = _myCommittedPayload[id];
-      final current = live[id];
+      final current = adapter.materializeElement(id);
       if (_payloadEquals(current, recorded)) continue;
       conflicts.add(id);
     }
@@ -3589,9 +3658,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   void _refreshCommitRecords(Set<String> ids) {
     final adapter = _crdtAdapter;
     if (adapter == null || ids.isEmpty) return;
-    final live = adapter.materializeElements();
     for (final id in ids) {
-      _myCommittedPayload[id] = live[id];
+      _myCommittedPayload[id] = adapter.materializeElement(id);
     }
   }
 
@@ -3625,13 +3693,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   List<String> _myRedoConflicts(Set<String> ids) {
     final adapter = _crdtAdapter;
     if (adapter == null) return const [];
-    final live = adapter.materializeElements();
     final conflicts = <String>[];
     for (final id in ids) {
+      final live = adapter.materializeElement(id);
       final target = _myRedoTarget[id] ?? _myCommittedPayload[id];
       final baseline = _myCommittedPayload[id];
-      if (_payloadEquals(live[id], baseline)) continue;
-      if (_payloadEquals(live[id], target)) continue;
+      if (_payloadEquals(live, baseline)) continue;
+      if (_payloadEquals(live, target)) continue;
       conflicts.add(id);
     }
     return conflicts;

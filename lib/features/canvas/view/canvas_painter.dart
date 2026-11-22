@@ -41,6 +41,7 @@ class _CanvasElement {
   final String lineStyle;
   final bool hasArrowhead;
   final Map<String, dynamic> data;
+  final CanvasElement? sourceElement;
 
   /// World-space bounds used to composite this element's opacity layer.
   final Rect? layerBounds;
@@ -141,6 +142,7 @@ class _CanvasElement {
     this.hasArrowhead = true,
     this.data = const {},
     this.layerBounds,
+    this.sourceElement,
   });
 
   factory _CanvasElement.stroke({
@@ -157,6 +159,7 @@ class _CanvasElement {
     double spacing = 0.25,
     int textureSeed = 0,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -173,6 +176,7 @@ class _CanvasElement {
       spacing: spacing,
       textureSeed: textureSeed,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -186,6 +190,7 @@ class _CanvasElement {
     required double strokeWidth,
     required bool isFilled,
     required Map<String, dynamic> data,
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -199,6 +204,7 @@ class _CanvasElement {
       isFilled: isFilled,
       rotation: (data['rotation'] as num?)?.toDouble() ?? 0.0,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -219,6 +225,7 @@ class _CanvasElement {
     int maxLines = 0,
     Color? backgroundColor,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -238,6 +245,7 @@ class _CanvasElement {
       maxLines: maxLines,
       textBackgroundColor: backgroundColor,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -249,6 +257,7 @@ class _CanvasElement {
     required double height,
     required String imageBase64,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -261,6 +270,7 @@ class _CanvasElement {
       color: Colors.transparent,
       rotation: (data['rotation'] as num?)?.toDouble() ?? 0.0,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -274,6 +284,7 @@ class _CanvasElement {
     required Color color,
     double rotation = 0,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -287,6 +298,7 @@ class _CanvasElement {
       color: color,
       rotation: rotation,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -300,6 +312,7 @@ class _CanvasElement {
     required Color color,
     double cornerRadius = 12,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -313,6 +326,7 @@ class _CanvasElement {
       color: color,
       strokeWidth: cornerRadius,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -327,6 +341,7 @@ class _CanvasElement {
     double opacity = 1,
     Rect? layerBounds,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -341,6 +356,7 @@ class _CanvasElement {
       opacity: opacity,
       layerBounds: layerBounds,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -358,6 +374,7 @@ class _CanvasElement {
     required double strokeWidth,
     bool hasArrowhead = true,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     final center = Offset(
       (startPoint.dx + endPoint.dx) / 2,
@@ -383,6 +400,7 @@ class _CanvasElement {
       strokeWidth: strokeWidth,
       hasArrowhead: hasArrowhead,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -413,6 +431,8 @@ class _CanvasElement {
     bool? isFilled,
     double? opacity,
     Rect? layerBounds,
+    CanvasElement? sourceElement,
+    bool clearSourceElement = false,
   }) {
     return _CanvasElement._(
       id: id,
@@ -425,6 +445,7 @@ class _CanvasElement {
       brushType: brushType ?? this.brushType,
       brushId: brushId ?? this.brushId,
       pressures: pressures ?? this.pressures,
+      tilts: tilts,
       spacing: spacing ?? this.spacing,
       textureSeed: textureSeed ?? this.textureSeed,
       shapeType: shapeType,
@@ -453,6 +474,9 @@ class _CanvasElement {
       hasArrowhead: hasArrowhead,
       data: data ?? this.data,
       layerBounds: layerBounds ?? this.layerBounds,
+      sourceElement: clearSourceElement
+          ? null
+          : (sourceElement ?? this.sourceElement),
     );
   }
 }
@@ -1191,6 +1215,19 @@ class _CanvasPainter extends CustomPainter {
   }
 
   void _paintTable(Canvas canvas, _CanvasElement element) {
+    final source = element.sourceElement;
+    if (source is TableElement) {
+      paintTableElement(
+        canvas,
+        source.copyWith(
+          center: element.center,
+          width: element.width,
+          height: element.height,
+          rotation: element.rotation,
+        ),
+      );
+      return;
+    }
     final parsed = CanvasElement.fromMap(element.id, {
       ...element.data,
       'type': 'table',
@@ -1435,30 +1472,36 @@ class _CanvasPainter extends CustomPainter {
       maxLines: element.maxLines,
       color: element.color,
     );
-    final boxWidth = element.width > 0 ? element.width : layout.size.width;
-    final boxHeight = element.height > 0 ? element.height : layout.size.height;
-    final box = Rect.fromLTWH(
-      element.center.dx,
-      element.center.dy,
-      boxWidth,
-      boxHeight,
-    );
-
-    canvas.save();
-    if (element.rotation != 0) {
-      canvas.translate(box.center.dx, box.center.dy);
-      canvas.rotate(element.rotation);
-      canvas.translate(-box.center.dx, -box.center.dy);
-    }
-    final background = element.textBackgroundColor;
-    if (background != null) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(box.inflate(4), const Radius.circular(3)),
-        Paint()..color = background,
+    try {
+      final boxWidth = element.width > 0 ? element.width : layout.size.width;
+      final boxHeight = element.height > 0
+          ? element.height
+          : layout.size.height;
+      final box = Rect.fromLTWH(
+        element.center.dx,
+        element.center.dy,
+        boxWidth,
+        boxHeight,
       );
+
+      canvas.save();
+      if (element.rotation != 0) {
+        canvas.translate(box.center.dx, box.center.dy);
+        canvas.rotate(element.rotation);
+        canvas.translate(-box.center.dx, -box.center.dy);
+      }
+      final background = element.textBackgroundColor;
+      if (background != null) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(box.inflate(4), const Radius.circular(3)),
+          Paint()..color = background,
+        );
+      }
+      layout.painter.paint(canvas, box.topLeft);
+      canvas.restore();
+    } finally {
+      layout.dispose();
     }
-    layout.painter.paint(canvas, box.topLeft);
-    canvas.restore();
   }
 
   void _paintImage(
@@ -1466,7 +1509,9 @@ class _CanvasPainter extends CustomPainter {
     _CanvasElement element,
     ui.Image? decodedImage,
   ) {
-    final parsed = CanvasElement.fromMap(element.id, element.data);
+    final parsed =
+        element.sourceElement ??
+        CanvasElement.fromMap(element.id, element.data);
     final base = parsed is ImageElement
         ? parsed
         : ImageElement(id: element.id, z: 0, center: element.center);
@@ -1511,6 +1556,7 @@ class _CanvasPainter extends CustomPainter {
             rect.center.dy - textPainter.height / 2,
           ),
         );
+        textPainter.dispose();
       },
     );
   }
@@ -1531,8 +1577,10 @@ class _CanvasPainter extends CustomPainter {
   }
 
   void _paintStickyNote(Canvas canvas, _CanvasElement element) {
-    final note =
-        CanvasElement.fromMap(element.id, element.data) as StickyNoteElement;
+    final parsed =
+        element.sourceElement ??
+        CanvasElement.fromMap(element.id, element.data);
+    final note = parsed as StickyNoteElement;
     paintStickyNoteElement(
       canvas,
       note.copyWith(
@@ -1570,7 +1618,9 @@ class _CanvasPainter extends CustomPainter {
       towards: startRaw,
     );
 
-    final model = CanvasElement.fromMap(element.id, element.data);
+    final model =
+        element.sourceElement ??
+        CanvasElement.fromMap(element.id, element.data);
     final connector = model is ConnectorElement ? model : null;
     final cornerRadius = connector?.cornerRadius ?? 0;
 

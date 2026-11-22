@@ -12,12 +12,19 @@ void main() {
         pageBoundsEnabled: true,
         pageWidth: 1000,
         pageHeight: 700,
+        inkSpillEnabled: true,
       );
 
       final parsed = CanvasBoardSettings.fromMap(settings.toMap());
 
       expect(parsed, settings);
+      expect(parsed.inkSpillEnabled, isTrue);
       expect(parsed.toMap()['type'], CanvasBoardSettings.crdtType);
+    });
+
+    test('Given default settings, Then inkSpillEnabled is off by default', () {
+      expect(CanvasBoardSettings.defaults.inkSpillEnabled, isFalse);
+      expect(CanvasBoardSettings.fromMap(const {}).inkSpillEnabled, isFalse);
     });
 
     test('Given legacy or malformed data, Then defaults and clamps apply', () {

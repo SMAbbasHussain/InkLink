@@ -150,6 +150,7 @@ void main() {
         width: 80,
         height: 80,
         text: 'Inside note',
+        frameId: 'fr1',
       );
       const outside = StickyNoteElement(
         id: 'out1',

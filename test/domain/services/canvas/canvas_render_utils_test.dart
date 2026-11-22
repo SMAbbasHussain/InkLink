@@ -153,6 +153,35 @@ void main() {
       expect(result.first.radius, lessThan(result[result.length ~/ 2].radius));
       expect(result.last.radius, lessThan(result[result.length ~/ 2].radius));
     });
+
+    test('dwell / ink spill pressure (> 1.0) expands radius and opacity', () {
+      final penStyle = resolveBrushStyle(
+        brushType: 'solid',
+        strokeWidth: 8.0,
+        strokeOpacity: 0.8,
+      );
+      final normalSamples = resampleStroke(
+        points: const [Offset(0, 0), Offset(20, 0)],
+        pressures: const [0.7, 0.7],
+        baseWidth: 8.0,
+        baseOpacity: 0.8,
+        style: penStyle,
+      );
+      final spillSamples = resampleStroke(
+        points: const [Offset(0, 0), Offset(20, 0), Offset(20.1, 0)],
+        pressures: const [0.7, 1.4, 1.9],
+        baseWidth: 8.0,
+        baseOpacity: 0.8,
+        style: penStyle,
+      );
+
+      expect(spillSamples.last.pressure, greaterThan(1.0));
+      expect(spillSamples.last.radius, greaterThan(normalSamples.last.radius));
+      expect(
+        spillSamples.last.opacity,
+        greaterThanOrEqualTo(normalSamples.last.opacity),
+      );
+    });
   });
 
   group('paintCanvasStroke', () {

@@ -183,11 +183,17 @@ class _BrushTrayState extends State<BrushTray> {
   Widget _buildLiveBrushPreview(InkTokens tokens) {
     final preset = brushPresetFor(widget.brushType);
     final isEraser = widget.brushType == 'eraser';
+    final pressureTag = isEraser
+        ? 'Eraser preview'
+        : (widget.stylusPressureEnabled &&
+                  (preset.pressureAffectsSize || preset.pressureAffectsOpacity)
+              ? 'Pressure & dwell active'
+              : 'Uniform weight');
 
     return Container(
       width: double.infinity,
-      height: 72,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      height: 96,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: tokens.field,
         borderRadius: BorderRadius.circular(InkRadii.input),
@@ -204,7 +210,24 @@ class _BrushTrayState extends State<BrushTray> {
                   color: isEraser ? tokens.inkMuted : widget.selectedColor,
                   strokeWidth: widget.strokeWidth,
                   opacity: widget.brushOpacity,
+                  stylusPressureEnabled: widget.stylusPressureEnabled,
+                  gridColor: tokens.glassStroke.withValues(alpha: 0.35),
                 ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 0,
+            right: 0,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: tokens.paper.withValues(alpha: 0.85),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                '${preset.description} · $pressureTag',
+                style: InkType.caption(tokens.inkMuted),
               ),
             ),
           ),
@@ -434,7 +457,7 @@ class _BrushTrayState extends State<BrushTray> {
         Text('Brushes', style: InkType.label(tokens.inkSecondary)),
         const SizedBox(height: InkSpacing.s8),
         SizedBox(
-          height: 40,
+          height: 62,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: brushPresets.length,
@@ -451,12 +474,14 @@ class _BrushTrayState extends State<BrushTray> {
 
   Widget _buildPresetCard(InkTokens tokens, BrushPreset preset) {
     final selected = widget.brushType == preset.id;
+    final swatchColor = selected ? tokens.accent : tokens.ink;
     return InkWell(
       key: ValueKey('brush-preset-${preset.id}'),
       onTap: () => _onBrushPresetSelected(preset),
       borderRadius: BorderRadius.circular(InkRadii.input),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        width: 108,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: selected
               ? tokens.accent.withValues(alpha: 0.12)
@@ -466,20 +491,38 @@ class _BrushTrayState extends State<BrushTray> {
             color: selected ? tokens.accent : tokens.glassStroke,
           ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Icon(
-              preset.icon,
-              size: 16,
-              color: selected ? tokens.accent : tokens.inkMuted,
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  preset.icon,
+                  size: 14,
+                  color: selected ? tokens.accent : tokens.inkMuted,
+                ),
+                const SizedBox(width: 5),
+                Flexible(
+                  child: Text(
+                    preset.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: InkType.label(selected ? tokens.accent : tokens.ink),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 6),
-            Text(
-              preset.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: InkType.label(selected ? tokens.accent : tokens.ink),
+            SizedBox(
+              width: double.infinity,
+              height: 22,
+              child: CustomPaint(
+                painter: _MiniBrushArtworkPainter(
+                  preset: preset,
+                  color: swatchColor,
+                ),
+              ),
             ),
           ],
         ),
@@ -822,22 +865,99 @@ Widget brushInputControlsPreview() {
   );
 }
 
+class _MiniBrushArtworkPainter extends CustomPainter {
+  final BrushPreset preset;
+  final Color color;
+
+  const _MiniBrushArtworkPainter({
+    required this.preset,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+    final w = size.width;
+    final h = size.height;
+    final p0 = Offset(4, h * 0.68);
+    final p1 = Offset(w * 0.35, h * 0.15);
+    final p2 = Offset(w * 0.68, h * 0.85);
+    final p3 = Offset(w - 6, h * 0.38);
+
+    final points = <Offset>[];
+    final pressures = <double>[];
+    const steps = 20;
+    for (int i = 0; i <= steps; i++) {
+      final t = i / steps;
+      final u = 1 - t;
+      final x =
+          u * u * u * p0.dx +
+          3 * u * u * t * p1.dx +
+          3 * u * t * t * p2.dx +
+          t * t * t * p3.dx;
+      final y =
+          u * u * u * p0.dy +
+          3 * u * u * t * p1.dy +
+          3 * u * t * t * p2.dy +
+          t * t * t * p3.dy;
+      points.add(Offset(x, y));
+      pressures.add(0.22 + 0.78 * math.sin(t * math.pi));
+    }
+
+    final sampleWidth = preset.defaultWidth.clamp(3.0, 9.0);
+    paintCanvasStroke(
+      canvas: canvas,
+      points: points,
+      pressures: pressures,
+      color: color,
+      strokeWidth: sampleWidth,
+      strokeOpacity: preset.defaultOpacity,
+      brushType: preset.id,
+      brushId: preset.id,
+      textureSeed: 17,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _MiniBrushArtworkPainter oldDelegate) {
+    return oldDelegate.preset.id != preset.id || oldDelegate.color != color;
+  }
+}
+
 class _BrushPreviewPainter extends CustomPainter {
   final String brushType;
   final Color color;
   final double strokeWidth;
   final double opacity;
+  final bool stylusPressureEnabled;
+  final Color gridColor;
 
   _BrushPreviewPainter({
     required this.brushType,
     required this.color,
     required this.strokeWidth,
     required this.opacity,
+    this.stylusPressureEnabled = true,
+    this.gridColor = const Color(0x2294A3B8),
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
+
+    // Subtle paper grid backdrop so translucency, multiply blend, and wash bleed
+    // are immediately visible against the surface.
+    final gridPaint = Paint()
+      ..color = gridColor
+      ..strokeWidth = 0.75;
+    const gridStep = 16.0;
+    for (double x = gridStep; x < size.width; x += gridStep) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
+    }
+    for (double y = gridStep; y < size.height; y += gridStep) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+
     final isEraser = brushType == 'eraser';
     if (isEraser) {
       final paint = Paint()
@@ -855,10 +975,43 @@ class _BrushPreviewPainter extends CustomPainter {
 
     final w = size.width;
     final h = size.height;
-    final p0 = Offset(16, h * 0.65);
-    final p1 = Offset(w * 0.3, h * 0.25);
-    final p2 = Offset(w * 0.7, h * 0.8);
-    final p3 = Offset(w - 16, h * 0.35);
+
+    // Secondary overlapping companion stroke to visualize layering, grain tooth,
+    // and blend mode (e.g. highlighter multiply, watercolor glazing).
+    final accentPoints = <Offset>[];
+    final accentPressures = <double>[];
+    final a0 = Offset(w * 0.56, h * 0.78);
+    final a1 = Offset(w * 0.68, h * 0.22);
+    final a2 = Offset(w * 0.88, h * 0.28);
+    const accentSteps = 22;
+    for (int i = 0; i <= accentSteps; i++) {
+      final t = i / accentSteps;
+      final u = 1 - t;
+      final x = u * u * a0.dx + 2 * u * t * a1.dx + t * t * a2.dx;
+      final y = u * u * a0.dy + 2 * u * t * a1.dy + t * t * a2.dy;
+      accentPoints.add(Offset(x, y));
+      accentPressures.add(
+        stylusPressureEnabled ? (0.3 + 0.55 * math.sin(t * math.pi)) : 1.0,
+      );
+    }
+    paintCanvasStroke(
+      canvas: canvas,
+      points: accentPoints,
+      pressures: accentPressures,
+      color: color,
+      strokeWidth: (strokeWidth * 0.82).clamp(1.0, 64.0),
+      strokeOpacity: (opacity * 0.75).clamp(0.1, 1.0),
+      brushType: brushType,
+      brushId: brushType,
+      textureSeed: 84,
+    );
+
+    // Primary expressive artwork stroke: light entry -> heavy pressure swell ->
+    // dynamic taper -> held dwell spot at the tail.
+    final p0 = Offset(14, h * 0.66);
+    final p1 = Offset(w * 0.28, h * 0.14);
+    final p2 = Offset(w * 0.64, h * 0.88);
+    final p3 = Offset(w - 22, h * 0.42);
 
     final points = <Offset>[];
     final pressures = <double>[];
@@ -877,7 +1030,15 @@ class _BrushPreviewPainter extends CustomPainter {
           3 * u * t * t * p2.dy +
           t * t * t * p3.dy;
       points.add(Offset(x, y));
-      final pressure = 0.35 + 0.65 * math.sin(t * math.pi);
+      final double pressure;
+      if (!stylusPressureEnabled) {
+        pressure = 1.0;
+      } else if (t > 0.92) {
+        // Demonstrate hold-on-spot darkening/pooling at the end of the stroke.
+        pressure = 0.85 + (t - 0.92) * 5.0;
+      } else {
+        pressure = 0.2 + 0.8 * math.sin(t * math.pi);
+      }
       pressures.add(pressure);
     }
 
@@ -899,6 +1060,8 @@ class _BrushPreviewPainter extends CustomPainter {
     return oldDelegate.brushType != brushType ||
         oldDelegate.color != color ||
         oldDelegate.strokeWidth != strokeWidth ||
-        oldDelegate.opacity != opacity;
+        oldDelegate.opacity != opacity ||
+        oldDelegate.stylusPressureEnabled != stylusPressureEnabled ||
+        oldDelegate.gridColor != gridColor;
   }
 }

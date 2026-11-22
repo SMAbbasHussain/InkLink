@@ -23,6 +23,8 @@ class CanvasTextLayout {
   final TextPainter painter;
   final Size size;
 
+  void dispose() => painter.dispose();
+
   static const double defaultFontSize = 16;
   static const int defaultFontWeight = 600;
   static const double defaultLineHeight = 1.2;
@@ -120,13 +122,17 @@ Rect textElementRect(TextElement element) {
   final measured = element.width > 0 && element.height > 0
       ? null
       : CanvasTextLayout.forElement(element);
-  final width = element.width > 0
-      ? element.width
-      : (measured?.size.width ?? CanvasTextLayout.defaultMaxWidth);
-  final height = element.height > 0
-      ? element.height
-      : (measured?.size.height ?? CanvasTextLayout.defaultFontSize);
-  return Rect.fromLTWH(element.center.dx, element.center.dy, width, height);
+  try {
+    final width = element.width > 0
+        ? element.width
+        : (measured?.size.width ?? CanvasTextLayout.defaultMaxWidth);
+    final height = element.height > 0
+        ? element.height
+        : (measured?.size.height ?? CanvasTextLayout.defaultFontSize);
+    return Rect.fromLTWH(element.center.dx, element.center.dy, width, height);
+  } finally {
+    measured?.dispose();
+  }
 }
 
 /// Legacy per-type aspect ratios used only when a shape payload has no
@@ -433,18 +439,22 @@ void _paintShapeLabel(Canvas canvas, ShapeElement shape, Rect rect) {
     maxLines: maxLines,
     color: shape.labelColor ?? const Color(0xFF000000),
   );
-  // TextPainter.width can shrink to the intrinsic text width, so centre the
-  // laid-out block within the box rather than trusting textAlign alone.
-  final double dx;
-  switch (shape.labelTextAlign) {
-    case 'left':
-      dx = -maxWidth / 2;
-    case 'right':
-      dx = maxWidth / 2 - layout.size.width;
-    default:
-      dx = -layout.size.width / 2;
+  try {
+    // TextPainter.width can shrink to the intrinsic text width, so centre the
+    // laid-out block within the box rather than trusting textAlign alone.
+    final double dx;
+    switch (shape.labelTextAlign) {
+      case 'left':
+        dx = -maxWidth / 2;
+      case 'right':
+        dx = maxWidth / 2 - layout.size.width;
+      default:
+        dx = -layout.size.width / 2;
+    }
+    layout.painter.paint(canvas, Offset(dx, -layout.size.height / 2));
+  } finally {
+    layout.dispose();
   }
-  layout.painter.paint(canvas, Offset(dx, -layout.size.height / 2));
 }
 
 /// Samples a path outline into a polyline for proximity hit-testing.
@@ -1232,25 +1242,29 @@ void paintConnectorElement(
     fontSize: labelFontSize,
   );
   if (box == null) return;
-  final rrect = RRect.fromRectAndRadius(
-    box.pill,
-    const Radius.circular(ConnectorLabelBox.cornerRadius),
-  );
-  final textColor = labelColor ?? color;
-  canvas.drawRRect(
-    rrect,
-    Paint()
-      ..color = ConnectorLabelBox.fill
-      ..style = PaintingStyle.fill,
-  );
-  canvas.drawRRect(
-    rrect,
-    Paint()
-      ..color = textColor.withValues(alpha: ConnectorLabelBox.borderAlpha)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1,
-  );
-  box.layout.painter.paint(canvas, box.textOrigin);
+  try {
+    final rrect = RRect.fromRectAndRadius(
+      box.pill,
+      const Radius.circular(ConnectorLabelBox.cornerRadius),
+    );
+    final textColor = labelColor ?? color;
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..color = ConnectorLabelBox.fill
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..color = textColor.withValues(alpha: ConnectorLabelBox.borderAlpha)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+    box.layout.painter.paint(canvas, box.textOrigin);
+  } finally {
+    box.layout.dispose();
+  }
 }
 
 Offset _cubicAt(Offset p0, Offset p1, Offset p2, Offset p3, double t) {

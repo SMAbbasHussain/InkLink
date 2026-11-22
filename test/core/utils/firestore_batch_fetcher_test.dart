@@ -85,6 +85,7 @@ class _FakeCollectionReference extends Fake
   final Map<String, Map<String, dynamic>> docs;
   final Set<String> deniedIds;
   final Set<String> cacheOnlyMissingIds;
+  final List<int> whereInChunkSizes = [];
 
   _FakeCollectionReference({
     required this.docs,
@@ -117,6 +118,7 @@ class _FakeCollectionReference extends Fake
   Future<QuerySnapshot<Map<String, dynamic>>> getWhereIn(
     List<String> ids,
   ) async {
+    whereInChunkSizes.add(ids.length);
     for (final id in ids) {
       if (deniedIds.contains(id) || !docs.containsKey(id)) {
         throw FirebaseException(
@@ -206,6 +208,24 @@ void main() {
       expect(result.docsById.keys, containsAll(['board-1', 'board-2']));
       expect(result.missingIds, isEmpty);
       expect(result.deniedIds, isEmpty);
+    });
+
+    test('chunks 20 IDs into batches of at most 10 for whereIn', () async {
+      final docs = <String, Map<String, dynamic>>{
+        for (var i = 0; i < 20; i++) 'board-$i': {'title': 'Board $i'},
+      };
+      final collection = _FakeCollectionReference(docs: docs);
+      final fetcher = FirestoreBatchFetcher(
+        firestoreService: _FakeFirestoreService(collection),
+      );
+
+      final result = await fetcher.fetchDocumentsByIdSet(
+        collectionPath: 'boards',
+        ids: docs.keys.toList(growable: false),
+      );
+
+      expect(result.docsById.length, 20);
+      expect(collection.whereInChunkSizes, [10, 10]);
     });
   });
 }

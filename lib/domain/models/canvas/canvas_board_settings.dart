@@ -89,6 +89,7 @@ class CanvasBoardSettings {
   final int symmetryCount;
   final bool perspectiveEnabled;
   final List<Offset> vanishingPoints;
+  final bool inkSpillEnabled;
 
   static const Color defaultBackground = Color(0xFFFFFFFF);
   static const bool defaultPageBounds = false;
@@ -98,6 +99,7 @@ class CanvasBoardSettings {
   static const double defaultSnapDistance = 8;
   static const Offset defaultSymmetryCenter = Offset(400, 300);
   static const int defaultSymmetryCount = 4;
+  static const bool defaultInkSpill = false;
 
   static const List<(String, double, double)> pagePresets = [
     ('Square', 1000, 1000),
@@ -122,6 +124,7 @@ class CanvasBoardSettings {
     this.symmetryCount = defaultSymmetryCount,
     this.perspectiveEnabled = false,
     this.vanishingPoints = const [],
+    this.inkSpillEnabled = defaultInkSpill,
   });
 
   static const CanvasBoardSettings defaults = CanvasBoardSettings();
@@ -142,6 +145,7 @@ class CanvasBoardSettings {
     int? symmetryCount,
     bool? perspectiveEnabled,
     List<Offset>? vanishingPoints,
+    bool? inkSpillEnabled,
   }) => CanvasBoardSettings(
     backgroundColor: backgroundColor ?? this.backgroundColor,
     backgroundPattern: backgroundPattern ?? this.backgroundPattern,
@@ -158,6 +162,7 @@ class CanvasBoardSettings {
     symmetryCount: symmetryCount ?? this.symmetryCount,
     perspectiveEnabled: perspectiveEnabled ?? this.perspectiveEnabled,
     vanishingPoints: vanishingPoints ?? this.vanishingPoints,
+    inkSpillEnabled: inkSpillEnabled ?? this.inkSpillEnabled,
   );
 
   Map<String, dynamic> toMap() => {
@@ -182,6 +187,7 @@ class CanvasBoardSettings {
       'vanishingPoints': vanishingPoints
           .map((p) => {'x': p.dx, 'y': p.dy})
           .toList(growable: false),
+    'inkSpillEnabled': inkSpillEnabled,
   };
 
   static CanvasBoardSettings fromMap(Map<String, dynamic> data) {
@@ -204,6 +210,7 @@ class CanvasBoardSettings {
     final rawRulers = data['rulersEnabled'];
     final rawSnap = data['snapEnabled'];
     final rawPerspective = data['perspectiveEnabled'];
+    final rawInkSpill = data['inkSpillEnabled'];
 
     final parsedGuides = <CanvasGuide>[];
     final rawGuides = data['guides'];
@@ -262,6 +269,7 @@ class CanvasBoardSettings {
       symmetryCount: symCount,
       perspectiveEnabled: rawPerspective is bool ? rawPerspective : false,
       vanishingPoints: List<Offset>.unmodifiable(parsedVanishingPoints),
+      inkSpillEnabled: rawInkSpill is bool ? rawInkSpill : defaultInkSpill,
     );
   }
 
@@ -283,7 +291,8 @@ class CanvasBoardSettings {
           symmetryCenter == other.symmetryCenter &&
           symmetryCount == other.symmetryCount &&
           perspectiveEnabled == other.perspectiveEnabled &&
-          _offsetsEqual(vanishingPoints, other.vanishingPoints);
+          _offsetsEqual(vanishingPoints, other.vanishingPoints) &&
+          inkSpillEnabled == other.inkSpillEnabled;
 
   static bool _guidesEqual(List<CanvasGuide> a, List<CanvasGuide> b) {
     if (identical(a, b)) return true;
@@ -320,5 +329,6 @@ class CanvasBoardSettings {
     symmetryCount,
     perspectiveEnabled,
     Object.hashAll(vanishingPoints),
+    inkSpillEnabled,
   );
 }

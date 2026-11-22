@@ -3,8 +3,8 @@ import 'package:inklink/features/canvas/geometry/canvas_viewport_math.dart';
 import 'package:inklink/features/canvas/models/canvas_tool_mode.dart';
 
 void main() {
-  test('Given extreme scales, Then zoom clamps to 0.5–4×', () {
-    expect(clampCanvasZoom(0.1), minCanvasZoom);
+  test('Given extreme scales, Then zoom clamps to 0.1–4×', () {
+    expect(clampCanvasZoom(0.05), minCanvasZoom);
     expect(clampCanvasZoom(8), maxCanvasZoom);
     expect(clampCanvasZoom(1.75), 1.75);
   });

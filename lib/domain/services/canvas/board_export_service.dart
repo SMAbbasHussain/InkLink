@@ -699,26 +699,30 @@ class BoardExportServiceImpl implements BoardExportService {
     // Same layout the canvas uses, so exported text cannot drift in size,
     // alignment or wrapping.
     final layout = CanvasTextLayout.forElement(text);
-    final box = textElementRect(text);
+    try {
+      final box = textElementRect(text);
 
-    canvas.save();
-    if (text.rotation != 0) {
-      canvas.translate(box.center.dx, box.center.dy);
-      canvas.rotate(text.rotation);
-      canvas.translate(-box.center.dx, -box.center.dy);
+      canvas.save();
+      if (text.rotation != 0) {
+        canvas.translate(box.center.dx, box.center.dy);
+        canvas.rotate(text.rotation);
+        canvas.translate(-box.center.dx, -box.center.dy);
+      }
+      final background = text.backgroundColor;
+      if (background != null) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            box.inflate(text.padding),
+            const Radius.circular(3),
+          ),
+          ui.Paint()..color = background,
+        );
+      }
+      layout.painter.paint(canvas, box.topLeft);
+      canvas.restore();
+    } finally {
+      layout.dispose();
     }
-    final background = text.backgroundColor;
-    if (background != null) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          box.inflate(text.padding),
-          const Radius.circular(3),
-        ),
-        ui.Paint()..color = background,
-      );
-    }
-    layout.painter.paint(canvas, box.topLeft);
-    canvas.restore();
   }
 
   void _paintStickyNote(ui.Canvas canvas, StickyNoteElement sticky) {
@@ -786,6 +790,7 @@ class BoardExportServiceImpl implements BoardExportService {
             rect.center.dy - textPainter.height / 2,
           ),
         );
+        textPainter.dispose();
       },
     );
   }
@@ -1618,27 +1623,31 @@ class BoardExportServiceImpl implements BoardExportService {
             padding: text.padding,
           );
     final layout = CanvasTextLayout.forElement(sizedText);
-    final metrics = layout.painter.computeLineMetrics();
-    if (metrics.isEmpty) {
-      return text.text.split('\n');
+    try {
+      final metrics = layout.painter.computeLineMetrics();
+      if (metrics.isEmpty) {
+        return text.text.split('\n');
+      }
+      final lines = <String>[];
+      final farRight = math.max(maxWidth, layout.painter.width) + 10000.0;
+      for (final metric in metrics) {
+        final y = metric.baseline - metric.ascent * 0.3;
+        final start = layout.painter
+            .getPositionForOffset(Offset(-10000.0, y))
+            .offset
+            .clamp(0, text.text.length);
+        final end = layout.painter
+            .getPositionForOffset(Offset(farRight, y))
+            .offset
+            .clamp(start, text.text.length);
+        lines.add(
+          text.text.substring(start, end).replaceFirst(RegExp(r'\r?\n$'), ''),
+        );
+      }
+      return lines;
+    } finally {
+      layout.dispose();
     }
-    final lines = <String>[];
-    final farRight = math.max(maxWidth, layout.painter.width) + 10000.0;
-    for (final metric in metrics) {
-      final y = metric.baseline - metric.ascent * 0.3;
-      final start = layout.painter
-          .getPositionForOffset(Offset(-10000.0, y))
-          .offset
-          .clamp(0, text.text.length);
-      final end = layout.painter
-          .getPositionForOffset(Offset(farRight, y))
-          .offset
-          .clamp(start, text.text.length);
-      lines.add(
-        text.text.substring(start, end).replaceFirst(RegExp(r'\r?\n$'), ''),
-      );
-    }
-    return lines;
   }
 
   void _serializeSvgStickyNote(StringBuffer buffer, StickyNoteElement sticky) {
@@ -1775,14 +1784,18 @@ class BoardExportServiceImpl implements BoardExportService {
       fontSize: connector.labelFontSize,
     );
     if (box == null) return;
-    final labelHex = _colorToHex(labelColor);
-    final pill = box.pill;
-    buffer.writeln(
-      '    <rect x="${_svgNumber(pill.left)}" y="${_svgNumber(pill.top)}" width="${_svgNumber(pill.width)}" height="${_svgNumber(pill.height)}" rx="${_svgNumber(ConnectorLabelBox.cornerRadius)}" fill="${_colorToHex(ConnectorLabelBox.fill)}" stroke="$labelHex" stroke-opacity="${_svgNumber(ConnectorLabelBox.borderAlpha * labelColor.a)}" stroke-width="1" />',
-    );
-    buffer.writeln(
-      '    <text x="${_svgNumber(box.center.dx)}" y="${_svgNumber(box.center.dy)}" fill="$labelHex"${_svgOpacityAttr('fill-opacity', labelColor)} font-size="${_svgNumber(connector.labelFontSize)}" font-weight="600" text-anchor="middle" dominant-baseline="central">${_escapeXml(connector.label)}</text>',
-    );
+    try {
+      final labelHex = _colorToHex(labelColor);
+      final pill = box.pill;
+      buffer.writeln(
+        '    <rect x="${_svgNumber(pill.left)}" y="${_svgNumber(pill.top)}" width="${_svgNumber(pill.width)}" height="${_svgNumber(pill.height)}" rx="${_svgNumber(ConnectorLabelBox.cornerRadius)}" fill="${_colorToHex(ConnectorLabelBox.fill)}" stroke="$labelHex" stroke-opacity="${_svgNumber(ConnectorLabelBox.borderAlpha * labelColor.a)}" stroke-width="1" />',
+      );
+      buffer.writeln(
+        '    <text x="${_svgNumber(box.center.dx)}" y="${_svgNumber(box.center.dy)}" fill="$labelHex"${_svgOpacityAttr('fill-opacity', labelColor)} font-size="${_svgNumber(connector.labelFontSize)}" font-weight="600" text-anchor="middle" dominant-baseline="central">${_escapeXml(connector.label)}</text>',
+      );
+    } finally {
+      box.layout.dispose();
+    }
   }
 
   String _svgOpacityAttr(String name, Color color) =>

@@ -227,6 +227,14 @@ class _CanvasScreenState extends State<CanvasScreen>
   double _latestPressure = 1.0;
   double _latestTilt = 0;
   DateTime _lastStrokeMoveAt = DateTime.now();
+  DateTime _lastSpatialStrokeMoveAt = DateTime.now();
+  Timer? _inkSpillTimer;
+  int _inkSpillDwellTicks = 0;
+  Offset? _rawStrokeLastScreen;
+  List<CanvasElement>? _cachedMapElementsInput;
+  List<_CanvasElement>? _cachedMappedElements;
+  List<CanvasElement>? _cachedLayerEffectsInput;
+  Map<String, CanvasLayerPaintEffect>? _cachedLayerEffects;
   Set<String> _lockedLayerElementIds = const {};
 
   // Color tools: recent swatches, saved palettes and the one-shot canvas
@@ -935,17 +943,30 @@ class _CanvasScreenState extends State<CanvasScreen>
     if (!_isBrushTool(state.currentToolMode) || _isTransformingCanvas) return;
     _rawStrokePointerId = event.pointer;
     _rawStrokeKind = kind;
+    _rawStrokeLastScreen = event.localPosition;
     final world = _toWorld(event.localPosition);
     _rawStrokeLastWorld = world;
     _showEraserPreview = state.currentToolMode == CanvasToolMode.eraser;
     _startStroke(world);
+    _startInkSpillDwellTimer();
   }
 
   void _handleCanvasPointerMove(PointerMoveEvent event) {
     if (!_activePointerKinds.containsKey(event.pointer)) return;
     _activeCanvasPointers[event.pointer] = event.localPosition;
     if (event.pointer != _rawStrokePointerId) return;
-    final world = _toWorld(event.localPosition);
+
+    final rawScreen = event.localPosition;
+    final prevScreen = _rawStrokeLastScreen;
+    if (prevScreen != null && (rawScreen - prevScreen).distance >= 1.5) {
+      _lastSpatialStrokeMoveAt = DateTime.now();
+      _inkSpillDwellTicks = 0;
+      _rawStrokeLastScreen = rawScreen;
+    } else {
+      _rawStrokeLastScreen ??= rawScreen;
+    }
+
+    final world = _toWorld(rawScreen);
     final previous = _rawStrokeLastWorld;
     if (previous != null && (world - previous).distance < 0.5) return;
     _rawStrokeLastWorld = world;
@@ -968,20 +989,83 @@ class _CanvasScreenState extends State<CanvasScreen>
     }
   }
 
+  void _startInkSpillDwellTimer() {
+    _inkSpillTimer?.cancel();
+    _inkSpillDwellTicks = 0;
+    _lastSpatialStrokeMoveAt = DateTime.now();
+    final state = _canvasBloc.state;
+    if (!state.boardSettings.inkSpillEnabled ||
+        state.currentToolMode == CanvasToolMode.eraser) {
+      return;
+    }
+    _inkSpillTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+      if (!mounted || _rawStrokePointerId == null) {
+        timer.cancel();
+        return;
+      }
+      final liveState = _canvasBloc.state;
+      if (!liveState.boardSettings.inkSpillEnabled ||
+          liveState.currentToolMode == CanvasToolMode.eraser ||
+          liveState.currentStroke.isEmpty) {
+        return;
+      }
+      final spot = _rawStrokeLastWorld;
+      if (spot == null) return;
+      final stationaryDuration = DateTime.now().difference(
+        _lastSpatialStrokeMoveAt,
+      );
+      if (stationaryDuration < const Duration(milliseconds: 110)) {
+        return;
+      }
+      if (_inkSpillDwellTicks >= 28) return;
+      _inkSpillDwellTicks++;
+      final basePressure = liveState.stylusPressureEnabled
+          ? _latestPressure.clamp(0.25, 1.0)
+          : 1.0;
+      final dwellPressure = (basePressure + _inkSpillDwellTicks * 0.05).clamp(
+        0.3,
+        2.35,
+      );
+      final angle = _inkSpillDwellTicks * 2.399963229728653; // Golden angle
+      final radius =
+          (liveState.strokeWidth * 0.015 * math.sqrt(_inkSpillDwellTicks))
+              .clamp(0.02, 0.32);
+      final dwellPoint =
+          spot + Offset(math.cos(angle) * radius, math.sin(angle) * radius);
+      // Do NOT update _lastStrokeMoveAt here so QuickShape hold timing still
+      // works if the user drew a shape and held at the end.
+      _canvasBloc.add(
+        CanvasAppendStroke(
+          dwellPoint,
+          pressure: dwellPressure,
+          tilt: _latestTilt,
+        ),
+      );
+    });
+  }
+
   void _cancelRawStroke() {
+    _inkSpillTimer?.cancel();
+    _inkSpillTimer = null;
+    _inkSpillDwellTicks = 0;
     if (_rawStrokePointerId == null) return;
     _rawStrokePointerId = null;
     _rawStrokeKind = null;
     _rawStrokeLastWorld = null;
+    _rawStrokeLastScreen = null;
     _showEraserPreview = false;
     _canvasBloc.add(const CanvasCancelStroke());
   }
 
   void _endRawStroke() {
+    _inkSpillTimer?.cancel();
+    _inkSpillTimer = null;
+    _inkSpillDwellTicks = 0;
     if (_rawStrokePointerId == null) return;
     _rawStrokePointerId = null;
     _rawStrokeKind = null;
     _rawStrokeLastWorld = null;
+    _rawStrokeLastScreen = null;
     _showEraserPreview = false;
     _endStroke();
   }
@@ -1021,7 +1105,19 @@ class _CanvasScreenState extends State<CanvasScreen>
         state.currentToolMode == CanvasToolMode.doodle &&
         state.currentStroke.length >= 12 &&
         heldLongEnough) {
-      final match = recognizeQuickShape(state.currentStroke);
+      var candidatePoints = state.currentStroke;
+      if (state.boardSettings.inkSpillEnabled && candidatePoints.length > 14) {
+        final anchor = candidatePoints.last;
+        var trimEnd = candidatePoints.length;
+        while (trimEnd > 12 &&
+            (candidatePoints[trimEnd - 2] - anchor).distance < 1.0) {
+          trimEnd--;
+        }
+        if (trimEnd < candidatePoints.length) {
+          candidatePoints = candidatePoints.sublist(0, trimEnd);
+        }
+      }
+      final match = recognizeQuickShape(candidatePoints);
       if (match != null) {
         _canvasBloc.add(
           CanvasCommitQuickShape(
@@ -1849,7 +1945,12 @@ class _CanvasScreenState extends State<CanvasScreen>
     final picker = ImagePicker();
     final XFile? picked;
     try {
-      picked = await picker.pickImage(source: source, imageQuality: 95);
+      picked = await picker.pickImage(
+        source: source,
+        imageQuality: 95,
+        maxWidth: 2048,
+        maxHeight: 2048,
+      );
     } on PlatformException catch (e) {
       if (!mounted) return;
       final isNoCamera =
@@ -2870,8 +2971,10 @@ class _CanvasScreenState extends State<CanvasScreen>
 
   Future<void> _editStickyNote(_CanvasElement element) async {
     if (!_canvasBloc.state.canEdit) return;
-    final note =
-        CanvasElement.fromMap(element.id, element.data) as StickyNoteElement;
+    final parsed =
+        element.sourceElement ??
+        CanvasElement.fromMap(element.id, element.data);
+    final note = parsed as StickyNoteElement;
     if (note.locked) return;
     final edited = await showStickyNoteEditor(context, note: note);
     if (edited == null || !mounted) return;
@@ -3221,7 +3324,11 @@ class _CanvasScreenState extends State<CanvasScreen>
 
     Navigator.push(
       context,
-      buildBoardSettingsRoute(context, board: board ?? fallback),
+      buildBoardSettingsRoute(
+        context,
+        board: board ?? fallback,
+        canvasBloc: _canvasBloc,
+      ),
     );
   }
 
@@ -3700,6 +3807,30 @@ class _CanvasScreenState extends State<CanvasScreen>
                               ],
                             ),
                           ],
+                          const Divider(height: 24),
+                          sectionTitle('Drawing & Ink'),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: settingLabel(
+                                  'Ink spill on hold',
+                                  'When enabled, holding a pen or brush still on a spot progressively darkens the ink and creates a natural ink spill effect. Off by default.',
+                                  strong: true,
+                                ),
+                              ),
+                              Switch(
+                                key: const ValueKey(
+                                  'canvas-setting-ink-spill-switch',
+                                ),
+                                activeColor: Colors.white,
+                                activeTrackColor: tokens.accent,
+                                value: draft.inkSpillEnabled,
+                                onChanged: (value) => apply(
+                                  draft.copyWith(inkSpillEnabled: value),
+                                ),
+                              ),
+                            ],
+                          ),
                           const Divider(height: 24),
                           sectionTitle('Page & Layout'),
                           Row(
@@ -5016,9 +5147,9 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   return;
                                 }
                                 if (_isTransformingCanvas) {
-                                  final nextScale =
-                                      (_gestureStartScale * details.scale)
-                                          .clamp(0.5, 4.0);
+                                  final nextScale = clampCanvasZoom(
+                                    _gestureStartScale * details.scale,
+                                  );
                                   final focalDelta =
                                       details.localFocalPoint -
                                       _gestureStartFocal;
@@ -5673,7 +5804,7 @@ class _CanvasScreenState extends State<CanvasScreen>
                                   child: CustomPaint(
                                     painter: _CanvasPainter(
                                       elements: mappedElements,
-                                      layerEffects: layerPaintEffects(
+                                      layerEffects: _memoizedLayerPaintEffects(
                                         displayElements,
                                       ),
                                       decodedImages: _decodedUiImages,
@@ -5981,7 +6112,35 @@ class _CanvasScreenState extends State<CanvasScreen>
     );
   }
 
+  bool get _hasActiveElementTransformOverlay =>
+      _pendingShapeEdits.isNotEmpty ||
+      _shapeTransformDraft != null ||
+      _isDraggingShape ||
+      _isDraggingStroke ||
+      _groupDragDelta != null ||
+      _groupScaleTarget != null ||
+      _groupRotationPivot != null;
+
+  Map<String, CanvasLayerPaintEffect> _memoizedLayerPaintEffects(
+    List<CanvasElement> elements,
+  ) {
+    if (identical(elements, _cachedLayerEffectsInput) &&
+        _cachedLayerEffects != null) {
+      return _cachedLayerEffects!;
+    }
+    final computed = layerPaintEffects(elements);
+    _cachedLayerEffectsInput = elements;
+    _cachedLayerEffects = computed;
+    return computed;
+  }
+
   List<_CanvasElement> _mapElements(List<CanvasElement> elements) {
+    final canUseCache = !_hasActiveElementTransformOverlay;
+    if (canUseCache &&
+        identical(elements, _cachedMapElementsInput) &&
+        _cachedMappedElements != null) {
+      return _cachedMappedElements!;
+    }
     // Group transforms are previewed by rewriting payloads, so painter,
     // hit-testing and overlays all see the same transformed geometry.
     // Layers paint as bands: Default bottom-most, then each layer by z.
@@ -6010,7 +6169,12 @@ class _CanvasScreenState extends State<CanvasScreen>
               tilts: e.tilts,
               spacing: e.spacing,
               textureSeed: e.textureSeed,
-              data: e.toMap(),
+              data: {
+                'type': 'stroke',
+                if (e.frameId != null) 'frameId': e.frameId,
+                if (e.fillColor != null) 'fillColor': e.fillColor!.toARGB32(),
+              },
+              sourceElement: e,
             ),
             LayerElement _ => null,
             FrameElement e => _CanvasElement.frame(
@@ -6023,6 +6187,7 @@ class _CanvasScreenState extends State<CanvasScreen>
               color: e.color,
               cornerRadius: e.cornerRadius,
               data: e.toMap(),
+              sourceElement: e,
             ),
             TableElement e => _CanvasElement.table(
               id: e.id,
@@ -6034,6 +6199,7 @@ class _CanvasScreenState extends State<CanvasScreen>
               rotation: e.rotation,
               opacity: e.opacity,
               data: e.toMap(),
+              sourceElement: e,
             ),
             ShapeElement e => _CanvasElement.shape(
               id: e.id,
@@ -6045,6 +6211,7 @@ class _CanvasScreenState extends State<CanvasScreen>
               strokeWidth: e.strokeWidth,
               isFilled: e.isFilled,
               data: e.toMap(),
+              sourceElement: e,
             ),
             TextElement e => _CanvasElement.text(
               id: e.id,
@@ -6065,6 +6232,7 @@ class _CanvasScreenState extends State<CanvasScreen>
               rotation: e.rotation,
               maxLines: e.maxLines,
               backgroundColor: e.backgroundColor,
+              sourceElement: e,
             ),
             ImageElement e => _CanvasElement.image(
               id: e.id,
@@ -6074,6 +6242,7 @@ class _CanvasScreenState extends State<CanvasScreen>
               height: e.height,
               imageBase64: e.imageBase64,
               data: e.toMap(),
+              sourceElement: e,
             ),
             StickyNoteElement e => _CanvasElement.stickyNote(
               id: e.id,
@@ -6085,6 +6254,7 @@ class _CanvasScreenState extends State<CanvasScreen>
               color: e.color,
               rotation: e.rotation,
               data: e.toMap(),
+              sourceElement: e,
             ),
             ConnectorElement e => _CanvasElement.connector(
               id: e.id,
@@ -6100,6 +6270,7 @@ class _CanvasScreenState extends State<CanvasScreen>
               strokeWidth: e.strokeWidth,
               hasArrowhead: e.hasArrowhead,
               data: e.toMap(),
+              sourceElement: e,
             ),
           };
         })
@@ -6234,6 +6405,10 @@ class _CanvasScreenState extends State<CanvasScreen>
       return a.id.compareTo(b.id);
     });
 
+    if (canUseCache) {
+      _cachedMapElementsInput = elements;
+      _cachedMappedElements = processed;
+    }
     return processed;
   }
 
@@ -6408,7 +6583,9 @@ class _CanvasScreenState extends State<CanvasScreen>
     final selected = mappedElements.where((e) => e.id == state.selectedShapeId);
     if (selected.isEmpty) return const SizedBox.shrink();
     final element = selected.first;
-    final parsed = CanvasElement.fromMap(element.id, element.data);
+    final parsed =
+        element.sourceElement ??
+        CanvasElement.fromMap(element.id, element.data);
     final bottomInset = MediaQuery.of(context).padding.bottom;
 
     final actions = <({String id, IconData icon, String label})>[];
@@ -11361,7 +11538,9 @@ class _CanvasScreenState extends State<CanvasScreen>
           controller: _aiPromptController,
           onAddText: _addAiTextElement,
           onGenerateImage: _onGenerateImagePlaceholder,
-          recentImages: _collectRecentAiImages(state),
+          recentImages: state.activeTray == 'ai'
+              ? _collectRecentAiImages(state)
+              : const [],
           onClose: () => _toggleTray('ai'),
           // Null when AI_IMAGE_ENABLED is off: the tray keeps the old stub.
           generation: _aiImageEnabled
@@ -12610,6 +12789,7 @@ class _CanvasScreenState extends State<CanvasScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _inkSpillTimer?.cancel();
     _shapeEditDebounceTimer?.cancel();
     _edgeAutoPanTimer?.cancel();
     _scrubDebounce?.cancel();

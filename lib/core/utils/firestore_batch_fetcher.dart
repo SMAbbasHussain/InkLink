@@ -22,7 +22,11 @@ class FirestoreBatchFetcher {
   FirestoreBatchFetcher({required FirestoreService firestoreService})
     : _firestoreService = firestoreService;
 
-  static const int chunkSize = 30;
+  /// Kept at 10 (rather than Firestore's 30-element `whereIn` syntax limit) so
+  /// security rules that perform a `get()` per candidate document (e.g.
+  /// membership checks on `/boards` and `/workspaces`) stay within Firestore's
+  /// 10-`get()` per-query limit.
+  static const int chunkSize = 10;
 
   Future<BatchFetchResult> fetchDocumentsByIdSet({
     required String collectionPath,

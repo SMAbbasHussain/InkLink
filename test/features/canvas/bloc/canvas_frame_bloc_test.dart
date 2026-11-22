@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -393,6 +394,53 @@ void main() {
           moved.elements.firstWhere((e) => e.id == note.id)
               as StickyNoteElement;
       expect(movedNote.center, const Offset(310, 300));
+    },
+  );
+
+  test(
+    'Given a clipping frame, When drawing a huge circle around it or line across it, Then stroke is not swallowed by the frame',
+    () async {
+      final (:bloc, service: _) = await _boardWithContents();
+
+      if (bloc.state.currentToolMode != CanvasToolMode.doodle) {
+        bloc.add(const CanvasSetToolMode(CanvasToolMode.doodle));
+        await _until(bloc, (s) => s.currentToolMode == CanvasToolMode.doodle);
+      }
+
+      // Draw a huge circle around the frame (center 300,300, radius 2500).
+      const center = Offset(300, 300);
+      const radius = 2500.0;
+      bloc.add(CanvasStartStroke(center + const Offset(radius, 0)));
+      for (var i = 1; i <= 48; i++) {
+        final theta = (i / 48) * 2 * math.pi;
+        bloc.add(
+          CanvasAppendStroke(
+            center + Offset(math.cos(theta) * radius, math.sin(theta) * radius),
+          ),
+        );
+      }
+      bloc.add(const CanvasEndStroke());
+
+      final afterCircle = await _until(
+        bloc,
+        (s) => s.elements.whereType<StrokeElement>().isNotEmpty,
+      );
+      final circle = afterCircle.elements.whereType<StrokeElement>().single;
+      expect(circle.frameId, isNull);
+
+      // Draw a stroke starting inside the frame: it SHOULD still attach.
+      bloc.add(const CanvasStartStroke(Offset(250, 250)));
+      bloc.add(const CanvasAppendStroke(Offset(320, 320)));
+      bloc.add(const CanvasEndStroke());
+
+      final afterInside = await _until(
+        bloc,
+        (s) => s.elements.whereType<StrokeElement>().length == 2,
+      );
+      final insideStroke = afterInside.elements
+          .whereType<StrokeElement>()
+          .firstWhere((e) => e.id != circle.id);
+      expect(insideStroke.frameId, 'frame');
     },
   );
 }

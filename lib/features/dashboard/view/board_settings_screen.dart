@@ -18,6 +18,7 @@ import '../../../core/utils/app_snackbar.dart';
 import '../../../core/utils/app_error_formatter.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
+import '../../canvas/bloc/canvas_bloc.dart';
 import '../../notifications/bloc/notifications_bloc.dart';
 import '../bloc/board_settings_bloc.dart';
 import '../bloc/dashboard_bloc.dart';
@@ -26,17 +27,24 @@ import 'widgets/invite_expiration_picker.dart';
 
 class BoardSettingsScreen extends StatelessWidget {
   final Board board;
+  final CanvasBloc? canvasBloc;
 
-  const BoardSettingsScreen({super.key, required this.board});
+  const BoardSettingsScreen({
+    super.key,
+    required this.board,
+    this.canvasBloc,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return const _BoardSettingsView();
+    return _BoardSettingsView(canvasBloc: canvasBloc);
   }
 }
 
 class _BoardSettingsView extends StatefulWidget {
-  const _BoardSettingsView();
+  final CanvasBloc? canvasBloc;
+
+  const _BoardSettingsView({this.canvasBloc});
 
   @override
   State<_BoardSettingsView> createState() => _BoardSettingsViewState();
@@ -59,6 +67,7 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
   bool _friendsDropdownOpen = false;
   bool _formInitialized = false;
   bool _showMembersSearch = false;
+  bool _inkSpillEnabled = false;
   final RegExp _emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
   final RegExp _tagRegex = RegExp(r'^[a-z0-9\-]+$');
 
@@ -78,6 +87,8 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
     _defaultLinkJoinRole = board.defaultLinkJoinRole;
     _allowMembersToCopy = board.allowMembersToCopy;
     _inviteTargetRole = Board.roleViewer;
+    _inkSpillEnabled =
+        widget.canvasBloc?.state.boardSettings.inkSpillEnabled ?? false;
     _formInitialized = true;
   }
 
@@ -559,6 +570,50 @@ class _BoardSettingsViewState extends State<_BoardSettingsView> {
                 ),
               ),
               const SizedBox(height: InkSpacing.s20),
+              if (isOwner || board.currentUserRole == Board.roleEditor) ...[
+                _sectionLabel(tokens, 'Drawing & Ink'),
+                const SizedBox(height: InkSpacing.s8),
+                PaperCard(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: InkSpacing.s16,
+                    vertical: InkSpacing.s8,
+                  ),
+                  child: SwitchListTile.adaptive(
+                    key: const ValueKey('board-settings-ink-spill-switch'),
+                    activeColor: Colors.white,
+                    activeTrackColor: tokens.accent,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      'Ink spill on hold',
+                      style: InkType.bodyStrong(tokens.ink),
+                    ),
+                    subtitle: Text(
+                      'Holding a pen still on a spot darkens the ink and creates a natural ink spill (off by default)',
+                      style: InkType.caption(tokens.inkMuted),
+                    ),
+                    value: widget.canvasBloc != null
+                        ? widget.canvasBloc!.state.boardSettings.inkSpillEnabled
+                        : _inkSpillEnabled,
+                    onChanged: (value) {
+                      HapticFeedback.lightImpact();
+                      setState(() {
+                        _inkSpillEnabled = value;
+                      });
+                      final bloc = widget.canvasBloc;
+                      if (bloc != null) {
+                        bloc.add(
+                          CanvasSetBoardSettings(
+                            bloc.state.boardSettings.copyWith(
+                              inkSpillEnabled: value,
+                            ),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(height: InkSpacing.s20),
+              ],
                if (isOwner) ...[
                 const SizedBox(height: InkSpacing.s20),
                 _sectionLabel(tokens, 'Access & Requests'),
