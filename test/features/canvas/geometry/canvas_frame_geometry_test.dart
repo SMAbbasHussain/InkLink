@@ -103,4 +103,48 @@ void main() {
       );
     });
   });
+
+  group('canvasEdgeAutoPanDelta', () {
+    const size = Size(800, 600);
+
+    test('returns zero inside the central safe area', () {
+      expect(
+        canvasEdgeAutoPanDelta(
+          localPosition: const Offset(400, 300),
+          canvasSize: size,
+        ),
+        Offset.zero,
+      );
+    });
+
+    test('pans diagonally when dragged into any corner', () {
+      final topLeft = canvasEdgeAutoPanDelta(
+        localPosition: const Offset(0, 0),
+        canvasSize: size,
+      );
+      expect(topLeft.dx, greaterThan(0));
+      expect(topLeft.dy, greaterThan(0));
+
+      final topRight = canvasEdgeAutoPanDelta(
+        localPosition: const Offset(800, 0),
+        canvasSize: size,
+      );
+      expect(topRight.dx, lessThan(0));
+      expect(topRight.dy, greaterThan(0));
+
+      final bottomLeft = canvasEdgeAutoPanDelta(
+        localPosition: const Offset(0, 600),
+        canvasSize: size,
+      );
+      expect(bottomLeft.dx, greaterThan(0));
+      expect(bottomLeft.dy, lessThan(0));
+
+      final bottomRight = canvasEdgeAutoPanDelta(
+        localPosition: const Offset(800, 600),
+        canvasSize: size,
+      );
+      expect(bottomRight.dx, lessThan(0));
+      expect(bottomRight.dy, lessThan(0));
+    });
+  });
 }

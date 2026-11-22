@@ -376,6 +376,7 @@ class CanvasUpdateFrame extends CanvasEvent {
   final Offset? center;
   final double? width;
   final double? height;
+  final double? cornerRadius;
   final bool? clipContents;
 
   const CanvasUpdateFrame({
@@ -385,8 +386,17 @@ class CanvasUpdateFrame extends CanvasEvent {
     this.center,
     this.width,
     this.height,
+    this.cornerRadius,
     this.clipContents,
   });
+}
+
+/// Captures all background elements (not already on a frame) whose bounds lie
+/// within [frameId] and attaches them to the frame.
+class CanvasCaptureElementsInFrame extends CanvasEvent {
+  final String frameId;
+
+  const CanvasCaptureElementsInFrame(this.frameId);
 }
 
 /// Delete a frame, either keeping its contents on the board or deleting them
@@ -1416,18 +1426,25 @@ class CanvasSetActiveComment extends CanvasEvent {
 class CanvasAddCommentRequested extends CanvasEvent {
   final String text;
   final Offset? canvasPosition;
+  final List<String>? mentions;
 
-  const CanvasAddCommentRequested({required this.text, this.canvasPosition});
+  const CanvasAddCommentRequested({
+    required this.text,
+    this.canvasPosition,
+    this.mentions,
+  });
 }
 
 /// Add reply to comment thread
 class CanvasAddCommentReplyRequested extends CanvasEvent {
   final String commentId;
   final String text;
+  final List<String>? mentions;
 
   const CanvasAddCommentReplyRequested({
     required this.commentId,
     required this.text,
+    this.mentions,
   });
 }
 

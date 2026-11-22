@@ -3,15 +3,21 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/utils/app_error_formatter.dart';
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 import '../../../../domain/services/chat/chat_service.dart';
+import '../../../../domain/services/profile/profile_service.dart';
 import 'chat_inbox_event.dart';
 import 'chat_inbox_state.dart';
 
 class ChatInboxBloc extends Bloc<ChatInboxEvent, ChatInboxState> {
   final ChatService _chatService;
+  final ProfileService? _profileService;
+  final Set<String> _refreshedPartnerUids = {};
   StreamSubscription<List<ChatConversationModel>>? _sub;
 
-  ChatInboxBloc({required ChatService chatService})
-      : _chatService = chatService,
+  ChatInboxBloc({
+    required ChatService chatService,
+    ProfileService? profileService,
+  })  : _chatService = chatService,
+        _profileService = profileService,
         super(const ChatInboxInitial()) {
     on<LoadChatInbox>(_onLoadChatInbox);
     on<ConversationsUpdated>(_onConversationsUpdated);
@@ -52,6 +58,27 @@ class ChatInboxBloc extends Bloc<ChatInboxEvent, ChatInboxState> {
       searchQuery: query,
       totalUnreadCount: totalUnread,
     ));
+
+    _refreshPartnerAvatarsInBackground(event.conversations);
+  }
+
+  void _refreshPartnerAvatarsInBackground(
+    List<ChatConversationModel> conversations,
+  ) {
+    final profileService = _profileService;
+    if (profileService == null) return;
+
+    for (final conv in conversations) {
+      if (conv.isGroup || conv.id.isEmpty) continue;
+      if (!_refreshedPartnerUids.add(conv.id)) continue;
+
+      unawaited(() async {
+        try {
+          await profileService.loadProfile(conv.id);
+          await _chatService.notifyPartnerProfileUpdated(conv.id);
+        } catch (_) {}
+      }());
+    }
   }
 
   void _onSearchConversations(

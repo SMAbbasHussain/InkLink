@@ -11,6 +11,7 @@ sealed class CanvasElement {
   final bool hidden;
   final bool locked;
   final double opacity;
+  final String? frameId;
 
   const CanvasElement({
     required this.id,
@@ -18,6 +19,7 @@ sealed class CanvasElement {
     this.hidden = false,
     this.locked = false,
     this.opacity = 1.0,
+    this.frameId,
   });
 
   Map<String, dynamic> toMap();
@@ -25,6 +27,7 @@ sealed class CanvasElement {
   static CanvasElement fromMap(String id, Map<String, dynamic> data) {
     final type = data['type'] as String;
     final z = (data['z'] as num?)?.toInt() ?? 0;
+    final frameId = data['frameId'] as String?;
     switch (type) {
       case 'stroke':
         final rawType = data['brushType'] as String? ?? 'solid';
@@ -34,6 +37,7 @@ sealed class CanvasElement {
           z: z,
           hidden: data['hidden'] as bool? ?? false,
           locked: data['locked'] as bool? ?? false,
+          frameId: frameId,
           color: Color((data['color'] as num).toInt()),
           strokeWidth: (data['strokeWidth'] as num).toDouble(),
           opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
@@ -87,6 +91,7 @@ sealed class CanvasElement {
           hidden: data['hidden'] as bool? ?? false,
           locked: data['locked'] as bool? ?? false,
           opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          frameId: frameId,
           shapeType: shapeType,
           center: Offset(
             (data['cx'] as num).toDouble(),
@@ -140,6 +145,7 @@ sealed class CanvasElement {
           hidden: data['hidden'] as bool? ?? false,
           locked: data['locked'] as bool? ?? false,
           opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          frameId: frameId,
           text: data['text'] as String? ?? '',
           center: Offset(
             (data['cx'] as num?)?.toDouble() ?? 0,
@@ -169,6 +175,7 @@ sealed class CanvasElement {
           hidden: data['hidden'] as bool? ?? false,
           locked: data['locked'] as bool? ?? false,
           opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          frameId: frameId,
           center: Offset(
             (data['cx'] as num).toDouble(),
             (data['cy'] as num).toDouble(),
@@ -202,6 +209,7 @@ sealed class CanvasElement {
           hidden: data['hidden'] as bool? ?? false,
           locked: data['locked'] as bool? ?? false,
           opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          frameId: frameId,
           center: Offset(
             (data['cx'] as num).toDouble(),
             (data['cy'] as num).toDouble(),
@@ -239,7 +247,7 @@ sealed class CanvasElement {
           height: (data['height'] as num?)?.toDouble() ?? 320,
           title: data['title'] as String? ?? '',
           color: Color((data['color'] as num?)?.toInt() ?? 0xFF64748B),
-          cornerRadius: (data['cornerRadius'] as num?)?.toDouble() ?? 12,
+          cornerRadius: (data['cornerRadius'] as num?)?.toDouble() ?? 0,
           clipContents: data['clipContents'] as bool? ?? false,
         );
       case 'table':
@@ -262,6 +270,7 @@ sealed class CanvasElement {
           hidden: data['hidden'] as bool? ?? false,
           locked: data['locked'] as bool? ?? false,
           opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          frameId: frameId,
           center: Offset(
             (data['cx'] as num?)?.toDouble() ?? 0,
             (data['cy'] as num?)?.toDouble() ?? 0,
@@ -324,6 +333,7 @@ sealed class CanvasElement {
           hidden: data['hidden'] as bool? ?? false,
           locked: data['locked'] as bool? ?? false,
           opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          frameId: frameId,
           startElementId: data['startElementId'] as String?,
           startPoint: Offset(
             (data['sx'] as num).toDouble(),
@@ -368,7 +378,8 @@ sealed class CanvasElement {
           z == other.z &&
           hidden == other.hidden &&
           locked == other.locked &&
-          opacity == other.opacity;
+          opacity == other.opacity &&
+          frameId == other.frameId;
 
   @override
   int get hashCode =>
@@ -376,7 +387,8 @@ sealed class CanvasElement {
       z.hashCode ^
       hidden.hashCode ^
       locked.hashCode ^
-      opacity.hashCode;
+      opacity.hashCode ^
+      frameId.hashCode;
 }
 
 class StrokeElement extends CanvasElement {
@@ -407,6 +419,7 @@ class StrokeElement extends CanvasElement {
     super.hidden,
     super.locked,
     super.opacity,
+    super.frameId,
     this.brushType = 'solid',
     String? brushId,
     this.pressures = const [],
@@ -458,6 +471,7 @@ class StrokeElement extends CanvasElement {
     'hidden': hidden,
     'locked': locked,
     'opacity': opacity,
+    if (frameId != null) 'frameId': frameId,
     'color': color.value,
     'strokeWidth': strokeWidth,
     'brushType': brushType,
@@ -588,6 +602,7 @@ class ShapeElement extends CanvasElement {
     super.hidden,
     super.locked,
     super.opacity,
+    super.frameId,
     required this.shapeType,
     required this.center,
     required this.size,
@@ -624,6 +639,7 @@ class ShapeElement extends CanvasElement {
     'hidden': hidden,
     'locked': locked,
     'opacity': opacity,
+    if (frameId != null) 'frameId': frameId,
     'shapeType': shapeType.name,
     'cx': center.dx,
     'cy': center.dy,
@@ -762,6 +778,7 @@ class TextElement extends CanvasElement {
     super.hidden,
     super.locked,
     super.opacity,
+    super.frameId,
     this.text = '',
     required this.center,
     required this.color,
@@ -786,6 +803,7 @@ class TextElement extends CanvasElement {
     'hidden': hidden,
     'locked': locked,
     'opacity': opacity,
+    if (frameId != null) 'frameId': frameId,
     'text': text,
     'cx': center.dx,
     'cy': center.dy,
@@ -898,6 +916,7 @@ class ImageElement extends CanvasElement {
     super.hidden,
     super.locked,
     super.opacity,
+    super.frameId,
     required this.center,
     this.width = 100,
     this.height = 100,
@@ -995,6 +1014,7 @@ class ImageElement extends CanvasElement {
     'hidden': hidden,
     'locked': locked,
     'opacity': opacity,
+    if (frameId != null) 'frameId': frameId,
     'cx': center.dx,
     'cy': center.dy,
     'width': width,
@@ -1106,6 +1126,7 @@ class StickyNoteElement extends CanvasElement {
     super.hidden,
     super.locked,
     super.opacity,
+    super.frameId,
     required this.center,
     this.width = 160,
     this.height = 160,
@@ -1164,6 +1185,7 @@ class StickyNoteElement extends CanvasElement {
     'hidden': hidden,
     'locked': locked,
     'opacity': opacity,
+    if (frameId != null) 'frameId': frameId,
     'cx': center.dx,
     'cy': center.dy,
     'width': width,
@@ -1241,12 +1263,13 @@ class FrameElement extends CanvasElement {
     super.hidden,
     super.locked,
     super.opacity,
+    super.frameId,
     required this.center,
     this.width = defaultWidth,
     this.height = defaultHeight,
     this.title = '',
     this.color = const Color(0xFF64748B),
-    this.cornerRadius = 12,
+    this.cornerRadius = 0,
     this.clipContents = false,
   });
 
@@ -1284,6 +1307,7 @@ class FrameElement extends CanvasElement {
     'hidden': hidden,
     'locked': locked,
     'opacity': opacity,
+    if (frameId != null) 'frameId': frameId,
     'cx': center.dx,
     'cy': center.dy,
     'width': width,
@@ -1429,6 +1453,7 @@ class TableElement extends CanvasElement {
     super.hidden,
     super.locked,
     super.opacity,
+    super.frameId,
     required this.center,
     this.width = 360,
     this.height = 180,
@@ -1557,6 +1582,7 @@ class TableElement extends CanvasElement {
     'hidden': hidden,
     'locked': locked,
     'opacity': opacity,
+    if (frameId != null) 'frameId': frameId,
     'cx': center.dx,
     'cy': center.dy,
     'width': width,
@@ -1658,6 +1684,7 @@ class LayerElement extends CanvasElement {
     super.hidden,
     super.locked,
     super.opacity,
+    super.frameId,
     this.name = 'Layer',
     this.elementIds = const [],
     this.blendMode = 'normal',
@@ -1670,6 +1697,7 @@ class LayerElement extends CanvasElement {
     'hidden': hidden,
     'locked': locked,
     'opacity': opacity,
+    if (frameId != null) 'frameId': frameId,
     'name': name,
     'elementIds': elementIds,
     'blendMode': blendMode,
@@ -1719,6 +1747,7 @@ class ConnectorElement extends CanvasElement {
     super.hidden,
     super.locked,
     super.opacity,
+    super.frameId,
     this.startElementId,
     required this.startPoint,
     this.startAnchor = 'center',
@@ -1747,6 +1776,7 @@ class ConnectorElement extends CanvasElement {
     'hidden': hidden,
     'locked': locked,
     'opacity': opacity,
+    if (frameId != null) 'frameId': frameId,
     if (startElementId != null) 'startElementId': startElementId,
     'sx': startPoint.dx,
     'sy': startPoint.dy,

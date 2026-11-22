@@ -9,4 +9,5 @@ enum CanvasToolMode {
   image,
   highlight,
   fill,
+  frame,
 }

@@ -13,11 +13,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeNotificationService extends Fake implements NotificationService {}
 
-/// Seeds a canvas with the Select tool active and no elements.
-///
-/// This runs outside `testWidgets` on purpose: `pumpEventQueue` waits on
-/// timers, which never fire inside the widget tester's fake-async zone.
-Future<CanvasBloc> _seedBloc({bool withText = false}) async {
+/// Seeds a canvas with the Select tool active.
+Future<CanvasBloc> _seedBloc(
+  WidgetTester tester, {
+  bool withText = false,
+}) async {
   final bloc = CanvasBloc(currentUserId: 'owner-1', boardId: 'board-1');
   bloc.add(
     const CanvasBoardTitleUpdated(
@@ -25,7 +25,7 @@ Future<CanvasBloc> _seedBloc({bool withText = false}) async {
       currentUserRole: Board.roleOwner,
     ),
   );
-  await pumpEventQueue();
+  await tester.pump();
   if (withText) {
     bloc.add(
       CanvasAddText(
@@ -34,10 +34,10 @@ Future<CanvasBloc> _seedBloc({bool withText = false}) async {
         color: Colors.black,
       ),
     );
-    await pumpEventQueue();
+    await tester.pump();
   }
   bloc.add(const CanvasSetToolMode(CanvasToolMode.select));
-  await pumpEventQueue();
+  await tester.pump();
   return bloc;
 }
 
@@ -86,9 +86,9 @@ void main() {
 
   testWidgets(
     'selected text element builds the element editing bar',
+    timeout: const Timeout(Duration(seconds: 5)),
     (tester) async {
-      final bloc = (await tester.runAsync(() => _seedBloc(withText: true)))!;
-      addTearDown(bloc.close);
+      final bloc = await _seedBloc(tester, withText: true);
       final text = bloc.state.elements.whereType<TextElement>().single;
       expect(bloc.state.currentToolMode, CanvasToolMode.select);
       expect(bloc.state.selectedShapeId, text.id);
@@ -104,19 +104,21 @@ void main() {
       expect(find.byTooltip('Size'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      bloc.close();
+      await tester.pump();
     },
   );
 
   testWidgets(
     'finishing new text keeps it selected and leaves its editing bar open',
     (tester) async {
-      final bloc = (await tester.runAsync(() => _seedBloc()))!;
-      addTearDown(bloc.close);
+      final bloc = await _seedBloc(tester);
       expect(bloc.state.elements, isEmpty);
 
       await pumpCanvas(tester, bloc);
       bloc.add(const CanvasSetToolMode(CanvasToolMode.text));
-      await tester.runAsync(() => pumpEventQueue());
+      await tester.pump();
       await tester.pump();
 
       // Tap empty canvas, type, then finish by tapping elsewhere.
@@ -130,9 +132,7 @@ void main() {
       await tester.pump();
 
       await tester.tapAt(const Offset(120, 900));
-      await tester.pump(const Duration(milliseconds: 350));
-      await tester.runAsync(() => pumpEventQueue());
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       final text = bloc.state.elements.whereType<TextElement>().single;
       expect(text.text, 'Typed on canvas');
@@ -144,15 +144,20 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.byTooltip('Edit'), findsOneWidget);
 
-      // Clicking elsewhere afterwards still deselects as usual.
+      // Clicking elsewhere afterwards still deselects as usual (wait past the
+      // 500ms post-commit wall-clock guard in CanvasScreen).
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 550)),
+      );
       await tester.tapAt(const Offset(120, 1100));
-      await tester.pump(const Duration(milliseconds: 350));
-      await tester.runAsync(() => pumpEventQueue());
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(bloc.state.selectedShapeId, isNull);
       expect(find.byTooltip('Edit'), findsNothing);
 
       await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      bloc.close();
+      await tester.pump();
     },
   );
 }

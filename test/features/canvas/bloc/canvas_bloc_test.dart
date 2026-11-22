@@ -92,6 +92,25 @@ void main() {
     );
 
     blocTest<CanvasBloc, CanvasState>(
+      'each tool and brush keeps its own independent strokeWidth',
+      build: CanvasBloc.new,
+      act: (b) {
+        b.add(const CanvasApplyBrushPreset('pencil'));
+        b.add(const CanvasUpdateStrokeWidth(5));
+        b.add(const CanvasSetToolMode(CanvasToolMode.eraser));
+        b.add(const CanvasUpdateStrokeWidth(3));
+        b.add(const CanvasSetToolMode(CanvasToolMode.doodle));
+        b.add(const CanvasApplyBrushPreset('pencil'));
+      },
+      verify: (b) {
+        expect(b.state.brushType, 'pencil');
+        expect(b.state.strokeWidth, 5);
+        expect(b.state.brushWidths['pencil'], 5);
+        expect(b.state.brushWidths['eraser'], 3);
+      },
+    );
+
+    blocTest<CanvasBloc, CanvasState>(
       'CanvasUpdateEraserScope updates eraserEraseEverything',
       build: CanvasBloc.new,
       act: (b) => b.add(const CanvasUpdateEraserScope(true)),

@@ -785,37 +785,10 @@ class _BoardHistoryScreenState extends State<BoardHistoryScreen> {
   }
 
   Future<void> _promptRequestSpecificVersion(BuildContext context) async {
-    final controller = TextEditingController();
     final chosen = await showDialog<int>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Fetch previous version'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'Version number',
-            hintText: 'e.g. 12',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              final v = int.tryParse(controller.text.trim());
-              if (v != null && v >= 0) {
-                Navigator.pop(dialogContext, v);
-              }
-            },
-            child: const Text('Preview version'),
-          ),
-        ],
-      ),
+      builder: (_) => const _VersionInputDialog(),
     );
-    controller.dispose();
     if (chosen == null || !mounted) return;
     _returnToCanvasForPreview();
     widget.bloc.add(
@@ -1280,6 +1253,53 @@ class _RotatingRefreshButtonState extends State<_RotatingRefreshButton>
           color: widget.color,
         ),
       ),
+    );
+  }
+}
+
+class _VersionInputDialog extends StatefulWidget {
+  const _VersionInputDialog();
+
+  @override
+  State<_VersionInputDialog> createState() => _VersionInputDialogState();
+}
+
+class _VersionInputDialogState extends State<_VersionInputDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Fetch previous version'),
+      content: TextField(
+        controller: _controller,
+        keyboardType: TextInputType.number,
+        decoration: const InputDecoration(
+          labelText: 'Version number',
+          hintText: 'e.g. 12',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () {
+            final v = int.tryParse(_controller.text.trim());
+            if (v != null && v >= 0) {
+              Navigator.pop(context, v);
+            }
+          },
+          child: const Text('Preview version'),
+        ),
+      ],
     );
   }
 }

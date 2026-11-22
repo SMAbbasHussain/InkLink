@@ -34,6 +34,7 @@ class BoardCommentsServiceImpl implements BoardCommentsService {
     required String text,
     Offset? canvasPosition,
     String? boardTitle,
+    List<String>? mentions,
   }) async {
     final user = _authService.getCurrentUser();
     final authorUid = user?.uid ?? 'anonymous';
@@ -41,7 +42,9 @@ class BoardCommentsServiceImpl implements BoardCommentsService {
     final authorPhotoUrl = user?.photoURL;
 
     final commentId = _uuid.v4();
-    final mentions = _extractMentions(text);
+    final resolvedMentions = mentions != null
+        ? mentions.toSet().toList()
+        : _extractMentions(text);
 
     final comment = CanvasComment(
       id: commentId,
@@ -52,12 +55,12 @@ class BoardCommentsServiceImpl implements BoardCommentsService {
       authorPhotoUrl: authorPhotoUrl,
       text: text,
       createdAt: DateTime.now(),
-      mentions: mentions,
+      mentions: resolvedMentions,
     );
 
     await _repository.addComment(comment);
 
-    if (mentions.isNotEmpty && _cloudFunctionsService != null) {
+    if (resolvedMentions.isNotEmpty && _cloudFunctionsService != null) {
       _dispatchMentionNotification(
         boardId: boardId,
         boardTitle: boardTitle,
@@ -65,6 +68,7 @@ class BoardCommentsServiceImpl implements BoardCommentsService {
         commentText: text,
         senderName: authorName,
         senderPhotoUrl: authorPhotoUrl,
+        mentionedUids: mentions != null ? resolvedMentions : null,
       );
     }
 
@@ -77,6 +81,7 @@ class BoardCommentsServiceImpl implements BoardCommentsService {
     required String commentId,
     required String text,
     String? boardTitle,
+    List<String>? mentions,
   }) async {
     final user = _authService.getCurrentUser();
     final authorUid = user?.uid ?? 'anonymous';
@@ -84,6 +89,10 @@ class BoardCommentsServiceImpl implements BoardCommentsService {
     final authorPhotoUrl = user?.photoURL;
 
     final replyId = _uuid.v4();
+    final resolvedMentions = mentions != null
+        ? mentions.toSet().toList()
+        : _extractMentions(text);
+
     final reply = CanvasCommentReply(
       id: replyId,
       authorUid: authorUid,
@@ -91,12 +100,12 @@ class BoardCommentsServiceImpl implements BoardCommentsService {
       authorPhotoUrl: authorPhotoUrl,
       text: text,
       createdAt: DateTime.now(),
+      mentions: resolvedMentions,
     );
 
     await _repository.addReply(boardId, commentId, reply);
 
-    final mentions = _extractMentions(text);
-    if (mentions.isNotEmpty && _cloudFunctionsService != null) {
+    if (resolvedMentions.isNotEmpty && _cloudFunctionsService != null) {
       _dispatchMentionNotification(
         boardId: boardId,
         boardTitle: boardTitle,
@@ -104,6 +113,7 @@ class BoardCommentsServiceImpl implements BoardCommentsService {
         commentText: text,
         senderName: authorName,
         senderPhotoUrl: authorPhotoUrl,
+        mentionedUids: mentions != null ? resolvedMentions : null,
       );
     }
 
@@ -131,6 +141,7 @@ class BoardCommentsServiceImpl implements BoardCommentsService {
     required String commentText,
     required String senderName,
     String? senderPhotoUrl,
+    List<String>? mentionedUids,
   }) async {
     // Non-blocking fire-and-forget call to Cloud Function
     try {
@@ -141,6 +152,7 @@ class BoardCommentsServiceImpl implements BoardCommentsService {
         'commentText': commentText,
         'senderName': senderName,
         'senderPhotoUrl': senderPhotoUrl,
+        if (mentionedUids != null) 'mentionedUids': mentionedUids,
       });
     } catch (err) {
       developer.log(

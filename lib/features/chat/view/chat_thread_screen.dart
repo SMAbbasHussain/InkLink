@@ -88,6 +88,11 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
           ? ((b.state as ChatThreadLoaded).isOnline ?? conv.isOnline)
           : conv.isOnline,
     );
+    final liveAvatarUrl = context.select<ChatThreadBloc, String?>(
+      (b) => b.state is ChatThreadLoaded
+          ? ((b.state as ChatThreadLoaded).partnerAvatarUrl ?? conv.avatarUrl)
+          : conv.avatarUrl,
+    );
 
     return Scaffold(
       backgroundColor: colors.background,
@@ -120,10 +125,10 @@ class _ChatThreadViewState extends State<_ChatThreadView> {
                     CircleAvatar(
                       radius: 19,
                       backgroundColor: colors.surfaceElevated,
-                      backgroundImage: conv.avatarUrl != null && conv.avatarUrl!.isNotEmpty
-                          ? NetworkImage(conv.avatarUrl!)
+                      backgroundImage: liveAvatarUrl != null && liveAvatarUrl.isNotEmpty
+                          ? NetworkImage(liveAvatarUrl)
                           : null,
-                      child: conv.avatarUrl == null || conv.avatarUrl!.isEmpty
+                      child: liveAvatarUrl == null || liveAvatarUrl.isEmpty
                           ? Icon(
                               conv.isGroup ? Icons.groups_rounded : Icons.person_rounded,
                               color: colors.textSecondary,

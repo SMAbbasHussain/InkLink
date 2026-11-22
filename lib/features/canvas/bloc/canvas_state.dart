@@ -25,6 +25,7 @@ class CanvasState {
   final List<Offset> currentStroke;
   final Color selectedColor;
   final double strokeWidth;
+  final Map<String, double> brushWidths;
   final double brushOpacity;
   final String brushType;
   final bool eraserEraseEverything;
@@ -184,6 +185,7 @@ class CanvasState {
     this.syncMessage,
     this.selectedColor = Colors.black,
     this.strokeWidth = 5,
+    this.brushWidths = const <String, double>{},
     this.brushOpacity = 1.0,
     this.brushType = 'solid',
     this.eraserEraseEverything = false,
@@ -278,6 +280,7 @@ class CanvasState {
     Object? syncMessage = _unset,
     Color? selectedColor,
     double? strokeWidth,
+    Map<String, double>? brushWidths,
     double? brushOpacity,
     String? brushType,
     bool? eraserEraseEverything,
@@ -375,6 +378,7 @@ class CanvasState {
           : syncMessage as String?,
       selectedColor: selectedColor ?? this.selectedColor,
       strokeWidth: strokeWidth ?? this.strokeWidth,
+      brushWidths: brushWidths ?? this.brushWidths,
       brushOpacity: brushOpacity ?? this.brushOpacity,
       brushType: brushType ?? this.brushType,
       eraserEraseEverything:

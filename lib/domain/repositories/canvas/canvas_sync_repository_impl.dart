@@ -82,6 +82,12 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     final isar = await _localDatabaseService.database;
     await isar.writeTxn(() async {
       await isar.localCrdtUpdates.filter().boardIdEqualTo(boardId).deleteAll();
+      final existing = await isar.localCanvasSyncStates.getByBoardId(boardId);
+      if (existing != null) {
+        await isar.localCanvasSyncStates.putByBoardId(
+          existing..lastSeenCursor = null,
+        );
+      }
     });
   }
 
@@ -933,15 +939,17 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     DateTime? since,
     String? lastSeenCursor,
     bool preferSocket = true,
+    bool ignoreCursor = false,
   }) async {
     if (preferSocket) {
       try {
         await _ensureSocketConnected();
 
         if (_socket != null && _socket!.connected) {
-          // Load stored cursor from local sync state if not provided
-          String? cursor = lastSeenCursor;
-          if (cursor == null) {
+          // Load stored cursor from local sync state if not provided, unless
+          // the caller explicitly requested a full snapshot hydration.
+          String? cursor = ignoreCursor ? null : lastSeenCursor;
+          if (!ignoreCursor && cursor == null) {
             final isar = await _localDatabaseService.database;
             final syncState = await isar.localCanvasSyncStates.getByBoardId(
               boardId,

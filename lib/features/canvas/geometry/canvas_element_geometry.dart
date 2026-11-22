@@ -542,22 +542,88 @@ List<CanvasElement> elementsContainedByFrame(
     .where((element) => frameContainsElement(frame, element))
     .toList(growable: false);
 
-/// Returns the topmost clipping [FrameElement] whose bounds contain [element]'s
-/// center (and whose `z` is at or below [element]'s `z`), or `null` if none.
+/// Returns the screen-space viewport offset delta needed to auto-pan the
+/// canvas when a dragged pointer approaches any edge or corner of [canvasSize].
+/// Returns `Offset.zero` when [localPosition] is inside the central safe area.
+Offset canvasEdgeAutoPanDelta({
+  required Offset localPosition,
+  required Size canvasSize,
+  double edgeMargin = 56.0,
+  double maxStep = 12.0,
+}) {
+  if (canvasSize.width <= 0 || canvasSize.height <= 0 || edgeMargin <= 0) {
+    return Offset.zero;
+  }
+  double panX = 0.0;
+  if (localPosition.dx < edgeMargin) {
+    final t = ((edgeMargin - localPosition.dx) / edgeMargin).clamp(0.0, 1.0);
+    panX = maxStep * t;
+  } else if (localPosition.dx > canvasSize.width - edgeMargin) {
+    final t = ((localPosition.dx - (canvasSize.width - edgeMargin)) / edgeMargin)
+        .clamp(0.0, 1.0);
+    panX = -maxStep * t;
+  }
+
+  double panY = 0.0;
+  if (localPosition.dy < edgeMargin) {
+    final t = ((edgeMargin - localPosition.dy) / edgeMargin).clamp(0.0, 1.0);
+    panY = maxStep * t;
+  } else if (localPosition.dy > canvasSize.height - edgeMargin) {
+    final t = ((localPosition.dy - (canvasSize.height - edgeMargin)) / edgeMargin)
+        .clamp(0.0, 1.0);
+    panY = -maxStep * t;
+  }
+
+  if (panX == 0.0 && panY == 0.0) return Offset.zero;
+  return Offset(panX, panY);
+}
+
+/// The id of the frame [element] sits on: its explicit `frameId` when that
+/// frame still exists. Background elements that only overlap geometrically
+/// never belong to a frame unless explicitly dragged onto or captured by it.
+/// Frames and layers never have a host.
+String? hostFrameId(CanvasElement element, Iterable<CanvasElement> all) {
+  if (element is FrameElement || element is LayerElement) return null;
+  final targetId = element.frameId;
+  if (targetId == null) return null;
+  for (final candidate in all) {
+    if (candidate is FrameElement && candidate.id == targetId) {
+      return candidate.id;
+    }
+  }
+  return null;
+}
+
+/// Whether any part of [element]'s bounds overlaps [frame]'s box.
+bool frameOverlapsElement(FrameElement frame, CanvasElement element) {
+  if (identical(frame, element) ||
+      element is FrameElement ||
+      element is LayerElement) {
+    return false;
+  }
+  final bounds = elementBounds(element);
+  if (bounds == null) return false;
+  return frameRect(frame).overlaps(bounds);
+}
+
+/// Returns the clipping [FrameElement] that should clip [element] (its attached
+/// `frameId` when that frame has `clipContents` enabled), or `null` if none.
 FrameElement? enclosingClipFrame(
   CanvasElement element,
   List<FrameElement> clipFrames,
 ) {
   if (clipFrames.isEmpty ||
       element is FrameElement ||
-      element is LayerElement) {
+      element is LayerElement ||
+      element.frameId == null) {
     return null;
   }
   final bounds = elementBounds(element);
   if (bounds == null) return null;
   for (final frame in clipFrames.reversed) {
-    if (!frame.clipContents) continue;
-    if (frameRect(frame).contains(bounds.center)) {
+    if (frame.id == element.frameId &&
+        frame.clipContents &&
+        frameRect(frame).overlaps(bounds)) {
       return frame;
     }
   }
@@ -645,7 +711,8 @@ void paintBoardBackgroundPattern(
 }
 
 /// Paints a frame identically on the interactive canvas and in PNG/PDF
-/// export: a faint paper tint and a border. Frames carry no heading.
+/// export: an opaque paper surface tinted with the frame colour and a border.
+/// Frames carry no heading.
 void paintFrameElement(Canvas canvas, FrameElement frame) {
   final rect = frameRect(frame);
   final radius = math.min(
@@ -654,12 +721,16 @@ void paintFrameElement(Canvas canvas, FrameElement frame) {
   );
   final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
   final color = frame.color;
+  final fillColor = Color.alphaBlend(
+    color.withValues(alpha: 0.12),
+    const Color(0xFFFFFFFF),
+  );
 
-  canvas.drawRRect(rrect, Paint()..color = color.withValues(alpha: 0.04));
+  canvas.drawRRect(rrect, Paint()..color = fillColor);
   canvas.drawRRect(
     rrect,
     Paint()
-      ..color = color.withValues(alpha: 0.55)
+      ..color = color.withValues(alpha: 0.65)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5,
   );
@@ -1415,12 +1486,44 @@ CanvasPaintOrder canvasPaintOrder(List<CanvasElement> elements) {
   }
   defaultBand.sort(_comparePaintZ);
 
+  List<CanvasElement> orderBandWithFrames(List<CanvasElement> sortedBand) {
+    final bandFrames = sortedBand.whereType<FrameElement>().toList(
+      growable: false,
+    );
+    if (bandFrames.isEmpty) return sortedBand;
+    final bandFrameIds = {for (final f in bandFrames) f.id};
+    final ordered = <CanvasElement>[];
+    for (final element in sortedBand) {
+      if (element is FrameElement) continue;
+      if (element.frameId == null || !bandFrameIds.contains(element.frameId)) {
+        ordered.add(element);
+      }
+    }
+    for (final frame in bandFrames) {
+      ordered.add(frame);
+      for (final element in sortedBand) {
+        if (element is! FrameElement && element.frameId == frame.id) {
+          ordered.add(element);
+        }
+      }
+    }
+    return ordered;
+  }
+
   final bands = <CanvasPaintBand>[
-    CanvasPaintBand(layer: null, elements: List.unmodifiable(defaultBand)),
+    CanvasPaintBand(
+      layer: null,
+      elements: List.unmodifiable(orderBandWithFrames(defaultBand)),
+    ),
   ];
   for (final layer in layers) {
     final band = byLayer[layer.id]!..sort(_comparePaintZ);
-    bands.add(CanvasPaintBand(layer: layer, elements: List.unmodifiable(band)));
+    bands.add(
+      CanvasPaintBand(
+        layer: layer,
+        elements: List.unmodifiable(orderBandWithFrames(band)),
+      ),
+    );
   }
   return CanvasPaintOrder(List.unmodifiable(bands));
 }

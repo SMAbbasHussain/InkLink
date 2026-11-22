@@ -9,6 +9,7 @@ abstract class BoardCommentsService {
     required String text,
     Offset? canvasPosition,
     String? boardTitle,
+    List<String>? mentions,
   });
 
   Future<CanvasCommentReply> addReply({
@@ -16,6 +17,7 @@ abstract class BoardCommentsService {
     required String commentId,
     required String text,
     String? boardTitle,
+    List<String>? mentions,
   });
 
   Future<void> deleteComment({

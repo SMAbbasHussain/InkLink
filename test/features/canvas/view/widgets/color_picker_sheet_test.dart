@@ -171,4 +171,30 @@ void main() {
     expect(called, isTrue);
     expect(result, isNull);
   });
+
+  testWidgets('creating a new palette and confirming does not throw', (
+    tester,
+  ) async {
+    Map<String, List<Color>>? saved;
+    await tester.pumpWidget(
+      _harness(
+        onResult: (_) {},
+        onPalettesChanged: (palettes) => saved = palettes,
+      ),
+    );
+
+    await tester.tap(find.text('Open picker'));
+    await tester.pumpAndSettle();
+
+    await _tapVisible(tester, find.byKey(const ValueKey('palette-new')));
+    await tester.enterText(
+      find.byKey(const ValueKey('palette-name-field')),
+      'Pastels',
+    );
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(saved?.containsKey('Pastels'), isTrue);
+  });
 }

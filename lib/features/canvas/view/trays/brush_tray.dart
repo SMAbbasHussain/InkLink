@@ -37,6 +37,7 @@ class BrushTray extends StatefulWidget {
   final ValueChanged<bool>? onFingerDrawingChanged;
   final ValueChanged<bool>? onQuickShapeChanged;
   final List<Color> recentColors;
+  final Map<String, List<Color>> palettes;
   final bool eyedropperActive;
   final VoidCallback? onOpenColorPicker;
   final VoidCallback? onEyedropperRequested;
@@ -67,6 +68,7 @@ class BrushTray extends StatefulWidget {
     this.onFingerDrawingChanged,
     this.onQuickShapeChanged,
     this.recentColors = const [],
+    this.palettes = const <String, List<Color>>{},
     this.eyedropperActive = false,
     this.onOpenColorPicker,
     this.onEyedropperRequested,
@@ -78,89 +80,26 @@ class BrushTray extends StatefulWidget {
 }
 
 class _BrushTrayState extends State<BrushTray> {
-  late TextEditingController _hexController;
-  late TextEditingController _redController;
-  late TextEditingController _greenController;
-  late TextEditingController _blueController;
-  final List<String> _recentBrushes = <String>[];
+  bool _showPalettes = false;
+  String? _selectedPaletteName;
 
   @override
   void initState() {
     super.initState();
-    _hexController = TextEditingController();
-    _redController = TextEditingController();
-    _greenController = TextEditingController();
-    _blueController = TextEditingController();
-    if (widget.brushType.isNotEmpty && widget.brushType != 'eraser') {
-      _recentBrushes.add(widget.brushType);
-    }
-    _updateColorControllers(widget.selectedColor);
+    _selectedPaletteName = widget.palettes.keys.firstOrNull;
   }
 
   @override
   void didUpdateWidget(BrushTray oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedColor != widget.selectedColor) {
-      _updateColorControllers(widget.selectedColor);
-    }
-    if (widget.brushType != oldWidget.brushType &&
-        widget.brushType.isNotEmpty &&
-        widget.brushType != 'eraser') {
-      _recentBrushes.remove(widget.brushType);
-      _recentBrushes.insert(0, widget.brushType);
-      if (_recentBrushes.length > 5) {
-        _recentBrushes.removeLast();
-      }
-    }
-  }
-
-  void _updateColorControllers(Color color) {
-    final hex = color.value.toRadixString(16).padLeft(8, '0').toUpperCase();
-    final red = color.red;
-    final green = color.green;
-    final blue = color.blue;
-
-    _hexController.text = hex.substring(2); // Remove alpha
-    _redController.text = red.toString();
-    _greenController.text = green.toString();
-    _blueController.text = blue.toString();
-  }
-
-  void _updateColorFromHex(String hex) {
-    try {
-      final cleanHex = hex.replaceAll('#', '');
-      if (cleanHex.length == 6) {
-        final color = Color(int.parse('FF$cleanHex', radix: 16));
-        widget.onColorSelected(color);
-      }
-    } catch (_) {
-      // Invalid input
-    }
-  }
-
-  void _updateColorFromRGB() {
-    try {
-      final r = int.parse(_redController.text).clamp(0, 255);
-      final g = int.parse(_greenController.text).clamp(0, 255);
-      final b = int.parse(_blueController.text).clamp(0, 255);
-      final color = Color.fromARGB(255, r, g, b);
-      widget.onColorSelected(color);
-    } catch (_) {
-      // Invalid input
+    if (_selectedPaletteName == null ||
+        !widget.palettes.containsKey(_selectedPaletteName)) {
+      _selectedPaletteName = widget.palettes.keys.firstOrNull;
     }
   }
 
   void _onBrushPresetSelected(BrushPreset preset) {
     HapticFeedback.selectionClick();
-    if (preset.id != 'eraser') {
-      setState(() {
-        _recentBrushes.remove(preset.id);
-        _recentBrushes.insert(0, preset.id);
-        if (_recentBrushes.length > 5) {
-          _recentBrushes.removeLast();
-        }
-      });
-    }
     widget.onBrushPresetSelected(preset.id);
     widget.onToolModeChanged?.call(
       preset.id == 'highlighter'
@@ -170,18 +109,9 @@ class _BrushTrayState extends State<BrushTray> {
   }
 
   @override
-  void dispose() {
-    _hexController.dispose();
-    _redController.dispose();
-    _greenController.dispose();
-    _blueController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
-    final colors = <Color>[
+    const defaultColors = <Color>[
       Colors.black,
       Colors.white,
       Colors.red,
@@ -213,43 +143,35 @@ class _BrushTrayState extends State<BrushTray> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              _buildColorsSection(tokens, defaultColors),
+              const SizedBox(height: InkSpacing.s12),
+              _buildBrushPresetPicker(tokens),
+              const SizedBox(height: InkSpacing.s12),
               _buildLiveBrushPreview(tokens),
               const SizedBox(height: InkSpacing.s16),
+              // Sliders section (brush size at the top of sliders)
               _buildStrokeWidthControl(tokens),
-              const SizedBox(height: InkSpacing.s16),
-              if (widget.brushType == 'eraser') ...[
-                _buildEraserModeControl(tokens),
-                const SizedBox(height: InkSpacing.s16),
-              ],
+              const SizedBox(height: InkSpacing.s12),
               _buildOpacityControl(tokens),
-              const SizedBox(height: InkSpacing.s16),
-              _buildFingerDrawingToggle(tokens),
-              const SizedBox(height: InkSpacing.s16),
               if (widget.brushType != 'eraser') ...[
-                _buildStylusPressureToggle(tokens),
-                const SizedBox(height: InkSpacing.s16),
-                _buildQuickShapeToggle(tokens),
-                const SizedBox(height: InkSpacing.s16),
-              ],
-              _buildBrushPresetPicker(tokens),
-              if (_recentBrushes.length > 1) ...[
                 const SizedBox(height: InkSpacing.s12),
-                _buildRecentBrushesRow(tokens),
-              ],
-              const SizedBox(height: InkSpacing.s16),
-              if (widget.brushType != 'eraser') ...[
                 _buildStabilizerControl(tokens),
-                const SizedBox(height: InkSpacing.s16),
-                _buildSmoothToggle(tokens),
-                const SizedBox(height: InkSpacing.s16),
               ],
-              _buildColorPalette(tokens, colors),
-              if (widget.recentColors.isNotEmpty) ...[
+              // Toggles section at the bottom
+              if (widget.brushType == 'eraser') ...[
                 const SizedBox(height: InkSpacing.s12),
-                _buildRecentColors(tokens),
+                _buildEraserModeControl(tokens),
               ],
               const SizedBox(height: InkSpacing.s12),
-              _buildColorInputs(tokens),
+              _buildFingerDrawingToggle(tokens),
+              if (widget.brushType != 'eraser') ...[
+                const SizedBox(height: InkSpacing.s12),
+                _buildStylusPressureToggle(tokens),
+                const SizedBox(height: InkSpacing.s12),
+                _buildQuickShapeToggle(tokens),
+                const SizedBox(height: InkSpacing.s12),
+                _buildSmoothToggle(tokens),
+              ],
               const SizedBox(height: InkSpacing.s8),
             ],
           ),
@@ -473,42 +395,6 @@ class _BrushTrayState extends State<BrushTray> {
     );
   }
 
-  Widget _buildRecentBrushesRow(InkTokens tokens) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Recent Brushes', style: InkType.label(tokens.inkSecondary)),
-        const SizedBox(height: InkSpacing.s8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          children: _recentBrushes.map((brushId) {
-            final preset = brushPresetFor(brushId);
-            final isSelected = widget.brushType == brushId;
-            return ChoiceChip(
-              avatar: Icon(
-                preset.icon,
-                size: 14,
-                color: isSelected ? tokens.accent : tokens.inkMuted,
-              ),
-              label: Text(preset.label),
-              selected: isSelected,
-              onSelected: (_) => _onBrushPresetSelected(preset),
-              labelStyle: InkType.caption(
-                isSelected ? tokens.accent : tokens.ink,
-              ),
-              backgroundColor: tokens.field,
-              selectedColor: tokens.accent.withValues(alpha: 0.15),
-              side: BorderSide(
-                color: isSelected ? tokens.accent : tokens.glassStroke,
-              ),
-            );
-          }).toList(),
-        ),
-      ],
-    );
-  }
-
   Widget _buildOpacityControl(InkTokens tokens) {
     return Row(
       children: [
@@ -545,10 +431,10 @@ class _BrushTrayState extends State<BrushTray> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Brush Presets', style: InkType.label(tokens.inkSecondary)),
+        Text('Brushes', style: InkType.label(tokens.inkSecondary)),
         const SizedBox(height: InkSpacing.s8),
         SizedBox(
-          height: 96,
+          height: 40,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: brushPresets.length,
@@ -558,11 +444,6 @@ class _BrushTrayState extends State<BrushTray> {
               return _buildPresetCard(tokens, preset);
             },
           ),
-        ),
-        const SizedBox(height: InkSpacing.s8),
-        Text(
-          brushPresetFor(widget.brushType).description,
-          style: InkType.caption(tokens.inkMuted),
         ),
       ],
     );
@@ -575,8 +456,7 @@ class _BrushTrayState extends State<BrushTray> {
       onTap: () => _onBrushPresetSelected(preset),
       borderRadius: BorderRadius.circular(InkRadii.input),
       child: Container(
-        width: 104,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: selected
               ? tokens.accent.withValues(alpha: 0.12)
@@ -586,32 +466,20 @@ class _BrushTrayState extends State<BrushTray> {
             color: selected ? tokens.accent : tokens.glassStroke,
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                Icon(
-                  preset.icon,
-                  size: 16,
-                  color: selected ? tokens.accent : tokens.inkMuted,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    preset.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: InkType.label(selected ? tokens.accent : tokens.ink),
-                  ),
-                ),
-              ],
+            Icon(
+              preset.icon,
+              size: 16,
+              color: selected ? tokens.accent : tokens.inkMuted,
             ),
-            const Spacer(),
+            const SizedBox(width: 6),
             Text(
-              '${preset.defaultWidth.toStringAsFixed(0)} px · '
-              '${(preset.defaultOpacity * 100).round()}%',
-              style: InkType.caption(tokens.inkMuted),
+              preset.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: InkType.label(selected ? tokens.accent : tokens.ink),
             ),
           ],
         ),
@@ -721,13 +589,57 @@ class _BrushTrayState extends State<BrushTray> {
     );
   }
 
-  Widget _buildColorPalette(InkTokens tokens, List<Color> colors) {
+  Widget _buildColorsSection(InkTokens tokens, List<Color> defaultColors) {
+    final activePaletteName = _selectedPaletteName != null &&
+            widget.palettes.containsKey(_selectedPaletteName)
+        ? _selectedPaletteName
+        : widget.palettes.keys.firstOrNull;
+    final paletteColors = activePaletteName != null
+        ? (widget.palettes[activePaletteName] ?? const <Color>[])
+        : const <Color>[];
+    final displayedColors = _showPalettes
+        ? paletteColors
+        : (widget.recentColors.isNotEmpty ? widget.recentColors : defaultColors);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Text('Colors', style: InkType.label(tokens.inkSecondary)),
+            ChoiceChip(
+              key: const ValueKey('brush-colors-recent-tab'),
+              label: const Text('Recent'),
+              selected: !_showPalettes,
+              visualDensity: VisualDensity.compact,
+              onSelected: (_) => setState(() => _showPalettes = false),
+              labelStyle: InkType.caption(
+                !_showPalettes ? tokens.accent : tokens.inkSecondary,
+              ),
+              backgroundColor: tokens.field,
+              selectedColor: tokens.accent.withValues(alpha: 0.15),
+              side: BorderSide(
+                color: !_showPalettes ? tokens.accent : tokens.glassStroke,
+              ),
+            ),
+            const SizedBox(width: 6),
+            ChoiceChip(
+              key: const ValueKey('brush-colors-palettes-tab'),
+              label: const Text('Palettes'),
+              selected: _showPalettes,
+              visualDensity: VisualDensity.compact,
+              onSelected: (_) => setState(() {
+                _showPalettes = true;
+                _selectedPaletteName ??= widget.palettes.keys.firstOrNull;
+              }),
+              labelStyle: InkType.caption(
+                _showPalettes ? tokens.accent : tokens.inkSecondary,
+              ),
+              backgroundColor: tokens.field,
+              selectedColor: tokens.accent.withValues(alpha: 0.15),
+              side: BorderSide(
+                color: _showPalettes ? tokens.accent : tokens.glassStroke,
+              ),
+            ),
             const Spacer(),
             IconButton(
               onPressed: widget.onEyedropperRequested,
@@ -749,156 +661,113 @@ class _BrushTrayState extends State<BrushTray> {
             ),
           ],
         ),
-        const SizedBox(height: InkSpacing.s4),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: colors
-                .map(
-                  (c) => Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: InkWell(
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        widget.onColorSelected(c);
-                      },
-                      borderRadius: BorderRadius.circular(20),
-                      child: Padding(
-                        padding: EdgeInsets.all(
-                          widget.selectedColor == c ? 2 : 0,
-                        ),
-                        child: Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: c,
-                            border: Border.all(
-                              color: widget.selectedColor == c
-                                  ? tokens.ink
-                                  : tokens.glassStroke,
-                              width: widget.selectedColor == c ? 2 : 1,
-                            ),
-                          ),
-                          child: widget.selectedColor == c
-                              ? Icon(
-                                  LucideIcons.check,
-                                  color: c.computeLuminance() > 0.6
-                                      ? Colors.black
-                                      : Colors.white,
-                                  size: 16,
-                                )
-                              : null,
-                        ),
-                      ),
+        if (_showPalettes && widget.palettes.isNotEmpty) ...[
+          const SizedBox(height: InkSpacing.s8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final name in widget.palettes.keys) ...[
+                  ChoiceChip(
+                    key: ValueKey('brush-palette-tab-$name'),
+                    label: Text(name),
+                    selected: name == activePaletteName,
+                    visualDensity: VisualDensity.compact,
+                    onSelected: (_) =>
+                        setState(() => _selectedPaletteName = name),
+                    labelStyle: InkType.caption(
+                      name == activePaletteName
+                          ? tokens.accent
+                          : tokens.inkSecondary,
                     ),
-                  ),
-                )
-                .toList(),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildRecentColors(InkTokens tokens) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Recent', style: InkType.label(tokens.inkSecondary)),
-        const SizedBox(height: InkSpacing.s8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final color in widget.recentColors)
-              InkWell(
-                onTap: () {
-                  HapticFeedback.selectionClick();
-                  widget.onColorSelected(color);
-                },
-                borderRadius: BorderRadius.circular(20),
-                child: Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: widget.selectedColor == color
-                          ? tokens.ink
+                    backgroundColor: tokens.field,
+                    selectedColor: tokens.accent.withValues(alpha: 0.15),
+                    side: BorderSide(
+                      color: name == activePaletteName
+                          ? tokens.accent
                           : tokens.glassStroke,
-                      width: widget.selectedColor == color ? 2 : 1,
                     ),
                   ),
-                ),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildColorInputs(InkTokens tokens) {
-    final smallFieldDecoration = InputDecoration(
-      isDense: true,
-      filled: true,
-      fillColor: tokens.field,
-      contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide.none,
-      ),
-      counterText: '',
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Custom Color', style: InkType.label(tokens.inkSecondary)),
+                  const SizedBox(width: 6),
+                ],
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: InkSpacing.s8),
-        Row(
-          children: [
-            Text('#', style: InkType.caption(tokens.inkMuted)),
-            const SizedBox(width: 6),
-            Expanded(
-              flex: 2,
-              child: TextField(
-                controller: _hexController,
-                onChanged: _updateColorFromHex,
-                maxLength: 6,
-                style: InkType.caption(tokens.ink),
-                decoration: smallFieldDecoration.copyWith(hintText: 'HEX'),
+        if (_showPalettes && widget.palettes.isEmpty)
+          Row(
+            children: [
+              Text(
+                'No saved palettes yet',
+                style: InkType.caption(tokens.inkMuted),
               ),
-            ),
-            const SizedBox(width: InkSpacing.s8),
-            ...[
-              ('R', _redController),
-              ('G', _greenController),
-              ('B', _blueController),
-            ].map(
-              (pair) => Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: Column(
-                    children: [
-                      Text(pair.$1, style: InkType.caption(tokens.inkMuted)),
-                      const SizedBox(height: 2),
-                      TextField(
-                        controller: pair.$2,
-                        onChanged: (_) => _updateColorFromRGB(),
-                        maxLength: 3,
-                        style: InkType.caption(tokens.ink),
-                        keyboardType: TextInputType.number,
-                        decoration: smallFieldDecoration,
-                      ),
-                    ],
+              if (widget.onOpenColorPicker != null) ...[
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: widget.onOpenColorPicker,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
                   ),
+                  child: const Text('Create'),
                 ),
-              ),
+              ],
+            ],
+          )
+        else if (displayedColors.isEmpty)
+          Text(
+            'No colors in this palette yet',
+            style: InkType.caption(tokens.inkMuted),
+          )
+        else
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: displayedColors
+                  .map(
+                    (c) => Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: InkWell(
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          widget.onColorSelected(c);
+                        },
+                        borderRadius: BorderRadius.circular(20),
+                        child: Padding(
+                          padding: EdgeInsets.all(
+                            widget.selectedColor == c ? 2 : 0,
+                          ),
+                          child: Container(
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: c,
+                              border: Border.all(
+                                color: widget.selectedColor == c
+                                    ? tokens.ink
+                                    : tokens.glassStroke,
+                                width: widget.selectedColor == c ? 2 : 1,
+                              ),
+                            ),
+                            child: widget.selectedColor == c
+                                ? Icon(
+                                    LucideIcons.check,
+                                    color: c.computeLuminance() > 0.6
+                                        ? Colors.black
+                                        : Colors.white,
+                                    size: 16,
+                                  )
+                                : null,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
             ),
-          ],
-        ),
+          ),
       ],
     );
   }

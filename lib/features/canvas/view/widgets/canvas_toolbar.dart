@@ -20,6 +20,7 @@ class CanvasToolbar extends StatelessWidget {
     required this.onToolSelected,
     this.actions = CanvasToolbarAction.defaultBottomBarActions,
     this.onActionSelected,
+    this.onActionLongPressed,
     this.onShape,
     this.onStickyNote,
     this.onFrame,
@@ -40,6 +41,7 @@ class CanvasToolbar extends StatelessWidget {
   final List<CanvasToolbarAction> actions;
   final ValueChanged<CanvasToolMode> onToolSelected;
   final ValueChanged<CanvasToolbarAction>? onActionSelected;
+  final ValueChanged<CanvasToolbarAction>? onActionLongPressed;
   final VoidCallback? onShape;
   final VoidCallback? onStickyNote;
   final VoidCallback? onFrame;
@@ -125,6 +127,9 @@ class CanvasToolbar extends StatelessWidget {
             selected: _isSelected(action),
             enabled: enabled,
             onTap: handler,
+            onLongPress: onActionLongPressed == null
+                ? null
+                : () => onActionLongPressed!(action),
           );
         }(),
       if (onMore != null)
@@ -172,6 +177,7 @@ class _ToolButton extends StatelessWidget {
     required this.selected,
     required this.enabled,
     required this.onTap,
+    this.onLongPress,
   });
 
   final IconData icon;
@@ -180,6 +186,7 @@ class _ToolButton extends StatelessWidget {
   final bool selected;
   final bool enabled;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -199,6 +206,7 @@ class _ToolButton extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
           onTap: enabled ? onTap : null,
+          onLongPress: enabled ? onLongPress : null,
           child: Container(
             width: 44,
             padding: const EdgeInsets.symmetric(vertical: 5),

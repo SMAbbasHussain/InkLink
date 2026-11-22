@@ -52,6 +52,7 @@ class CanvasServiceImpl implements CanvasService {
   final BoardRepository _boardRepository;
   final CanvasSyncRepository _syncRepository;
   final Map<String, StreamSubscription<List<LocalCrdtUpdate>>> _remoteSubs = {};
+  final Map<String, Future<void>> _hydrationInFlight = {};
 
   CanvasServiceImpl({
     required BoardRepository boardRepository,
@@ -93,18 +94,23 @@ class CanvasServiceImpl implements CanvasService {
     }
 
     return () async* {
-      try {
-        await _hydrateAndStartRemoteSync(boardId, userId);
-      } catch (error, stackTrace) {
-        developer.log(
-          'CRDT hydrate failed for board $boardId, falling back to local updates',
-          name: 'CanvasService',
-          error: error,
-          stackTrace: stackTrace,
-        );
-      }
+      // Never block locally stored updates behind network hydration: a slow or
+      // stalled remote sync used to leave the board empty even though every
+      // update was already on the device. Hydrate in the background; the local
+      // watch re-emits as remote updates land in the database.
+      final hydration = _hydrationInFlight[boardId] ??=
+          _hydrateAndStartRemoteSync(boardId, userId)
+              .catchError((Object error, StackTrace stackTrace) {
+                developer.log(
+                  'CRDT hydrate failed for board $boardId, using local updates',
+                  name: 'CanvasService',
+                  error: error,
+                  stackTrace: stackTrace,
+                );
+              })
+              .whenComplete(() => _hydrationInFlight.remove(boardId));
+      unawaited(hydration);
 
-      // Always surface local updates, even when remote hydration fails.
       yield* _syncRepository.watchLocalCrdtUpdates(boardId);
     }();
   }
@@ -244,19 +250,25 @@ class CanvasServiceImpl implements CanvasService {
     } catch (_) {}
 
     final localUpdates = await _syncRepository.getLocalCrdtUpdates(boardId);
-    final useFirestoreFirst = localUpdates.isEmpty;
+    final hasLocalActiveUpdates = localUpdates.any(
+      (u) => !u.isDeleted && u.payloadBase64.isNotEmpty,
+    );
     // Only use previously-synced rows to compute the 'since' cursor. If there
-    // are no local updates, fetch all remote updates from Firestore.
-    final latestLocalUpdateAt = useFirestoreFirst
+    // are no active local updates, ignore any stale cursor and fetch a full
+    // snapshot + deltas from the server.
+    final latestLocalUpdateAt = !hasLocalActiveUpdates
         ? null
         : await _syncRepository.getLatestLocalCrdtUpdateAt(boardId);
-    final lastSeenCursor = await _syncRepository.getLastSeenCursor(boardId);
+    final lastSeenCursor = hasLocalActiveUpdates
+        ? await _syncRepository.getLastSeenCursor(boardId)
+        : null;
 
     final remoteUpdates = await _syncRepository.fetchRemoteCrdtUpdates(
       boardId,
       since: latestLocalUpdateAt,
       lastSeenCursor: lastSeenCursor,
       preferSocket: true,
+      ignoreCursor: !hasLocalActiveUpdates,
     );
     if (remoteUpdates.isNotEmpty) {
       for (final update in remoteUpdates) {

@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../core/services/auth_service.dart';
+import '../../../../domain/models/board.dart';
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_tokens.dart';
 import '../../../../ui/theme/ink_type.dart';
@@ -10,6 +11,7 @@ import '../../../../ui/widgets/glass_panel.dart';
 import '../../../../ui/widgets/ink_avatar.dart';
 import '../../../../ui/widgets/ink_initials.dart';
 import '../../bloc/canvas_bloc.dart';
+import '../widgets/comment_mention_picker.dart';
 
 class CommentsTray extends StatefulWidget {
   const CommentsTray({super.key});
@@ -20,32 +22,66 @@ class CommentsTray extends StatefulWidget {
 
 class _CommentsTrayState extends State<CommentsTray> {
   final TextEditingController _newCommentController = TextEditingController();
+  late final MentionSelectionTracker _newCommentMentions;
   final Map<String, TextEditingController> _replyControllers = {};
+  final Map<String, MentionSelectionTracker> _replyMentions = {};
   String? _expandedReplyCommentId;
 
   @override
+  void initState() {
+    super.initState();
+    _newCommentMentions = MentionSelectionTracker(_newCommentController);
+  }
+
+  @override
   void dispose() {
+    _newCommentMentions.dispose();
     _newCommentController.dispose();
+    for (final tracker in _replyMentions.values) {
+      tracker.dispose();
+    }
     for (final c in _replyControllers.values) {
       c.dispose();
     }
     super.dispose();
   }
 
+  MentionSelectionTracker _replyTrackerFor(String commentId) {
+    final controller = _replyControllers.putIfAbsent(
+      commentId,
+      () => TextEditingController(),
+    );
+    return _replyMentions.putIfAbsent(
+      commentId,
+      () => MentionSelectionTracker(controller),
+    );
+  }
+
   void _addBoardComment() {
     final text = _newCommentController.text.trim();
     if (text.isEmpty) return;
-    context.read<CanvasBloc>().add(CanvasAddCommentRequested(text: text));
+    final mentions = _newCommentMentions.selectedMentionUids;
+    context.read<CanvasBloc>().add(
+      CanvasAddCommentRequested(text: text, mentions: mentions),
+    );
+    _newCommentMentions.clear();
     _newCommentController.clear();
   }
 
   void _sendReply(String commentId) {
     final controller = _replyControllers[commentId];
+    final tracker = _replyMentions[commentId];
     final text = controller?.text.trim() ?? '';
     if (text.isEmpty) return;
+    final mentions = tracker?.selectedMentionUids ?? const [];
     context.read<CanvasBloc>().add(
-      CanvasAddCommentReplyRequested(commentId: commentId, text: text),
+      CanvasAddCommentReplyRequested(
+        commentId: commentId,
+        text: text,
+        mentions: mentions,
+      ),
     );
+    tracker?.clear();
     controller?.clear();
     setState(() {
       _expandedReplyCommentId = null;
@@ -61,7 +97,8 @@ class _CommentsTrayState extends State<CommentsTray> {
           prev.isCommentsTrayOpen != curr.isCommentsTrayOpen ||
           prev.comments != curr.comments ||
           prev.isPlacingComment != curr.isPlacingComment ||
-          prev.activeCommentId != curr.activeCommentId,
+          prev.activeCommentId != curr.activeCommentId ||
+          prev.boardMembers != curr.boardMembers,
       builder: (context, state) {
         if (!state.isCommentsTrayOpen) {
           return const SizedBox.shrink();
@@ -250,16 +287,17 @@ class _CommentsTrayState extends State<CommentsTray> {
                             final isSelected =
                                 comment.id == state.activeCommentId;
 
+                            final replyTracker = _replyTrackerFor(comment.id);
                             return _CommentThreadCard(
                               comment: comment,
                               isSelected: isSelected,
                               canDelete: canDelete,
                               isReplyExpanded:
                                   _expandedReplyCommentId == comment.id,
-                              replyController: _replyControllers.putIfAbsent(
-                                comment.id,
-                                () => TextEditingController(),
-                              ),
+                              replyController: replyTracker.controller,
+                              replyMentionTracker: replyTracker,
+                              boardMembers: state.boardMembers,
+                              currentUserId: currentUserId,
                               tokens: tokens,
                               onToggleReply: () {
                                 setState(() {
@@ -279,6 +317,28 @@ class _CommentsTrayState extends State<CommentsTray> {
                             );
                           },
                         ),
+                ),
+
+                // Mention Picker (above bottom comment input when typing @...)
+                ListenableBuilder(
+                  listenable: _newCommentMentions,
+                  builder: (context, _) {
+                    final match = _newCommentMentions.activeMatch;
+                    if (match == null) return const SizedBox.shrink();
+                    final matches = filterMentionMembers(
+                      state.boardMembers,
+                      query: match.query,
+                      excludeUid: currentUserId,
+                    );
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+                      child: MentionMemberPicker(
+                        members: matches,
+                        tokens: tokens,
+                        onSelectMember: _newCommentMentions.selectMember,
+                      ),
+                    );
+                  },
                 ),
 
                 // Bottom Input Field (Board Comment)
@@ -347,6 +407,9 @@ class _CommentThreadCard extends StatelessWidget {
   final bool canDelete;
   final bool isReplyExpanded;
   final TextEditingController replyController;
+  final MentionSelectionTracker replyMentionTracker;
+  final List<BoardMember> boardMembers;
+  final String? currentUserId;
   final InkTokens tokens;
   final VoidCallback onToggleReply;
   final VoidCallback onSendReply;
@@ -358,6 +421,9 @@ class _CommentThreadCard extends StatelessWidget {
     required this.canDelete,
     required this.isReplyExpanded,
     required this.replyController,
+    required this.replyMentionTracker,
+    required this.boardMembers,
+    required this.currentUserId,
     required this.tokens,
     required this.onToggleReply,
     required this.onSendReply,
@@ -373,21 +439,44 @@ class _CommentThreadCard extends StatelessWidget {
     return '${dt.month}/${dt.day}';
   }
 
-  Widget _buildFormattedText(String text) {
+  Set<String> _allowedMentionTokens(List<String> mentions) {
+    if (mentions.isEmpty) return const {};
+    final allowed = <String>{};
+    for (final m in mentions) {
+      final lower = m.toLowerCase();
+      allowed.add(lower);
+      for (final member in boardMembers) {
+        if (member.uid == m || member.uid.toLowerCase() == lower) {
+          allowed.add(mentionHandleFor(member).toLowerCase());
+        }
+      }
+    }
+    return allowed;
+  }
+
+  Widget _buildFormattedText(String text, List<String> mentions) {
+    final allowedTokens = _allowedMentionTokens(mentions);
+    if (allowedTokens.isEmpty) {
+      return Text(text, style: InkType.body(tokens.ink));
+    }
+
     final words = text.split(' ');
     final spans = <TextSpan>[];
 
     for (var i = 0; i < words.length; i++) {
       final w = words[i];
-      if (w.startsWith('@') && w.length > 1) {
+      final suffix = i < words.length - 1 ? ' ' : '';
+      final tokenMatch = RegExp(r'^@([a-zA-Z0-9_.\-]+)').firstMatch(w);
+      if (tokenMatch != null &&
+          allowedTokens.contains(tokenMatch.group(1)!.toLowerCase())) {
         spans.add(
           TextSpan(
-            text: '$w ',
+            text: '$w$suffix',
             style: TextStyle(fontWeight: FontWeight.bold, color: tokens.accent),
           ),
         );
       } else {
-        spans.add(TextSpan(text: '$w '));
+        spans.add(TextSpan(text: '$w$suffix'));
       }
     }
 
@@ -477,7 +566,7 @@ class _CommentThreadCard extends StatelessWidget {
           const SizedBox(height: 6),
 
           // Comment body with @mention highlighting
-          _buildFormattedText(comment.text),
+          _buildFormattedText(comment.text, comment.mentions),
           const SizedBox(height: 6),
 
           // Actions: Reply button
@@ -553,7 +642,7 @@ class _CommentThreadCard extends StatelessWidget {
                                   ],
                                 ),
                                 const SizedBox(height: 2),
-                                _buildFormattedText(reply.text),
+                                _buildFormattedText(reply.text, reply.mentions),
                               ],
                             ),
                           ),
@@ -569,39 +658,64 @@ class _CommentThreadCard extends StatelessWidget {
           if (isReplyExpanded)
             Padding(
               padding: const EdgeInsets.only(left: 16, top: 8),
-              child: Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: replyController,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => onSendReply(),
-                      style: InkType.body(tokens.ink),
-                      decoration: InputDecoration(
-                        hintText: 'Reply... (use @name)',
-                        hintStyle: InkType.body(tokens.inkMuted),
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
+                  ListenableBuilder(
+                    listenable: replyMentionTracker,
+                    builder: (context, _) {
+                      final match = replyMentionTracker.activeMatch;
+                      if (match == null) return const SizedBox.shrink();
+                      final matches = filterMentionMembers(
+                        boardMembers,
+                        query: match.query,
+                        excludeUid: currentUserId,
+                      );
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: MentionMemberPicker(
+                          members: matches,
+                          tokens: tokens,
+                          onSelectMember: replyMentionTracker.selectMember,
                         ),
-                        filled: true,
-                        fillColor: tokens.field,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide.none,
+                      );
+                    },
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: replyController,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => onSendReply(),
+                          style: InkType.body(tokens.ink),
+                          decoration: InputDecoration(
+                            hintText: 'Reply... (use @name)',
+                            hintStyle: InkType.body(tokens.inkMuted),
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            filled: true,
+                            fillColor: tokens.field,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  IconButton(
-                    icon: Icon(
-                      LucideIcons.send,
-                      size: 16,
-                      color: tokens.accent,
-                    ),
-                    onPressed: onSendReply,
+                      const SizedBox(width: 6),
+                      IconButton(
+                        icon: Icon(
+                          LucideIcons.send,
+                          size: 16,
+                          color: tokens.accent,
+                        ),
+                        onPressed: onSendReply,
+                      ),
+                    ],
                   ),
                 ],
               ),

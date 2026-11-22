@@ -2284,17 +2284,23 @@ class AgoraChatServiceImpl implements ChatService {
         currentUid: targetAccountUid,
       );
 
-      final localMessageId = msg.attributes?['localMessageId']?.toString();
+      final attrLocalId = msg.attributes?['localMessageId']?.toString();
+      final mappedLocalId = _agoraMsgIdToLocalId[msg.msgId];
+      final localMessageId = (attrLocalId != null && attrLocalId.isNotEmpty)
+          ? attrLocalId
+          : mappedLocalId;
       if (localMessageId != null &&
           localMessageId.isNotEmpty &&
           msg.msgId.isNotEmpty) {
         _recordMessageIdMapping(msg.msgId, localMessageId);
       }
 
-      final messageId = (!isFromSelf || localMessageId == null)
-          ? msg.msgId
-          : (localMessageId.isNotEmpty ? localMessageId : msg.msgId);
-      final isOwnEcho = isFromSelf && localMessageId != null;
+      final messageId =
+          (!isFromSelf || localMessageId == null || localMessageId.isEmpty)
+              ? msg.msgId
+              : localMessageId;
+      final isOwnEcho =
+          isFromSelf && localMessageId != null && localMessageId.isNotEmpty;
 
       ChatSharePayload? sharePayload;
       if (msgType == ChatMessageType.boardShare ||
@@ -2326,11 +2332,14 @@ class AgoraChatServiceImpl implements ChatService {
         status = ChatMessageStatus.delivered;
       }
 
+      final attrSenderName = msg.attributes?['senderName']?.toString();
       final model = ChatMessageModel(
         id: messageId,
         conversationId: conversationId,
         senderId: senderId,
-        senderName: msg.attributes?['senderName']?.toString() ?? senderId,
+        senderName: (attrSenderName != null && attrSenderName.isNotEmpty)
+            ? attrSenderName
+            : senderId,
         senderAvatar: msg.attributes?['senderAvatar']?.toString(),
         type: msgType,
         content: textContent,
@@ -3193,6 +3202,14 @@ class AgoraChatServiceImpl implements ChatService {
         affected.senderId!.isNotEmpty &&
         affected.senderId != conversationId) {
       _notifyThreadUpdated(affected.senderId!);
+    }
+  }
+
+  @override
+  Future<void> notifyPartnerProfileUpdated(String partnerUid) async {
+    await _syncConversationsFromLocal();
+    if (partnerUid.isNotEmpty) {
+      _notifyThreadUpdated(partnerUid);
     }
   }
 

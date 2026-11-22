@@ -148,6 +148,7 @@ class _MainWrapperState extends State<MainWrapper> with WidgetsBindingObserver {
       BlocProvider(
         create: (context) => ChatInboxBloc(
           chatService: context.read<ChatService>(),
+          profileService: context.read<ProfileService>(),
         )..add(const LoadChatInbox()),
         child: const ChatInboxScreen(),
       ),

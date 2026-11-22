@@ -619,6 +619,7 @@ class _CanvasPainter extends CustomPainter {
   final Offset viewportOffset;
   final bool showEraserPreview;
   final bool isDrawingShape;
+  final bool isDrawingFrame;
   final Offset? shapeDrawStart;
   final Offset? shapeDrawCurrent;
   final CanvasShapeType? pendingShapeType;
@@ -648,6 +649,7 @@ class _CanvasPainter extends CustomPainter {
     required this.viewportOffset,
     required this.showEraserPreview,
     this.isDrawingShape = false,
+    this.isDrawingFrame = false,
     this.shapeDrawStart,
     this.shapeDrawCurrent,
     this.pendingShapeType,
@@ -697,10 +699,14 @@ class _CanvasPainter extends CustomPainter {
       if (clipFrames.isNotEmpty &&
           element.kind != _ElementKind.frame &&
           bounds != null) {
-        for (final frame in clipFrames.reversed) {
-          if (frameRect(frame).contains(bounds.center)) {
-            clipFrame = frame;
-            break;
+        final elementFrameId = element.data['frameId'] as String?;
+        if (elementFrameId != null) {
+          for (final frame in clipFrames.reversed) {
+            if (frame.id == elementFrameId &&
+                frameRect(frame).overlaps(bounds)) {
+              clipFrame = frame;
+              break;
+            }
           }
         }
       }
@@ -1034,12 +1040,28 @@ class _CanvasPainter extends CustomPainter {
   }
 
   void _paintShapeDrawPreview(Canvas canvas, Offset start, Offset current) {
-    final shapeType = pendingShapeType;
-    if (shapeType == null) return;
-
     final dx = (current.dx - start.dx).abs();
     final dy = (current.dy - start.dy).abs();
     if (dx < 2 && dy < 2) return;
+
+    if (isDrawingFrame) {
+      final rect = Rect.fromPoints(start, current);
+      paintFrameElement(
+        canvas,
+        FrameElement(
+          id: '__preview_frame__',
+          z: 0,
+          center: rect.center,
+          width: rect.width.clamp(2.0, 4000.0),
+          height: rect.height.clamp(2.0, 4000.0),
+          title: 'Frame',
+        ),
+      );
+      return;
+    }
+
+    final shapeType = pendingShapeType;
+    if (shapeType == null) return;
 
     final geom = ShapeGeometry.compute(
       shapeType: shapeType,
@@ -1274,8 +1296,15 @@ class _CanvasPainter extends CustomPainter {
       }
       canvas.drawCircle(
         settings.symmetryCenter,
-        4.5 * invScale,
-        Paint()..color = accentColor.withValues(alpha: 0.8),
+        7.5 * invScale,
+        Paint()
+          ..color = accentColor.withValues(alpha: 0.25)
+          ..style = PaintingStyle.fill,
+      );
+      canvas.drawCircle(
+        settings.symmetryCenter,
+        5.0 * invScale,
+        Paint()..color = accentColor.withValues(alpha: 0.9),
       );
     }
 
@@ -1645,6 +1674,7 @@ class _CanvasPainter extends CustomPainter {
         oldDelegate.viewportScale != viewportScale ||
         oldDelegate.viewportOffset != viewportOffset ||
         oldDelegate.isDrawingShape != isDrawingShape ||
+        oldDelegate.isDrawingFrame != isDrawingFrame ||
         oldDelegate.shapeDrawStart != shapeDrawStart ||
         oldDelegate.shapeDrawCurrent != shapeDrawCurrent ||
         oldDelegate.pendingShapeType != pendingShapeType ||

@@ -7,6 +7,7 @@ class CanvasCommentReply {
   final String? authorPhotoUrl;
   final String text;
   final DateTime createdAt;
+  final List<String> mentions;
 
   const CanvasCommentReply({
     required this.id,
@@ -15,6 +16,7 @@ class CanvasCommentReply {
     this.authorPhotoUrl,
     required this.text,
     required this.createdAt,
+    this.mentions = const [],
   });
 
   Map<String, dynamic> toMap() {
@@ -25,10 +27,12 @@ class CanvasCommentReply {
       'authorPhotoUrl': authorPhotoUrl,
       'text': text,
       'createdAt': createdAt.millisecondsSinceEpoch,
+      'mentions': mentions,
     };
   }
 
   factory CanvasCommentReply.fromMap(Map<String, dynamic> map) {
+    final rawMentions = map['mentions'] as List<dynamic>? ?? [];
     return CanvasCommentReply(
       id: map['id'] as String? ?? '',
       authorUid: map['authorUid'] as String? ?? '',
@@ -38,6 +42,7 @@ class CanvasCommentReply {
       createdAt: map['createdAt'] != null
           ? DateTime.fromMillisecondsSinceEpoch(map['createdAt'] as int)
           : DateTime.now(),
+      mentions: rawMentions.map((m) => m.toString()).toList(),
     );
   }
 }
