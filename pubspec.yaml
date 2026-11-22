@@ -70,6 +70,7 @@ dependencies:
   # Desk redesign (presentation-only)
   google_fonts: ^6.2.1
   lucide_icons_flutter: ^3.0.4
+  firebase_crashlytics: ^5.4.1
 
 dev_dependencies:
   flutter_test:

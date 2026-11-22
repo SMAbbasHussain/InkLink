@@ -14,6 +14,7 @@ import 'features/workspaces/bloc/workspace_bloc.dart';
 import 'features/notifications/bloc/notifications_bloc.dart';
 import 'features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'features/friends/bloc/friends_bloc.dart';
+import 'core/services/crashlytics_service.dart';
 import 'core/services/data_prefetch_service.dart';
 import 'core/services/deep_link_service.dart';
 import 'domain/services/auth/auth_session_service.dart';
@@ -57,6 +58,7 @@ class _AppViewState extends State<AppView> {
   void _initializeAuthenticatedSession(String uid) {
     if (_initializedAuthUid == uid) return;
     _initializedAuthUid = uid;
+    CrashlyticsService.instance.setUserId(uid);
 
     // Phase 4E: Prefetch data on auth
     context.read<DataPrefetchService>().prefetchInitialData(uid);
@@ -88,6 +90,7 @@ class _AppViewState extends State<AppView> {
 
   Future<void> _stopBlocsForLogout() async {
     _initializedAuthUid = null;
+    await CrashlyticsService.instance.setUserId(null);
     if (!mounted) return;
     final friendsBloc = context.read<FriendsBloc>();
     final workspaceBloc = context.read<WorkspaceBloc>();
