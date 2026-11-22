@@ -96,7 +96,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     if (specificSocket == null || identical(_socket, specificSocket)) {
       _socket = null;
       _connectedUserId = null;
-      for (final timer in _watchRetryTimers.values) {
+      for (final timer in _watchRetryTimers.values.toList()) {
         timer.cancel();
       }
       _watchRetryTimers.clear();
@@ -195,7 +195,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       _socket = socket;
       _connectedUserId = targetUid;
       _bindStoredSocketHandlers(socket);
-      for (final boardId in _watchedBoardRefCounts.keys) {
+      for (final boardId in _watchedBoardRefCounts.keys.toList()) {
         if ((_watchedBoardRefCounts[boardId] ?? 0) > 0) {
           _watchBoard(boardId);
         }
@@ -217,7 +217,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       _socket = socket;
       _connectedUserId = targetUid;
       _bindStoredSocketHandlers(socket);
-      for (final boardId in _watchedBoardRefCounts.keys) {
+      for (final boardId in _watchedBoardRefCounts.keys.toList()) {
         if ((_watchedBoardRefCounts[boardId] ?? 0) > 0) {
           _watchBoard(boardId);
         }
@@ -235,10 +235,10 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   void _bindStoredSocketHandlers(io.Socket socket) {
     if (identical(_handlersBoundSocket, socket)) return;
     _handlersBoundSocket = socket;
-    for (final handler in _updateHandlers.values) {
+    for (final handler in _updateHandlers.values.toList()) {
       socket.on('crdt_update', handler);
     }
-    for (final handler in _previewHandlers.values) {
+    for (final handler in _previewHandlers.values.toList()) {
       socket.on('crdt_preview', handler);
     }
     socket.off('peer_crdt_updates_requested');
@@ -896,7 +896,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       (_) async {
         final socket = _socket;
         if (socket == null || !socket.connected) return;
-        for (final boardId in _watchedBoardRefCounts.keys) {
+        final boardIds = _watchedBoardRefCounts.keys.toList();
+        for (final boardId in boardIds) {
+          if ((_watchedBoardRefCounts[boardId] ?? 0) <= 0) continue;
           final currentHighest = _highestAppliedVersionPerBoard[boardId] ?? 0;
           if (currentHighest <= 0) continue;
           try {
