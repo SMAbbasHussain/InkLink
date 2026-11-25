@@ -82,7 +82,10 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
-  build_runner: ^2.16.2
+  # build_runner 2.16+ needs analyzer >=13.3, which needs meta ^1.18.3;
+  # Flutter 3.44.0 (the CI version) pins meta 1.18.0. Revisit this bound when
+  # the CI Flutter version is upgraded.
+  build_runner: ">=2.15.1 <2.16.0"
   isar_community_generator: 3.4.1
   flutter_launcher_icons: ^0.14.1
   flutter_native_splash: ^2.4.1
