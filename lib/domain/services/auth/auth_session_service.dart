@@ -48,20 +48,14 @@ class AuthSessionServiceImpl implements AuthSessionService {
   StreamSubscription<String>? _tokenRefreshSub;
 
   AuthSessionServiceImpl({
-    required AuthRepository authRepository,
-    required AuthService authService,
-    required MessagingService messagingService,
-    required LocalDatabaseService localDatabaseService,
-    required PresenceService presenceService,
-    required CanvasSyncRepository canvasSyncRepository,
-    CloudFunctionsService? cloudFunctionsService,
-  }) : _authRepository = authRepository,
-       _authService = authService,
-       _messagingService = messagingService,
-       _localDatabaseService = localDatabaseService,
-       _presenceService = presenceService,
-       _canvasSyncRepository = canvasSyncRepository,
-       _cloudFunctionsService = cloudFunctionsService;
+    required this._authRepository,
+    required this._authService,
+    required this._messagingService,
+    required this._localDatabaseService,
+    required this._presenceService,
+    required this._canvasSyncRepository,
+    this._cloudFunctionsService,
+  });
 
   @override
   Stream<User?> get user => _authRepository.user;

@@ -110,13 +110,10 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
   final Set<String> _inFlightAccessRequestIds = <String>{};
 
   NotificationsBloc({
-    required NotificationService notificationService,
-    required NotificationPreferences notificationPreferences,
-    BoardService? boardService,
-  }) : _notificationService = notificationService,
-       _notificationPreferences = notificationPreferences,
-       _boardService = boardService,
-       super(const NotificationsInitial()) {
+    required this._notificationService,
+    required this._notificationPreferences,
+    this._boardService,
+  }) : super(const NotificationsInitial()) {
     on<NotificationsLoadRequested>(_onLoadRequested);
     on<_NotificationsUpdated>(_onNotificationsUpdated);
     on<_NotificationsErrorOccurred>(_onErrorOccurred);

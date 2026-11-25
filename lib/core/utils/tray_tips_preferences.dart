@@ -3,7 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class TrayTipsPreferences {
   final SharedPreferences _prefs;
 
-  TrayTipsPreferences({required SharedPreferences prefs}) : _prefs = prefs;
+  TrayTipsPreferences({required this._prefs});
 
   /// Convenience static accessor for legacy callers without DI.
   /// Prefer constructor injection in new code.

@@ -127,10 +127,9 @@ class BoardServiceImpl implements BoardService {
   final CloudFunctionsService _cloudFunctionsService;
 
   BoardServiceImpl({
-    required BoardRepository boardRepository,
-    required CloudFunctionsService cloudFunctionsService,
-  }) : _boardRepository = boardRepository,
-       _cloudFunctionsService = cloudFunctionsService;
+    required this._boardRepository,
+    required this._cloudFunctionsService,
+  });
 
   @override
   Future<void> startBoardsSync() => _boardRepository.startBoardsSync();

@@ -2,7 +2,9 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const Redis = require('ioredis');
-const admin = require('firebase-admin');
+const { initializeApp, applicationDefault, cert, getApps } = require('firebase-admin/app');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+const { getAuth } = require('firebase-admin/auth');
 const cors = require('cors');
 const Y = require('yjs');
 const crypto = require('crypto');
@@ -344,13 +346,13 @@ redis.on('error', (error) => {
 // ============================================================
 try {
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    admin.initializeApp({
-      credential: admin.credential.applicationDefault(),
+    initializeApp({
+      credential: applicationDefault(),
     });
   } else {
     const serviceAccount = loadFirebaseServiceAccount();
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+    initializeApp({
+      credential: cert(serviceAccount),
     });
   }
 } catch (error) {
@@ -359,7 +361,7 @@ try {
   );
 }
 
-const db = admin.firestore?.() || null;
+const db = getFirestore() || null;
 
 // ============================================================
 // REDIS SUBSCRIBER — Real-time Room Eviction
@@ -853,11 +855,11 @@ function sanitizeAgoraUid(uid) {
 async function authenticateFirebaseRequest(req) {
   const header = req.headers.authorization || '';
   if (!header.startsWith('Bearer ')) return null;
-  if (!db || !admin.apps || !admin.apps.length) return null;
+  if (!db || !getApps().length) return null;
 
   const idToken = header.slice('Bearer '.length).trim();
   try {
-    return await admin.auth().verifyIdToken(idToken, true);
+    return await getAuth().verifyIdToken(idToken, true);
   } catch (error) {
     // Same transient fallback as the socket middleware: only when the
     // verification backend itself is unavailable, verify without the
@@ -871,7 +873,7 @@ async function authenticateFirebaseRequest(req) {
     if (!transient) return null;
     console.warn('[agora] Revocation check unavailable, verifying without it:', error.message);
     try {
-      return await admin.auth().verifyIdToken(idToken);
+      return await getAuth().verifyIdToken(idToken);
     } catch (_) {
       return null;
     }
@@ -1415,7 +1417,7 @@ async function runSnapshot(boardId) {
     stateVector,
     elementCount,
     snapshotVersion: lastSnapshotVersion + 1,
-    lastSnapshotAt: admin.firestore.FieldValue.serverTimestamp(),
+    lastSnapshotAt: FieldValue.serverTimestamp(),
     updatedBy: '__snapshot_worker__',
   });
   batch.set(indexRef, {
@@ -1426,7 +1428,7 @@ async function runSnapshot(boardId) {
     operationCount: rawOps.length,
     firstOpAt: rawOps.length ? rawOps[0].timestamp : null,
     lastOpAt: rawOps.length ? rawOps[rawOps.length - 1].timestamp : null,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
     contributorUids,
     summary,
     ...(summaryTruncated ? { summaryTruncated: true } : {}),
@@ -1652,7 +1654,7 @@ io.use(async (socket, next) => {
     const { token } = socket.handshake.auth;
     if (!token) return next(new Error('Authentication error: Token missing'));
 
-    if (!db || !admin.apps || !admin.apps.length) {
+    if (!db || !getApps().length) {
       if (process.env.NODE_ENV === 'development' && process.env.ALLOW_DEV_AUTH === 'true') {
         socket.data.uid = socket.handshake.auth.uid || "test-user";
         return next();
@@ -1662,7 +1664,7 @@ io.use(async (socket, next) => {
 
     let decodedToken;
     try {
-      decodedToken = await admin.auth().verifyIdToken(token, true);
+      decodedToken = await getAuth().verifyIdToken(token, true);
     } catch (error) {
       // Fall back to a non-revocation check only when the verification
       // backend itself is unavailable (transient errors) — genuine
@@ -1675,7 +1677,7 @@ io.use(async (socket, next) => {
       );
       if (!transient) throw error;
       console.warn('[Socket.IO auth] Revocation check unavailable, verifying without it:', error.message);
-      decodedToken = await admin.auth().verifyIdToken(token);
+      decodedToken = await getAuth().verifyIdToken(token);
     }
     socket.data.uid = decodedToken.uid;
     next();

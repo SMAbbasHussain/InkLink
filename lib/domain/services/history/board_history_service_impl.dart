@@ -98,16 +98,12 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
   bool _disposed = false;
 
   BoardHistoryServiceImpl({
-    required AuthService authService,
-    CloudFunctionsService? cloudFunctionsService,
-    BoardHistoryRepository? historyRepository,
+    required this._authService,
+    this._cloudFunctionsService,
+    this._historyRepository,
     BoardHistorySocketFactory? socketFactory,
-    Duration connectTimeout = const Duration(seconds: 5),
-  }) : _authService = authService,
-       _cloudFunctionsService = cloudFunctionsService,
-       _historyRepository = historyRepository,
-       _connectTimeout = connectTimeout,
-       _socketFactory = socketFactory ?? _defaultSocketFactory;
+    this._connectTimeout = const Duration(seconds: 5),
+  }) : _socketFactory = socketFactory ?? _defaultSocketFactory;
 
   static BoardHistorySocket _defaultSocketFactory(String token) {
     final socket = io.io(

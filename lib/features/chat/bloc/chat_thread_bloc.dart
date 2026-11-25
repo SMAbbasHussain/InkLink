@@ -22,15 +22,11 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
   StreamSubscription<Map<String, dynamic>?>? _profileSub;
 
   ChatThreadBloc({
-    required ChatService chatService,
-    required String currentUid,
-    PresenceService? presenceService,
-    ProfileService? profileService,
-  })  : _chatService = chatService,
-        _presenceService = presenceService,
-        _profileService = profileService,
-        _currentUid = currentUid,
-        super(const ChatThreadInitial()) {
+    required this._chatService,
+    required this._currentUid,
+    this._presenceService,
+    this._profileService,
+  })  : super(const ChatThreadInitial()) {
     on<LoadChatThread>(_onLoadChatThread);
     on<MessagesUpdated>(_onMessagesUpdated);
     on<PartnerPresenceUpdated>(_onPartnerPresenceUpdated);

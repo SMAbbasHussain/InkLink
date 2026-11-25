@@ -124,9 +124,8 @@ class BoardInvitationsBloc
       <String, _OptimisticInvite>{};
   bool _isOffline = false;
 
-  BoardInvitationsBloc({required InvitationService invitationService})
-    : _invitationService = invitationService,
-      super(const BoardInvitationsInitial()) {
+  BoardInvitationsBloc({required this._invitationService})
+    : super(const BoardInvitationsInitial()) {
     on<BoardInvitationsLoadRequested>(_onLoadRequested);
     on<_BoardInvitationsUpdated>(_onUpdated);
     on<_BoardInvitationsStreamFailed>(_onStreamFailed);

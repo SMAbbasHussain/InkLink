@@ -40,10 +40,9 @@ class _FakeDocumentSnapshot extends Fake
   _FakeDocumentSnapshot({
     required this.id,
     required this.exists,
-    Map<String, dynamic>? data,
+    this._data,
     bool isFromCache = false,
-  }) : _data = data,
-       metadata = _FakeSnapshotMetadata(isFromCache: isFromCache);
+  }) : metadata = _FakeSnapshotMetadata(isFromCache: isFromCache);
 
   @override
   Map<String, dynamic>? data() => _data;

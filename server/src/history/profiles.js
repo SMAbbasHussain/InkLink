@@ -2,7 +2,7 @@
 // Cached uid -> { displayName, photoURL } resolver. Attribution is always
 // stamped server-side (D9), so the archive worker needs the human-readable
 // name without adding a Firestore read per stroke.
-const admin = require('firebase-admin');
+const { getFirestore } = require('firebase-admin/firestore');
 
 const cache = new Map(); // uid -> { displayName, photoURL, expiresAt }
 const TTL_MS = 10 * 60 * 1000;
@@ -15,7 +15,7 @@ async function getProfile(uid) {
   let displayName = 'InkLink User';
   let photoURL = null;
   try {
-    const db = admin.firestore();
+    const db = getFirestore();
     const snap = await db.collection('users').doc(uid).get();
     if (snap.exists) {
       const d = snap.data() || {};

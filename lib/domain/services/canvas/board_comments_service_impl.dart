@@ -16,12 +16,10 @@ class BoardCommentsServiceImpl implements BoardCommentsService {
   final Uuid _uuid = const Uuid();
 
   BoardCommentsServiceImpl({
-    required BoardCommentsRepository repository,
-    required AuthService authService,
-    CloudFunctionsService? cloudFunctionsService,
-  })  : _repository = repository,
-        _authService = authService,
-        _cloudFunctionsService = cloudFunctionsService;
+    required this._repository,
+    required this._authService,
+    this._cloudFunctionsService,
+  });
 
   @override
   Stream<List<CanvasComment>> watchComments(String boardId) {

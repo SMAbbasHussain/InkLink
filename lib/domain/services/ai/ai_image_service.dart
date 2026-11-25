@@ -66,10 +66,9 @@ class AiImageServiceImpl implements AiImageService {
   final Map<String, Future<Uint8List>> _inFlightDownloads = {};
 
   AiImageServiceImpl({
-    required CloudFunctionsService cloudFunctionsService,
+    required this._cloudFunctionsService,
     http.Client? httpClient,
-  }) : _cloudFunctionsService = cloudFunctionsService,
-       _httpClient = httpClient ?? http.Client();
+  }) : _httpClient = httpClient ?? http.Client();
 
   @override
   Future<AiImageResult> generateImage({

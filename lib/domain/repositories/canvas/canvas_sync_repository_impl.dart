@@ -48,10 +48,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   StreamController<List<LocalCrdtUpdate>>? _socketPreviewController;
 
   FirestoreCanvasSyncRepository({
-    required AuthService authService,
-    required LocalDatabaseService localDatabaseService,
-  }) : _authService = authService,
-       _localDatabaseService = localDatabaseService;
+    required this._authService,
+    required this._localDatabaseService,
+  });
 
   @override
   void setBoardSingleUserStatus(bool isSingleUser) {

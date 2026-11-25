@@ -301,9 +301,8 @@ class WorkspaceBloc extends Bloc<WorkspaceEvent, WorkspaceState> {
       <String, ({WorkspaceInvite? invite, int index})>{};
   final Set<String> _inFlightInviteSendKeys = <String>{};
 
-  WorkspaceBloc({WorkspaceService? workspaceService})
-    : _workspaceService = workspaceService,
-      super(WorkspaceInitial()) {
+  WorkspaceBloc({this._workspaceService})
+    : super(WorkspaceInitial()) {
     on<LoadWorkspacesRequested>(_onLoadWorkspacesRequested);
     on<LoadWorkspaceBoardsRequested>(_onLoadWorkspaceBoardsRequested);
     on<RefreshWorkspacePreviewsRequested>(_onRefreshWorkspacePreviewsRequested);

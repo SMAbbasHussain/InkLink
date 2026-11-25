@@ -9,10 +9,9 @@ class BoardHistoryRepositoryImpl implements BoardHistoryRepository {
   final AuthService _authService;
 
   BoardHistoryRepositoryImpl({
-    required FirestoreService firestoreService,
-    required AuthService authService,
-  }) : _firestoreService = firestoreService,
-       _authService = authService;
+    required this._firestoreService,
+    required this._authService,
+  });
 
   @override
   Stream<List<BoardActivityBlock>> watchActivityFeed(

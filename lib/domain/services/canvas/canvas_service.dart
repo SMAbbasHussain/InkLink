@@ -55,10 +55,9 @@ class CanvasServiceImpl implements CanvasService {
   final Map<String, Future<void>> _hydrationInFlight = {};
 
   CanvasServiceImpl({
-    required BoardRepository boardRepository,
-    required CanvasSyncRepository syncRepository,
-  }) : _boardRepository = boardRepository,
-       _syncRepository = syncRepository;
+    required this._boardRepository,
+    required this._syncRepository,
+  });
 
   @override
   bool get canSync => _syncRepository.currentUserId != null;

@@ -19,12 +19,10 @@ class FriendsRepositoryImpl implements FriendsRepository {
   final LocalDatabaseService _localDatabaseService;
 
   FriendsRepositoryImpl({
-    required FirestoreService firestoreService,
-    required AuthService authService,
-    required LocalDatabaseService localDatabaseService,
-  }) : _firestoreService = firestoreService,
-       _authService = authService,
-       _localDatabaseService = localDatabaseService;
+    required this._firestoreService,
+    required this._authService,
+    required this._localDatabaseService,
+  });
 
   String get _currentUid => _authService.getCurrentUserId()!;
 

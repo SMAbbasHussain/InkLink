@@ -99,8 +99,8 @@ Enforced locally and in CI via `tool/architecture_guardrails.dart`:
 ## Local Development & Setup
 
 ### Prerequisites
-- **Flutter SDK:** Stable channel (3.35+ / Dart 3.9.2+, matching `sdk: ^3.9.2` in `pubspec.yaml`)
-- **Node.js:** v20+ or v22 LTS
+- **Flutter SDK:** Stable channel (3.44+ / Dart 3.12+, matching `sdk: ^3.12.0` in `pubspec.yaml`)
+- **Node.js:** v22 LTS (required by `firebase-admin` 14)
 - **Redis Server:** Running locally (`redis://127.0.0.1:6379`) or a provisioned cloud instance
 - **Firebase CLI:** Installed and authenticated (`firebase login`)
 - **Agora Console Account:** App ID, App Certificate, and Chat REST credentials

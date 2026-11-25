@@ -5,8 +5,7 @@ import 'presence_repository.dart';
 class FirebasePresenceRepository implements PresenceRepository {
   final FirebaseDatabase _database;
 
-  FirebasePresenceRepository({required FirebaseDatabase database})
-    : _database = database;
+  FirebasePresenceRepository({required this._database});
 
   @override
   Stream<bool> watchConnectionStatus() {

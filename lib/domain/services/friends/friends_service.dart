@@ -46,12 +46,10 @@ class FriendsServiceImpl implements FriendsService {
   final CloudFunctionsService _cloudFunctionsService;
 
   FriendsServiceImpl({
-    required FriendsRepository friendsRepository,
-    required AuthService authService,
-    required CloudFunctionsService cloudFunctionsService,
-  }) : _friendsRepository = friendsRepository,
-       _authService = authService,
-       _cloudFunctionsService = cloudFunctionsService;
+    required this._friendsRepository,
+    required this._authService,
+    required this._cloudFunctionsService,
+  });
 
   List<Map<String, dynamic>> _excludeSelfFriends(
     List<Map<String, dynamic>> friends,

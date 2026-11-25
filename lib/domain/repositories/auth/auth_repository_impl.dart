@@ -18,12 +18,10 @@ class FirebaseAuthRepository implements AuthRepository {
   bool _googleInitialized = false;
 
   FirebaseAuthRepository({
-    required AuthService authService,
-    required FirestoreService firestoreService,
-    required FirebaseDatabase database,
-  }) : _authService = authService,
-       _firestoreService = firestoreService,
-       _database = database;
+    required this._authService,
+    required this._firestoreService,
+    required this._database,
+  });
 
   Future<void> _ensureGoogleInitialized() async {
     if (_googleInitialized) return;

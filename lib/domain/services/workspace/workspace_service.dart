@@ -78,10 +78,9 @@ class WorkspaceServiceImpl implements WorkspaceService {
   final CloudFunctionsService _cloudFunctionsService;
 
   WorkspaceServiceImpl({
-    required WorkspaceRepository repository,
-    required CloudFunctionsService cloudFunctionsService,
-  }) : _repository = repository,
-       _cloudFunctionsService = cloudFunctionsService;
+    required this._repository,
+    required this._cloudFunctionsService,
+  });
 
   @override
   Future<void> startWorkspacSync() => _repository.startWorkspaceSync();

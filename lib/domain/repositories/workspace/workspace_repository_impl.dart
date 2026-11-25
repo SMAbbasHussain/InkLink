@@ -35,11 +35,9 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
 
   FirestoreWorkspaceRepository({
     required FirestoreService firestoreService,
-    required AuthService authService,
-    required LocalDatabaseService localDatabaseService,
-  }) : _firestoreService = firestoreService,
-       _authService = authService,
-       _localDatabaseService = localDatabaseService {
+    required this._authService,
+    required this._localDatabaseService,
+  }) : _firestoreService = firestoreService {
     _batchFetcher = FirestoreBatchFetcher(firestoreService: firestoreService);
   }
 

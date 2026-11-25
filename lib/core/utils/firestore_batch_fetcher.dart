@@ -19,8 +19,7 @@ class BatchFetchResult {
 class FirestoreBatchFetcher {
   final FirestoreService _firestoreService;
 
-  FirestoreBatchFetcher({required FirestoreService firestoreService})
-    : _firestoreService = firestoreService;
+  FirestoreBatchFetcher({required this._firestoreService});
 
   /// Kept at 10 (rather than Firestore's 30-element `whereIn` syntax limit) so
   /// security rules that perform a `get()` per candidate document (e.g.

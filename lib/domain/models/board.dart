@@ -48,16 +48,13 @@ class Board {
     this.whoCanInvite = inviteOwnerOnly,
     this.defaultLinkJoinRole = roleViewer,
     this.currentUserRole = roleViewer,
-    bool isArchived = false,
-    bool isPaused = false,
-    bool allowMembersToCopy = false,
+    bool this._isArchived = false,
+    bool this._isPaused = false,
+    bool this._allowMembersToCopy = false,
     int? membersCount,
     required this.createdAt,
     required this.updatedAt,
-  }) : _isArchived = isArchived,
-       _isPaused = isPaused,
-       _allowMembersToCopy = allowMembersToCopy,
-       membersCount = membersCount ?? members.length;
+  }) : membersCount = membersCount ?? members.length;
 
   factory Board.fromMap(Map<String, dynamic> map, String id) {
     final invitePolicy = map['invitePolicy'] as Map<String, dynamic>?;

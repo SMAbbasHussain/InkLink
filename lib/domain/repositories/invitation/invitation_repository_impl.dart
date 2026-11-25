@@ -18,12 +18,10 @@ class InvitationRepositoryImpl implements InvitationRepository {
   final LocalDatabaseService _localDatabaseService;
 
   InvitationRepositoryImpl({
-    required FirestoreService firestoreService,
-    required AuthService authService,
-    required LocalDatabaseService localDatabaseService,
-  }) : _firestoreService = firestoreService,
-       _authService = authService,
-       _localDatabaseService = localDatabaseService;
+    required this._firestoreService,
+    required this._authService,
+    required this._localDatabaseService,
+  });
 
   @override
   Stream<List<Map<String, dynamic>>> watchPendingInvites() {

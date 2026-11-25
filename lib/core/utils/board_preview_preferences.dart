@@ -3,7 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class BoardPreviewPreferences {
   final SharedPreferences _prefs;
 
-  BoardPreviewPreferences({required SharedPreferences prefs}) : _prefs = prefs;
+  BoardPreviewPreferences({required this._prefs});
 
   static const String _previewQualityKey = 'board_preview_quality';
   static const String _previewCompressionEnabledKey =

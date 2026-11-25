@@ -3,7 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class NotificationPreferences {
   final SharedPreferences _prefs;
 
-  NotificationPreferences({required SharedPreferences prefs}) : _prefs = prefs;
+  NotificationPreferences({required this._prefs});
 
   static const String _readNotificationIdsKey = 'read_notification_ids';
   static const String _pushNotificationsKey = 'push_notifications_enabled';

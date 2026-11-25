@@ -149,26 +149,19 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   final BoardExportService _boardExportService;
 
   CanvasBloc({
-    CanvasService? canvasService,
-    BoardService? boardService,
+    this._canvasService,
+    this._boardService,
     BoardExportService? boardExportService,
-    BoardCommentsService? boardCommentsService,
-    BoardChatService? boardChatService,
-    VoiceService? voiceService,
+    this._boardCommentsService,
+    this._boardChatService,
+    this._voiceService,
     CanvasDocAdapter? crdtAdapter,
-    BoardHistoryService? historyService,
+    this._historyService,
     String currentUserId = '',
-    String boardId = '',
-  }) : _canvasService = canvasService,
-       _boardService = boardService,
-       _boardExportService =
+    this._boardId = '',
+  }) : _boardExportService =
            boardExportService ?? const BoardExportServiceImpl(),
-       _boardCommentsService = boardCommentsService,
-       _boardChatService = boardChatService,
-       _voiceService = voiceService,
        _crdtAdapter = crdtAdapter,
-       _historyService = historyService,
-       _boardId = boardId,
        super(CanvasInitial(currentUserId: currentUserId)) {
     if (crdtAdapter != null) {
       for (final entry in crdtAdapter.materializeElements().entries) {

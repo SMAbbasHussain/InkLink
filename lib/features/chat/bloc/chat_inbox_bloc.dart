@@ -14,11 +14,9 @@ class ChatInboxBloc extends Bloc<ChatInboxEvent, ChatInboxState> {
   StreamSubscription<List<ChatConversationModel>>? _sub;
 
   ChatInboxBloc({
-    required ChatService chatService,
-    ProfileService? profileService,
-  })  : _chatService = chatService,
-        _profileService = profileService,
-        super(const ChatInboxInitial()) {
+    required this._chatService,
+    this._profileService,
+  })  : super(const ChatInboxInitial()) {
     on<LoadChatInbox>(_onLoadChatInbox);
     on<ConversationsUpdated>(_onConversationsUpdated);
     on<SearchConversations>(_onSearchConversations);

@@ -4,7 +4,7 @@
 // Redis stream tail. Re-applying a CRDT update is idempotent, so overlapping
 // block/stream ranges are safe (do NOT add dedup that could drop an op).
 const Y = require('yjs');
-const admin = require('firebase-admin');
+const { getFirestore } = require('firebase-admin/firestore');
 const r2 = require('./r2');
 
 function parseStreamFields(fields) {
@@ -35,7 +35,7 @@ function applyBase64(doc, payloadBase64) {
 
 // Fast path used for "current state": snapshot/latest + the stream tail.
 async function reconstructCurrentFromSnapshot(boardId, redis) {
-  const db = admin.firestore();
+  const db = getFirestore();
   let snapshotVersion = 0;
   let found = false;
   try {
@@ -78,7 +78,7 @@ async function reconstruct(boardId, targetVersion, redis) {
     if (fast) return fast;
   }
 
-  const db = admin.firestore();
+  const db = getFirestore();
   const doc = new Y.Doc();
 
   // 1. Choose base: latest milestone <= targetVersion, else empty.
@@ -150,7 +150,7 @@ async function reconstruct(boardId, targetVersion, redis) {
 // skipped, mirroring reconstruct's tolerance; a version seen in both a block
 // and the stream is applied once (first record wins).
 async function loadOpsInRange(boardId, fromVersion, toVersion, redis) {
-  const db = admin.firestore();
+  const db = getFirestore();
   const byVersion = new Map();
 
   let blocks = [];

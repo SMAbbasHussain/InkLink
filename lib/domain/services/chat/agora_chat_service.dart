@@ -591,21 +591,16 @@ class AgoraChatServiceImpl implements ChatService {
   }
 
   AgoraChatServiceImpl({
-    required ChatRepository chatRepository,
-    required AuthService authService,
-    PresenceService? presenceService,
-    Future<String?> Function()? pushTokenProvider,
+    required this._chatRepository,
+    required this._authService,
+    this._presenceService,
+    this._pushTokenProvider,
     http.Client? httpClient,
     AgoraChatSdkGateway? sdkGateway,
-    String Function()? serverBaseUrlProvider,
-  })  : _chatRepository = chatRepository,
-        _authService = authService,
-        _presenceService = presenceService,
-        _pushTokenProvider = pushTokenProvider,
-        _http = httpClient ?? http.Client(),
+    this._serverBaseUrlProvider,
+  })  : _http = httpClient ?? http.Client(),
         _ownsHttpClient = httpClient == null,
-        _sdk = sdkGateway ?? const LiveAgoraChatSdkGateway(),
-        _serverBaseUrlProvider = serverBaseUrlProvider;
+        _sdk = sdkGateway ?? const LiveAgoraChatSdkGateway();
 
   String _sanitizeAgoraUid(String uid) {
     // Agora Chat usernames accept [a-zA-Z0-9_-]+. Mirrored by the server

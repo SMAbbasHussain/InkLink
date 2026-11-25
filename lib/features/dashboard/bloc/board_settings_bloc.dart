@@ -147,11 +147,9 @@ class BoardSettingsBloc extends Bloc<BoardSettingsEvent, BoardSettingsState> {
   StreamSubscription<List<Map<String, dynamic>>>? _friendsSub;
 
   BoardSettingsBloc({
-    required BoardService boardService,
-    FriendsService? friendsService,
-  }) : _boardService = boardService,
-       _friendsService = friendsService,
-       super(const BoardSettingsState()) {
+    required this._boardService,
+    this._friendsService,
+  }) : super(const BoardSettingsState()) {
     on<BoardSettingsStarted>(_onStarted);
     on<_BoardMembersUpdated>(_onMembersUpdated);
     on<_BoardUpdated>(_onBoardUpdated);

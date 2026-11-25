@@ -16,10 +16,9 @@ class SettingsRepositoryImpl implements SettingsRepository {
   final NotificationPreferences _notificationPreferences;
 
   SettingsRepositoryImpl({
-    required LocalDatabaseService localDatabaseService,
+    required this._localDatabaseService,
     required SharedPreferences sharedPreferences,
-  }) : _localDatabaseService = localDatabaseService,
-       _trayTipsPreferences = TrayTipsPreferences(prefs: sharedPreferences),
+  }) : _trayTipsPreferences = TrayTipsPreferences(prefs: sharedPreferences),
        _boardPreviewPreferences = BoardPreviewPreferences(prefs: sharedPreferences),
        _canvasToolbarPreferences = CanvasToolbarPreferences(prefs: sharedPreferences),
        _notificationPreferences = NotificationPreferences(prefs: sharedPreferences);

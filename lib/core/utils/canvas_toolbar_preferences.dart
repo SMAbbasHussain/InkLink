@@ -6,7 +6,7 @@ import '../../domain/models/canvas/canvas_toolbar_action.dart';
 class CanvasToolbarPreferences {
   final SharedPreferences _prefs;
 
-  CanvasToolbarPreferences({required SharedPreferences prefs}) : _prefs = prefs;
+  CanvasToolbarPreferences({required this._prefs});
 
   static const String _bottomBarActionsKey = 'canvas_bottom_bar_actions';
 

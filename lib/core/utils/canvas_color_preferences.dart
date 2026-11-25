@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Stores the colours recently chosen for the canvas brush and the user's
 /// saved artist palettes so both survive restarts.
 class CanvasColorPreferences {
-  CanvasColorPreferences({required SharedPreferences prefs}) : _prefs = prefs;
+  CanvasColorPreferences({required this._prefs});
 
   final SharedPreferences _prefs;
 

@@ -85,12 +85,10 @@ class BoardChatServiceImpl implements BoardChatService {
   bool _disposed = false;
 
   BoardChatServiceImpl({
-    required AuthService authService,
+    required this._authService,
     BoardChatSocketFactory? socketFactory,
-    Duration connectTimeout = const Duration(seconds: 5),
-  })  : _authService = authService,
-        _connectTimeout = connectTimeout,
-        _socketFactory = socketFactory ?? _defaultSocketFactory;
+    this._connectTimeout = const Duration(seconds: 5),
+  })  : _socketFactory = socketFactory ?? _defaultSocketFactory;
 
   static BoardChatSocket _defaultSocketFactory(String token) {
     final socket = io.io(

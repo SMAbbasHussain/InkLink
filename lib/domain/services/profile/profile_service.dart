@@ -65,14 +65,11 @@ class ProfileServiceImpl implements ProfileService {
   final FriendsRepository _friendsRepository;
 
   ProfileServiceImpl({
-    required ProfileRepository profileRepository,
-    required AuthService authService,
-    required CloudFunctionsService cloudFunctionsService,
-    required FriendsRepository friendsRepository,
-  }) : _profileRepository = profileRepository,
-       _authService = authService,
-       _cloudFunctionsService = cloudFunctionsService,
-       _friendsRepository = friendsRepository;
+    required this._profileRepository,
+    required this._authService,
+    required this._cloudFunctionsService,
+    required this._friendsRepository,
+  });
 
   @override
   Future<ProfileViewData> loadProfile(String userId) async {

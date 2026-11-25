@@ -40,10 +40,9 @@ class VoiceServiceImpl implements VoiceService {
   bool _disposed = false;
 
   VoiceServiceImpl({
-    required AuthService authService,
+    required this._authService,
     RtcMediaClient? rtcMediaClient,
-  }) : _authService = authService,
-       _rtcMediaClient = rtcMediaClient ?? DefaultRtcMediaClient() {
+  }) : _rtcMediaClient = rtcMediaClient ?? DefaultRtcMediaClient() {
     // Drive local speaking state from the RTC engine's volume indication.
     // The server broadcasts `voice_speaking_changed` to the whole voice room
     // (including the sender), but the socket handler below only refreshes the

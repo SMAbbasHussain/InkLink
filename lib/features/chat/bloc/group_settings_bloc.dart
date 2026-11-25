@@ -9,11 +9,9 @@ class GroupSettingsBloc extends Bloc<GroupSettingsEvent, GroupSettingsState> {
   final String _currentUid;
 
   GroupSettingsBloc({
-    required ChatService chatService,
-    required String currentUid,
-  })  : _chatService = chatService,
-        _currentUid = currentUid,
-        super(const GroupSettingsInitial()) {
+    required this._chatService,
+    required this._currentUid,
+  })  : super(const GroupSettingsInitial()) {
     on<LoadGroupSettings>(_onLoadGroupSettings);
     on<UpdateGroupDetailsRequested>(_onUpdateGroupDetails);
     on<AddGroupMembersRequested>(_onAddGroupMembers);
