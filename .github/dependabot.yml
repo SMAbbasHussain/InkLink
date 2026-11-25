@@ -1,0 +1,152 @@
+# Dependabot configuration for InkLink.
+#
+# Ecosystems covered:
+#   - pub            : Flutter app (root) and the vendored yjs_dart package
+#   - npm            : Node backend (`server/`) and Firebase Functions (`functions/`)
+#   - github-actions : workflow action versions in `.github/workflows/`
+#
+# Notes:
+#   - Dependabot security updates are enabled in the repository settings
+#     (Settings -> Code security -> Dependabot alerts / security updates).
+#     This file controls version updates; security PRs also respect the
+#     grouping and ignore rules below.
+#   - `pubspec.lock` and both `package-lock.json` files are committed, so
+#     Dependabot can resolve exact versions.
+#   - Adjust the schedule timezone if you want PRs to land in your working day.
+
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------------
+  # Flutter app (root pubspec.yaml)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "pub"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+    groups:
+      # One PR for all routine Dart/Flutter package bumps; majors stay separate.
+      dart-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ---------------------------------------------------------------------------
+  # Vendored pure-Dart Yjs port (packages/yjs_dart)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "pub"
+    directory: "/packages/yjs_dart"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(yjs_dart)"
+    labels:
+      - "dependencies"
+    groups:
+      yjs-dart-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ---------------------------------------------------------------------------
+  # Node backend (server/)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/server"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(server)"
+    labels:
+      - "dependencies"
+    groups:
+      # The AWS SDK publishes frequently; keep those bumps together.
+      server-aws-sdk:
+        patterns:
+          - "@aws-sdk/*"
+      server-minor-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@aws-sdk/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ---------------------------------------------------------------------------
+  # Firebase Functions (functions/)
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/functions"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(functions)"
+    labels:
+      - "dependencies"
+    groups:
+      # Firebase packages are versioned in lockstep; upgrade them together.
+      functions-firebase:
+        patterns:
+          - "firebase-admin"
+          - "firebase-functions"
+          - "firebase-functions-test"
+      functions-aws-sdk:
+        patterns:
+          - "@aws-sdk/*"
+      functions-minor-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "firebase-admin"
+          - "firebase-functions"
+          - "firebase-functions-test"
+          - "@aws-sdk/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ---------------------------------------------------------------------------
+  # GitHub Actions used by .github/workflows/*
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - "dependencies"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
