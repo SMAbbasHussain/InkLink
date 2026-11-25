@@ -5,15 +5,10 @@ class FirestorePaths {
   // Collections
   static const String users = 'users';
   static const String boards = 'boards';
-  static const String boardInvites = 'board_invites';
-  static const String friendRequests = 'friend_requests';
   static const String workspaces = 'workspaces';
   static const String workspaceInvites = 'workspace_invites';
 
   // User subcollections
-  static const String friendsSubcollection = 'friends';
-  static const String notificationsSubcollection = 'notifications';
-  static const String boardMembersSubcollection = 'members';
   static const String workspaceMembersSubcollection = 'members';
   static const String workspaceBoardsSubcollection = 'boards';
 

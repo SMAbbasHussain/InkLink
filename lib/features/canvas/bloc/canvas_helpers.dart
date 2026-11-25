@@ -198,17 +198,6 @@ void _applyPendingShapeEdits(
   }
 }
 
-/// Measures the on-canvas bounds of [text] using the same layout the painter
-/// and the text tool use, so persisted bounds match the render.
-Size measureTextElementBounds(String text) {
-  final layout = CanvasTextLayout.layout(text: text);
-  try {
-    return layout.size;
-  } finally {
-    layout.dispose();
-  }
-}
-
 /// Eraser bounds delegate to the shared geometry so erasing, selection and
 /// painting agree about where an element is.
 Rect? _elementBounds(CanvasElement element) => elementBounds(element);

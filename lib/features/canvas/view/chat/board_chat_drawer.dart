@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../../../core/services/auth_service.dart';
+import '../../../../core/utils/time_format.dart';
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_tokens.dart';
 import '../../../../ui/theme/ink_type.dart';
@@ -243,13 +244,6 @@ class _ChatMessageBubble extends StatelessWidget {
     required this.tokens,
   });
 
-  String _formatTime(int ms) {
-    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
-    final hour = dt.hour.toString().padLeft(2, '0');
-    final minute = dt.minute.toString().padLeft(2, '0');
-    return '$hour:$minute';
-  }
-
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -290,7 +284,7 @@ class _ChatMessageBubble extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 2, left: 4, right: 4),
             child: Text(
-              _formatTime(message.timestamp),
+              formatClockTimeFromMillis(message.timestamp),
               style: InkType.caption(tokens.inkMuted).copyWith(fontSize: 10),
             ),
           ),

@@ -19,6 +19,7 @@ import '../../../core/services/firestore_service.dart';
 import '../../../core/utils/firestore_batch_fetcher.dart';
 import '../../models/board.dart';
 import 'board_repository.dart';
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 class FirestoreBoardRepository implements BoardRepository {
   final FirestoreService _firestoreService;
@@ -84,7 +85,7 @@ class FirestoreBoardRepository implements BoardRepository {
           .get();
       if (userDoc.exists) {
         final data = userDoc.data() ?? const <String, dynamic>{};
-        final count = _toInt(data['boardCount']);
+        final count = parseIntValue(data['boardCount']);
         if (count >= 0) {
           return count;
         }
@@ -739,7 +740,7 @@ class FirestoreBoardRepository implements BoardRepository {
           .collection('users')
           .doc(uid)
           .get();
-      final count = _toInt(userDoc.data()?['boardCount']);
+      final count = parseIntValue(userDoc.data()?['boardCount']);
       if (count <= 0) return null;
 
       final snapshot = await _firestoreService
@@ -1570,13 +1571,6 @@ class FirestoreBoardRepository implements BoardRepository {
           .watch(fireImmediately: true)
           .map((boards) => boards.isEmpty ? null : boards.first.previewPath);
     });
-  }
-
-  int _toInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 0;
-    return 0;
   }
 
   Future<String> _resolveCurrentUserRole({

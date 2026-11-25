@@ -632,168 +632,47 @@ class BoardExportServiceImpl implements BoardExportService {
     Map<String, CanvasElement> elementMap,
     Map<String, ui.Image> decodedImages,
   ) {
-    switch (element) {
-      case StrokeElement stroke:
-        _paintStroke(canvas, stroke);
-        break;
-      case ShapeElement shape:
-        _paintShape(canvas, shape);
-        break;
-      case TextElement text:
-        _paintText(canvas, text);
-        break;
-      case StickyNoteElement sticky:
-        _paintStickyNote(canvas, sticky);
-        break;
-      case ConnectorElement connector:
-        _paintConnector(canvas, connector, elementMap);
-        break;
-      case ImageElement image:
-        _paintImage(canvas, image, decodedImages[image.id]);
-        break;
-      case FrameElement frame:
-        paintFrameElement(canvas, frame);
-        break;
-      case TableElement table:
-        paintTableElement(canvas, table);
-        break;
-      case LayerElement _:
-        // Layers are organisational and never draw ink.
-        break;
-    }
-  }
-
-  void _paintStroke(ui.Canvas canvas, StrokeElement stroke) {
-    final fillColor = stroke.fillColor;
-    if (fillColor != null && stroke.points.length >= 3) {
-      final fillOpacity = (stroke.opacity * fillColor.a).clamp(0.0, 1.0);
-      canvas.drawPath(
-        ui.Path()..addPolygon(stroke.points, true),
-        ui.Paint()
-          ..color = fillColor.withValues(alpha: fillOpacity)
-          ..style = ui.PaintingStyle.fill,
-      );
-    }
-    paintCanvasStroke(
-      canvas: canvas,
-      points: stroke.points,
-      pressures: stroke.pressures,
-      tilts: stroke.tilts,
-      color: stroke.color,
-      strokeWidth: stroke.strokeWidth,
-      strokeOpacity: stroke.opacity,
-      brushType: stroke.brushType,
-      brushId: stroke.brushId,
-      textureSeed: stroke.textureSeed,
+    paintSharedElement(
+      canvas,
+      element,
+      elementMap: elementMap,
+      decodedImage: element is ImageElement ? decodedImages[element.id] : null,
+      imagePlaceholder: _paintImagePlaceholder,
     );
   }
 
-  void _paintShape(ui.Canvas canvas, ShapeElement shape) {
-    // Shared with the interactive painter so PNG/PDF match the canvas exactly
-    // (free aspect, independent fill/stroke, dashes, arrowheads, label).
-    paintShapeElement(canvas, shape);
-  }
-
-  void _paintText(ui.Canvas canvas, TextElement text) {
-    if (text.text.isEmpty) return;
-    // Same layout the canvas uses, so exported text cannot drift in size,
-    // alignment or wrapping.
-    final layout = CanvasTextLayout.forElement(text);
-    try {
-      final box = textElementRect(text);
-
-      canvas.save();
-      if (text.rotation != 0) {
-        canvas.translate(box.center.dx, box.center.dy);
-        canvas.rotate(text.rotation);
-        canvas.translate(-box.center.dx, -box.center.dy);
-      }
-      final background = text.backgroundColor;
-      if (background != null) {
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(
-            box.inflate(text.padding),
-            const Radius.circular(3),
-          ),
-          ui.Paint()..color = background,
-        );
-      }
-      layout.painter.paint(canvas, box.topLeft);
-      canvas.restore();
-    } finally {
-      layout.dispose();
-    }
-  }
-
-  void _paintStickyNote(ui.Canvas canvas, StickyNoteElement sticky) {
-    paintStickyNoteElement(canvas, sticky);
+  /// Stand-in plate for an image whose bytes are still decoding. Deliberately
+  /// neutral: an exported file must never ship the canvas-only debug label.
+  void _paintImagePlaceholder(ui.Canvas canvas, Rect rect, RRect rrect) {
+    canvas.drawRRect(rrect, ui.Paint()..color = const Color(0xFFF1F5F9));
+    canvas.drawRRect(
+      rrect,
+      ui.Paint()
+        ..color = const Color(0xFF94A3B8)
+        ..style = ui.PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+    final textPainter = TextPainter(
+      text: const TextSpan(
+        text: '🖼 Image',
+        style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    textPainter.paint(
+      canvas,
+      Offset(
+        rect.center.dx - textPainter.width / 2,
+        rect.center.dy - textPainter.height / 2,
+      ),
+    );
+    textPainter.dispose();
   }
 
   (Offset, Offset) _resolveConnectorEndpoints(
     ConnectorElement connector,
     Map<String, CanvasElement> elementMap,
   ) => resolveConnectorEndpoints(connector, elementMap);
-
-  void _paintConnector(
-    ui.Canvas canvas,
-    ConnectorElement connector,
-    Map<String, CanvasElement> elementMap,
-  ) {
-    // Resolve attached anchors so connector connects directly to shape boundaries (Comment 14)
-    final (start, end) = _resolveConnectorEndpoints(connector, elementMap);
-    paintConnectorElement(
-      canvas,
-      start,
-      end,
-      lineStyle: connector.lineStyle,
-      color: connector.color,
-      strokeWidth: connector.strokeWidth,
-      cornerRadius: connector.cornerRadius,
-      dashPattern: connector.dashPattern,
-      startArrowhead: connector.startArrowhead,
-      endArrowhead: connector.endArrowhead,
-      label: connector.label,
-      labelColor: connector.labelColor,
-      labelFontSize: connector.labelFontSize,
-    );
-  }
-
-  void _paintImage(
-    ui.Canvas canvas,
-    ImageElement image,
-    ui.Image? decodedImage,
-  ) {
-    paintImageElement(
-      canvas,
-      image,
-      decodedImage,
-      placeholder: (canvas, rect, rrect) {
-        canvas.drawRRect(rrect, ui.Paint()..color = const Color(0xFFF1F5F9));
-        canvas.drawRRect(
-          rrect,
-          ui.Paint()
-            ..color = const Color(0xFF94A3B8)
-            ..style = ui.PaintingStyle.stroke
-            ..strokeWidth = 1.5,
-        );
-        final textPainter = TextPainter(
-          text: const TextSpan(
-            text: '🖼 Image',
-            style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        textPainter.paint(
-          canvas,
-          Offset(
-            rect.center.dx - textPainter.width / 2,
-            rect.center.dy - textPainter.height / 2,
-          ),
-        );
-        textPainter.dispose();
-      },
-    );
-  }
 
   // ──────────────────────────────────────────────
   // PDF Render Pipeline

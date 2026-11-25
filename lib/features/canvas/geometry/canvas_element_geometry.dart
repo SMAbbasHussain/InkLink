@@ -29,7 +29,6 @@ class CanvasTextLayout {
   static const int defaultFontWeight = 600;
   static const double defaultLineHeight = 1.2;
   static const double defaultMaxWidth = 220;
-  static const double defaultPadding = 4;
 
   static FontWeight fontWeightFromValue(int value) {
     final index = ((value / 100).round() - 1).clamp(
@@ -49,19 +48,6 @@ class CanvasTextLayout {
         return TextAlign.justify;
       default:
         return TextAlign.left;
-    }
-  }
-
-  static String textAlignName(TextAlign align) {
-    switch (align) {
-      case TextAlign.center:
-        return 'center';
-      case TextAlign.right:
-        return 'right';
-      case TextAlign.justify:
-        return 'justify';
-      default:
-        return 'left';
     }
   }
 
@@ -114,6 +100,39 @@ class CanvasTextLayout {
       color: element.color,
     );
   }
+}
+
+/// Draws an already-laid-out [layout] into [box] for a text element.
+///
+/// Covers the parts every text renderer shares: rotation about the box centre,
+/// the optional rounded background plate behind the glyphs, and the glyph paint
+/// itself. Callers own [layout] (and must dispose it) and pass the [box] and
+/// [backgroundPadding] derived from their own element representation.
+void paintTextLayoutBox(
+  Canvas canvas, {
+  required CanvasTextLayout layout,
+  required Rect box,
+  required double rotation,
+  Color? background,
+  required double backgroundPadding,
+}) {
+  canvas.save();
+  if (rotation != 0) {
+    canvas.translate(box.center.dx, box.center.dy);
+    canvas.rotate(rotation);
+    canvas.translate(-box.center.dx, -box.center.dy);
+  }
+  if (background != null) {
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        box.inflate(backgroundPadding),
+        const Radius.circular(3),
+      ),
+      Paint()..color = background,
+    );
+  }
+  layout.painter.paint(canvas, box.topLeft);
+  canvas.restore();
 }
 
 /// The on-canvas box of a text element, anchored at its top-left point and
@@ -2069,16 +2088,6 @@ List<double> tableRowOffsets(TableElement table, [Rect? rect]) {
     ys.add(i == fracs.length - 1 ? box.bottom : box.top + box.height * acc);
   }
   return ys;
-}
-
-/// Unrotated bounds of cell `(row, col)` inside [table].
-Rect tableCellRect(TableElement table, int row, int col) {
-  final rect = tableElementRect(table);
-  final xs = tableColumnOffsets(table, rect);
-  final ys = tableRowOffsets(table, rect);
-  final r = row.clamp(0, table.rows - 1);
-  final c = col.clamp(0, table.columns - 1);
-  return Rect.fromLTRB(xs[c], ys[r], xs[c + 1], ys[r + 1]);
 }
 
 /// Returns `(row, col)` if [point] falls inside [table], otherwise `null`.

@@ -434,11 +434,7 @@ function summarizeOperation(op, changes) {
 }
 
 module.exports = {
-  colorName,
   elementNoun,
-  centerOf,
-  sizeOf,
   describeChange,
   summarizeOperation,
-  diffFields,
 };

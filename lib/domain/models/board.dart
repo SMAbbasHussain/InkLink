@@ -1,16 +1,5 @@
 import 'dart:math' as math;
-
-DateTime _parseDate(dynamic value) {
-  if (value == null) return DateTime.now();
-  if (value is DateTime) return value;
-  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
-  if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
-  try {
-    return (value as dynamic).toDate() as DateTime? ?? DateTime.now();
-  } catch (_) {
-    return DateTime.now();
-  }
-}
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 class Board {
   static const String visibilityPublic = 'public';
@@ -99,8 +88,8 @@ class Board {
       isPaused: (map['isPaused'] as bool?) ?? false,
       allowMembersToCopy: (map['allowMembersToCopy'] as bool?) ?? false,
       membersCount: membersCount,
-      createdAt: _parseDate(map['createdAt']),
-      updatedAt: _parseDate(map['updatedAt']),
+      createdAt: parseDateTimeValue(map['createdAt']),
+      updatedAt: parseDateTimeValue(map['updatedAt']),
     );
   }
 

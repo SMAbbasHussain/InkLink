@@ -415,6 +415,28 @@ List<ResampledStrokePoint> resampleStroke({
   return samples;
 }
 
+/// Draws the optional fill beneath a freehand stroke: the stroke's closed
+/// polygon in [fillColor] at the stroke's effective [opacity].
+///
+/// Shared by the interactive canvas painter and the raster/PDF exporter so a
+/// filled stroke reads identically on screen and in an export. Fewer than three
+/// points cannot form a polygon, so nothing is filled and only the ink remains.
+void paintStrokeFill({
+  required ui.Canvas canvas,
+  required List<Offset> points,
+  required Color? fillColor,
+  required double opacity,
+}) {
+  if (fillColor == null || points.length < 3) return;
+  final fillOpacity = (opacity * fillColor.a).clamp(0.0, 1.0);
+  canvas.drawPath(
+    ui.Path()..addPolygon(points, true),
+    ui.Paint()
+      ..color = fillColor.withValues(alpha: fillOpacity)
+      ..style = ui.PaintingStyle.fill,
+  );
+}
+
 /// Unified brush renderer used by both the interactive canvas painter and
 /// raster / PDF exporters, ensuring identical stroke appearance across all
 /// platforms.

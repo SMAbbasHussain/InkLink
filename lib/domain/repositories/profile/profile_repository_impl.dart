@@ -9,6 +9,7 @@ import '../../../core/database/collections/local_chat_conversation.dart';
 import '../../../core/database/collections/local_chat_message.dart';
 import '../../../core/database/collections/local_profile.dart';
 import 'profile_repository.dart';
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 enum _ProfileBucket { self, friend, nonFriend }
 
@@ -314,10 +315,10 @@ class ProfileRepositoryImpl implements ProfileRepository {
     }
 
     if (data.containsKey('friendCount')) {
-      model.friendCount = _toInt(data['friendCount']);
+      model.friendCount = parseIntValue(data['friendCount']);
     }
     if (data.containsKey('boardCount')) {
-      model.boardCount = _toInt(data['boardCount']);
+      model.boardCount = parseIntValue(data['boardCount']);
     }
 
     model.lastSource = source;
@@ -331,10 +332,4 @@ class ProfileRepositoryImpl implements ProfileRepository {
     return profile?.friendshipStatus == FriendshipStatus.friend;
   }
 
-  int _toInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 0;
-    return 0;
-  }
 }

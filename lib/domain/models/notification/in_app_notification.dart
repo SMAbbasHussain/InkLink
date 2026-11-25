@@ -1,14 +1,4 @@
-DateTime _parseDate(dynamic value) {
-  if (value == null) return DateTime.now();
-  if (value is DateTime) return value;
-  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
-  if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
-  try {
-    return (value as dynamic).toDate() as DateTime? ?? DateTime.now();
-  } catch (_) {
-    return DateTime.now();
-  }
-}
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 class InAppNotification {
   final String id;
@@ -43,7 +33,7 @@ class InAppNotification {
     return InAppNotification(
       id: (map['id'] ?? map['notificationId'] ?? fallbackId ?? '').toString(),
       uid: (map['uid'] ?? '').toString(),
-      timestamp: _parseDate(map['timestamp']),
+      timestamp: parseDateTimeValue(map['timestamp']),
       type: (map['type'] ?? '').toString(),
       title: (map['title'] ?? '').toString(),
       body: map['body']?.toString(),
@@ -52,7 +42,7 @@ class InAppNotification {
       senderDisplayName: map['senderDisplayName']?.toString(),
       senderPhotoUrl: map['senderPhotoUrl']?.toString(),
       read: (map['read'] as bool?) ?? false,
-      readAt: map['readAt'] != null ? _parseDate(map['readAt']) : null,
+      readAt: map['readAt'] != null ? parseDateTimeValue(map['readAt']) : null,
     );
   }
 

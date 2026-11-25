@@ -1255,7 +1255,6 @@ class FrameElement extends CanvasElement {
 
   static const double defaultWidth = 480;
   static const double defaultHeight = 320;
-  static const double titleBarHeight = 32;
 
   const FrameElement({
     required super.id,

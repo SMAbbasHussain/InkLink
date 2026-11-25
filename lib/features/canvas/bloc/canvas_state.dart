@@ -730,22 +730,6 @@ class CanvasInitial extends CanvasState {
   const CanvasInitial({super.currentUserId});
 }
 
-class CanvasCreating extends CanvasState {
-  const CanvasCreating() : super(isLoading: true);
-}
-
-class CanvasReady extends CanvasState {
-  final String boardId;
-
-  const CanvasReady(this.boardId) : super();
-}
-
-class CanvasErrorState extends CanvasState {
-  final String message;
-
-  const CanvasErrorState(this.message) : super(error: message);
-}
-
 /// An undo/redo entry could not be applied because the element(s) it would
 /// revert have since been changed by another user. Carried on [CanvasState]
 /// until the user dismisses the dialog or chooses an action (member: send an

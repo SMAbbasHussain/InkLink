@@ -284,14 +284,49 @@ function isValidBoardId(value) {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= 128;
 }
 
+// Payload ceilings. Socket.IO caps a frame at 5 MB (maxHttpBufferSize), so
+// these bound what can be *persisted and fanned out* well below that.
+const MAX_UPDATE_BASE64_LENGTH = 4 * 1024 * 1024;
+const MAX_PREVIEW_BASE64_LENGTH = 1024 * 1024;
+const MAX_ID_LENGTH = 128;
+const MAX_PREVIEW_KEYS = 16;
+const MAX_PREVIEW_STRING = MAX_PREVIEW_BASE64_LENGTH;
+
 function isValidUpdate(update) {
-  if (!update || typeof update !== 'object') return false;
-  return typeof update.updateId === 'string' && update.updateId.length > 0;
+  if (!update || typeof update !== 'object' || Array.isArray(update)) return false;
+  if (typeof update.updateId !== 'string') return false;
+  if (update.updateId.length === 0 || update.updateId.length > MAX_ID_LENGTH) return false;
+  // A CRDT update without a usable payload would still occupy a version slot in
+  // the durable stream and be replayed by every later reconstruct, so reject it
+  // here rather than persisting an empty op.
+  if (typeof update.payloadBase64 !== 'string') return false;
+  if (update.payloadBase64.length === 0
+    || update.payloadBase64.length > MAX_UPDATE_BASE64_LENGTH) return false;
+  if (update.elementId != null) {
+    if (typeof update.elementId !== 'string') return false;
+    if (update.elementId.length > MAX_ID_LENGTH) return false;
+  }
+  return true;
 }
 
 function isValidPreview(preview) {
-  if (!preview || typeof preview !== 'object') return false;
-  return preview.previewId != null;
+  if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return false;
+  if (preview.previewId == null) return false;
+  const keys = Object.keys(preview);
+  // Previews are relayed to every collaborator on the board at up to
+  // RATE_LIMIT_MAX_PREVIEWS per second, so an unbounded preview body becomes
+  // room-wide fan-out amplification from a single socket.
+  if (keys.length > MAX_PREVIEW_KEYS) return false;
+  for (const key of keys) {
+    const value = preview[key];
+    if (typeof value === 'string' && value.length > MAX_PREVIEW_STRING) return false;
+    if (typeof value === 'number' && !Number.isFinite(value)) return false;
+    if (value !== null && typeof value === 'object') return false;
+  }
+  if (typeof preview.previewId === 'string' && preview.previewId.length > MAX_ID_LENGTH) {
+    return false;
+  }
+  return true;
 }
 
 redis.on('connect', () => {
@@ -592,11 +627,6 @@ function logWsEvent(title, lines) {
     console.log(line);
   }
   console.log('==================================================');
-}
-
-async function getConnectedSocketsInRoom(roomName) {
-  const sockets = await io.in(roomName).fetchSockets();
-  return sockets.map(s => s.data.uid).filter(Boolean);
 }
 
 // ============================================================
@@ -1699,13 +1729,16 @@ io.on('connection', (socket) => {
       return;
     }
     socket.leave(`board_room:${boardId}`);
+    if (socket.data.currentBoardId === boardId) {
+      socket.data.currentBoardId = null;
+    }
     console.log(`[leave_board] User ${uid} left board ${boardId}`);
   });
 
   // ============================================================
   // crdt_update — LIVE UPDATE RELAY + PERSISTENCE
   // ============================================================
-  socket.on('crdt_update', async ({ boardId, update }, ack) => {
+  socket.on('crdt_update', async ({ boardId, update } = {}, ack) => {
     if (isRateLimited(socket.id)) {
       console.warn(`[crdt_update] Rate limited ${uid} (socket: ${socket.id})`);
       if (typeof ack === 'function') ack({ status: 'error', message: 'rate_limited' });
@@ -2109,6 +2142,13 @@ io.on('connection', (socket) => {
           .collection('undo_requests').doc(String(requestId)).get();
         if (!reqDoc.exists) return historyError(ack, 'not_found');
         const req = reqDoc.data() || {};
+        // A resolved request must not be re-planned. resolveUndoRequest records
+        // `status`, and honouring it stops a denied or already-applied request
+        // from being turned into a fresh revert. Legacy requests predate the
+        // field, so an absent status stays allowed.
+        if (req.status !== undefined && req.status !== 'pending') {
+          return historyError(ack, 'request_not_pending');
+        }
         if (req.scopeMode === 'area_state' && req.targetVersion != null) {
           opts = {
             mode: 'restore',
@@ -2389,7 +2429,7 @@ io.on('connection', (socket) => {
   // ----------------------------------------------------------
   // crdt_preview — EPHEMERAL RELAY (unchanged)
   // ----------------------------------------------------------
-  socket.on('crdt_preview', async ({ boardId, preview }, ack) => {
+  socket.on('crdt_preview', async ({ boardId, preview } = {}, ack) => {
     if (isRateLimited(socket.id, true)) {
       console.warn(`[crdt_preview] Rate limited ${uid} (socket: ${socket.id})`);
       if (typeof ack === 'function') ack({ status: 'error', message: 'rate_limited' });

@@ -4,6 +4,7 @@ import '../../../core/utils/helpers.dart';
 import '../../repositories/profile/profile_repository.dart';
 import '../../repositories/friends/friends_repository.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 class ProfileViewData {
   final Map<String, dynamic> userData;
@@ -118,8 +119,8 @@ class ProfileServiceImpl implements ProfileService {
       }
     }
 
-    final friendCount = _toInt(userData['friendCount']);
-    final boardCount = _toInt(userData['boardCount']);
+    final friendCount = parseIntValue(userData['friendCount']);
+    final boardCount = parseIntValue(userData['boardCount']);
 
     return ProfileViewData(
       userData: userData,
@@ -291,10 +292,4 @@ class ProfileServiceImpl implements ProfileService {
     return _profileRepository.getUserById(user.uid);
   }
 
-  int _toInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 0;
-    return 0;
-  }
 }

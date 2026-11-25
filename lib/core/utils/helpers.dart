@@ -43,7 +43,3 @@ String? getPasswordStrengthError(String password) {
   return null;
 }
 
-/// Returns true if password meets all minimum strength rules
-bool isValidPassword(String password) {
-  return getPasswordStrengthError(password) == null;
-}

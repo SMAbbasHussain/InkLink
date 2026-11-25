@@ -101,7 +101,7 @@ class AuthSessionServiceImpl implements AuthSessionService {
     // FR01-05: Automatically dispatch email verification upon registration
     try {
       await _authRepository.sendEmailVerification();
-      developer.log('Initial email verification dispatched to ${user.email}', name: 'AuthSessionService');
+      developer.log('Initial email verification dispatched', name: 'AuthSessionService');
     } catch (e) {
       developer.log('Initial email verification dispatch warning: $e', name: 'AuthSessionService', error: e);
     }

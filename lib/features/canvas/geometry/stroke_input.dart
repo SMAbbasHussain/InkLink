@@ -53,8 +53,6 @@ class StrokeStabilizer {
   Offset? _direction;
   Duration? _lastTime;
 
-  Offset? get lastRaw => _lastRaw;
-
   List<Offset> add(Offset raw, {Duration? elapsed}) {
     final smoothed = _smoothed;
     final previousRaw = _lastRaw;

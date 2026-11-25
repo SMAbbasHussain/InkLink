@@ -27,9 +27,6 @@ class AiImageException implements Exception {
 /// AI image generation and editing. The provider lives behind Cloud
 /// Functions; the app only ever sees image URLs.
 abstract class AiImageService {
-  static const List<String> aspectRatios = ['1:1', '16:9', '9:16'];
-  static const int maxPromptLength = 1000;
-
   Future<AiImageResult> generateImage({
     required String boardId,
     required String prompt,

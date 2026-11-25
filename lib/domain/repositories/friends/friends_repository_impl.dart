@@ -11,6 +11,7 @@ import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
 import '../../../core/services/stream_registry.dart';
 import 'friends_repository.dart';
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 class FriendsRepositoryImpl implements FriendsRepository {
   final FirestoreService _firestoreService;
@@ -890,8 +891,8 @@ class FriendsRepositoryImpl implements FriendsRepository {
       model.photoURL = photoUrl.isEmpty ? null : photoUrl;
     }
 
-    model.friendCount = _toInt(userData['friendCount']);
-    model.boardCount = _toInt(userData['boardCount']);
+    model.friendCount = parseIntValue(userData['friendCount']);
+    model.boardCount = parseIntValue(userData['boardCount']);
 
     model.lastSource = source;
     model.lastSeenAt = DateTime.now();
@@ -911,13 +912,6 @@ class FriendsRepositoryImpl implements FriendsRepository {
       'lastSeenAt': profile.lastSeenAt,
       'lastSource': profile.lastSource,
     };
-  }
-
-  int _toInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 0;
-    return 0;
   }
 
   Future<Map<String, String>> _resolveDisplayNamesBulk(

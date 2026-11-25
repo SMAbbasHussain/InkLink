@@ -10,6 +10,7 @@ import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/firestore_service.dart';
 import 'invitation_repository.dart';
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 class InvitationRepositoryImpl implements InvitationRepository {
   final FirestoreService _firestoreService;
@@ -166,7 +167,7 @@ class InvitationRepositoryImpl implements InvitationRepository {
         model.inviterRoleSnapshot = invite['inviterRoleSnapshot']?.toString();
         model.timestamp = timestamp;
         model.expiresAt = _toDateTime(invite['expiresAt']);
-        model.inviteExpiryHours = _toInt(invite['inviteExpiryHours']);
+        model.inviteExpiryHours = parseIntValue(invite['inviteExpiryHours']);
         model.acceptedAt = _toDateTime(invite['acceptedAt']);
         model.rejectedAt = _toDateTime(invite['rejectedAt']);
         model.resolvedAt = _toDateTime(invite['resolvedAt']);
@@ -318,8 +319,8 @@ class InvitationRepositoryImpl implements InvitationRepository {
       model.photoURL = photoUrl.isEmpty ? null : photoUrl;
     }
 
-    model.friendCount = _toInt(userData['friendCount']);
-    model.boardCount = _toInt(userData['boardCount']);
+    model.friendCount = parseIntValue(userData['friendCount']);
+    model.boardCount = parseIntValue(userData['boardCount']);
 
     model.lastSource = source;
     model.lastSeenAt = DateTime.now();
@@ -333,13 +334,6 @@ class InvitationRepositoryImpl implements InvitationRepository {
       return DateTime.fromMillisecondsSinceEpoch(value);
     }
     return null;
-  }
-
-  int _toInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 0;
-    return 0;
   }
 
   int _timestampToMillis(dynamic value) {

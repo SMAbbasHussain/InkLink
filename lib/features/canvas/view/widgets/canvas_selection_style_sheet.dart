@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../ui/theme/ink_theme.dart';
 import '../../../../ui/theme/ink_tokens.dart';
 import '../../../../ui/theme/ink_type.dart';
+import 'package:inklink/features/canvas/models/canvas_editor_palette.dart';
 
 /// Shared appearance controls for two or more selected objects.
 class CanvasSelectionStyleSheet extends StatefulWidget {
@@ -30,16 +31,7 @@ class CanvasSelectionStyleSheet extends StatefulWidget {
     this.onClose,
   });
 
-  static const List<Color> palette = <Color>[
-    Color(0xFF111827),
-    Color(0xFF2563EB),
-    Color(0xFF16A34A),
-    Color(0xFFF59E0B),
-    Color(0xFFDC2626),
-    Color(0xFF7C3AED),
-    Color(0xFF0EA5E9),
-    Color(0xFF64748B),
-  ];
+  static const List<Color> palette = canvasEditorPalette;
 
   @override
   State<CanvasSelectionStyleSheet> createState() =>
