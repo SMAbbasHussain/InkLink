@@ -28,19 +28,26 @@ section.
   into the same world rectangle at 1:1 and compares the RGBA bytes **exactly**
   (zero differing pixels allowed). Eight tests, named
   `<element id> rasterizes identically through export and canvas`.
-- `test/features/canvas/paint_parity_test.dart` pins the export raster
-  (digest `bb16e6bffea56427`) and the shared painter call sequences. Its
-  `ablating any single element changes the exported bytes` test re-renders the
-  scene with each element removed in turn and requires every element to change
-  the bytes, so a paint branch that stops drawing fails the build instead of
-  being absorbed by a golden refresh.
-- `test/features/canvas/view/canvas_painter_golden_test.dart` pins the
-  interactive raster
-  (`test/features/canvas/view/goldens/canvas_painter_interactive.png`).
+- `test/features/canvas/paint_parity_test.dart` checks the export raster
+  structurally and the shared painter call sequences. Every opaque element must
+  contribute its signature colour to the raster, so a dropped paint branch
+  fails. Its `ablating any single element changes the exported bytes` test
+  re-renders the scene with each element removed in turn and requires every
+  element to change the bytes, and `renderToPng is deterministic across runs`
+  pins run-to-run stability.
+- `test/features/canvas/view/canvas_painter_golden_test.dart` captures the
+  interactive raster and checks the same signature colours, plus that the
+  decoded image covers the element's area.
 
-A change that alters either golden, or that makes any equivalence test
-disagree, is a rendering change and needs to be treated as such — not as a
-golden refresh.
+These checks are deliberately **not** byte-level pins. Text falls back to
+different fonts and anti-aliasing on different platforms, so an exact digest or
+checked-in PNG fails on Ubuntu CI (0.18% of pixels differed) even though both
+render paths agree exactly with each other on the same host. The cross-path
+test below is the exact comparison, and it runs both paths in one process.
+
+A change that drops an element's colour, changes the area it covers, or makes
+an equivalence test disagree is a rendering change and needs to be treated as
+such — not as a test tolerance to widen.
 
 ## 1. Stroke fill — no preserved difference
 
@@ -113,7 +120,7 @@ in `_paintShape` also applies preview-era defaults (for example `endArrowhead`
 falling back to "arrow shapes have heads", `fillMode` falling back to
 `solid`/`none`); that is why it was not replaced with
 `CanvasElement.fromMap`, which would change output for gradient/dash shapes
-outside the golden scene.
+outside the shared scene.
 
 ## 4. Text padding — formerly 4 vs element padding; now unified
 
@@ -169,7 +176,7 @@ viewport and must never be baked into a file. The pattern is also world-anchored
 in exports so a printed board is independent of how the author had panned.
 
 **Pinned by:** `cross_path_equivalence_test.dart` (identical paper at the
-defaults, for every element), `paint_parity_test.dart` (export digest rendered
+defaults, for every element), `paint_parity_test.dart` (export raster rendered
 with `includePattern: false`), and
 `test/domain/services/canvas/canvas_export_options_render_test.dart`
 (transparent and opaque PNG/SVG backgrounds). The canvas-side chrome is
@@ -179,13 +186,13 @@ symmetry or selection.
 ## 7. Image bleed — a resolved non-difference
 
 An earlier comment claimed the interactive painter drew a 60 px image at
-~66 px. That was the canvas auto-fit zoom: the interactive golden captures at
+~66 px. That was the canvas auto-fit zoom: the interactive capture is taken at
 the screen's fit scale (~1.13×), so the image spans ~68 px **in that capture**.
 At 1:1 both paths call the same `paintImageElement` with the same rect.
 
-**Current behaviour:** no bleed difference. The golden test's pixel assertion
-keeps a tolerance that only absorbs the capture zoom, and the `image` case of
-`cross_path_equivalence_test.dart` proves 1:1 equality.
+**Current behaviour:** no bleed difference. The interactive test's pixel
+assertion keeps a tolerance that only absorbs the capture zoom, and the `image`
+case of `cross_path_equivalence_test.dart` proves 1:1 equality.
 
 ## Tests that must stay green
 
@@ -198,5 +205,5 @@ flutter test test/domain/services/canvas/canvas_export_options_render_test.dart
 ```
 
 When changing shared paint code, run the first three: they are the parity
-gate. Do not regenerate a golden to make a parity failure disappear; a failed
+gate. Do not widen a tolerance to make a parity failure disappear; a failed
 equivalence test means one path drifted from the other.

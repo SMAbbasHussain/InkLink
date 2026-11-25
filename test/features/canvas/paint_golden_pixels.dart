@@ -34,7 +34,7 @@ bool _matches(ByteData rgba, int index, int er, int eg, int eb, int tol) {
 ///
 /// Used to prove that a decoded image actually reached the raster: a
 /// placeholder box or a blank region yields far fewer matches than the real
-/// pixels do, so the assertion fails instead of the golden silently pinning a
+/// pixels do, so the assertion fails instead of the test silently accepting a
 /// fallback.
 SolidBlock measureColorBlock(
   ByteData rgba,
@@ -79,22 +79,65 @@ Future<SolidBlock> measureColorBlockInPng(Uint8List png, Color expected) async {
   final frame = await codec.getNextFrame();
   final image = frame.image;
   final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-  final block = measureColorBlock(
-    data!,
-    image.width,
-    image.height,
-    expected,
-  );
+  final block = measureColorBlock(data!, image.width, image.height, expected);
   image.dispose();
   codec.dispose();
   return block;
+}
+
+/// Asserts every colour in [expected] reached [rgba].
+///
+/// Colours are matched with the same tolerance as [measureColorBlock], so
+/// anti-aliasing and platform rasterization differences do not matter; a
+/// missing element yields zero matching pixels and fails.
+void expectSceneColors(
+  ByteData rgba,
+  int width,
+  int height,
+  Map<String, Color> expected, {
+  int minPixels = 20,
+}) {
+  for (final entry in expected.entries) {
+    final block = measureColorBlock(rgba, width, height, entry.value);
+    expect(
+      block.pixels,
+      greaterThan(minPixels),
+      reason:
+          '${entry.key} did not reach the raster: expected '
+          '${entry.value.toARGB32().toRadixString(16)}, got $block',
+    );
+  }
+}
+
+/// Decodes [png] once and asserts every colour in [expected] is present.
+Future<void> expectSceneColorsInPng(
+  Uint8List png,
+  Map<String, Color> expected, {
+  int minPixels = 20,
+}) async {
+  final codec = await ui.instantiateImageCodec(png);
+  final frame = await codec.getNextFrame();
+  final image = frame.image;
+  try {
+    final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    expectSceneColors(
+      data!,
+      image.width,
+      image.height,
+      expected,
+      minPixels: minPixels,
+    );
+  } finally {
+    image.dispose();
+    codec.dispose();
+  }
 }
 
 /// Asserts that a decoded image really painted: enough pixels match the
 /// expected colour, and they cover roughly the element's area.
 ///
 /// [tolerance] exists for rasters captured under the screen's viewport zoom
-/// rather than at 1:1: the interactive golden is captured at the canvas fit
+/// rather than at 1:1: the interactive capture is taken at the canvas fit
 /// scale (~1.13x), where a 60px element spans ~68px. At 1:1 the two paths are
 /// pixel-identical — `cross_path_equivalence_test.dart` proves that — so a
 /// widened tolerance here only absorbs the zoom.

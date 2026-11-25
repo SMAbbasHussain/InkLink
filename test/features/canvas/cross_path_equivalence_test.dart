@@ -16,11 +16,11 @@ import 'paint_golden_scene.dart';
 /// Cross-path equivalence: the exporter and the interactive painter must
 /// rasterize each element type to the same pixels.
 ///
-/// The two goldens (`paint_parity_test.dart` and
-/// `view/canvas_painter_golden_test.dart`) only prove each path is stable on
-/// its own. They share a scene, but nothing compares their output, so a shared
-/// helper could drift on one side without either golden noticing. This test
-/// compares them byte for byte.
+/// The two single-path tests (`paint_parity_test.dart` and
+/// `view/canvas_painter_golden_test.dart`) only prove each path renders every
+/// element on its own. They share a scene, but nothing compares their output,
+/// so a shared helper could drift on one side without either noticing. This
+/// test compares them byte for byte.
 ///
 /// Each element of the shared scene is rendered alone, by both paths, into the
 /// same world rectangle at the same 1:1 scale:

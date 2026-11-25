@@ -37,6 +37,14 @@ golden digest is treated as a bug in the change, never as a golden to refresh.
 Roughly: **6 lines deleted for every line added**, with the rendering output
 provably identical.
 
+> **Update (CI hardening):** the byte-level export digest and the checked-in
+> interactive golden in the table above were later retired. Ubuntu CI rendered
+> text with different anti-aliasing (771 px, 0.18%) even though both render
+> paths still agreed exactly with each other on the same host. The current
+> tests assert platform-neutral structure instead: per-element signature
+> colours, per-element ablation, run-to-run determinism, and exact cross-path
+> RGBA. See `docs/canvas/paint-parity.md` for the current gate.
+
 ---
 
 ## 2. Verification gate
@@ -73,6 +81,9 @@ bytes"* removes each element in turn and requires the output to change, so a
 paint branch that silently stops drawing fails the build instead of being
 absorbed by a golden update. (Verified by temporarily sabotaging a branch: the
 digest moved to `804440f1d7a80163` and the test failed as designed.)
+
+> **Later update:** proofs 1 and 2 were replaced by platform-neutral raster
+> checks (see the note in §1); proof 3 and the ablation guard remain unchanged.
 
 ---
 
@@ -451,11 +462,11 @@ New (untracked) files:
 
 | File | Lines | Purpose |
 | --- | --- | --- |
-| `test/features/canvas/paint_parity_test.dart` | 328 | export digest, ablation guard, determinism, `paintStrokeFill` / `paintShapeElement` / `paintTextLayoutBox` call sequences (9 tests) |
+| `test/features/canvas/paint_parity_test.dart` | 328 | signature-colour export raster, ablation guard, determinism, `paintStrokeFill` / `paintShapeElement` / `paintTextLayoutBox` call sequences (9 tests) |
 | `test/features/canvas/cross_path_equivalence_test.dart` | 263 | 8 exact-RGBA export-vs-canvas tests, one per scene element |
-| `test/features/canvas/view/canvas_painter_golden_test.dart` | 168 | interactive painter golden |
+| `test/features/canvas/view/canvas_painter_golden_test.dart` | 168 | interactive painter raster check |
 | `test/features/canvas/paint_golden_scene.dart` | 133 | the shared scene every element type appears in |
-| `test/features/canvas/paint_golden_pixels.dart` | 122 | pixel/digest comparison helpers |
+| `test/features/canvas/paint_golden_pixels.dart` | 122 | pixel comparison helpers |
 | `test/features/canvas/canvas_render_test_harness.dart` | 66 | render-to-image harness |
 
 `docs/canvas/paint-parity.md` catalogues every place the two paths

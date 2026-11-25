@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:inklink/domain/models/canvas/canvas_shape_type.dart';
 import 'package:inklink/features/canvas/models/canvas_element.dart';
 
-/// Canvas size both paint goldens render into.
+/// Canvas size the paint tests render into.
 const Size paintGoldenSceneSize = Size(420, 440);
 
 /// 8x8 PNG filled with [paintGoldenImageColor] on every pixel.
@@ -21,7 +21,23 @@ const double paintGoldenImageSide = 60;
 /// Centre of the image element, in canvas coordinates.
 const Offset paintGoldenImageCenter = Offset(380, 120);
 
-/// The canonical scene for the paint goldens.
+/// Opaque colours that uniquely identify an element in the rendered scene.
+///
+/// These let the tests prove an element reached the raster without pinning
+/// platform-specific bytes. The stroke (translucent ink and fill) and the frame
+/// (12% fill, 65% border) are intentionally absent: their composited colours
+/// depend on the board background, so they are covered by the ablation test and
+/// the per-element cross-path equivalence test instead.
+const Map<String, Color> paintGoldenSignatureColors = {
+  'shape': Color(0xFFE0245E),
+  'text': Color(0xFFE8ECF2),
+  'connector': Color(0xFF1B4DFF),
+  'sticky': Color(0xFFFFF9A6),
+  'image': paintGoldenImageColor,
+  'table': Color(0xFFCBD5E1),
+};
+
+/// The canonical scene for the paint tests.
 ///
 /// Shared by `paint_parity_test.dart` (export pipeline) and
 /// `view/canvas_painter_golden_test.dart` (interactive painter) so the two
@@ -34,11 +50,11 @@ const Offset paintGoldenImageCenter = Offset(380, 120);
 /// 4. connector + arrowhead   — connector polyline and head
 /// 5. rounded frame + title   — frame chrome
 /// 6. rotated sticky note     — note plate and wrapped text
-/// 7. solid-colour image     — decode + image paint; both goldens assert the
+/// 7. solid-colour image     — decode + image paint; both tests assert the
 ///                             decoded colour covers the element's area. The
-///                             interactive golden is captured under the
-///                             canvas fit zoom, so its block is scaled and
-///                             the assertion tolerance absorbs that.
+///                             interactive capture is taken under the canvas
+///                             fit zoom, so its block is scaled and the
+///                             assertion tolerance absorbs that.
 /// 8. table with header row   — grid, header band and cell text
 List<CanvasElement> paintGoldenScene() => [
   const StrokeElement(
