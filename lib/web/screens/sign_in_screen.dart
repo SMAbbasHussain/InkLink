@@ -460,6 +460,8 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
   }
 
   Future<void> _resend() async {
+    if (_busy) return;
+    setState(() => _busy = true);
     try {
       await context.read<WebCompanionRepository>().resendVerificationEmail();
       if (mounted) {
@@ -467,6 +469,8 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
       }
     } catch (e) {
       if (mounted) showWebMessage(context, webErrorText(e), isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
