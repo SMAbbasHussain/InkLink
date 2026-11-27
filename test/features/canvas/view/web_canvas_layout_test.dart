@@ -170,6 +170,14 @@ void main() {
   ) async {
     await pumpCanvas(tester, web: true, withHistory: true);
     final id = await addText(tester);
+    // Yjs's UndoManager groups edits made within 500 ms of each other, timed
+    // by the wall clock (tester.pump's fake time does not advance it). On a
+    // fast runner the add above and the delete below would become one undo
+    // step, and Ctrl+Z would revert both instead of restoring the text. Wait
+    // past the capture window so the delete is a step of its own.
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 650)),
+    );
     canvas.add(const CanvasSetToolMode(CanvasToolMode.select));
     canvas.add(CanvasSelectShape(id));
     await settle(tester);
