@@ -6,6 +6,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../../../core/services/auth_service.dart';
 import '../../../core/utils/network_config.dart';
+import '../../../core/utils/sync_server_socket.dart';
 import '../../models/canvas/crdt_update.dart';
 import 'canvas_sync_repository.dart';
 import 'crdt_local_store.dart';
@@ -151,7 +152,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     }
 
     final serverUrl = resolveWebSocketUrl();
-    final socket = io.io(
+    // Its own connection: a socket shared with the chat lost its listeners
+    // whenever the chat replaced its socket (see openSyncServerSocket).
+    final socket = openSyncServerSocket(
       serverUrl,
       io.OptionBuilder()
           .setTransports(['websocket'])
@@ -159,8 +162,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           .disableAutoConnect()
           .enableReconnection()
           .setReconnectionDelay(500)
-          .setReconnectionDelayMax(3000)
-          .build(),
+          .setReconnectionDelayMax(3000),
     );
     socket.connect();
 
