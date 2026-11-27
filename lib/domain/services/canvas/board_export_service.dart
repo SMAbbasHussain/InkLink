@@ -27,7 +27,7 @@ import '../../models/canvas/canvas_element.dart';
 import '../../models/canvas/canvas_board_settings.dart';
 import '../../models/canvas/canvas_export_options.dart';
 import 'canvas_geometry.dart';
-import 'export_directories.dart';
+import 'export_storage.dart';
 import '../../models/canvas/canvas_shape_type.dart';
 
 import '../../models/canvas/board_export_format.dart';
@@ -161,7 +161,7 @@ class BoardExportServiceImpl implements BoardExportService {
         .toString()
         .padLeft(6, '0');
     final uniqueSuffix = '${timestamp}_$randomPart';
-    final exportDir = await _resolveExportDirectory();
+    final exportDir = await resolveExportDirectory();
 
     switch (format) {
       case BoardExportFormat.png:
@@ -222,7 +222,7 @@ class BoardExportServiceImpl implements BoardExportService {
         .toString()
         .padLeft(6, '0');
     final fileBase = '$sanitizedTitle${suffix}_${timestamp}_$randomPart';
-    final exportDir = await _resolveExportDirectory();
+    final exportDir = await resolveExportDirectory();
 
     switch (options.format) {
       case BoardExportFormat.png:
@@ -452,95 +452,6 @@ class BoardExportServiceImpl implements BoardExportService {
       );
     }
     return CanvasExportPlan(elements: chosen, bounds: padded, scale: scale);
-  }
-
-  Future<Directory> _resolveExportDirectory() async {
-    if (Platform.isAndroid) {
-      // 1. Try public Android Download directory
-      try {
-        final publicDownloadDir = Directory('/storage/emulated/0/Download');
-        if (await publicDownloadDir.exists()) {
-          final inkLinkDir = Directory('${publicDownloadDir.path}/InkLink');
-          if (!await inkLinkDir.exists()) {
-            try {
-              await inkLinkDir.create(recursive: true);
-            } catch (_) {}
-          }
-          final targetDir = (await inkLinkDir.exists())
-              ? inkLinkDir
-              : publicDownloadDir;
-          final testFile = File(
-            '${targetDir.path}/.test_${DateTime.now().millisecondsSinceEpoch}',
-          );
-          await testFile.writeAsString('test');
-          await testFile.delete();
-          return targetDir;
-        }
-      } catch (_) {}
-
-      // 2. Try public Android Documents directory
-      try {
-        final publicDocsDir = Directory('/storage/emulated/0/Documents');
-        if (await publicDocsDir.exists()) {
-          final inkLinkDir = Directory('${publicDocsDir.path}/InkLink');
-          if (!await inkLinkDir.exists()) {
-            try {
-              await inkLinkDir.create(recursive: true);
-            } catch (_) {}
-          }
-          final targetDir = (await inkLinkDir.exists())
-              ? inkLinkDir
-              : publicDocsDir;
-          final testFile = File(
-            '${targetDir.path}/.test_${DateTime.now().millisecondsSinceEpoch}',
-          );
-          await testFile.writeAsString('test');
-          await testFile.delete();
-          return targetDir;
-        }
-      } catch (_) {}
-
-      // 3. Fallback to external storage directory
-      try {
-        final extDir = await getExternalStorageDirectory();
-        if (extDir != null) {
-          final inkLinkDir = Directory('${extDir.path}/InkLink');
-          if (!await inkLinkDir.exists()) {
-            await inkLinkDir.create(recursive: true);
-          }
-          return inkLinkDir;
-        }
-      } catch (_) {}
-    }
-
-    if (Platform.isIOS || Platform.isMacOS) {
-      try {
-        final docsDir = await getApplicationDocumentsDirectory();
-        final inkLinkDir = Directory('${docsDir.path}/InkLink');
-        if (!await inkLinkDir.exists()) {
-          await inkLinkDir.create(recursive: true);
-        }
-        return inkLinkDir;
-      } catch (_) {}
-    }
-
-    try {
-      final downloadsDir = await getDownloadsDirectory();
-      if (downloadsDir != null) {
-        final inkLinkDir = Directory('${downloadsDir.path}/InkLink');
-        if (!await inkLinkDir.exists()) {
-          await inkLinkDir.create(recursive: true);
-        }
-        return inkLinkDir;
-      }
-    } catch (_) {}
-
-    final appDocDir = await getApplicationDocumentsDirectory();
-    final inkLinkDir = Directory('${appDocDir.path}/InkLink');
-    if (!await inkLinkDir.exists()) {
-      await inkLinkDir.create(recursive: true);
-    }
-    return inkLinkDir;
   }
 
   @override

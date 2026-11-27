@@ -12,6 +12,10 @@ import '../../domain/repositories/board/board_repository.dart';
 /// files). It implements what the canvas path uses (`CanvasServiceImpl`
 /// and the `BoardServiceImpl` calls the canvas makes); the board list,
 /// creation and settings stay in the web companion's own repository.
+///
+/// Every [BoardRepository] member is implemented explicitly (no
+/// `noSuchMethod`), so adding a member to the interface shows up here as a
+/// compile error instead of a runtime failure in the browser.
 class WebBoardRepository implements BoardRepository {
   final FirestoreService _db;
   final AuthService _authService;
@@ -22,6 +26,10 @@ class WebBoardRepository implements BoardRepository {
   }) : _db = firestoreService;
 
   static const String _members = 'members';
+
+  UnsupportedError _unsupported(String method) => UnsupportedError(
+    'WebBoardRepository.$method is not available on the web canvas.',
+  );
 
   @override
   String? get currentUserId => _authService.getCurrentUserId();
@@ -174,11 +182,83 @@ class WebBoardRepository implements BoardRepository {
   @override
   Future<void> stopBoardsSync() async {}
 
-  /// Everything else (board list, create, delete, discovery) is handled
-  /// by the web companion and is not used from the canvas.
+  // ── Board list, creation and discovery (the web companion's job) ─────────
+  //
+  // These are the rest of [BoardRepository]. The canvas never reaches them —
+  // the companion has its own repository — but they are listed explicitly so
+  // the compiler keeps this class in step with the interface.
+
   @override
-  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
-    'WebBoardRepository.${invocation.memberName} is not available on the web '
-    'canvas.',
-  );
+  Future<int> countBoardsForUser(String userId) =>
+      throw _unsupported('countBoardsForUser');
+
+  @override
+  Stream<List<Board>> getOwnedBoards() => throw _unsupported('getOwnedBoards');
+
+  @override
+  Stream<List<Board>> getJoinedBoards() =>
+      throw _unsupported('getJoinedBoards');
+
+  @override
+  Future<String> createNewBoard({
+    String name = 'Untitled Board',
+    required String visibility,
+    required String privateJoinPolicy,
+    required String whoCanInvite,
+    required String defaultLinkJoinRole,
+    required List<String> tags,
+    bool allowMembersToCopy = false,
+    List<String> invitedUserIds = const [],
+    int inviteExpiryHours = 72,
+  }) => throw _unsupported('createNewBoard');
+
+  @override
+  Future<void> joinBoard(String boardId) => throw _unsupported('joinBoard');
+
+  @override
+  Future<void> deleteBoard(String boardId) => throw _unsupported('deleteBoard');
+
+  @override
+  Future<void> archiveBoard(String boardId) =>
+      throw _unsupported('archiveBoard');
+
+  @override
+  Future<void> unarchiveBoard(String boardId) =>
+      throw _unsupported('unarchiveBoard');
+
+  @override
+  Future<void> setBoardPaused(String boardId, {required bool isPaused}) =>
+      throw _unsupported('setBoardPaused');
+
+  @override
+  Future<String> duplicateBoard(String boardId, {String? customTitle}) =>
+      throw _unsupported('duplicateBoard');
+
+  @override
+  Future<void> updateBoardTags(String boardId, List<String> tags) =>
+      throw _unsupported('updateBoardTags');
+
+  @override
+  Future<void> updateBoardSettings({
+    required String boardId,
+    required String visibility,
+    required String privateJoinPolicy,
+    required String whoCanInvite,
+    required String defaultLinkJoinRole,
+    bool? allowMembersToCopy,
+  }) => throw _unsupported('updateBoardSettings');
+
+  @override
+  Future<PublicBoardsPage> getPublicBoards({
+    String? tag,
+    PublicBoardSort sort = PublicBoardSort.recent,
+    dynamic lastDocCursor,
+    int limit = 20,
+  }) => throw _unsupported('getPublicBoards');
+
+  @override
+  Future<List<Board>> getRecommendedPublicBoards({
+    required List<String> preferredTags,
+    int limit = 10,
+  }) => throw _unsupported('getRecommendedPublicBoards');
 }

@@ -46,6 +46,30 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
   // phone's helper; web-safe).
   final FirestoreBatchFetcher _batchFetcher;
 
+  /// The user's board index (`users/{uid}/boards`), listened to once per
+  /// session and shared: the board list and every workspace card join this
+  /// stream instead of re-reading the index each time.
+  Stream<UserBoardIndex>? _boardIndexStream;
+  String? _boardIndexUid;
+
+  Stream<UserBoardIndex> _myBoardIndex(String uid) {
+    if (_boardIndexStream == null || _boardIndexUid != uid) {
+      _boardIndexUid = uid;
+      _boardIndexStream = _firestore
+          .collection(FirestorePaths.users)
+          .doc(uid)
+          .collection('boards')
+          .snapshots()
+          .map(
+            (snapshot) => UserBoardIndex.fromDocs(
+              snapshot.docs.map((d) => MapEntry(d.id, d.data())),
+            ),
+          )
+          .asBroadcastStream();
+    }
+    return _boardIndexStream!;
+  }
+
   // ── Auth ────────────────────────────────────────────────────────────────
 
   static WebAccount? _toAccount(User? user) => user == null
@@ -173,33 +197,28 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
   Stream<List<Board>> watchMyBoards() {
     final uid = _uid;
     if (uid == null) return Stream.value(const []);
-    return _firestore
-        .collection(FirestorePaths.users)
-        .doc(uid)
-        .collection('boards')
-        .snapshots()
-        .asyncMap((snapshot) async {
-          final index = UserBoardIndex.fromDocs(
-            snapshot.docs.map((d) => MapEntry(d.id, d.data())),
-          );
-          final boards = await _fetchBoards(index.all.toList());
-          return boards
-              .map(
-                (b) => b.copyWith(
-                  currentUserRole:
-                      index.owned.contains(b.id) || b.ownerId == uid
-                      ? 'owner'
-                      : b.currentUserRole,
-                ),
-              )
-              .toList()
-            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-        });
+    return _myBoardIndex(uid).asyncMap((index) async {
+      final boards = await _fetchBoards(index.all.toList());
+      return boards
+          .map(
+            (b) => b.copyWith(
+              currentUserRole: index.owned.contains(b.id) || b.ownerId == uid
+                  ? 'owner'
+                  : b.currentUserRole,
+            ),
+          )
+          .toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    });
   }
 
   Future<List<Board>> _fetchBoards(List<String> ids) async {
     final boards = <Board>[];
-    for (final batch in chunked(ids)) {
+    // Reading a board is rule-checked with a member `get()` per document and
+    // Firestore allows 10 document reads per query, so this must stay at
+    // FirestoreBatchFetcher.chunkSize (10) rather than the 30-value `whereIn`
+    // syntax limit.
+    for (final batch in chunked(ids, FirestoreBatchFetcher.chunkSize)) {
       final snap = await _firestore
           .collection(FirestorePaths.boards)
           .where(FieldPath.documentId, whereIn: batch)
@@ -275,45 +294,53 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
 
   /// The boards in a workspace that the user can open, kept live (the
   /// phone's rules: hidden links skipped, only boards the user has).
+  ///
+  /// The user's board index is shared with [watchMyBoards] and every other
+  /// workspace card, so no card re-reads `users/{uid}/boards`: each one joins
+  /// the single shared index stream with its own links.
   @override
   Stream<List<Board>> watchWorkspaceBoards(String workspaceId) {
     final uid = _uid;
     if (uid == null) return Stream.value(const []);
-    return _firestore
+    final links = _firestore
         .collection(FirestorePaths.workspaces)
         .doc(workspaceId)
         .collection(FirestorePaths.workspaceBoardsSubcollection)
-        .snapshots()
-        .asyncMap((links) async {
-          final mine = await _firestore
-              .collection(FirestorePaths.users)
-              .doc(uid)
-              .collection('boards')
-              .get();
-          final index = UserBoardIndex.fromDocs(
-            mine.docs.map((d) => MapEntry(d.id, d.data())),
-          );
-          final ids = visibleWorkspaceBoardIds(
-            links.docs.map((d) => MapEntry(d.id, d.data())),
-            index.all,
-          );
-          if (ids.isEmpty) return const <Board>[];
-          final result = await _batchFetcher.fetchDocumentsByIdSet(
-            collectionPath: FirestorePaths.boards,
-            ids: ids,
-            trackMissingIds: false,
-          );
-          return [
-            for (final id in ids)
-              if (result.docsById[id] case final data?)
-                Board.fromMap(data, id).copyWith(
-                  currentUserRole:
-                      index.owned.contains(id) || data['ownerId'] == uid
-                      ? 'owner'
-                      : null,
-                ),
-          ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-        });
+        .snapshots();
+    final combined =
+        combineLatest2<
+          QuerySnapshot<Map<String, dynamic>>,
+          UserBoardIndex,
+          (QuerySnapshot<Map<String, dynamic>>, UserBoardIndex)
+        >(
+          links,
+          _myBoardIndex(uid),
+          (linkSnapshot, index) => (linkSnapshot, index),
+        );
+    return combined.asyncMap((pair) async {
+      final linkSnapshot = pair.$1;
+      final index = pair.$2;
+      final ids = visibleWorkspaceBoardIds(
+        linkSnapshot.docs.map((d) => MapEntry(d.id, d.data())),
+        index.all,
+      );
+      if (ids.isEmpty) return const <Board>[];
+      final result = await _batchFetcher.fetchDocumentsByIdSet(
+        collectionPath: FirestorePaths.boards,
+        ids: ids,
+        trackMissingIds: false,
+      );
+      return [
+        for (final id in ids)
+          if (result.docsById[id] case final data?)
+            Board.fromMap(data, id).copyWith(
+              currentUserRole:
+                  index.owned.contains(id) || data['ownerId'] == uid
+                  ? 'owner'
+                  : null,
+            ),
+      ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    });
   }
 
   // ── Invites ─────────────────────────────────────────────────────────────
