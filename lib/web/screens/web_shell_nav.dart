@@ -1,7 +1,15 @@
 import 'package:flutter/material.dart';
 
 /// Sections of the signed-in web companion, in sidebar order.
-enum WebSection { boards, discover, invites, friends, notifications, profile }
+enum WebSection {
+  boards,
+  workspaces,
+  discover,
+  invites,
+  friends,
+  notifications,
+  profile,
+}
 
 /// Lets a page jump to another section (e.g. the "2 invites waiting" chip).
 class WebShellNav extends InheritedWidget {

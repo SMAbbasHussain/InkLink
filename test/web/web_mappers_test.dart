@@ -31,6 +31,20 @@ void main() {
     });
   });
 
+  test('workspace boards: hidden links and boards the user lacks are left out', () {
+    final ids = visibleWorkspaceBoardIds(
+      [
+        const MapEntry('a', {'boardId': 'a'}),
+        const MapEntry('b', {'boardId': 'b', 'visible': false}),
+        const MapEntry('c', {'boardId': 'c', 'visible': true}),
+        const MapEntry('d', <String, dynamic>{}), // doc id is the board id
+        const MapEntry('x', {'boardId': 'x'}), // not one of the user's boards
+      ],
+      {'a', 'b', 'c', 'd'},
+    );
+    expect(ids, ['a', 'c', 'd']);
+  });
+
   test('chunked splits into whereIn-sized batches', () {
     expect(chunked(List.generate(23, (i) => i)).map((c) => c.length), [10, 10, 3]);
     expect(chunked(<int>[]), isEmpty);

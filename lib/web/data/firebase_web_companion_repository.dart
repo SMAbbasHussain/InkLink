@@ -8,6 +8,7 @@ import '../../core/constants/firestore_paths.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/cloud_functions_service.dart';
 import '../../core/services/firestore_service.dart';
+import '../../core/utils/firestore_batch_fetcher.dart';
 import '../../core/utils/helpers.dart';
 import '../../domain/models/board.dart';
 import '../../domain/models/friends/friend.dart';
@@ -36,7 +37,14 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     required CloudFunctionsService cloudFunctionsService,
   }) : _auth = authService,
        _firestore = firestoreService,
-       _functions = cloudFunctionsService;
+       _functions = cloudFunctionsService,
+       _batchFetcher = FirestoreBatchFetcher(
+         firestoreService: firestoreService,
+       );
+
+  // Reads documents by id in batches, falling back to single reads (the
+  // phone's helper; web-safe).
+  final FirestoreBatchFetcher _batchFetcher;
 
   // ── Auth ────────────────────────────────────────────────────────────────
 
@@ -216,6 +224,96 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
         .where((b) => !b.isArchived)
         .toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+  }
+
+  // ── Workspaces ──────────────────────────────────────────────────────────
+
+  /// The workspaces in the user's `workspaceIds` (owned and joined), kept
+  /// live, newest activity first. Same source as the phone's list.
+  @override
+  Stream<List<Workspace>> watchMyWorkspaces() {
+    final uid = _uid;
+    if (uid == null) return Stream.value(const []);
+    return _firestore
+        .collection(FirestorePaths.users)
+        .doc(uid)
+        .snapshots()
+        .asyncMap((snapshot) async {
+          final ids =
+              ((snapshot.data()?[FirestorePaths.workspaceIds] as List?) ??
+                      const [])
+                  .whereType<String>()
+                  .where((id) => id.isNotEmpty)
+                  .toList();
+          if (ids.isEmpty) return const <Workspace>[];
+          final result = await _batchFetcher.fetchDocumentsByIdSet(
+            collectionPath: FirestorePaths.workspaces,
+            ids: ids,
+            trackMissingIds: false,
+          );
+          return [
+            for (final entry in result.docsById.entries)
+              _workspaceFrom(entry.key, entry.value, uid),
+          ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        });
+  }
+
+  Workspace _workspaceFrom(String id, Map<String, dynamic> data, String uid) {
+    DateTime date(Object? v) => v is Timestamp ? v.toDate() : DateTime.now();
+    return Workspace(
+      id: id,
+      ownerId: (data[FirestorePaths.ownerId] as String?) ?? '',
+      name: (data[FirestorePaths.name] as String?) ?? '',
+      description: (data[FirestorePaths.description] as String?) ?? '',
+      memberCount: (data[FirestorePaths.memberCount] as num?)?.toInt() ?? 0,
+      boardCount: (data[FirestorePaths.boardCount] as num?)?.toInt() ?? 0,
+      createdAt: date(data[FirestorePaths.createdAt]),
+      updatedAt: date(data[FirestorePaths.updatedAt]),
+      currentUserRole: data[FirestorePaths.ownerId] == uid ? 'owner' : 'member',
+    );
+  }
+
+  /// The boards in a workspace that the user can open, kept live (the
+  /// phone's rules: hidden links skipped, only boards the user has).
+  @override
+  Stream<List<Board>> watchWorkspaceBoards(String workspaceId) {
+    final uid = _uid;
+    if (uid == null) return Stream.value(const []);
+    return _firestore
+        .collection(FirestorePaths.workspaces)
+        .doc(workspaceId)
+        .collection(FirestorePaths.workspaceBoardsSubcollection)
+        .snapshots()
+        .asyncMap((links) async {
+          final mine = await _firestore
+              .collection(FirestorePaths.users)
+              .doc(uid)
+              .collection('boards')
+              .get();
+          final index = UserBoardIndex.fromDocs(
+            mine.docs.map((d) => MapEntry(d.id, d.data())),
+          );
+          final ids = visibleWorkspaceBoardIds(
+            links.docs.map((d) => MapEntry(d.id, d.data())),
+            index.all,
+          );
+          if (ids.isEmpty) return const <Board>[];
+          final result = await _batchFetcher.fetchDocumentsByIdSet(
+            collectionPath: FirestorePaths.boards,
+            ids: ids,
+            trackMissingIds: false,
+          );
+          return [
+            for (final id in ids)
+              if (result.docsById[id] case final data?)
+                Board.fromMap(data, id).copyWith(
+                  currentUserRole:
+                      index.owned.contains(id) || data['ownerId'] == uid
+                      ? 'owner'
+                      : null,
+                ),
+          ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        });
   }
 
   // ── Invites ─────────────────────────────────────────────────────────────

@@ -35,6 +35,23 @@ class UserBoardIndex {
   }
 }
 
+/// Boards of a workspace the user can open, in link order. Mirrors the
+/// phone: links marked `visible: false` are hidden, and a board shows only
+/// if it is in the user's own board index ([readable]).
+List<String> visibleWorkspaceBoardIds(
+  Iterable<MapEntry<String, Map<String, dynamic>>> links,
+  Set<String> readable,
+) {
+  final ids = <String>[];
+  for (final link in links) {
+    final data = link.value;
+    if (data.containsKey('visible') && data['visible'] != true) continue;
+    final boardId = (data['boardId'] as String?) ?? link.key;
+    if (boardId.isNotEmpty && readable.contains(boardId)) ids.add(boardId);
+  }
+  return ids;
+}
+
 /// Splits [ids] into chunks small enough for a Firestore `whereIn` query.
 List<List<T>> chunked<T>(List<T> ids, [int size = 10]) {
   if (size <= 0) throw ArgumentError.value(size, 'size');

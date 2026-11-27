@@ -124,6 +124,36 @@ void main() {
     expect(find.text('Hello from the web'), findsOneWidget);
   });
 
+  testWidgets('workspaces: list, open one to see its boards, go back', (
+    tester,
+  ) async {
+    await pumpApp(tester);
+    await openSection(tester, 'Workspaces');
+    expect(find.text('Product Team'), findsOneWidget);
+    expect(find.text('Home Projects'), findsOneWidget);
+    expect(find.text('Owner'), findsOneWidget);
+    expect(find.text('Member'), findsOneWidget);
+    expect(find.text('4 members • 3 boards'), findsOneWidget);
+
+    // Search narrows the list.
+    await tester.enterText(find.byType(TextField).first, 'home');
+    await settle(tester);
+    expect(find.text('Product Team'), findsNothing);
+    expect(find.text('Home Projects'), findsOneWidget);
+
+    // Opening a workspace shows only its boards as board cards.
+    await tester.tap(find.text('Home Projects'));
+    await settle(tester);
+    expect(find.text('Kitchen remodel ideas'), findsOneWidget);
+    expect(find.text('Q3 roadmap'), findsNothing);
+    expect(find.byTooltip('Board options'), findsOneWidget);
+
+    await tester.tap(find.text('Workspaces').last); // back button
+    await settle(tester);
+    expect(find.text('Home Projects'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('small windows use the phone nav bar instead of the sidebar', (
     tester,
   ) async {
@@ -141,6 +171,9 @@ void main() {
     await tester.tap(find.byTooltip('Discover'));
     await settle(tester);
     expect(find.text('Explore Public Boards'), findsOneWidget);
+    await tester.tap(find.byTooltip('Workspaces'));
+    await settle(tester);
+    expect(find.text('Product Team'), findsOneWidget);
   });
 
   testWidgets('the header switches between light and dark', (tester) async {

@@ -31,6 +31,10 @@ abstract class WebCompanionRepository {
   Stream<List<Board>> watchMyBoards();
   Future<List<Board>> loadPublicBoards({int limit = 40});
 
+  // Workspaces (view and open; creating and managing them is in the app)
+  Stream<List<Workspace>> watchMyWorkspaces();
+  Stream<List<Board>> watchWorkspaceBoards(String workspaceId);
+
   // Invites
   Stream<List<BoardInvitation>> watchBoardInvites();
   Stream<List<WorkspaceInvite>> watchWorkspaceInvites();

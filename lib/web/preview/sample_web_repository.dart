@@ -286,6 +286,54 @@ class SampleWebCompanionRepository implements WebCompanionRepository {
   Future<List<Board>> loadPublicBoards({int limit = 40}) async =>
       _publicBoards.take(limit).toList();
 
+  // Two workspaces: one owned, one shared, each with a few sample boards.
+  late final List<(Workspace, List<String>)> _workspaces = [
+    (
+      Workspace(
+        id: 'w-product',
+        ownerId: 'me',
+        name: 'Product Team',
+        description: 'Roadmaps, wireframes and retros.',
+        memberCount: 4,
+        boardCount: 3,
+        createdAt: _now.subtract(const Duration(days: 60)),
+        updatedAt: _now.subtract(const Duration(minutes: 12)),
+        currentUserRole: 'owner',
+      ),
+      const ['b1', 'b2', 'b3'],
+    ),
+    (
+      Workspace(
+        id: 'w-home',
+        ownerId: 'u3',
+        name: 'Home Projects',
+        description: 'Shared with Noah.',
+        memberCount: 2,
+        boardCount: 1,
+        createdAt: _now.subtract(const Duration(days: 20)),
+        updatedAt: _now.subtract(const Duration(days: 5)),
+        currentUserRole: 'member',
+      ),
+      const ['b5'],
+    ),
+  ];
+
+  @override
+  Stream<List<Workspace>> watchMyWorkspaces() =>
+      Stream.value([for (final (w, _) in _workspaces) w]);
+
+  @override
+  Stream<List<Board>> watchWorkspaceBoards(String workspaceId) {
+    final ids = _workspaces
+            .where((e) => e.$1.id == workspaceId)
+            .firstOrNull
+            ?.$2 ??
+        const <String>[];
+    return Stream.value(
+      [for (final id in ids) ..._myBoards.where((b) => b.id == id)],
+    );
+  }
+
   @override
   Stream<List<BoardInvitation>> watchBoardInvites() =>
       _live(_boardInvitesCtl, () => List.of(_boardInvites));

@@ -21,12 +21,14 @@ import 'friends_page.dart';
 import 'invites_page.dart';
 import 'notifications_page.dart';
 import 'profile_page.dart';
+import 'workspaces_page.dart';
 import 'web_shell_nav.dart';
 
 /// Sections in the bottom nav bar, in order. Notifications and Profile open
 /// from the header, as on the phone.
 const _navSections = [
   WebSection.boards,
+  WebSection.workspaces,
   WebSection.discover,
   WebSection.invites,
   WebSection.friends,
@@ -34,6 +36,7 @@ const _navSections = [
 
 Widget _pageFor(WebSection section) => switch (section) {
   WebSection.boards => const WebBoardsPage(),
+  WebSection.workspaces => const WebWorkspacesPage(),
   WebSection.discover => const WebDiscoverPage(),
   WebSection.invites => const WebInvitesPage(),
   WebSection.friends => const WebFriendsPage(),
@@ -243,6 +246,11 @@ class _WebHomeShellState extends State<WebHomeShell> {
                   label: 'Home',
                 ),
                 const GlassNavItem(
+                  activeIcon: LucideIcons.briefcase,
+                  inactiveIcon: LucideIcons.briefcase,
+                  label: 'Workspaces',
+                ),
+                const GlassNavItem(
                   activeIcon: LucideIcons.compass,
                   inactiveIcon: LucideIcons.compass,
                   label: 'Discover',
@@ -283,6 +291,7 @@ class _SideNav extends StatelessWidget {
 
   static const _items = <(WebSection, IconData, String)>[
     (WebSection.boards, LucideIcons.house, 'Home'),
+    (WebSection.workspaces, LucideIcons.briefcase, 'Workspaces'),
     (WebSection.discover, LucideIcons.compass, 'Discover'),
     (WebSection.invites, LucideIcons.mail, 'Invites'),
     (WebSection.friends, LucideIcons.users, 'Friends'),
