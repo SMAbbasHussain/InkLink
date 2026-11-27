@@ -22,6 +22,7 @@ import 'package:inklink/domain/repositories/board/board_repository.dart';
 import 'package:inklink/domain/repositories/board/board_repository_impl.dart';
 import 'package:inklink/domain/repositories/canvas/canvas_sync_repository.dart';
 import 'package:inklink/domain/repositories/canvas/canvas_sync_repository_impl.dart';
+import 'package:inklink/domain/repositories/canvas/isar_crdt_local_store.dart';
 import 'package:inklink/domain/repositories/history/board_history_repository.dart';
 import 'package:inklink/domain/repositories/history/board_history_repository_impl.dart';
 import 'package:inklink/domain/services/history/board_history_service.dart';
@@ -192,7 +193,7 @@ Future<void> _startApp() async {
         RepositoryProvider<CanvasSyncRepository>(
           create: (context) => FirestoreCanvasSyncRepository(
             authService: context.read<AuthService>(),
-            localDatabaseService: context.read<LocalDatabaseService>(),
+            store: IsarCrdtLocalStore(context.read<LocalDatabaseService>()),
           ),
         ),
         RepositoryProvider<BoardHistoryRepository>(

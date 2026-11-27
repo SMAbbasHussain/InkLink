@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:typed_data';
 
-import '../../../core/database/collections/local_crdt_update.dart';
+import '../../models/canvas/crdt_update.dart';
 import '../../models/board.dart';
 import '../../repositories/board/board_repository.dart';
 import '../../repositories/canvas/canvas_sync_repository.dart';

@@ -1,19 +1,19 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
-import 'package:isar_community/isar.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
-import '../../../core/database/collections/local_canvas_sync_state.dart';
-import '../../../core/database/collections/local_crdt_update.dart';
-import '../../../core/database/local_database_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/utils/network_config.dart';
+import '../../../core/utils/sync_server_socket.dart';
+import '../../models/canvas/crdt_update.dart';
 import 'canvas_sync_repository.dart';
+import 'crdt_local_store.dart';
 
 class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   final AuthService _authService;
-  final LocalDatabaseService _localDatabaseService;
+  final CrdtLocalStore _store;
   static const int _maxPayloadBase64Length = 900000;
   // Socket.IO client (optional). When present and connected, we'll prefer websocket transport.
   io.Socket? _socket;
@@ -49,7 +49,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
   FirestoreCanvasSyncRepository({
     required this._authService,
-    required this._localDatabaseService,
+    required this._store,
   });
 
   @override
@@ -62,32 +62,12 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
   @override
   Future<void> saveLocalCrdtUpdate(LocalCrdtUpdate update) async {
-    final isar = await _localDatabaseService.database;
-    await isar.writeTxn(() async {
-      await isar.localCrdtUpdates.putByUpdateId(update);
-      final existing = await isar.localCanvasSyncStates.getByBoardId(
-        update.boardId,
-      );
-      await isar.localCanvasSyncStates.putByBoardId(
-        (existing ?? LocalCanvasSyncState()
-            ..boardId = update.boardId)
-          ..lastSyncedAppliedAt = update.appliedAt,
-      );
-    });
+    await _store.saveUpdateAndSyncedAt(update);
   }
 
   @override
   Future<void> clearLocalCrdtUpdatesForBoard(String boardId) async {
-    final isar = await _localDatabaseService.database;
-    await isar.writeTxn(() async {
-      await isar.localCrdtUpdates.filter().boardIdEqualTo(boardId).deleteAll();
-      final existing = await isar.localCanvasSyncStates.getByBoardId(boardId);
-      if (existing != null) {
-        await isar.localCanvasSyncStates.putByBoardId(
-          existing..lastSeenCursor = null,
-        );
-      }
-    });
+    await _store.deleteUpdatesForBoard(boardId);
   }
 
   void _teardownSocket([io.Socket? specificSocket]) {
@@ -172,7 +152,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     }
 
     final serverUrl = resolveWebSocketUrl();
-    final socket = io.io(
+    // Its own connection: a socket shared with the chat lost its listeners
+    // whenever the chat replaced its socket (see openSyncServerSocket).
+    final socket = openSyncServerSocket(
       serverUrl,
       io.OptionBuilder()
           .setTransports(['websocket'])
@@ -180,8 +162,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           .disableAutoConnect()
           .enableReconnection()
           .setReconnectionDelay(500)
-          .setReconnectionDelayMax(3000)
-          .build(),
+          .setReconnectionDelayMax(3000),
     );
     socket.connect();
 
@@ -203,7 +184,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
     await Future.any([
       connectCompleter.future,
-      Future.delayed(const Duration(seconds: 2)),
+      // The web keeps no local copy of a board: giving up on a slow first
+      // connection would show it empty, so allow it longer than phones.
+      Future.delayed(Duration(seconds: kIsWeb ? 10 : 2)),
     ]);
 
     if (gen != _connectGeneration ||
@@ -389,26 +372,20 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
   @override
   Future<void> markCrdtUpdateSynced(String updateId) async {
-    final isar = await _localDatabaseService.database;
-    final existing = await isar.localCrdtUpdates.getByUpdateId(updateId);
+    final existing = await _store.getByUpdateId(updateId);
     if (existing == null) return;
 
     existing.isSynced = true;
-    await isar.writeTxn(() async {
-      await isar.localCrdtUpdates.putByUpdateId(existing);
-    });
+    await _store.putUpdate(existing);
   }
 
   @override
   Future<void> markCrdtUpdateDeleted(String updateId, bool isDeleted) async {
-    final isar = await _localDatabaseService.database;
-    final existing = await isar.localCrdtUpdates.getByUpdateId(updateId);
+    final existing = await _store.getByUpdateId(updateId);
     if (existing == null) return;
 
     existing.isDeleted = isDeleted;
-    await isar.writeTxn(() async {
-      await isar.localCrdtUpdates.putByUpdateId(existing);
-    });
+    await _store.putUpdate(existing);
   }
 
   @override
@@ -416,12 +393,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     String boardId,
     String elementId,
   ) async {
-    final isar = await _localDatabaseService.database;
-    final updates = await isar.localCrdtUpdates
-        .filter()
-        .boardIdEqualTo(boardId)
-        .sortByAppliedAtDesc()
-        .findAll();
+    final updates = await _store.updatesForBoardNewestFirst(boardId);
 
     // Find the latest non-deleted update for this element.
     for (final update in updates) {
@@ -434,15 +406,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
   @override
   Future<DateTime?> getLatestLocalCrdtUpdateAt(String boardId) async {
-    final isar = await _localDatabaseService.database;
     // Use only previously-synced rows to compute the local 'since' cursor.
     // This avoids client-clock based local entries skewing hydration windows.
-    final latest = await isar.localCrdtUpdates
-        .filter()
-        .boardIdEqualTo(boardId)
-        .isSyncedEqualTo(true)
-        .sortByAppliedAtDesc()
-        .findFirst();
+    final latest = await _store.latestSyncedUpdate(boardId);
     return latest?.appliedAt;
   }
 
@@ -458,16 +424,13 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     }
 
     // Update locally only for payloads that will also be sent remotely.
-    final isar = await _localDatabaseService.database;
-    final existing = await isar.localCrdtUpdates.getByUpdateId(updateId);
+    final existing = await _store.getByUpdateId(updateId);
     if (existing == null) return;
 
     existing.payloadBase64 = payloadBase64;
     existing.appliedAt = DateTime.now();
     existing.isSynced = false; // Mark for re-sync since payload changed
-    await isar.writeTxn(() async {
-      await isar.localCrdtUpdates.putByUpdateId(existing);
-    });
+    await _store.putUpdate(existing);
 
     final sourceClientId = _authService.getCurrentUserId() ?? '';
 
@@ -517,9 +480,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   @override
   Future<String?> getLastSeenCursor(String boardId) async {
     try {
-      final isar = await _localDatabaseService.database;
-      final syncState = await isar.localCanvasSyncStates.getByBoardId(boardId);
-      return syncState?.lastSeenCursor;
+      return await _store.getLastSeenCursor(boardId);
     } catch (_) {
       return null;
     }
@@ -759,11 +720,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           .map((n) => n.toInt())
           .toSet();
 
-      final isar = await _localDatabaseService.database;
-      final local = await isar.localCrdtUpdates
-          .filter()
-          .boardIdEqualTo(boardId)
-          .findAll();
+      final local = await _store.updatesForBoard(boardId);
       final matching = local.where((u) {
         if (missingList != null && missingList.contains(u.version)) return true;
         if (fromVersion != null && toVersion != null) {
@@ -930,8 +887,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
   @override
   Future<List<LocalCrdtUpdate>> getLocalCrdtUpdates(String boardId) async {
-    final isar = await _localDatabaseService.database;
-    return isar.localCrdtUpdates.filter().boardIdEqualTo(boardId).findAll();
+    return _store.updatesForBoard(boardId);
   }
 
   @override
@@ -951,11 +907,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
           // the caller explicitly requested a full snapshot hydration.
           String? cursor = ignoreCursor ? null : lastSeenCursor;
           if (!ignoreCursor && cursor == null) {
-            final isar = await _localDatabaseService.database;
-            final syncState = await isar.localCanvasSyncStates.getByBoardId(
-              boardId,
-            );
-            cursor = syncState?.lastSeenCursor;
+            cursor = await _store.getLastSeenCursor(boardId);
           }
 
           final result = await _fetchWithCursor(boardId, cursor);
@@ -1066,15 +1018,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   Future<void> _saveCursor(String boardId, String cursor) async {
     if (cursor.isEmpty) return;
     try {
-      final isar = await _localDatabaseService.database;
-      await isar.writeTxn(() async {
-        final existing = await isar.localCanvasSyncStates.getByBoardId(boardId);
-        await isar.localCanvasSyncStates.putByBoardId(
-          (existing ?? LocalCanvasSyncState()
-              ..boardId = boardId)
-            ..lastSeenCursor = cursor,
-        );
-      });
+      await _store.saveLastSeenCursor(boardId, cursor);
     } catch (_) {}
   }
 
@@ -1142,12 +1086,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
   @override
   Stream<List<LocalCrdtUpdate>> watchLocalCrdtUpdates(String boardId) async* {
-    final isar = await _localDatabaseService.database;
-    yield* isar.localCrdtUpdates
-        .filter()
-        .boardIdEqualTo(boardId)
-        .sortByAppliedAt()
-        .watch(fireImmediately: true);
+    yield* _store.watchUpdatesForBoard(boardId);
   }
 
   @override
@@ -1164,12 +1103,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         _socketUpdatesController = StreamController<List<LocalCrdtUpdate>>();
 
         if ((_highestAppliedVersionPerBoard[boardId] ?? 0) == 0) {
-          final isar = await _localDatabaseService.database;
-          final latestUpdate = await isar.localCrdtUpdates
-              .filter()
-              .boardIdEqualTo(boardId)
-              .sortByVersionDesc()
-              .findFirst();
+          final latestUpdate = await _store.highestVersionUpdate(boardId);
           if (latestUpdate != null && latestUpdate.version > 0) {
             _highestAppliedVersionPerBoard[boardId] = latestUpdate.version;
           }
@@ -1339,13 +1273,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
 
   @override
   Future<bool> batchSyncPendingUpdates(String boardId, String userId) async {
-    final isar = await _localDatabaseService.database;
-    final toSync = await isar.localCrdtUpdates
-        .filter()
-        .boardIdEqualTo(boardId)
-        .isSyncedEqualTo(false)
-        .sortByAppliedAt()
-        .findAll();
+    final toSync = await _store.unsyncedUpdatesOldestFirst(boardId);
     if (toSync.isEmpty) return true;
     // Push each pending update to server via socket
     try {
@@ -1385,33 +1313,13 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
         }
         // Clean up old synced entries and update sync state
         try {
-          final isar = await _localDatabaseService.database;
-          await isar.writeTxn(() async {
-            await isar.localCrdtUpdates
-                .filter()
-                .boardIdEqualTo(boardId)
-                .isSyncedEqualTo(true)
-                .appliedAtLessThan(
-                  DateTime.now().subtract(const Duration(hours: 1)),
-                )
-                .deleteAll();
-          });
-          final latest = await isar.localCrdtUpdates
-              .filter()
-              .boardIdEqualTo(boardId)
-              .sortByAppliedAtDesc()
-              .findFirst();
+          await _store.deleteSyncedUpdatesAppliedBefore(
+            boardId,
+            DateTime.now().subtract(const Duration(hours: 1)),
+          );
+          final latest = await _store.latestUpdate(boardId);
           if (latest != null) {
-            final existing = await isar.localCanvasSyncStates.getByBoardId(
-              boardId,
-            );
-            await isar.writeTxn(() async {
-              await isar.localCanvasSyncStates.putByBoardId(
-                (existing ?? LocalCanvasSyncState()
-                    ..boardId = boardId)
-                  ..lastSyncedAppliedAt = latest.appliedAt,
-              );
-            });
+            await _store.saveLastSyncedAppliedAt(boardId, latest.appliedAt);
           }
         } catch (_) {}
         return true;
@@ -1471,12 +1379,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   @override
   Future<void> persistCursorForBoard(String boardId) async {
     try {
-      final isar = await _localDatabaseService.database;
-      final latest = await isar.localCrdtUpdates
-          .filter()
-          .boardIdEqualTo(boardId)
-          .sortByAppliedAtDesc()
-          .findFirst();
+      final latest = await _store.latestUpdate(boardId);
       if (latest == null) return;
       if (latest.version == 0) return;
 
@@ -1487,14 +1390,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       // Redis stream entry IDs.
       final cursor = '0-0:${latest.version}';
 
-      final existing = await isar.localCanvasSyncStates.getByBoardId(boardId);
-      await isar.writeTxn(() async {
-        await isar.localCanvasSyncStates.putByBoardId(
-          (existing ?? LocalCanvasSyncState()
-              ..boardId = boardId)
-            ..lastSeenCursor = cursor,
-        );
-      });
+      await _store.saveLastSeenCursor(boardId, cursor);
     } catch (_) {}
   }
 

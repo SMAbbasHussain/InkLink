@@ -6,6 +6,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../../../core/services/auth_service.dart';
 import '../../../core/utils/network_config.dart';
+import '../../../core/utils/sync_server_socket.dart';
 import '../../../features/canvas/models/board_chat_message.dart';
 import 'board_chat_service.dart';
 
@@ -91,7 +92,8 @@ class BoardChatServiceImpl implements BoardChatService {
   })  : _socketFactory = socketFactory ?? _defaultSocketFactory;
 
   static BoardChatSocket _defaultSocketFactory(String token) {
-    final socket = io.io(
+    // Its own connection, not the board sync's (see openSyncServerSocket).
+    final socket = openSyncServerSocket(
       resolveWebSocketUrl(),
       io.OptionBuilder()
           .setTransports(['websocket'])
@@ -100,8 +102,7 @@ class BoardChatServiceImpl implements BoardChatService {
           // auto-reconnect would reuse the token frozen at creation time and
           // fail forever once that token expires.
           .disableAutoConnect()
-          .disableReconnection()
-          .build(),
+          .disableReconnection(),
     );
     return _LiveBoardChatSocket(socket);
   }

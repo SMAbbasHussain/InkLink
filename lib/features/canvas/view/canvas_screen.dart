@@ -37,8 +37,6 @@ import '../../../ui/widgets/ink_avatar.dart';
 import '../../../ui/widgets/ink_button.dart';
 import '../../../ui/widgets/ink_dialog.dart';
 import '../../../ui/widgets/ink_text_field.dart';
-import '../../dashboard/bloc/dashboard_bloc.dart';
-import '../../dashboard/view/board_settings_route.dart';
 import '../../dashboard/view/board_edit_requests_screen.dart';
 import '../../notifications/bloc/notifications_bloc.dart';
 import '../bloc/ai_image_bloc.dart';
@@ -54,6 +52,8 @@ import '../geometry/stroke_input.dart';
 import '../models/board_template.dart';
 import '../models/canvas_tool_mode.dart';
 import 'ai_repaint_screen.dart';
+import 'board_settings_opener.dart'
+    if (dart.library.js_interop) 'board_settings_opener_web.dart';
 import 'media_editor_screen.dart';
 import 'trays/ai_tray.dart';
 import 'trays/brush_tray.dart';
@@ -65,6 +65,7 @@ import 'history_screen.dart';
 import 'trays/tools_tray.dart';
 import 'widgets/history_preview_banner.dart';
 import 'widgets/shapes_picker_popup.dart';
+import 'widgets/sliding_tray.dart';
 import 'widgets/revert_review_sheet.dart';
 import 'widgets/undo_request_sheet.dart';
 import 'chat/board_chat_drawer.dart';
@@ -80,9 +81,11 @@ import 'widgets/sticky_note_editor_dialog.dart';
 import 'widgets/template_coachmark.dart';
 import 'widgets/template_gallery_sheet.dart';
 import 'widgets/tray_tips_overlay.dart';
+import '../../../ui/widgets/canvas_toolbar_action_meta.dart';
 import 'package:inklink/features/canvas/models/canvas_editor_palette.dart';
 
 part 'canvas_painter.dart';
+part 'canvas_screen_web.dart';
 
 enum _PinchIntent { undecided, zoom, pan }
 
@@ -278,6 +281,21 @@ class _CanvasScreenState extends State<CanvasScreen>
   InkTokens get _tokens => context.ink;
   bool _preventGestureBack = true;
   bool _showEdgeTrayButtons = true;
+
+  /// Desktop browser layout: whether the minimap is shown.
+  bool _webMinimapVisible = true;
+
+  /// Desktop browser: holds keyboard focus for the board's shortcuts
+  /// (canvas_screen_web.dart). Unused on phones.
+  final FocusNode _webKeyFocus = FocusNode(debugLabel: 'canvas web keys');
+
+  /// Desktop browser: the mouse pointer panning with the middle button.
+  int? _webMiddlePanPointer;
+
+  void _closeShapesPopup() => setState(() => _isShapesPopupOpen = false);
+
+  void _toggleWebMinimap() =>
+      setState(() => _webMinimapVisible = !_webMinimapVisible);
   bool _isShapesPopupOpen = false;
   late List<CanvasToolbarAction> _bottomBarActions =
       List<CanvasToolbarAction>.of(widget.initialBottomBarActions);
@@ -873,6 +891,9 @@ class _CanvasScreenState extends State<CanvasScreen>
       kind == PointerDeviceKind.invertedStylus;
 
   void _handleCanvasPointerDown(PointerDownEvent event, CanvasState state) {
+    // Desktop browser only: clicking the board gives it the keyboard
+    // shortcuts, and the middle mouse button pans.
+    if (SlidingTray.useWebLayout(context) && _webPointerDown(event)) return;
     final kind = event.kind;
     final stylus = _isStylusKind(kind);
     if (stylus) {
@@ -937,6 +958,13 @@ class _CanvasScreenState extends State<CanvasScreen>
   }
 
   void _handleCanvasPointerMove(PointerMoveEvent event) {
+    if (event.pointer == _webMiddlePanPointer) {
+      _applyViewportTransform(
+        scale: _viewportScale,
+        offset: _viewportOffset + event.delta,
+      );
+      return;
+    }
     if (!_activePointerKinds.containsKey(event.pointer)) return;
     _activeCanvasPointers[event.pointer] = event.localPosition;
     if (event.pointer != _rawStrokePointerId) return;
@@ -959,6 +987,10 @@ class _CanvasScreenState extends State<CanvasScreen>
   }
 
   void _handleCanvasPointerEnd(PointerEvent event) {
+    if (event.pointer == _webMiddlePanPointer) {
+      _webMiddlePanPointer = null;
+      return;
+    }
     _activeCanvasPointers.remove(event.pointer);
     _activePointerKinds.remove(event.pointer);
     _stylusPointers.remove(event.pointer);
@@ -1185,11 +1217,15 @@ class _CanvasScreenState extends State<CanvasScreen>
     });
   }
 
-  void _selectShape(String? shapeId, {bool expandEditor = false}) {
+  void _selectShape(
+    String? shapeId, {
+    bool expandEditor = false,
+    bool centerView = true,
+  }) {
     // Commit any pending edits before selecting a different shape
     _commitPendingShapeEdits();
 
-    if (shapeId != null) {
+    if (shapeId != null && centerView) {
       final elements = _canvasBloc.state.elements;
       try {
         final element = elements.firstWhere((e) => e.id == shapeId);
@@ -3199,43 +3235,11 @@ class _CanvasScreenState extends State<CanvasScreen>
   }
 
   void _openSettings(String currentTitle) {
-    final dashboardBloc = context.read<DashboardBloc>();
-    final dashboardState = dashboardBloc.state;
-    Board? board;
-
-    if (dashboardState is DashboardLoaded) {
-      for (final b in dashboardState.ownedBoards) {
-        if (b.id == widget.boardId) {
-          board = b;
-          break;
-        }
-      }
-      if (board == null) {
-        for (final b in dashboardState.joinedBoards) {
-          if (b.id == widget.boardId) {
-            board = b;
-            break;
-          }
-        }
-      }
-    }
-
-    final fallback = Board(
-      id: widget.boardId,
-      title: currentTitle,
-      ownerId: '',
-      members: const [],
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-    );
-
-    Navigator.push(
+    openBoardSettings(
       context,
-      buildBoardSettingsRoute(
-        context,
-        board: board ?? fallback,
-        canvasBloc: _canvasBloc,
-      ),
+      boardId: widget.boardId,
+      currentTitle: currentTitle,
+      canvasBloc: _canvasBloc,
     );
   }
 
@@ -4587,6 +4591,8 @@ class _CanvasScreenState extends State<CanvasScreen>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // Desktop browser layout (canvas_screen_web.dart); always false on phones.
+    final webLayout = SlidingTray.useWebLayout(context);
 
     return BlocProvider.value(
       value: _canvasBloc,
@@ -4607,7 +4613,8 @@ class _CanvasScreenState extends State<CanvasScreen>
             AppSnackBar.showSuccess(
               context,
               msg,
-              action: path != null
+              // The web has no export file to share (the download is it).
+              action: path != null && !kIsWeb
                   ? SnackBarAction(
                       label: 'Share',
                       textColor: Colors.white,
@@ -4829,6 +4836,15 @@ class _CanvasScreenState extends State<CanvasScreen>
                             onPointerCancel: _handleCanvasPointerEnd,
                             onPointerSignal: _handleViewportPointerSignal,
                             child: GestureDetector(
+                              // Desktop browser: right-click opens the
+                              // canvas menu (long-press on phones).
+                              onSecondaryTapUp: webLayout
+                                  ? (details) => _showCanvasContextMenu(
+                                      state,
+                                      mappedElements,
+                                      details.localPosition,
+                                    )
+                                  : null,
                               onScaleStart: (details) {
                                 // The in-place text editor owns the gesture while
                                 // it is open; drawing/panning resumes on commit.
@@ -5520,6 +5536,28 @@ class _CanvasScreenState extends State<CanvasScreen>
                                     }
                                   }
                                 }
+
+                                // Desktop browsers: one click selects, and a
+                                // click on empty canvas clears the selection,
+                                // as people expect with a mouse (double-click
+                                // still opens the editor). Phones unchanged.
+                                if (SlidingTray.useWebLayout(context) &&
+                                    state.currentToolMode ==
+                                        CanvasToolMode.select) {
+                                  final hitShapeId = _hitTestShape(
+                                    mappedElements,
+                                    worldPoint,
+                                  );
+                                  if (hitShapeId != null) {
+                                    // Keep the view still, as desktop apps do.
+                                    _selectShape(hitShapeId, centerView: false);
+                                  } else if (!_insideSingleSelection(
+                                    state,
+                                    worldPoint,
+                                  )) {
+                                    _selectShape(null, centerView: false);
+                                  }
+                                }
                               },
                               onDoubleTapDown: (details) {
                                 _lastDoubleTapWorldPoint = _toWorld(
@@ -5788,17 +5826,28 @@ class _CanvasScreenState extends State<CanvasScreen>
                                       ..._buildPinnedCommentPins(state),
                                     if (!state.isViewingHistory)
                                       ..._buildAiImageOverlays(state),
-                                    if (!state.isViewingHistory)
-                                      _buildEdgeTriggers(state, isDark),
-                                    if (!state.isViewingHistory &&
-                                        !editingElement)
-                                      _buildCanvasToolbar(state),
-                                    if (!state.isViewingHistory &&
-                                        !editingElement)
-                                      _buildSelectionModeToggle(state),
-                                    _buildZoomControls(state),
-                                    if (_lastCanvasSize.width >= 720)
-                                      _buildMinimap(state),
+                                    // Desktop browser: corner bars and a tool rail
+                                    // (canvas_screen_web.dart). Phones: unchanged.
+                                    if (webLayout) ...[
+                                      _buildWebKeyboardFocus(state),
+                                      if (!state.isViewingHistory)
+                                        _buildWebToolRail(state),
+                                      if (!state.isViewingHistory)
+                                        ..._buildWebBottomLeft(state),
+                                      if (!editingElement) _buildWebBottomRight(state),
+                                    ] else ...[
+                                      if (!state.isViewingHistory)
+                                        _buildEdgeTriggers(state, isDark),
+                                      if (!state.isViewingHistory &&
+                                          !editingElement)
+                                        _buildCanvasToolbar(state),
+                                      if (!state.isViewingHistory &&
+                                          !editingElement)
+                                        _buildSelectionModeToggle(state),
+                                      _buildZoomControls(state),
+                                      if (_lastCanvasSize.width >= 720)
+                                        _buildMinimap(state),
+                                    ],
                                     if (!state.isViewingHistory &&
                                         _showTemplateCoachmark &&
                                         !state.isLoading &&
@@ -5962,7 +6011,17 @@ class _CanvasScreenState extends State<CanvasScreen>
                                         state,
                                         mappedElements,
                                       ),
-                                    if (!state.isViewingHistory)
+                                    if (!state.isViewingHistory && webLayout) ...[
+                                      _buildWebTopLeftBar(
+                                        state,
+                                        title,
+                                        _pendingEditRequestsCount(state),
+                                      ),
+                                      _buildWebTopRightBar(
+                                        state,
+                                        _pendingEditRequestsCount(state),
+                                      ),
+                                    ] else if (!state.isViewingHistory)
                                       _buildTopPills(state, title),
                                     if (!state.isViewingHistory &&
                                         state.isArchived)
@@ -7943,18 +8002,30 @@ class _CanvasScreenState extends State<CanvasScreen>
           onTap: () => setState(() => _isShapesPopupOpen = false),
         ),
       ),
-      Positioned(
-        left: 12,
-        right: 12,
-        bottom: bottomInset + 66,
-        child: Center(
+      // Desktop browser: beside the tool rail. Phones: above the toolbar.
+      if (SlidingTray.useWebLayout(context))
+        Positioned(
+          left: 84,
+          top: 120,
           child: ShapesPickerPopup(
             selectedType: state.pendingShapeType,
             onSelectShape: _selectShapeForDrawing,
             onClose: () => setState(() => _isShapesPopupOpen = false),
           ),
+        )
+      else
+        Positioned(
+          left: 12,
+          right: 12,
+          bottom: bottomInset + 66,
+          child: Center(
+            child: ShapesPickerPopup(
+              selectedType: state.pendingShapeType,
+              onSelectShape: _selectShapeForDrawing,
+              onClose: () => setState(() => _isShapesPopupOpen = false),
+            ),
+          ),
         ),
-      ),
     ];
   }
 
@@ -9638,29 +9709,7 @@ class _CanvasScreenState extends State<CanvasScreen>
   Widget _buildTopPills(CanvasState state, String title) {
     final tokens = _tokens;
     final topInset = MediaQuery.of(context).padding.top + 8;
-    final notifState = context.watch<NotificationsBloc>().state;
-    final int pendingRequestsCount;
-    if (state.currentUserRole == Board.roleOwner &&
-        notifState is NotificationsLoaded) {
-      pendingRequestsCount = notifState.notifications.where((n) {
-        final type = n['type']?.toString();
-        final status = n['status']?.toString();
-        final extraData = n['extraData'] is Map
-            ? (n['extraData'] as Map).cast<String, dynamic>()
-            : <String, dynamic>{};
-        final bId =
-            extraData['boardId']?.toString() ?? n['targetId']?.toString();
-        final reqType =
-            extraData['requestType']?.toString() ??
-            (type == 'board_edit_request' ? 'edit' : 'join');
-        return (type == 'board_edit_request' ||
-                (type == 'board_access_request' && reqType == 'edit')) &&
-            status == 'pending' &&
-            bId == widget.boardId;
-      }).length;
-    } else {
-      pendingRequestsCount = 0;
-    }
+    final pendingRequestsCount = _pendingEditRequestsCount(state);
 
     return Positioned(
       top: topInset,
@@ -9774,190 +9823,7 @@ class _CanvasScreenState extends State<CanvasScreen>
                         ),
                       ),
                     ),
-                  PopupMenuButton<String>(
-                    tooltip: 'More options',
-                    icon: pendingRequestsCount > 0
-                        ? Badge(
-                            label: Text('$pendingRequestsCount'),
-                            backgroundColor: tokens.accent,
-                            textColor: Colors.white,
-                            child: Icon(
-                              LucideIcons.ellipsis,
-                              color: tokens.ink,
-                              size: 18,
-                            ),
-                          )
-                        : Icon(
-                            LucideIcons.ellipsis,
-                            color: tokens.ink,
-                            size: 18,
-                          ),
-                    onSelected: (value) async {
-                      if (value == 'requests') {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => BoardEditRequestsScreen(
-                              boardId: widget.boardId,
-                              boardTitle: state.boardTitle ?? 'Board',
-                            ),
-                          ),
-                        );
-                      } else if (value == 'settings') {
-                        _openSettings(state.boardTitle ?? 'Board');
-                      } else if (value == 'request_edit') {
-                        _showRequestEditDialog(context);
-                      } else if (value == 'export') {
-                        _showExportOptionsSheet(context);
-                      } else if (value == 'copy_selection') {
-                        _canvasBloc.add(const CanvasCopySelection());
-                      } else if (value == 'paste_selection') {
-                        _canvasBloc.add(const CanvasPasteSelection());
-                      } else if (value == 'layers') {
-                        _toggleTray('layers');
-                      } else if (value == 'share') {
-                        _canvasBloc.add(
-                          CanvasExportBoardRequested(
-                            format: BoardExportFormat.png,
-                            shareAfterExport: true,
-                            sharePositionOrigin: _shareAnchorRect(),
-                          ),
-                        );
-                      } else if (value == 'copy') {
-                        Clipboard.setData(ClipboardData(text: widget.boardId));
-                        AppSnackBar.showSuccess(
-                          context,
-                          'Join Code copied to clipboard!',
-                        );
-                      } else if (value == 'toggle_gesture_lock') {
-                        setState(() {
-                          _preventGestureBack = !_preventGestureBack;
-                        });
-                        AppSnackBar.showMessage(
-                          context,
-                          _preventGestureBack
-                              ? 'Gesture back locked (exit via back button).'
-                              : 'Gesture back unlocked.',
-                        );
-                      } else if (value == 'toggle_edge_buttons') {
-                        setState(() {
-                          _showEdgeTrayButtons = !_showEdgeTrayButtons;
-                        });
-                      } else if (value == 'exit') {
-                        await _exitCanvas();
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      if (state.currentUserRole == Board.roleOwner &&
-                          pendingRequestsCount > 0)
-                        PopupMenuItem(
-                          value: 'requests',
-                          child: _menuRow(
-                            LucideIcons.userCheck,
-                            'Edit Requests ($pendingRequestsCount)',
-                            tokens.accent,
-                          ),
-                        ),
-                      PopupMenuItem(
-                        value: 'settings',
-                        child: _menuRow(
-                          LucideIcons.slidersHorizontal,
-                          (state.currentUserRole == Board.roleOwner &&
-                                  pendingRequestsCount > 0)
-                              ? 'Board Settings ($pendingRequestsCount)'
-                              : 'Board Settings',
-                          tokens.ink,
-                        ),
-                      ),
-                      if (state.currentUserRole == Board.roleViewer)
-                        PopupMenuItem(
-                          value: 'request_edit',
-                          child: _menuRow(
-                            LucideIcons.pencilLine,
-                            'Request Edit Access',
-                            tokens.accent,
-                          ),
-                        ),
-                      PopupMenuItem(
-                        value: 'export',
-                        child: _menuRow(
-                          LucideIcons.download,
-                          'Export Board...',
-                          tokens.ink,
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'layers',
-                        child: _menuRow(
-                          LucideIcons.layers,
-                          'Layers',
-                          tokens.ink,
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'copy_selection',
-                        enabled:
-                            state.selectedIds.isNotEmpty ||
-                            state.selectedShapeId != null,
-                        child: _menuRow(
-                          LucideIcons.copy,
-                          'Copy Selection',
-                          tokens.ink,
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'paste_selection',
-                        enabled: state.hasClipboard && state.canEdit,
-                        child: _menuRow(
-                          LucideIcons.clipboardPaste,
-                          'Paste',
-                          tokens.ink,
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'share',
-                        child: _menuRow(
-                          LucideIcons.share2,
-                          'Share Board',
-                          tokens.ink,
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'copy',
-                        child: _menuRow(
-                          LucideIcons.copy,
-                          'Copy Join Code',
-                          tokens.ink,
-                        ),
-                      ),
-                      const PopupMenuDivider(),
-                      CheckedPopupMenuItem<String>(
-                        value: 'toggle_gesture_lock',
-                        checked: _preventGestureBack,
-                        child: Text(
-                          'Lock Back Gesture',
-                          style: TextStyle(color: tokens.ink),
-                        ),
-                      ),
-                      CheckedPopupMenuItem<String>(
-                        value: 'toggle_edge_buttons',
-                        checked: _showEdgeTrayButtons,
-                        child: Text(
-                          'Show Tray Edge Icons',
-                          style: TextStyle(color: tokens.ink),
-                        ),
-                      ),
-                      const PopupMenuDivider(),
-                      PopupMenuItem(
-                        value: 'exit',
-                        child: _menuRow(
-                          LucideIcons.logOut,
-                          'Exit Canvas',
-                          tokens.danger,
-                        ),
-                      ),
-                    ],
-                  ),
+                  _buildBoardMenuButton(state, pendingRequestsCount),
                   const SizedBox(width: 4),
                 ],
               ),
@@ -9965,6 +9831,224 @@ class _CanvasScreenState extends State<CanvasScreen>
           ),
         ],
       ),
+    );
+  }
+
+  /// Owner's pending edit requests for this board (badge on the menu).
+  int _pendingEditRequestsCount(CanvasState state) {
+    final notifState = context.watch<NotificationsBloc>().state;
+    if (state.currentUserRole == Board.roleOwner &&
+        notifState is NotificationsLoaded) {
+      return notifState.notifications.where((n) {
+        final type = n['type']?.toString();
+        final status = n['status']?.toString();
+        final extraData = n['extraData'] is Map
+            ? (n['extraData'] as Map).cast<String, dynamic>()
+            : <String, dynamic>{};
+        final bId =
+            extraData['boardId']?.toString() ?? n['targetId']?.toString();
+        final reqType =
+            extraData['requestType']?.toString() ??
+            (type == 'board_edit_request' ? 'edit' : 'join');
+        return (type == 'board_edit_request' ||
+                (type == 'board_access_request' && reqType == 'edit')) &&
+            status == 'pending' &&
+            bId == widget.boardId;
+      }).length;
+    } else {
+      return 0;
+    }
+  }
+
+  /// The board's "More options" menu (settings, export, layers, share...).
+  Widget _buildBoardMenuButton(
+    CanvasState state,
+    int pendingRequestsCount, {
+    IconData icon = LucideIcons.ellipsis,
+  }) {
+    final tokens = _tokens;
+    return PopupMenuButton<String>(
+      tooltip: 'More options',
+      icon: pendingRequestsCount > 0
+          ? Badge(
+              label: Text('$pendingRequestsCount'),
+              backgroundColor: tokens.accent,
+              textColor: Colors.white,
+              child: Icon(
+                icon,
+                color: tokens.ink,
+                size: 18,
+              ),
+            )
+          : Icon(
+              icon,
+              color: tokens.ink,
+              size: 18,
+            ),
+      onSelected: (value) async {
+        if (value == 'requests') {
+          Navigator.push(
+            context,
+            BoardEditRequestsScreen.routeFrom(
+              context,
+              boardId: widget.boardId,
+              boardTitle: state.boardTitle ?? 'Board',
+            ),
+          );
+        } else if (value == 'settings') {
+          _openSettings(state.boardTitle ?? 'Board');
+        } else if (value == 'request_edit') {
+          _showRequestEditDialog(context);
+        } else if (value == 'export') {
+          _showExportOptionsSheet(context);
+        } else if (value == 'copy_selection') {
+          _canvasBloc.add(const CanvasCopySelection());
+        } else if (value == 'paste_selection') {
+          _canvasBloc.add(const CanvasPasteSelection());
+        } else if (value == 'layers') {
+          _toggleTray('layers');
+        } else if (value == 'share') {
+          _canvasBloc.add(
+            CanvasExportBoardRequested(
+              format: BoardExportFormat.png,
+              shareAfterExport: true,
+              sharePositionOrigin: _shareAnchorRect(),
+            ),
+          );
+        } else if (value == 'copy') {
+          Clipboard.setData(ClipboardData(text: widget.boardId));
+          AppSnackBar.showSuccess(
+            context,
+            'Join Code copied to clipboard!',
+          );
+        } else if (value == 'toggle_gesture_lock') {
+          setState(() {
+            _preventGestureBack = !_preventGestureBack;
+          });
+          AppSnackBar.showMessage(
+            context,
+            _preventGestureBack
+                ? 'Gesture back locked (exit via back button).'
+                : 'Gesture back unlocked.',
+          );
+        } else if (value == 'toggle_edge_buttons') {
+          setState(() {
+            _showEdgeTrayButtons = !_showEdgeTrayButtons;
+          });
+        } else if (value == 'exit') {
+          await _exitCanvas();
+        }
+      },
+      itemBuilder: (context) => [
+        if (state.currentUserRole == Board.roleOwner &&
+            pendingRequestsCount > 0)
+          PopupMenuItem(
+            value: 'requests',
+            child: _menuRow(
+              LucideIcons.userCheck,
+              'Edit Requests ($pendingRequestsCount)',
+              tokens.accent,
+            ),
+          ),
+        PopupMenuItem(
+          value: 'settings',
+          child: _menuRow(
+            LucideIcons.slidersHorizontal,
+            (state.currentUserRole == Board.roleOwner &&
+                    pendingRequestsCount > 0)
+                ? 'Board Settings ($pendingRequestsCount)'
+                : 'Board Settings',
+            tokens.ink,
+          ),
+        ),
+        if (state.currentUserRole == Board.roleViewer)
+          PopupMenuItem(
+            value: 'request_edit',
+            child: _menuRow(
+              LucideIcons.pencilLine,
+              'Request Edit Access',
+              tokens.accent,
+            ),
+          ),
+        PopupMenuItem(
+          value: 'export',
+          child: _menuRow(
+            LucideIcons.download,
+            'Export Board...',
+            tokens.ink,
+          ),
+        ),
+        PopupMenuItem(
+          value: 'layers',
+          child: _menuRow(
+            LucideIcons.layers,
+            'Layers',
+            tokens.ink,
+          ),
+        ),
+        PopupMenuItem(
+          value: 'copy_selection',
+          enabled:
+              state.selectedIds.isNotEmpty ||
+              state.selectedShapeId != null,
+          child: _menuRow(
+            LucideIcons.copy,
+            'Copy Selection',
+            tokens.ink,
+          ),
+        ),
+        PopupMenuItem(
+          value: 'paste_selection',
+          enabled: state.hasClipboard && state.canEdit,
+          child: _menuRow(
+            LucideIcons.clipboardPaste,
+            'Paste',
+            tokens.ink,
+          ),
+        ),
+        PopupMenuItem(
+          value: 'share',
+          child: _menuRow(
+            LucideIcons.share2,
+            'Share Board',
+            tokens.ink,
+          ),
+        ),
+        PopupMenuItem(
+          value: 'copy',
+          child: _menuRow(
+            LucideIcons.copy,
+            'Copy Join Code',
+            tokens.ink,
+          ),
+        ),
+        const PopupMenuDivider(),
+        CheckedPopupMenuItem<String>(
+          value: 'toggle_gesture_lock',
+          checked: _preventGestureBack,
+          child: Text(
+            'Lock Back Gesture',
+            style: TextStyle(color: tokens.ink),
+          ),
+        ),
+        CheckedPopupMenuItem<String>(
+          value: 'toggle_edge_buttons',
+          checked: _showEdgeTrayButtons,
+          child: Text(
+            'Show Tray Edge Icons',
+            style: TextStyle(color: tokens.ink),
+          ),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 'exit',
+          child: _menuRow(
+            LucideIcons.logOut,
+            'Exit Canvas',
+            tokens.danger,
+          ),
+        ),
+      ],
     );
   }
 
@@ -10610,6 +10694,7 @@ class _CanvasScreenState extends State<CanvasScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _webKeyFocus.dispose();
     _inkSpillTimer?.cancel();
     _shapeEditDebounceTimer?.cancel();
     _edgeAutoPanTimer?.cancel();

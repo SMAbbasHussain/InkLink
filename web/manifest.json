@@ -1,12 +1,12 @@
 {
-    "name": "inklink",
-    "short_name": "inklink",
+    "name": "InkLink",
+    "short_name": "InkLink",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#EDEDF0",
+    "theme_color": "#6A4EFF",
+    "description": "InkLink on the web: manage your collaborative whiteboards, invites and friends from any computer.",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {

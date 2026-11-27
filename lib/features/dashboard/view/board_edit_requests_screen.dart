@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -31,6 +32,32 @@ class BoardEditRequestsScreen extends StatefulWidget {
     required this.boardId,
     this.boardTitle,
   });
+
+  /// Opens the screen from inside a board. The page reads the
+  /// [NotificationsBloc] of the [context] it is opened from: on phones that
+  /// is the app-wide one (so nothing changes there); on the web the bloc
+  /// lives in the board page, which a pushed page can't otherwise reach.
+  /// On the web it also keeps the board's (light) theme.
+  static Route<void> routeFrom(
+    BuildContext context, {
+    required String boardId,
+    String? boardTitle,
+  }) {
+    final notifications = context.read<NotificationsBloc>();
+    final theme = Theme.of(context);
+    return MaterialPageRoute<void>(
+      builder: (_) {
+        final Widget page = BlocProvider.value(
+          value: notifications,
+          child: BoardEditRequestsScreen(
+            boardId: boardId,
+            boardTitle: boardTitle,
+          ),
+        );
+        return kIsWeb ? Theme(data: theme, child: page) : page;
+      },
+    );
+  }
 
   @override
   State<BoardEditRequestsScreen> createState() =>

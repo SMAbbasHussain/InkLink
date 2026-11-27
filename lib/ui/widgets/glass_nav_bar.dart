@@ -3,6 +3,7 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 
 import '../theme/ink_theme.dart';
+import '../theme/ink_tokens.dart';
 import 'glass_panel.dart';
 
 class GlassNavItem {
@@ -10,10 +11,14 @@ class GlassNavItem {
   final IconData inactiveIcon;
   final String label;
 
+  /// Count shown on the icon (e.g. waiting invites). 0 shows nothing.
+  final int badge;
+
   const GlassNavItem({
     required this.activeIcon,
     required this.inactiveIcon,
     required this.label,
+    this.badge = 0,
   });
 }
 
@@ -140,26 +145,23 @@ class _GlassNavBarState extends State<GlassNavBar>
                         child: Semantics(
                           button: true,
                           selected: i == widget.currentIndex,
-                          label: items[i].label,
+                          label: items[i].badge > 0
+                              ? '${items[i].label}, ${items[i].badge} new'
+                              : items[i].label,
                           child: Tooltip(
                             message: items[i].label,
                             child: InkWell(
                               onTap: () => _handleTap(i),
                               customBorder: const StadiumBorder(),
                               child: Center(
-                                child: AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 200),
-                                  child: Icon(
-                                    i == widget.currentIndex
-                                        ? items[i].activeIcon
-                                        : items[i].inactiveIcon,
-                                    key: ValueKey('${i}_${i == widget.currentIndex}'),
-                                    color: i == widget.currentIndex
-                                        ? tokens.accentText
-                                        : tokens.inkMuted,
-                                    size: 24,
-                                  ),
-                                ),
+                                child: items[i].badge > 0
+                                    ? Badge(
+                                        label: Text('${items[i].badge}'),
+                                        backgroundColor: tokens.accent,
+                                        textColor: Colors.white,
+                                        child: _icon(items[i], i, tokens),
+                                      )
+                                    : _icon(items[i], i, tokens),
                               ),
                             ),
                           ),
@@ -171,6 +173,18 @@ class _GlassNavBarState extends State<GlassNavBar>
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _icon(GlassNavItem item, int i, InkTokens tokens) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 200),
+      child: Icon(
+        i == widget.currentIndex ? item.activeIcon : item.inactiveIcon,
+        key: ValueKey('${i}_${i == widget.currentIndex}'),
+        color: i == widget.currentIndex ? tokens.accentText : tokens.inkMuted,
+        size: 24,
       ),
     );
   }
