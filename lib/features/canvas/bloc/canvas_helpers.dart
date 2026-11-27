@@ -68,6 +68,7 @@ class _QueuedPreviewPublish {
   String previewId = '';
   String elementId = '';
   Uint8List payload = Uint8List(0);
+  Map<String, dynamic> Function()? payloadBuilder;
 }
 
 double _normalizeRotation(double value) {
@@ -195,13 +196,6 @@ void _applyPendingShapeEdits(
       data[key] = entry.value;
     }
   }
-}
-
-/// Measures the on-canvas bounds of [text] using the same layout the painter
-/// and the text tool use, so persisted bounds match the render.
-Size measureTextElementBounds(String text) {
-  final layout = CanvasTextLayout.layout(text: text);
-  return layout.size;
 }
 
 /// Eraser bounds delegate to the shared geometry so erasing, selection and

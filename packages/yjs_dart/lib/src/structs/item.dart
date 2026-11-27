@@ -657,6 +657,8 @@ class Item extends AbstractStruct {
   bool mergeWith(AbstractStruct right) {
     if (right is! Item) return false;
     if (runtimeType != right.runtimeType ||
+        parentSub != null ||
+        right.parentSub != null ||
         !compareIDs(right.origin, lastId) ||
         this.right != right ||
         !compareIDs(rightOrigin, right.rightOrigin) ||

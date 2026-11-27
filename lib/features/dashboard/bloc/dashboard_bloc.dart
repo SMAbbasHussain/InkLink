@@ -158,6 +158,16 @@ class DashboardUnarchiveBoardRequested extends DashboardEvent {
   DashboardUnarchiveBoardRequested(this.boardId);
 }
 
+class DashboardPauseBoardRequested extends DashboardEvent {
+  final String boardId;
+  DashboardPauseBoardRequested(this.boardId);
+}
+
+class DashboardResumeBoardRequested extends DashboardEvent {
+  final String boardId;
+  DashboardResumeBoardRequested(this.boardId);
+}
+
 class DashboardDuplicateBoardRequested extends DashboardEvent {
   final String boardId;
   final String? customTitle;
@@ -196,6 +206,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   StreamSubscription<List<List<Board>>>? _dashboardSub;
   StreamSubscription<Map<String, dynamic>?>? _profileSub;
   Map<String, dynamic>? _latestCurrentUserProfile;
+  int _profileWatchRetries = 0;
 
   DashboardBloc({required this.boardService, required this.profileService})
     : super(DashboardInitial()) {
@@ -211,6 +222,8 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     );
     on<DashboardArchiveBoardRequested>(_onDashboardArchiveBoardRequested);
     on<DashboardUnarchiveBoardRequested>(_onDashboardUnarchiveBoardRequested);
+    on<DashboardPauseBoardRequested>(_onDashboardPauseBoardRequested);
+    on<DashboardResumeBoardRequested>(_onDashboardResumeBoardRequested);
     on<DashboardDuplicateBoardRequested>(_onDashboardDuplicateBoardRequested);
     on<DashboardUpdateBoardTagsRequested>(_onDashboardUpdateBoardTagsRequested);
     on<DashboardConsumeEffects>(_onDashboardConsumeEffects);
@@ -310,9 +323,30 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       return;
     }
 
-    _profileSub = profileService.watchUserById(event.userId!).listen((data) {
-      add(_UpdateCurrentUserProfile(data));
-    });
+    _profileSub = profileService.watchUserById(event.userId!).listen(
+      (data) {
+        _profileWatchRetries = 0;
+        add(_UpdateCurrentUserProfile(data));
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        // A terminated listener would leave the header avatar stale forever
+        // (for example a new profile photo never appearing). Re-arm it a few
+        // times so later document changes are still picked up.
+        developer.log(
+          'Current-user profile watch error: $error',
+          name: 'DashboardBloc',
+          error: error,
+          stackTrace: stackTrace,
+        );
+        if (_profileWatchRetries >= 3) return;
+        _profileWatchRetries += 1;
+        Future<void>.delayed(Duration(seconds: 2 * _profileWatchRetries), () {
+          if (!isClosed) {
+            add(DashboardWatchCurrentUserProfileRequested(event.userId));
+          }
+        });
+      },
+    );
   }
 
   void _onUpdateCurrentUserProfile(
@@ -537,6 +571,61 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           joinedBoards: updatedJoined,
           actionError: null,
           actionInfo: 'Board restored from archive.',
+        ));
+      }
+    } catch (e) {
+      final current = state;
+      if (current is DashboardLoaded) {
+        emit(current.copyWith(actionError: _humanizeError(e)));
+      }
+    }
+  }
+
+  Future<void> _onDashboardPauseBoardRequested(
+    DashboardPauseBoardRequested event,
+    Emitter<DashboardState> emit,
+  ) {
+    return _setBoardPaused(
+      event.boardId,
+      isPaused: true,
+      infoMessage: 'Board paused. Editing is disabled until resumed.',
+      emit: emit,
+    );
+  }
+
+  Future<void> _onDashboardResumeBoardRequested(
+    DashboardResumeBoardRequested event,
+    Emitter<DashboardState> emit,
+  ) {
+    return _setBoardPaused(
+      event.boardId,
+      isPaused: false,
+      infoMessage: 'Board resumed. Editing is enabled.',
+      emit: emit,
+    );
+  }
+
+  Future<void> _setBoardPaused(
+    String boardId, {
+    required bool isPaused,
+    required String infoMessage,
+    required Emitter<DashboardState> emit,
+  }) async {
+    try {
+      await boardService.setBoardPaused(boardId, isPaused: isPaused);
+      final current = state;
+      if (current is DashboardLoaded) {
+        final updatedOwned = current.ownedBoards
+            .map((b) => b.id == boardId ? b.copyWith(isPaused: isPaused) : b)
+            .toList();
+        final updatedJoined = current.joinedBoards
+            .map((b) => b.id == boardId ? b.copyWith(isPaused: isPaused) : b)
+            .toList();
+        emit(current.copyWith(
+          ownedBoards: updatedOwned,
+          joinedBoards: updatedJoined,
+          actionError: null,
+          actionInfo: infoMessage,
         ));
       }
     } catch (e) {

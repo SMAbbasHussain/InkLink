@@ -11,7 +11,8 @@ abstract class CrdtLocalStore {
   /// `appliedAt` as the board's last synced time, in one transaction.
   Future<void> saveUpdateAndSyncedAt(LocalCrdtUpdate update);
 
-  /// Deletes every update of [boardId].
+  /// Deletes every update of [boardId] and forgets its stream cursor, so the
+  /// next load starts from a full snapshot.
   Future<void> deleteUpdatesForBoard(String boardId);
 
   /// The update with [updateId], or null.

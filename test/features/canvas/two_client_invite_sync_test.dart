@@ -191,10 +191,9 @@ class _FakeInvitationService implements InvitationService {
 
   _FakeInvitationService({
     required _SharedBoard board,
-    required String inviteeUid,
+    required this._inviteeUid,
     required String inviteId,
   }) : _board = board,
-       _inviteeUid = inviteeUid,
        _inviteId = inviteId,
        _invites = [
          <String, dynamic>{

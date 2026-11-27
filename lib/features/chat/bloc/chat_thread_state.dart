@@ -18,6 +18,8 @@ class ChatThreadLoaded extends ChatThreadState {
   final bool isSending;
   final String? typingUser;
   final bool? isOnline;
+  final String? partnerAvatarUrl;
+  final String? partnerName;
 
   const ChatThreadLoaded({
     required this.conversationId,
@@ -25,6 +27,8 @@ class ChatThreadLoaded extends ChatThreadState {
     this.isSending = false,
     this.typingUser,
     this.isOnline,
+    this.partnerAvatarUrl,
+    this.partnerName,
   });
 
   ChatThreadLoaded copyWith({
@@ -33,6 +37,8 @@ class ChatThreadLoaded extends ChatThreadState {
     bool? isSending,
     String? typingUser,
     bool? isOnline,
+    String? partnerAvatarUrl,
+    String? partnerName,
   }) {
     return ChatThreadLoaded(
       conversationId: conversationId ?? this.conversationId,
@@ -40,6 +46,8 @@ class ChatThreadLoaded extends ChatThreadState {
       isSending: isSending ?? this.isSending,
       typingUser: typingUser ?? this.typingUser,
       isOnline: isOnline ?? this.isOnline,
+      partnerAvatarUrl: partnerAvatarUrl ?? this.partnerAvatarUrl,
+      partnerName: partnerName ?? this.partnerName,
     );
   }
 }

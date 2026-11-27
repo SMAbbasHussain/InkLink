@@ -5,6 +5,7 @@ import 'dart:developer' as developer;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../../../core/services/auth_service.dart';
@@ -97,16 +98,12 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
   bool _disposed = false;
 
   BoardHistoryServiceImpl({
-    required AuthService authService,
-    CloudFunctionsService? cloudFunctionsService,
-    BoardHistoryRepository? historyRepository,
+    required this._authService,
+    this._cloudFunctionsService,
+    this._historyRepository,
     BoardHistorySocketFactory? socketFactory,
-    Duration connectTimeout = const Duration(seconds: 5),
-  }) : _authService = authService,
-       _cloudFunctionsService = cloudFunctionsService,
-       _historyRepository = historyRepository,
-       _connectTimeout = connectTimeout,
-       _socketFactory = socketFactory ?? _defaultSocketFactory;
+    this._connectTimeout = const Duration(seconds: 5),
+  }) : _socketFactory = socketFactory ?? _defaultSocketFactory;
 
   static BoardHistorySocket _defaultSocketFactory(String token) {
     final socket = io.io(
@@ -698,6 +695,29 @@ class BoardHistoryServiceImpl implements BoardHistoryService {
         'submitUndoRequest failed: $error',
         name: 'BoardHistoryService',
       );
+      // Keep the callable's own reason: "you already have a pending request",
+      // "only editors can request an undo" and validation errors are all
+      // actionable, while a generic failure message is not.
+      if (error is FirebaseFunctionsException) {
+        final reason = (error.message ?? '').trim();
+        final detail = reason.isEmpty ? null : reason;
+        switch (error.code) {
+          case 'failed-precondition':
+            throw HistoryServiceException('pending_exists', detail);
+          case 'permission-denied':
+            throw HistoryServiceException('forbidden', detail);
+          case 'unauthenticated':
+            throw HistoryServiceException('unauthenticated', detail);
+          case 'not-found':
+            throw HistoryServiceException('board_missing', detail);
+          case 'invalid-argument':
+            throw HistoryServiceException('invalid_request', detail);
+          case 'unavailable':
+          case 'deadline-exceeded':
+          case 'internal':
+            throw HistoryServiceException('submit_unavailable', detail);
+        }
+      }
       throw HistoryServiceException('submit_failed', error.toString());
     }
   }

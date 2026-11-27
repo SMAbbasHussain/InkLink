@@ -1,14 +1,4 @@
-DateTime _parseDate(dynamic value) {
-  if (value == null) return DateTime.now();
-  if (value is DateTime) return value;
-  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
-  if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
-  try {
-    return (value as dynamic).toDate() as DateTime? ?? DateTime.now();
-  } catch (_) {
-    return DateTime.now();
-  }
-}
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 /// Pure domain entity representing a user profile.
 /// Free of database framework dependencies (Isar/Firestore).
@@ -56,10 +46,10 @@ class UserModel {
       photoURL: data['photoURL']?.toString(),
       friendCount: (data['friendCount'] as num?)?.toInt() ?? 0,
       boardCount: (data['boardCount'] as num?)?.toInt() ?? 0,
-      createdAt: _parseDate(data['createdAt']),
-      updatedAt: data['updatedAt'] != null ? _parseDate(data['updatedAt']) : null,
+      createdAt: parseDateTimeValue(data['createdAt']),
+      updatedAt: data['updatedAt'] != null ? parseDateTimeValue(data['updatedAt']) : null,
       isOnline: data['isOnline'] as bool?,
-      lastActive: data['lastActive'] != null ? _parseDate(data['lastActive']) : null,
+      lastActive: data['lastActive'] != null ? parseDateTimeValue(data['lastActive']) : null,
       isProfilePublic: (data['isProfilePublic'] as bool?) ?? true,
       showOnlineStatus: (data['showOnlineStatus'] as bool?) ?? true,
       showEmail: (data['showEmail'] as bool?) ?? false,

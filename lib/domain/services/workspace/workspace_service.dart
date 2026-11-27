@@ -26,6 +26,9 @@ abstract class WorkspaceService {
     required String workspaceId,
     required List<String> invitedUserIds,
   });
+  Stream<Set<String>> getPendingSentWorkspaceInviteUserIds(
+    String workspaceId,
+  ) => Stream.value(const <String>{});
   Future<void> leaveWorkspace({
     String? workspaceId,
     List<String>? importedBoardsToKeep,
@@ -75,10 +78,9 @@ class WorkspaceServiceImpl implements WorkspaceService {
   final CloudFunctionsService _cloudFunctionsService;
 
   WorkspaceServiceImpl({
-    required WorkspaceRepository repository,
-    required CloudFunctionsService cloudFunctionsService,
-  }) : _repository = repository,
-       _cloudFunctionsService = cloudFunctionsService;
+    required this._repository,
+    required this._cloudFunctionsService,
+  });
 
   @override
   Future<void> startWorkspacSync() => _repository.startWorkspaceSync();
@@ -142,6 +144,11 @@ class WorkspaceServiceImpl implements WorkspaceService {
       'invitedUserIds': invitedUserIds,
     });
   }
+
+  @override
+  Stream<Set<String>> getPendingSentWorkspaceInviteUserIds(
+    String workspaceId,
+  ) => _repository.getPendingSentWorkspaceInviteUserIds(workspaceId);
 
   @override
   Future<void> leaveWorkspace({

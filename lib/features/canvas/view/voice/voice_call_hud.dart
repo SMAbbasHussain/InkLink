@@ -21,6 +21,7 @@ class VoiceCallHud extends StatelessWidget {
       buildWhen: (prev, curr) =>
           prev.isVoiceCallActive != curr.isVoiceCallActive ||
           prev.isMicMuted != curr.isMicMuted ||
+          prev.isSpeakerOn != curr.isSpeakerOn ||
           prev.voiceParticipants != curr.voiceParticipants,
       builder: (context, state) {
         if (!state.isVoiceCallActive && state.voiceParticipants.isEmpty) {
@@ -32,87 +33,114 @@ class VoiceCallHud extends StatelessWidget {
         return Positioned(
           top: topInset,
           left: 16,
-          child: GlassPanel(
-            radius: InkRadii.pill,
-            padding: const EdgeInsets.symmetric(
-              horizontal: InkSpacing.s12,
-              vertical: InkSpacing.s8,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Call status indicator
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: tokens.success,
-                  ),
-                ),
-                const SizedBox(width: InkSpacing.s8),
-
-                Text(
-                  state.isVoiceCallActive
-                      ? 'Voice call'
-                      : 'Voice call · ${state.voiceParticipants.length} in call',
-                  style: InkType.label(tokens.ink),
-                ),
-                const SizedBox(width: InkSpacing.s12),
-
-                // Participant Avatars
-                ...state.voiceParticipants.map(
-                  (p) => _ParticipantAvatar(participant: p, tokens: tokens),
-                ),
-
-                const SizedBox(width: InkSpacing.s8),
-
-                // Mute only makes sense while this user is in the call.
-                if (state.isVoiceCallActive)
-                  IconButton(
-                    icon: Icon(
-                      state.isMicMuted ? LucideIcons.micOff : LucideIcons.mic,
-                      size: 18,
-                      color: state.isMicMuted ? tokens.danger : tokens.ink,
+          right: 16,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: GlassPanel(
+              radius: InkRadii.pill,
+              padding: const EdgeInsets.symmetric(
+                horizontal: InkSpacing.s12,
+                vertical: InkSpacing.s8,
+              ),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Call status indicator
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: tokens.success,
+                      ),
                     ),
-                    tooltip: state.isMicMuted ? 'Unmute Mic' : 'Mute Mic',
-                    onPressed: () {
-                      context.read<CanvasBloc>().add(
-                        const CanvasToggleVoiceMuteRequested(),
-                      );
-                    },
-                  ),
+                    const SizedBox(width: InkSpacing.s8),
 
-                // End Call / Join Call Button
-                if (state.isVoiceCallActive)
-                  IconButton(
-                    icon: Icon(
-                      LucideIcons.phoneOff,
-                      size: 18,
-                      color: tokens.danger,
+                    Text(
+                      state.isVoiceCallActive
+                          ? 'Voice call'
+                          : 'Voice call · ${state.voiceParticipants.length} in call',
+                      style: InkType.label(tokens.ink),
                     ),
-                    tooltip: 'Leave Call',
-                    onPressed: () {
-                      context.read<CanvasBloc>().add(
-                        const CanvasLeaveVoiceCallRequested(),
-                      );
-                    },
-                  )
-                else
-                  IconButton(
-                    icon: Icon(
-                      LucideIcons.phone,
-                      size: 18,
-                      color: tokens.success,
+                    const SizedBox(width: InkSpacing.s12),
+
+                    // Participant Avatars
+                    ...state.voiceParticipants.map(
+                      (p) => _ParticipantAvatar(participant: p, tokens: tokens),
                     ),
-                    tooltip: 'Join Call',
-                    onPressed: () {
-                      context.read<CanvasBloc>().add(
-                        const CanvasJoinVoiceCallRequested(),
-                      );
-                    },
-                  ),
-              ],
+
+                    const SizedBox(width: InkSpacing.s8),
+
+                    // Mute & speaker only make sense while this user is in the call.
+                    if (state.isVoiceCallActive) ...[
+                      IconButton(
+                        icon: Icon(
+                          state.isMicMuted
+                              ? LucideIcons.micOff
+                              : LucideIcons.mic,
+                          size: 18,
+                          color: state.isMicMuted ? tokens.danger : tokens.ink,
+                        ),
+                        tooltip: state.isMicMuted ? 'Unmute Mic' : 'Mute Mic',
+                        onPressed: () {
+                          context.read<CanvasBloc>().add(
+                            const CanvasToggleVoiceMuteRequested(),
+                          );
+                        },
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          state.isSpeakerOn
+                              ? LucideIcons.volume2
+                              : LucideIcons.volume1,
+                          size: 18,
+                          color: state.isSpeakerOn ? tokens.accent : tokens.ink,
+                        ),
+                        tooltip: state.isSpeakerOn
+                            ? 'Speaker Off'
+                            : 'Speaker On',
+                        onPressed: () {
+                          context.read<CanvasBloc>().add(
+                            const CanvasToggleVoiceSpeakerRequested(),
+                          );
+                        },
+                      ),
+                    ],
+
+                    // End Call / Join Call Button
+                    if (state.isVoiceCallActive)
+                      IconButton(
+                        icon: Icon(
+                          LucideIcons.phoneOff,
+                          size: 18,
+                          color: tokens.danger,
+                        ),
+                        tooltip: 'Leave Call',
+                        onPressed: () {
+                          context.read<CanvasBloc>().add(
+                            const CanvasLeaveVoiceCallRequested(),
+                          );
+                        },
+                      )
+                    else
+                      IconButton(
+                        icon: Icon(
+                          LucideIcons.phone,
+                          size: 18,
+                          color: tokens.success,
+                        ),
+                        tooltip: 'Join Call',
+                        onPressed: () {
+                          context.read<CanvasBloc>().add(
+                            const CanvasJoinVoiceCallRequested(),
+                          );
+                        },
+                      ),
+                  ],
+                ),
+              ),
             ),
           ),
         );

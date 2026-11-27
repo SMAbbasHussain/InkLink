@@ -18,12 +18,10 @@ class FirebaseAuthRepository implements AuthRepository {
   bool _googleInitialized = false;
 
   FirebaseAuthRepository({
-    required AuthService authService,
-    required FirestoreService firestoreService,
-    required FirebaseDatabase database,
-  }) : _authService = authService,
-       _firestoreService = firestoreService,
-       _database = database;
+    required this._authService,
+    required this._firestoreService,
+    required this._database,
+  });
 
   Future<void> _ensureGoogleInitialized() async {
     if (_googleInitialized) return;
@@ -50,7 +48,7 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   @override
-  Stream<User?> get user => _authService.getInstance().authStateChanges();
+  Stream<User?> get user => _authService.getInstance().userChanges();
 
   @override
   User? get currentUser => _authService.getCurrentUser();
@@ -294,7 +292,13 @@ class FirebaseAuthRepository implements AuthRepository {
         }
       } else if (isGoogleUser) {
         await _ensureGoogleInitialized();
-        final GoogleSignInAccount googleUser = await _googleSignIn.authenticate();
+        GoogleSignInAccount? googleUser;
+        try {
+          googleUser = await _googleSignIn.attemptLightweightAuthentication();
+        } catch (_) {
+          googleUser = null;
+        }
+        googleUser ??= await _googleSignIn.authenticate();
         final GoogleSignInAuthentication googleAuth = googleUser.authentication;
         if (googleAuth.idToken == null) {
           throw 'Google re-authentication failed: missing ID token.';
@@ -536,8 +540,16 @@ class FirebaseAuthRepository implements AuthRepository {
       }
 
       // 10. Delete Firebase Auth user
-      await _authService.deleteAccount();
-      developer.log('Successfully deleted Firebase Auth user $uid', name: 'AuthRepository');
+      try {
+        await _authService.deleteAccount();
+        developer.log('Successfully deleted Firebase Auth user $uid', name: 'AuthRepository');
+      } on FirebaseAuthException catch (e) {
+        if (e.code == 'user-not-found') {
+          developer.log('Firebase Auth user $uid already deleted', name: 'AuthRepository');
+        } else {
+          rethrow;
+        }
+      }
 
     } on FirebaseAuthException catch (e) {
       if (e.code == 'requires-recent-login') {

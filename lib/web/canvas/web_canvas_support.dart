@@ -91,10 +91,9 @@ class WebNotificationRepository implements NotificationRepository {
   final AuthService _authService;
 
   WebNotificationRepository({
-    required AuthService authService,
+    required this._authService,
     required FirestoreService firestoreService,
-  }) : _authService = authService,
-       _db = firestoreService;
+  }) : _db = firestoreService;
 
   CollectionReference<Map<String, dynamic>> _feed(String uid) =>
       _db.collection('users').doc(uid).collection('notifications');
@@ -145,6 +144,15 @@ class WebVoiceService implements VoiceService {
 
   @override
   bool get isMuted => false;
+
+  @override
+  Stream<bool> watchIsSpeakerOn() => Stream.value(false);
+
+  @override
+  bool get isSpeakerOn => false;
+
+  @override
+  Future<void> toggleSpeaker() async {}
 
   @override
   List<VoiceParticipant> get currentParticipants => const [];

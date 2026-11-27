@@ -17,10 +17,9 @@ class WebBoardRepository implements BoardRepository {
   final AuthService _authService;
 
   WebBoardRepository({
-    required AuthService authService,
+    required this._authService,
     required FirestoreService firestoreService,
-  }) : _authService = authService,
-       _db = firestoreService;
+  }) : _db = firestoreService;
 
   static const String _members = 'members';
 

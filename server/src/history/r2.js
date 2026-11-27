@@ -6,7 +6,6 @@ const {
   PutObjectCommand,
   GetObjectCommand,
   ListObjectsV2Command,
-  DeleteObjectsCommand,
 } = require('@aws-sdk/client-s3');
 const zlib = require('zlib');
 
@@ -65,27 +64,6 @@ async function getBytesGzip(key) {
   return zlib.gunzipSync(Buffer.concat(chunks));
 }
 
-// Paginated purge of a board prefix (blocks + milestones).
-async function purgeBoardPrefix(boardId) {
-  assertConfigured();
-  let token;
-  do {
-    const listed = await client.send(new ListObjectsV2Command({
-      Bucket: BUCKET,
-      Prefix: `${boardId}/`,
-      ContinuationToken: token,
-    }));
-    const keys = (listed.Contents || []).map(o => ({ Key: o.Key }));
-    if (keys.length) {
-      await client.send(new DeleteObjectsCommand({
-        Bucket: BUCKET,
-        Delete: { Objects: keys },
-      }));
-    }
-    token = listed.IsTruncated ? listed.NextContinuationToken : undefined;
-  } while (token);
-}
-
 // List milestone versions for a board (keys: {id}/milestones/state_v{N}.bin.gz).
 async function listMilestoneVersions(boardId) {
   assertConfigured();
@@ -111,7 +89,5 @@ module.exports = {
   putBytesGzip,
   getGzipJson,
   getBytesGzip,
-  purgeBoardPrefix,
   listMilestoneVersions,
-  BUCKET,
 };

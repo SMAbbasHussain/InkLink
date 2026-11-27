@@ -225,7 +225,7 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     final uid = _uid;
     if (uid == null) return Stream.value(const []);
     return _firestore
-        .collection(FirestorePaths.boardInvites)
+        .collection('board_invites')
         .where(FirestorePaths.toUid, isEqualTo: uid)
         .where(FirestorePaths.status, isEqualTo: 'pending')
         .snapshots()
@@ -299,7 +299,7 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     final uid = _uid;
     if (uid == null) return Stream.value(const []);
     return _firestore
-        .collection(FirestorePaths.friendRequests)
+        .collection('friend_requests')
         .where(FirestorePaths.toUid, isEqualTo: uid)
         .where(FirestorePaths.status, isEqualTo: 'pending')
         .snapshots()

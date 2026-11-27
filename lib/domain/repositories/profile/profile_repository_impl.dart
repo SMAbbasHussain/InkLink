@@ -1,10 +1,15 @@
 import 'dart:async';
 
+import 'package:isar_community/isar.dart';
+
 import '../../../core/services/firestore_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/database/local_database_service.dart';
+import '../../../core/database/collections/local_chat_conversation.dart';
+import '../../../core/database/collections/local_chat_message.dart';
 import '../../../core/database/collections/local_profile.dart';
 import 'profile_repository.dart';
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 enum _ProfileBucket { self, friend, nonFriend }
 
@@ -21,12 +26,10 @@ class ProfileRepositoryImpl implements ProfileRepository {
   final LocalDatabaseService _localDatabaseService;
 
   ProfileRepositoryImpl({
-    required FirestoreService firestoreService,
-    required AuthService authService,
-    required LocalDatabaseService localDatabaseService,
-  }) : _firestoreService = firestoreService,
-       _authService = authService,
-       _localDatabaseService = localDatabaseService;
+    required this._firestoreService,
+    required this._authService,
+    required this._localDatabaseService,
+  });
 
   @override
   String? getCurrentUserId() {
@@ -38,19 +41,17 @@ class ProfileRepositoryImpl implements ProfileRepository {
     final cached = await _getCachedUserMap(uid);
     if (cached != null) {
       // Return cached data immediately for fast page load.
-      // Revalidate in background only if cached value is stale.
-      if (cached.bucket != _ProfileBucket.self) {
-        final cachedAtRaw = cached.data['cachedAt'];
-        if (cachedAtRaw is DateTime) {
-          final age = DateTime.now().difference(cachedAtRaw);
-          // TTL: 5 minutes
-          if (age > const Duration(minutes: 5)) {
-            _revalidateUserFromFirestore(uid, cached.bucket);
-          }
-        } else {
-          // If no cachedAt, conservatively revalidate
+      // Revalidate in background if cached value is stale (including self).
+      final cachedAtRaw = cached.data['cachedAt'];
+      if (cachedAtRaw is DateTime) {
+        final age = DateTime.now().difference(cachedAtRaw);
+        // TTL: 5 minutes
+        if (age > const Duration(minutes: 5)) {
           _revalidateUserFromFirestore(uid, cached.bucket);
         }
+      } else {
+        // If no cachedAt, conservatively revalidate
+        _revalidateUserFromFirestore(uid, cached.bucket);
       }
 
       return cached.data;
@@ -142,6 +143,11 @@ class ProfileRepositoryImpl implements ProfileRepository {
     final timestamp = DateTime.now();
     final existingProfile = await isar.localProfiles.getByUid(uid);
 
+    final currentUid = _authService.getCurrentUserId();
+    final hasPhotoUpdate = data.containsKey('photoURL');
+    final nextPhotoUrl = data['photoURL']?.toString();
+    final nextDisplayName = data['displayName']?.toString();
+
     await isar.writeTxn(() async {
       final status = isSelf
           ? FriendshipStatus.self
@@ -154,6 +160,64 @@ class ProfileRepositoryImpl implements ProfileRepository {
       _applyProfileFields(model, uid, data, source, timestamp);
       model.friendshipStatus = status;
       await isar.localProfiles.putByUid(model);
+
+      // Keep cached DM conversation & message avatars/names in sync with
+      // the latest profile data so chat screens never show stale PFPs.
+      if (currentUid != null && currentUid.isNotEmpty && uid != currentUid) {
+        final dmConvId = 'dm:${currentUid.length}:$currentUid:$uid';
+        final conv = await isar.localChatConversations
+            .filter()
+            .conversationIdEqualTo(dmConvId, caseSensitive: true)
+            .findFirst();
+        if (conv != null) {
+          var convChanged = false;
+          if (hasPhotoUpdate) {
+            final normalized =
+                (nextPhotoUrl == null || nextPhotoUrl.isEmpty) ? null : nextPhotoUrl;
+            if (conv.avatarUrl != normalized) {
+              conv.avatarUrl = normalized;
+              convChanged = true;
+            }
+          }
+          if (nextDisplayName != null &&
+              nextDisplayName.isNotEmpty &&
+              conv.name != nextDisplayName) {
+            conv.name = nextDisplayName;
+            convChanged = true;
+          }
+          if (convChanged) {
+            await isar.localChatConversations.put(conv);
+          }
+        }
+
+        if (hasPhotoUpdate ||
+            (nextDisplayName != null && nextDisplayName.isNotEmpty)) {
+          final msgs = await isar.localChatMessages
+              .filter()
+              .senderIdEqualTo(uid, caseSensitive: true)
+              .findAll();
+          for (final m in msgs) {
+            var msgChanged = false;
+            if (hasPhotoUpdate) {
+              final normalized =
+                  (nextPhotoUrl == null || nextPhotoUrl.isEmpty) ? null : nextPhotoUrl;
+              if (m.senderAvatar != normalized) {
+                m.senderAvatar = normalized;
+                msgChanged = true;
+              }
+            }
+            if (nextDisplayName != null &&
+                nextDisplayName.isNotEmpty &&
+                m.senderName != nextDisplayName) {
+              m.senderName = nextDisplayName;
+              msgChanged = true;
+            }
+            if (msgChanged) {
+              await isar.localChatMessages.put(m);
+            }
+          }
+        }
+      }
     });
   }
 
@@ -249,10 +313,10 @@ class ProfileRepositoryImpl implements ProfileRepository {
     }
 
     if (data.containsKey('friendCount')) {
-      model.friendCount = _toInt(data['friendCount']);
+      model.friendCount = parseIntValue(data['friendCount']);
     }
     if (data.containsKey('boardCount')) {
-      model.boardCount = _toInt(data['boardCount']);
+      model.boardCount = parseIntValue(data['boardCount']);
     }
 
     model.lastSource = source;
@@ -266,10 +330,4 @@ class ProfileRepositoryImpl implements ProfileRepository {
     return profile?.friendshipStatus == FriendshipStatus.friend;
   }
 
-  int _toInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 0;
-    return 0;
-  }
 }

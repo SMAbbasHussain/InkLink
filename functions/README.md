@@ -21,7 +21,8 @@ This directory houses the serverless backend for InkLink, implemented as modular
     return { status: 'success' };
   };
   ```
-- **Execution Defaults:** All functions are configured in `us-central1` (or `FIREBASE_REGION`), with a 540-second timeout, and with Cloudflare R2 secrets bound.
+- **Execution Defaults:** Standard functions run in `us-central1` (or `FIREBASE_REGION`) with a 540-second timeout and Cloudflare R2 secrets bound. AI functions (`src/ai/*.js`) run with a 120-second timeout, `1GiB` memory (for `sharp` image processing), and additional Cloudflare Workers AI secrets (`CLOUDFLARE_AI_API_TOKEN`, `CLOUDFLARE_AI_ACCOUNT_ID`).
+- **Utility Exclusion:** Files under `src/utils/**` and files ending in `*_utils.js` are excluded from dynamic export.
 
 ---
 
@@ -31,15 +32,33 @@ This directory houses the serverless backend for InkLink, implemented as modular
 functions/
 ├── index.js                     # Dynamic function loader & runtime export
 ├── package.json                 # Node 22 engine & dependencies
+├── scripts/
+│   └── serve_local_ai_images.js # Local dev server for AI image emulator testing
 ├── server/
 │   └── firebase-admin.js        # Shared Firebase Admin initialization
+├── test/
+│   ├── ai/                      # Unit tests for AI utils, providers & local storage
+│   └── workspaces/              # Unit tests for workspace invite flows
 └── src/
-    ├── boards/                  # Board lifecycle & membership permissions
+    ├── ai/                      # AI image generation, editing & inpainting
+    │   ├── ai_access_utils.js
+    │   ├── ai_provider_utils.js
+    │   ├── ai_request_utils.js
+    │   ├── ai_storage_utils.js
+    │   ├── ai_usage_utils.js
+    │   ├── edit_ai_image.js
+    │   ├── generate_ai_image.js
+    │   └── inpaint_ai_image.js
+    │
+    ├── boards/                  # Board lifecycle, pause state, undo requests & permissions
     │   ├── delete_board.js
     │   ├── join_board_by_code.js
     │   ├── remove_board_member.js
     │   ├── request_board_access.js
+    │   ├── resolve_undo_request.js
     │   ├── respond_to_board_access_request.js
+    │   ├── set_board_paused.js
+    │   ├── submit_undo_request.js
     │   ├── update_board_member_role.js
     │   └── update_board_settings.js
     │
@@ -84,6 +103,7 @@ functions/
         ├── firestore_paths.js   # Centralized Firestore collection paths
         ├── logger.js            # Structured JSON logger
         ├── notification_sender.js
+        ├── r2_history.js        # R2 board history cleanup helpers
         ├── redis.js             # Upstash / ioredis cache sync helpers
         └── validation.js        # Input sanitization & boundary validation
 ```
@@ -103,12 +123,20 @@ functions/
 - **`setWorkspaceBoardVisibility`**: Toggles whether a board is visible to all workspace members.
 
 ### 2. Boards & Access Control
-- **`deleteBoard`**: Atomically removes board metadata, canvas states, and comments.
+- **`deleteBoard`**: Atomically removes board metadata, canvas states, comments, and R2 history archives.
 - **`joinBoardByCode`**: Resolves share codes and adds user as a board member.
 - **`requestBoardAccess`**: Creates an access request when a user visits a private deep link.
 - **`respondToBoardAccessRequest`**: Approves or denies pending access requests.
 - **`updateBoardMemberRole`**: Adjusts collaborator permissions (Editor/Viewer).
+- **`updateBoardSettings`**: Updates board metadata and collaboration settings.
+- **`setBoardPaused`**: Pauses or resumes editing on a board (owner control).
+- **`submitUndoRequest` / `resolveUndoRequest`**: Allows members to submit area/state undo requests and owners to approve or reject them.
 - **`removeBoardMember`**: Revokes access for a collaborator.
+
+### 3. AI Image Generation & Editing (`src/ai/`)
+- **`generateAiImage`**: Generates an image from a text prompt (`1:1`, `16:9`, `9:16`) via Cloudflare Workers AI (`flux-2-klein-4b` / `flux-1-schnell`), normalizes to PNG with `sharp`, stores in R2, and enforces per-user daily quotas.
+- **`editAiImage`**: Applies prompt-guided image-to-image edits on an existing canvas image.
+- **`inpaintAiImage`**: Performs masked inpainting on a selected region of an image.
 
 ### 3. Social & Friends
 - **`sendFriendRequest` / `cancelFriendRequest`**: Manages outgoing friend requests.
@@ -130,13 +158,16 @@ functions/
 - `FIREBASE_REGION`: Regional deployment target (defaults to `us-central1`).
 - `DEBUG`: Set to `'true'` to output verbose debug logging.
 
-### Cloudflare R2 Secrets
-Required for avatar media storage in `uploadProfilePhoto`:
+### Cloudflare R2 & Workers AI Secrets
+Required for avatar/AI media storage, board history cleanup, and AI image generation:
 - `CLOUDFLARE_R2_ACCESS_KEY`
 - `CLOUDFLARE_R2_SECRET_KEY`
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_R2_BUCKET`
 - `CLOUDFLARE_R2_PUBLIC_URL`
+- `CLOUDFLARE_R2_HISTORY_BUCKET`
+- `CLOUDFLARE_AI_API_TOKEN` (AI functions only)
+- `CLOUDFLARE_AI_ACCOUNT_ID` (AI functions only)
 
 Set secrets via Firebase CLI:
 ```bash
@@ -145,11 +176,21 @@ firebase functions:secrets:set CLOUDFLARE_R2_SECRET_KEY
 firebase functions:secrets:set CLOUDFLARE_ACCOUNT_ID
 firebase functions:secrets:set CLOUDFLARE_R2_BUCKET
 firebase functions:secrets:set CLOUDFLARE_R2_PUBLIC_URL
+firebase functions:secrets:set CLOUDFLARE_R2_HISTORY_BUCKET
+firebase functions:secrets:set CLOUDFLARE_AI_API_TOKEN
+firebase functions:secrets:set CLOUDFLARE_AI_ACCOUNT_ID
 ```
 
 ---
 
-## Local Development & Deployment
+## Local Development, Testing & Deployment
+
+### Run Unit Tests
+```bash
+cd functions
+npm install
+npm test
+```
 
 ### Run Functions Emulator
 ```bash

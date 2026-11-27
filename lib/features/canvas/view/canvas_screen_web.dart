@@ -203,11 +203,6 @@ extension _CanvasWebLayout on _CanvasScreenState {
               tooltip: 'Export board',
               onPressed: () => _showExportOptionsSheet(context),
             ),
-            _webIconButton(
-              icon: LucideIcons.search,
-              tooltip: 'Find on board',
-              onPressed: () => _showBoardSearchSheet(context),
-            ),
           ],
         ),
       ),
@@ -582,6 +577,19 @@ extension _CanvasWebLayout on _CanvasScreenState {
       onKeyEvent: (_, event) => _handleWebKey(event),
       child: const SizedBox.shrink(),
     );
+  }
+
+  /// Whether [worldPoint] is inside the box of the one selected element. A
+  /// click there keeps the selection, just as a drag there moves it.
+  bool _insideSingleSelection(CanvasState state, Offset worldPoint) {
+    final ids = state.selectedIds.isNotEmpty
+        ? state.selectedIds
+        : {?state.selectedShapeId};
+    if (ids.length != 1) return false;
+    final source = state.elements.where((e) => e.id == ids.first).firstOrNull;
+    final bounds = source == null ? null : elementBounds(source);
+    return bounds != null &&
+        bounds.inflate(6 / _viewportScale).contains(worldPoint);
   }
 
   /// A press on the board: take keyboard focus, and pan with the middle

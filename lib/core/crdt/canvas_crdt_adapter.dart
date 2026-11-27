@@ -27,6 +27,7 @@ abstract class CanvasDocAdapter {
   Uint8List? undoLast({String origin = 'local'});
   Uint8List? redoLast({String origin = 'local'});
   Map<String, Map<String, dynamic>> materializeElements();
+  Map<String, dynamic>? materializeElement(String elementId);
 
   /// Element ids the TOP undo entry would revert, without popping it.
   /// Returns null when the stack is empty or the entry is older than the
@@ -161,7 +162,9 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
     String origin = 'local',
   }) {
     final beforeVector = encodeStateVector();
-    _capturePreState(origin, {elementId: materializeElements()[elementId]});
+    if (origin == _localOrigin) {
+      _capturePreState(origin, {elementId: materializeElement(elementId)});
+    }
     transact<void>(_doc, (_) {
       _elements.set(elementId, _cloneValue(payload));
     }, origin);
@@ -175,7 +178,9 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
     }
 
     final beforeVector = encodeStateVector();
-    _capturePreState(origin, {elementId: materializeElements()[elementId]});
+    if (origin == _localOrigin) {
+      _capturePreState(origin, {elementId: materializeElement(elementId)});
+    }
     transact<void>(_doc, (_) {
       _elements.delete(elementId);
     }, origin);
@@ -190,10 +195,12 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
     if (changes.isEmpty) return Uint8List(0);
 
     final beforeVector = encodeStateVector();
-    final current = materializeElements();
-    _capturePreState(origin, {
-      for (final change in changes) change.id: current[change.id],
-    });
+    if (origin == _localOrigin) {
+      _capturePreState(origin, {
+        for (final change in changes)
+          change.id: materializeElement(change.id),
+      });
+    }
     transact<void>(_doc, (_) {
       for (final change in changes) {
         final payload = change.payload;
@@ -377,6 +384,15 @@ class CanvasCrdtAdapter implements CanvasDocAdapter {
     }
 
     return result;
+  }
+
+  @override
+  Map<String, dynamic>? materializeElement(String elementId) {
+    if (!_elements.has(elementId)) return null;
+    final raw = _elements.get(elementId);
+    if (raw == null) return null;
+    final normalized = _normalizeValue(raw);
+    return normalized is Map<String, dynamic> ? normalized : null;
   }
 
   /// Deep equality between two [materializeElements] snapshots, used to

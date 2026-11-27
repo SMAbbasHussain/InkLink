@@ -1,14 +1,4 @@
-DateTime _parseDate(dynamic value) {
-  if (value == null) return DateTime.now();
-  if (value is DateTime) return value;
-  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
-  if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
-  try {
-    return (value as dynamic).toDate() as DateTime? ?? DateTime.now();
-  } catch (_) {
-    return DateTime.now();
-  }
-}
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 /// Represents a board linked to a workspace with workspace-specific metadata.
 class WorkspaceBoard {
@@ -36,10 +26,10 @@ class WorkspaceBoard {
       boardId: (map['boardId'] ?? map['id'] ?? '') as String,
       source: (map['boardSource'] ?? 'imported') as String,
       addedBy: (map['addedBy'] ?? '') as String,
-      addedAt: _parseDate(map['addedAt']),
+      addedAt: parseDateTimeValue(map['addedAt']),
       visibilityInWorkspace:
           (map['visibilityInWorkspace'] ?? 'private') as String,
-      updatedAt: _parseDate(map['updatedAt']),
+      updatedAt: parseDateTimeValue(map['updatedAt']),
     );
   }
 

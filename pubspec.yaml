@@ -19,7 +19,8 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+2
 
 environment:
-  sdk: ^3.9.2
+  sdk: ^3.12.0
+  flutter: ">=3.44.0"
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -34,42 +35,43 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
    # Keep these as they are
-  cupertino_icons: ^1.0.8
+  cupertino_icons: ^2.0.0
   flutter_bloc: ^9.1.1
-  firebase_core: ^4.4.0
-  firebase_auth: ^6.5.1
-  cloud_firestore: ^6.1.2
-  firebase_messaging: ^16.0.1
-  awesome_notifications: ^0.11.0
+  firebase_core: ^5.2.0
+  firebase_auth: ^7.1.0
+  cloud_firestore: ^7.2.0
+  firebase_messaging: ^17.1.0
+  awesome_notifications: ^0.12.1
   rxdart: ^0.28.0
-  isar_community: 3.3.2
-  isar_community_flutter_libs: 3.3.2
-  uuid: ^4.5.3
-  path_provider: ^2.1.5
+  isar_community: 3.4.1
+  isar_community_flutter_libs: 3.4.1
+  uuid: ^4.6.0
+  path_provider: ^2.1.6
   hlc: ^1.0.4
   yjs_dart: ^1.1.15
-  flutter_dotenv: ^6.0.0
-  permission_handler: ^12.0.1
-  image: ^4.0.0
-  socket_io_client: ^3.1.4
+  flutter_dotenv: ^6.0.2
+  permission_handler: ^13.0.2
+  image: ^4.13.1
+  socket_io_client: ^3.1.6
 
   # Relax these version constraints so they can resolve to versions with Built-in Kotlin support:
   google_sign_in: ^7.2.0
-  cloud_functions: ^6.3.1
-  firebase_database: ^12.4.1
-  shared_preferences: ^2.5.5
-  image_picker: ^1.2.2
+  cloud_functions: ^7.1.0
+  firebase_database: ^13.1.0
+  shared_preferences: ^2.5.6
+  image_picker: ^1.2.4
   share_plus: ^13.3.1
   pdf: ^3.13.1
   agora_chat_sdk: ^1.4.0+1
   # InkLink server HTTP calls (Agora Chat/RTC token endpoints)
   http: ^1.2.2
   # Real-time voice media (replaces the signalling-only stub)
-  agora_rtc_engine: ^6.3.0
+  agora_rtc_engine: ^6.6.4
 
   # Desk redesign (presentation-only)
-  google_fonts: ^6.2.1
-  lucide_icons_flutter: ^3.0.4
+  google_fonts: ^8.2.1
+  lucide_icons_flutter: ^4.0.3
+  firebase_crashlytics: ^6.1.0
 
 dev_dependencies:
   flutter_test:
@@ -81,8 +83,11 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
-  build_runner: ^2.4.13
-  isar_community_generator: 3.3.2
+  # build_runner 2.16+ needs analyzer >=13.3, which needs meta ^1.18.3;
+  # Flutter 3.44.0 (the CI version) pins meta 1.18.0. Revisit this bound when
+  # the CI Flutter version is upgraded.
+  build_runner: ">=2.15.1 <2.16.0"
+  isar_community_generator: 3.4.1
   flutter_launcher_icons: ^0.14.1
   flutter_native_splash: ^2.4.1
   bloc_test: ^10.0.0

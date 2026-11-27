@@ -55,6 +55,7 @@ class _MockCanvasSyncRepository implements CanvasSyncRepository {
     DateTime? since,
     String? lastSeenCursor,
     bool preferSocket = true,
+    bool ignoreCursor = false,
   }) async {
     callLog.add('fetchRemoteCrdtUpdates($boardId)');
     return remoteFetchResult;

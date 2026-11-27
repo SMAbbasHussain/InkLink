@@ -37,6 +37,7 @@ class BrushTray extends StatefulWidget {
   final ValueChanged<bool>? onFingerDrawingChanged;
   final ValueChanged<bool>? onQuickShapeChanged;
   final List<Color> recentColors;
+  final Map<String, List<Color>> palettes;
   final bool eyedropperActive;
   final VoidCallback? onOpenColorPicker;
   final VoidCallback? onEyedropperRequested;
@@ -67,6 +68,7 @@ class BrushTray extends StatefulWidget {
     this.onFingerDrawingChanged,
     this.onQuickShapeChanged,
     this.recentColors = const [],
+    this.palettes = const <String, List<Color>>{},
     this.eyedropperActive = false,
     this.onOpenColorPicker,
     this.onEyedropperRequested,
@@ -78,89 +80,26 @@ class BrushTray extends StatefulWidget {
 }
 
 class _BrushTrayState extends State<BrushTray> {
-  late TextEditingController _hexController;
-  late TextEditingController _redController;
-  late TextEditingController _greenController;
-  late TextEditingController _blueController;
-  final List<String> _recentBrushes = <String>[];
+  bool _showPalettes = false;
+  String? _selectedPaletteName;
 
   @override
   void initState() {
     super.initState();
-    _hexController = TextEditingController();
-    _redController = TextEditingController();
-    _greenController = TextEditingController();
-    _blueController = TextEditingController();
-    if (widget.brushType.isNotEmpty && widget.brushType != 'eraser') {
-      _recentBrushes.add(widget.brushType);
-    }
-    _updateColorControllers(widget.selectedColor);
+    _selectedPaletteName = widget.palettes.keys.firstOrNull;
   }
 
   @override
   void didUpdateWidget(BrushTray oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedColor != widget.selectedColor) {
-      _updateColorControllers(widget.selectedColor);
-    }
-    if (widget.brushType != oldWidget.brushType &&
-        widget.brushType.isNotEmpty &&
-        widget.brushType != 'eraser') {
-      _recentBrushes.remove(widget.brushType);
-      _recentBrushes.insert(0, widget.brushType);
-      if (_recentBrushes.length > 5) {
-        _recentBrushes.removeLast();
-      }
-    }
-  }
-
-  void _updateColorControllers(Color color) {
-    final hex = color.value.toRadixString(16).padLeft(8, '0').toUpperCase();
-    final red = color.red;
-    final green = color.green;
-    final blue = color.blue;
-
-    _hexController.text = hex.substring(2); // Remove alpha
-    _redController.text = red.toString();
-    _greenController.text = green.toString();
-    _blueController.text = blue.toString();
-  }
-
-  void _updateColorFromHex(String hex) {
-    try {
-      final cleanHex = hex.replaceAll('#', '');
-      if (cleanHex.length == 6) {
-        final color = Color(int.parse('FF$cleanHex', radix: 16));
-        widget.onColorSelected(color);
-      }
-    } catch (_) {
-      // Invalid input
-    }
-  }
-
-  void _updateColorFromRGB() {
-    try {
-      final r = int.parse(_redController.text).clamp(0, 255);
-      final g = int.parse(_greenController.text).clamp(0, 255);
-      final b = int.parse(_blueController.text).clamp(0, 255);
-      final color = Color.fromARGB(255, r, g, b);
-      widget.onColorSelected(color);
-    } catch (_) {
-      // Invalid input
+    if (_selectedPaletteName == null ||
+        !widget.palettes.containsKey(_selectedPaletteName)) {
+      _selectedPaletteName = widget.palettes.keys.firstOrNull;
     }
   }
 
   void _onBrushPresetSelected(BrushPreset preset) {
     HapticFeedback.selectionClick();
-    if (preset.id != 'eraser') {
-      setState(() {
-        _recentBrushes.remove(preset.id);
-        _recentBrushes.insert(0, preset.id);
-        if (_recentBrushes.length > 5) {
-          _recentBrushes.removeLast();
-        }
-      });
-    }
     widget.onBrushPresetSelected(preset.id);
     widget.onToolModeChanged?.call(
       preset.id == 'highlighter'
@@ -170,18 +109,9 @@ class _BrushTrayState extends State<BrushTray> {
   }
 
   @override
-  void dispose() {
-    _hexController.dispose();
-    _redController.dispose();
-    _greenController.dispose();
-    _blueController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
-    final colors = <Color>[
+    const defaultColors = <Color>[
       Colors.black,
       Colors.white,
       Colors.red,
@@ -213,43 +143,35 @@ class _BrushTrayState extends State<BrushTray> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              _buildColorsSection(tokens, defaultColors),
+              const SizedBox(height: InkSpacing.s12),
+              _buildBrushPresetPicker(tokens),
+              const SizedBox(height: InkSpacing.s12),
               _buildLiveBrushPreview(tokens),
               const SizedBox(height: InkSpacing.s16),
+              // Sliders section (brush size at the top of sliders)
               _buildStrokeWidthControl(tokens),
-              const SizedBox(height: InkSpacing.s16),
-              if (widget.brushType == 'eraser') ...[
-                _buildEraserModeControl(tokens),
-                const SizedBox(height: InkSpacing.s16),
-              ],
+              const SizedBox(height: InkSpacing.s12),
               _buildOpacityControl(tokens),
-              const SizedBox(height: InkSpacing.s16),
-              _buildFingerDrawingToggle(tokens),
-              const SizedBox(height: InkSpacing.s16),
               if (widget.brushType != 'eraser') ...[
-                _buildStylusPressureToggle(tokens),
-                const SizedBox(height: InkSpacing.s16),
-                _buildQuickShapeToggle(tokens),
-                const SizedBox(height: InkSpacing.s16),
-              ],
-              _buildBrushPresetPicker(tokens),
-              if (_recentBrushes.length > 1) ...[
                 const SizedBox(height: InkSpacing.s12),
-                _buildRecentBrushesRow(tokens),
-              ],
-              const SizedBox(height: InkSpacing.s16),
-              if (widget.brushType != 'eraser') ...[
                 _buildStabilizerControl(tokens),
-                const SizedBox(height: InkSpacing.s16),
-                _buildSmoothToggle(tokens),
-                const SizedBox(height: InkSpacing.s16),
               ],
-              _buildColorPalette(tokens, colors),
-              if (widget.recentColors.isNotEmpty) ...[
+              // Toggles section at the bottom
+              if (widget.brushType == 'eraser') ...[
                 const SizedBox(height: InkSpacing.s12),
-                _buildRecentColors(tokens),
+                _buildEraserModeControl(tokens),
               ],
               const SizedBox(height: InkSpacing.s12),
-              _buildColorInputs(tokens),
+              _buildFingerDrawingToggle(tokens),
+              if (widget.brushType != 'eraser') ...[
+                const SizedBox(height: InkSpacing.s12),
+                _buildStylusPressureToggle(tokens),
+                const SizedBox(height: InkSpacing.s12),
+                _buildQuickShapeToggle(tokens),
+                const SizedBox(height: InkSpacing.s12),
+                _buildSmoothToggle(tokens),
+              ],
               const SizedBox(height: InkSpacing.s8),
             ],
           ),
@@ -261,11 +183,17 @@ class _BrushTrayState extends State<BrushTray> {
   Widget _buildLiveBrushPreview(InkTokens tokens) {
     final preset = brushPresetFor(widget.brushType);
     final isEraser = widget.brushType == 'eraser';
+    final pressureTag = isEraser
+        ? 'Eraser preview'
+        : (widget.stylusPressureEnabled &&
+                  (preset.pressureAffectsSize || preset.pressureAffectsOpacity)
+              ? 'Pressure & dwell active'
+              : 'Uniform weight');
 
     return Container(
       width: double.infinity,
-      height: 72,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      height: 96,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: tokens.field,
         borderRadius: BorderRadius.circular(InkRadii.input),
@@ -282,7 +210,24 @@ class _BrushTrayState extends State<BrushTray> {
                   color: isEraser ? tokens.inkMuted : widget.selectedColor,
                   strokeWidth: widget.strokeWidth,
                   opacity: widget.brushOpacity,
+                  stylusPressureEnabled: widget.stylusPressureEnabled,
+                  gridColor: tokens.glassStroke.withValues(alpha: 0.35),
                 ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 0,
+            right: 0,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: tokens.paper.withValues(alpha: 0.85),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                '${preset.description} · $pressureTag',
+                style: InkType.caption(tokens.inkMuted),
               ),
             ),
           ),
@@ -473,42 +418,6 @@ class _BrushTrayState extends State<BrushTray> {
     );
   }
 
-  Widget _buildRecentBrushesRow(InkTokens tokens) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Recent Brushes', style: InkType.label(tokens.inkSecondary)),
-        const SizedBox(height: InkSpacing.s8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          children: _recentBrushes.map((brushId) {
-            final preset = brushPresetFor(brushId);
-            final isSelected = widget.brushType == brushId;
-            return ChoiceChip(
-              avatar: Icon(
-                preset.icon,
-                size: 14,
-                color: isSelected ? tokens.accent : tokens.inkMuted,
-              ),
-              label: Text(preset.label),
-              selected: isSelected,
-              onSelected: (_) => _onBrushPresetSelected(preset),
-              labelStyle: InkType.caption(
-                isSelected ? tokens.accent : tokens.ink,
-              ),
-              backgroundColor: tokens.field,
-              selectedColor: tokens.accent.withValues(alpha: 0.15),
-              side: BorderSide(
-                color: isSelected ? tokens.accent : tokens.glassStroke,
-              ),
-            );
-          }).toList(),
-        ),
-      ],
-    );
-  }
-
   Widget _buildOpacityControl(InkTokens tokens) {
     return Row(
       children: [
@@ -545,10 +454,10 @@ class _BrushTrayState extends State<BrushTray> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Brush Presets', style: InkType.label(tokens.inkSecondary)),
+        Text('Brushes', style: InkType.label(tokens.inkSecondary)),
         const SizedBox(height: InkSpacing.s8),
         SizedBox(
-          height: 96,
+          height: 62,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: brushPresets.length,
@@ -559,24 +468,20 @@ class _BrushTrayState extends State<BrushTray> {
             },
           ),
         ),
-        const SizedBox(height: InkSpacing.s8),
-        Text(
-          brushPresetFor(widget.brushType).description,
-          style: InkType.caption(tokens.inkMuted),
-        ),
       ],
     );
   }
 
   Widget _buildPresetCard(InkTokens tokens, BrushPreset preset) {
     final selected = widget.brushType == preset.id;
+    final swatchColor = selected ? tokens.accent : tokens.ink;
     return InkWell(
       key: ValueKey('brush-preset-${preset.id}'),
       onTap: () => _onBrushPresetSelected(preset),
       borderRadius: BorderRadius.circular(InkRadii.input),
       child: Container(
-        width: 104,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        width: 108,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: selected
               ? tokens.accent.withValues(alpha: 0.12)
@@ -588,16 +493,18 @@ class _BrushTrayState extends State<BrushTray> {
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
                   preset.icon,
-                  size: 16,
+                  size: 14,
                   color: selected ? tokens.accent : tokens.inkMuted,
                 ),
-                const SizedBox(width: 6),
-                Expanded(
+                const SizedBox(width: 5),
+                Flexible(
                   child: Text(
                     preset.label,
                     maxLines: 1,
@@ -607,11 +514,15 @@ class _BrushTrayState extends State<BrushTray> {
                 ),
               ],
             ),
-            const Spacer(),
-            Text(
-              '${preset.defaultWidth.toStringAsFixed(0)} px · '
-              '${(preset.defaultOpacity * 100).round()}%',
-              style: InkType.caption(tokens.inkMuted),
+            SizedBox(
+              width: double.infinity,
+              height: 22,
+              child: CustomPaint(
+                painter: _MiniBrushArtworkPainter(
+                  preset: preset,
+                  color: swatchColor,
+                ),
+              ),
             ),
           ],
         ),
@@ -721,13 +632,57 @@ class _BrushTrayState extends State<BrushTray> {
     );
   }
 
-  Widget _buildColorPalette(InkTokens tokens, List<Color> colors) {
+  Widget _buildColorsSection(InkTokens tokens, List<Color> defaultColors) {
+    final activePaletteName = _selectedPaletteName != null &&
+            widget.palettes.containsKey(_selectedPaletteName)
+        ? _selectedPaletteName
+        : widget.palettes.keys.firstOrNull;
+    final paletteColors = activePaletteName != null
+        ? (widget.palettes[activePaletteName] ?? const <Color>[])
+        : const <Color>[];
+    final displayedColors = _showPalettes
+        ? paletteColors
+        : (widget.recentColors.isNotEmpty ? widget.recentColors : defaultColors);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Text('Colors', style: InkType.label(tokens.inkSecondary)),
+            ChoiceChip(
+              key: const ValueKey('brush-colors-recent-tab'),
+              label: const Text('Recent'),
+              selected: !_showPalettes,
+              visualDensity: VisualDensity.compact,
+              onSelected: (_) => setState(() => _showPalettes = false),
+              labelStyle: InkType.caption(
+                !_showPalettes ? tokens.accent : tokens.inkSecondary,
+              ),
+              backgroundColor: tokens.field,
+              selectedColor: tokens.accent.withValues(alpha: 0.15),
+              side: BorderSide(
+                color: !_showPalettes ? tokens.accent : tokens.glassStroke,
+              ),
+            ),
+            const SizedBox(width: 6),
+            ChoiceChip(
+              key: const ValueKey('brush-colors-palettes-tab'),
+              label: const Text('Palettes'),
+              selected: _showPalettes,
+              visualDensity: VisualDensity.compact,
+              onSelected: (_) => setState(() {
+                _showPalettes = true;
+                _selectedPaletteName ??= widget.palettes.keys.firstOrNull;
+              }),
+              labelStyle: InkType.caption(
+                _showPalettes ? tokens.accent : tokens.inkSecondary,
+              ),
+              backgroundColor: tokens.field,
+              selectedColor: tokens.accent.withValues(alpha: 0.15),
+              side: BorderSide(
+                color: _showPalettes ? tokens.accent : tokens.glassStroke,
+              ),
+            ),
             const Spacer(),
             IconButton(
               onPressed: widget.onEyedropperRequested,
@@ -749,156 +704,113 @@ class _BrushTrayState extends State<BrushTray> {
             ),
           ],
         ),
-        const SizedBox(height: InkSpacing.s4),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: colors
-                .map(
-                  (c) => Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: InkWell(
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        widget.onColorSelected(c);
-                      },
-                      borderRadius: BorderRadius.circular(20),
-                      child: Padding(
-                        padding: EdgeInsets.all(
-                          widget.selectedColor == c ? 2 : 0,
-                        ),
-                        child: Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: c,
-                            border: Border.all(
-                              color: widget.selectedColor == c
-                                  ? tokens.ink
-                                  : tokens.glassStroke,
-                              width: widget.selectedColor == c ? 2 : 1,
-                            ),
-                          ),
-                          child: widget.selectedColor == c
-                              ? Icon(
-                                  LucideIcons.check,
-                                  color: c.computeLuminance() > 0.6
-                                      ? Colors.black
-                                      : Colors.white,
-                                  size: 16,
-                                )
-                              : null,
-                        ),
-                      ),
+        if (_showPalettes && widget.palettes.isNotEmpty) ...[
+          const SizedBox(height: InkSpacing.s8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final name in widget.palettes.keys) ...[
+                  ChoiceChip(
+                    key: ValueKey('brush-palette-tab-$name'),
+                    label: Text(name),
+                    selected: name == activePaletteName,
+                    visualDensity: VisualDensity.compact,
+                    onSelected: (_) =>
+                        setState(() => _selectedPaletteName = name),
+                    labelStyle: InkType.caption(
+                      name == activePaletteName
+                          ? tokens.accent
+                          : tokens.inkSecondary,
                     ),
-                  ),
-                )
-                .toList(),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildRecentColors(InkTokens tokens) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Recent', style: InkType.label(tokens.inkSecondary)),
-        const SizedBox(height: InkSpacing.s8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final color in widget.recentColors)
-              InkWell(
-                onTap: () {
-                  HapticFeedback.selectionClick();
-                  widget.onColorSelected(color);
-                },
-                borderRadius: BorderRadius.circular(20),
-                child: Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: widget.selectedColor == color
-                          ? tokens.ink
+                    backgroundColor: tokens.field,
+                    selectedColor: tokens.accent.withValues(alpha: 0.15),
+                    side: BorderSide(
+                      color: name == activePaletteName
+                          ? tokens.accent
                           : tokens.glassStroke,
-                      width: widget.selectedColor == color ? 2 : 1,
                     ),
                   ),
-                ),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildColorInputs(InkTokens tokens) {
-    final smallFieldDecoration = InputDecoration(
-      isDense: true,
-      filled: true,
-      fillColor: tokens.field,
-      contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide.none,
-      ),
-      counterText: '',
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Custom Color', style: InkType.label(tokens.inkSecondary)),
+                  const SizedBox(width: 6),
+                ],
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: InkSpacing.s8),
-        Row(
-          children: [
-            Text('#', style: InkType.caption(tokens.inkMuted)),
-            const SizedBox(width: 6),
-            Expanded(
-              flex: 2,
-              child: TextField(
-                controller: _hexController,
-                onChanged: _updateColorFromHex,
-                maxLength: 6,
-                style: InkType.caption(tokens.ink),
-                decoration: smallFieldDecoration.copyWith(hintText: 'HEX'),
+        if (_showPalettes && widget.palettes.isEmpty)
+          Row(
+            children: [
+              Text(
+                'No saved palettes yet',
+                style: InkType.caption(tokens.inkMuted),
               ),
-            ),
-            const SizedBox(width: InkSpacing.s8),
-            ...[
-              ('R', _redController),
-              ('G', _greenController),
-              ('B', _blueController),
-            ].map(
-              (pair) => Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: Column(
-                    children: [
-                      Text(pair.$1, style: InkType.caption(tokens.inkMuted)),
-                      const SizedBox(height: 2),
-                      TextField(
-                        controller: pair.$2,
-                        onChanged: (_) => _updateColorFromRGB(),
-                        maxLength: 3,
-                        style: InkType.caption(tokens.ink),
-                        keyboardType: TextInputType.number,
-                        decoration: smallFieldDecoration,
-                      ),
-                    ],
+              if (widget.onOpenColorPicker != null) ...[
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: widget.onOpenColorPicker,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
                   ),
+                  child: const Text('Create'),
                 ),
-              ),
+              ],
+            ],
+          )
+        else if (displayedColors.isEmpty)
+          Text(
+            'No colors in this palette yet',
+            style: InkType.caption(tokens.inkMuted),
+          )
+        else
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: displayedColors
+                  .map(
+                    (c) => Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: InkWell(
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          widget.onColorSelected(c);
+                        },
+                        borderRadius: BorderRadius.circular(20),
+                        child: Padding(
+                          padding: EdgeInsets.all(
+                            widget.selectedColor == c ? 2 : 0,
+                          ),
+                          child: Container(
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: c,
+                              border: Border.all(
+                                color: widget.selectedColor == c
+                                    ? tokens.ink
+                                    : tokens.glassStroke,
+                                width: widget.selectedColor == c ? 2 : 1,
+                              ),
+                            ),
+                            child: widget.selectedColor == c
+                                ? Icon(
+                                    LucideIcons.check,
+                                    color: c.computeLuminance() > 0.6
+                                        ? Colors.black
+                                        : Colors.white,
+                                    size: 16,
+                                  )
+                                : null,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
             ),
-          ],
-        ),
+          ),
       ],
     );
   }
@@ -953,22 +865,99 @@ Widget brushInputControlsPreview() {
   );
 }
 
+class _MiniBrushArtworkPainter extends CustomPainter {
+  final BrushPreset preset;
+  final Color color;
+
+  const _MiniBrushArtworkPainter({
+    required this.preset,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+    final w = size.width;
+    final h = size.height;
+    final p0 = Offset(4, h * 0.68);
+    final p1 = Offset(w * 0.35, h * 0.15);
+    final p2 = Offset(w * 0.68, h * 0.85);
+    final p3 = Offset(w - 6, h * 0.38);
+
+    final points = <Offset>[];
+    final pressures = <double>[];
+    const steps = 20;
+    for (int i = 0; i <= steps; i++) {
+      final t = i / steps;
+      final u = 1 - t;
+      final x =
+          u * u * u * p0.dx +
+          3 * u * u * t * p1.dx +
+          3 * u * t * t * p2.dx +
+          t * t * t * p3.dx;
+      final y =
+          u * u * u * p0.dy +
+          3 * u * u * t * p1.dy +
+          3 * u * t * t * p2.dy +
+          t * t * t * p3.dy;
+      points.add(Offset(x, y));
+      pressures.add(0.22 + 0.78 * math.sin(t * math.pi));
+    }
+
+    final sampleWidth = preset.defaultWidth.clamp(3.0, 9.0);
+    paintCanvasStroke(
+      canvas: canvas,
+      points: points,
+      pressures: pressures,
+      color: color,
+      strokeWidth: sampleWidth,
+      strokeOpacity: preset.defaultOpacity,
+      brushType: preset.id,
+      brushId: preset.id,
+      textureSeed: 17,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _MiniBrushArtworkPainter oldDelegate) {
+    return oldDelegate.preset.id != preset.id || oldDelegate.color != color;
+  }
+}
+
 class _BrushPreviewPainter extends CustomPainter {
   final String brushType;
   final Color color;
   final double strokeWidth;
   final double opacity;
+  final bool stylusPressureEnabled;
+  final Color gridColor;
 
   _BrushPreviewPainter({
     required this.brushType,
     required this.color,
     required this.strokeWidth,
     required this.opacity,
+    this.stylusPressureEnabled = true,
+    this.gridColor = const Color(0x2294A3B8),
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
+
+    // Subtle paper grid backdrop so translucency, multiply blend, and wash bleed
+    // are immediately visible against the surface.
+    final gridPaint = Paint()
+      ..color = gridColor
+      ..strokeWidth = 0.75;
+    const gridStep = 16.0;
+    for (double x = gridStep; x < size.width; x += gridStep) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
+    }
+    for (double y = gridStep; y < size.height; y += gridStep) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+
     final isEraser = brushType == 'eraser';
     if (isEraser) {
       final paint = Paint()
@@ -986,10 +975,43 @@ class _BrushPreviewPainter extends CustomPainter {
 
     final w = size.width;
     final h = size.height;
-    final p0 = Offset(16, h * 0.65);
-    final p1 = Offset(w * 0.3, h * 0.25);
-    final p2 = Offset(w * 0.7, h * 0.8);
-    final p3 = Offset(w - 16, h * 0.35);
+
+    // Secondary overlapping companion stroke to visualize layering, grain tooth,
+    // and blend mode (e.g. highlighter multiply, watercolor glazing).
+    final accentPoints = <Offset>[];
+    final accentPressures = <double>[];
+    final a0 = Offset(w * 0.56, h * 0.78);
+    final a1 = Offset(w * 0.68, h * 0.22);
+    final a2 = Offset(w * 0.88, h * 0.28);
+    const accentSteps = 22;
+    for (int i = 0; i <= accentSteps; i++) {
+      final t = i / accentSteps;
+      final u = 1 - t;
+      final x = u * u * a0.dx + 2 * u * t * a1.dx + t * t * a2.dx;
+      final y = u * u * a0.dy + 2 * u * t * a1.dy + t * t * a2.dy;
+      accentPoints.add(Offset(x, y));
+      accentPressures.add(
+        stylusPressureEnabled ? (0.3 + 0.55 * math.sin(t * math.pi)) : 1.0,
+      );
+    }
+    paintCanvasStroke(
+      canvas: canvas,
+      points: accentPoints,
+      pressures: accentPressures,
+      color: color,
+      strokeWidth: (strokeWidth * 0.82).clamp(1.0, 64.0),
+      strokeOpacity: (opacity * 0.75).clamp(0.1, 1.0),
+      brushType: brushType,
+      brushId: brushType,
+      textureSeed: 84,
+    );
+
+    // Primary expressive artwork stroke: light entry -> heavy pressure swell ->
+    // dynamic taper -> held dwell spot at the tail.
+    final p0 = Offset(14, h * 0.66);
+    final p1 = Offset(w * 0.28, h * 0.14);
+    final p2 = Offset(w * 0.64, h * 0.88);
+    final p3 = Offset(w - 22, h * 0.42);
 
     final points = <Offset>[];
     final pressures = <double>[];
@@ -1008,7 +1030,15 @@ class _BrushPreviewPainter extends CustomPainter {
           3 * u * t * t * p2.dy +
           t * t * t * p3.dy;
       points.add(Offset(x, y));
-      final pressure = 0.35 + 0.65 * math.sin(t * math.pi);
+      final double pressure;
+      if (!stylusPressureEnabled) {
+        pressure = 1.0;
+      } else if (t > 0.92) {
+        // Demonstrate hold-on-spot darkening/pooling at the end of the stroke.
+        pressure = 0.85 + (t - 0.92) * 5.0;
+      } else {
+        pressure = 0.2 + 0.8 * math.sin(t * math.pi);
+      }
       pressures.add(pressure);
     }
 
@@ -1030,6 +1060,8 @@ class _BrushPreviewPainter extends CustomPainter {
     return oldDelegate.brushType != brushType ||
         oldDelegate.color != color ||
         oldDelegate.strokeWidth != strokeWidth ||
-        oldDelegate.opacity != opacity;
+        oldDelegate.opacity != opacity ||
+        oldDelegate.stylusPressureEnabled != stylusPressureEnabled ||
+        oldDelegate.gridColor != gridColor;
   }
 }

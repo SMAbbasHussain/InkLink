@@ -47,10 +47,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   StreamController<List<LocalCrdtUpdate>>? _socketPreviewController;
 
   FirestoreCanvasSyncRepository({
-    required AuthService authService,
-    required CrdtLocalStore store,
-  }) : _authService = authService,
-       _store = store;
+    required this._authService,
+    required this._store,
+  });
 
   @override
   void setBoardSingleUserStatus(bool isSingleUser) {
@@ -75,7 +74,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     if (specificSocket == null || identical(_socket, specificSocket)) {
       _socket = null;
       _connectedUserId = null;
-      for (final timer in _watchRetryTimers.values) {
+      for (final timer in _watchRetryTimers.values.toList()) {
         timer.cancel();
       }
       _watchRetryTimers.clear();
@@ -174,7 +173,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       _socket = socket;
       _connectedUserId = targetUid;
       _bindStoredSocketHandlers(socket);
-      for (final boardId in _watchedBoardRefCounts.keys) {
+      for (final boardId in _watchedBoardRefCounts.keys.toList()) {
         if ((_watchedBoardRefCounts[boardId] ?? 0) > 0) {
           _watchBoard(boardId);
         }
@@ -198,7 +197,7 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       _socket = socket;
       _connectedUserId = targetUid;
       _bindStoredSocketHandlers(socket);
-      for (final boardId in _watchedBoardRefCounts.keys) {
+      for (final boardId in _watchedBoardRefCounts.keys.toList()) {
         if ((_watchedBoardRefCounts[boardId] ?? 0) > 0) {
           _watchBoard(boardId);
         }
@@ -216,10 +215,10 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
   void _bindStoredSocketHandlers(io.Socket socket) {
     if (identical(_handlersBoundSocket, socket)) return;
     _handlersBoundSocket = socket;
-    for (final handler in _updateHandlers.values) {
+    for (final handler in _updateHandlers.values.toList()) {
       socket.on('crdt_update', handler);
     }
-    for (final handler in _previewHandlers.values) {
+    for (final handler in _previewHandlers.values.toList()) {
       socket.on('crdt_preview', handler);
     }
     socket.off('peer_crdt_updates_requested');
@@ -851,7 +850,9 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
       (_) async {
         final socket = _socket;
         if (socket == null || !socket.connected) return;
-        for (final boardId in _watchedBoardRefCounts.keys) {
+        final boardIds = _watchedBoardRefCounts.keys.toList();
+        for (final boardId in boardIds) {
+          if ((_watchedBoardRefCounts[boardId] ?? 0) <= 0) continue;
           final currentHighest = _highestAppliedVersionPerBoard[boardId] ?? 0;
           if (currentHighest <= 0) continue;
           try {
@@ -893,15 +894,19 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     DateTime? since,
     String? lastSeenCursor,
     bool preferSocket = true,
+    bool ignoreCursor = false,
   }) async {
     if (preferSocket) {
       try {
         await _ensureSocketConnected();
 
         if (_socket != null && _socket!.connected) {
-          // Load stored cursor from local sync state if not provided
-          String? cursor = lastSeenCursor;
-          cursor ??= await _store.getLastSeenCursor(boardId);
+          // Load stored cursor from local sync state if not provided, unless
+          // the caller explicitly requested a full snapshot hydration.
+          String? cursor = ignoreCursor ? null : lastSeenCursor;
+          if (!ignoreCursor && cursor == null) {
+            cursor = await _store.getLastSeenCursor(boardId);
+          }
 
           final result = await _fetchWithCursor(boardId, cursor);
           return result;
@@ -1272,6 +1277,10 @@ class FirestoreCanvasSyncRepository implements CanvasSyncRepository {
     try {
       if (_socket != null && _socket!.connected) {
         for (final local in toSync) {
+          if (local.payloadBase64.isEmpty ||
+              local.payloadBase64.length > _maxPayloadBase64Length) {
+            continue;
+          }
           _logWs(
             'UPDATE SENT',
             boardId,

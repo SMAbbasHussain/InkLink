@@ -25,6 +25,7 @@ class CanvasState {
   final List<Offset> currentStroke;
   final Color selectedColor;
   final double strokeWidth;
+  final Map<String, double> brushWidths;
   final double brushOpacity;
   final String brushType;
   final bool eraserEraseEverything;
@@ -41,6 +42,7 @@ class CanvasState {
   final bool infoMessageRedoable;
   final String currentUserRole;
   final bool isArchived;
+  final bool isPaused;
   final String currentUserId;
   final List<BoardMember> boardMembers;
   final String memberSearchQuery;
@@ -67,6 +69,7 @@ class CanvasState {
   final List<VoiceParticipant> voiceParticipants;
   final bool isVoiceCallActive;
   final bool isMicMuted;
+  final bool isSpeakerOn;
   final bool isChatDrawerOpen;
   final bool isCommentsTrayOpen;
   final String? activeCommentId;
@@ -121,6 +124,20 @@ class CanvasState {
   final bool hasMoreHistoryVersions;
   final int? historyNextBeforeVersion;
   final List<UndoRequest> undoRequests;
+
+  /// The signed-in member's own undo requests, newest first (member view).
+  /// A pending entry means the owner still has to resolve it, so the member
+  /// must see it instead of sending a duplicate request.
+  final List<UndoRequest> myUndoRequests;
+
+  /// The member's request that is still waiting on the owner, if any.
+  UndoRequest? get myPendingUndoRequest {
+    for (final request in myUndoRequests) {
+      if (request.isPending) return request;
+    }
+    return null;
+  }
+
   final RevertPlan? activeRevertPlan;
   final bool isHistoryLoading;
 
@@ -168,6 +185,7 @@ class CanvasState {
     this.syncMessage,
     this.selectedColor = Colors.black,
     this.strokeWidth = 5,
+    this.brushWidths = const <String, double>{},
     this.brushOpacity = 1.0,
     this.brushType = 'solid',
     this.eraserEraseEverything = false,
@@ -180,6 +198,7 @@ class CanvasState {
     this.infoMessageRedoable = false,
     this.currentUserRole = 'viewer',
     this.isArchived = false,
+    this.isPaused = false,
     this.currentUserId = '',
     this.boardMembers = const [],
     this.memberSearchQuery = '',
@@ -206,6 +225,7 @@ class CanvasState {
     this.voiceParticipants = const [],
     this.isVoiceCallActive = false,
     this.isMicMuted = false,
+    this.isSpeakerOn = false,
     this.isChatDrawerOpen = false,
     this.isCommentsTrayOpen = false,
     this.activeCommentId,
@@ -233,6 +253,7 @@ class CanvasState {
     this.hasMoreHistoryVersions = false,
     this.historyNextBeforeVersion,
     this.undoRequests = const [],
+    this.myUndoRequests = const [],
     this.activeRevertPlan,
     this.isHistoryLoading = false,
     this.undoConflict,
@@ -259,6 +280,7 @@ class CanvasState {
     Object? syncMessage = _unset,
     Color? selectedColor,
     double? strokeWidth,
+    Map<String, double>? brushWidths,
     double? brushOpacity,
     String? brushType,
     bool? eraserEraseEverything,
@@ -271,6 +293,7 @@ class CanvasState {
     bool? infoMessageRedoable,
     String? currentUserRole,
     bool? isArchived,
+    bool? isPaused,
     String? currentUserId,
     List<BoardMember>? boardMembers,
     String? memberSearchQuery,
@@ -297,6 +320,7 @@ class CanvasState {
     List<VoiceParticipant>? voiceParticipants,
     bool? isVoiceCallActive,
     bool? isMicMuted,
+    bool? isSpeakerOn,
     bool? isChatDrawerOpen,
     bool? isCommentsTrayOpen,
     Object? activeCommentId = _unset,
@@ -324,6 +348,7 @@ class CanvasState {
     bool? hasMoreHistoryVersions,
     Object? historyNextBeforeVersion = _unset,
     List<UndoRequest>? undoRequests,
+    List<UndoRequest>? myUndoRequests,
     Object? activeRevertPlan = _unset,
     bool? isHistoryLoading,
     Object? undoConflict = _unset,
@@ -353,6 +378,7 @@ class CanvasState {
           : syncMessage as String?,
       selectedColor: selectedColor ?? this.selectedColor,
       strokeWidth: strokeWidth ?? this.strokeWidth,
+      brushWidths: brushWidths ?? this.brushWidths,
       brushOpacity: brushOpacity ?? this.brushOpacity,
       brushType: brushType ?? this.brushType,
       eraserEraseEverything:
@@ -370,6 +396,7 @@ class CanvasState {
       infoMessageRedoable: infoMessageRedoable ?? this.infoMessageRedoable,
       currentUserRole: currentUserRole ?? this.currentUserRole,
       isArchived: isArchived ?? this.isArchived,
+      isPaused: isPaused ?? this.isPaused,
       currentUserId: currentUserId ?? this.currentUserId,
       boardMembers: boardMembers ?? this.boardMembers,
       memberSearchQuery: memberSearchQuery ?? this.memberSearchQuery,
@@ -413,6 +440,7 @@ class CanvasState {
       voiceParticipants: voiceParticipants ?? this.voiceParticipants,
       isVoiceCallActive: isVoiceCallActive ?? this.isVoiceCallActive,
       isMicMuted: isMicMuted ?? this.isMicMuted,
+      isSpeakerOn: isSpeakerOn ?? this.isSpeakerOn,
       isChatDrawerOpen: isChatDrawerOpen ?? this.isChatDrawerOpen,
       isCommentsTrayOpen: isCommentsTrayOpen ?? this.isCommentsTrayOpen,
       activeCommentId: activeCommentId == _unset
@@ -467,6 +495,7 @@ class CanvasState {
           ? this.historyNextBeforeVersion
           : historyNextBeforeVersion as int?,
       undoRequests: undoRequests ?? this.undoRequests,
+      myUndoRequests: myUndoRequests ?? this.myUndoRequests,
       activeRevertPlan: activeRevertPlan == _unset
           ? this.activeRevertPlan
           : activeRevertPlan as RevertPlan?,
@@ -492,7 +521,8 @@ class CanvasState {
   ///
   /// This is UI gating only; every mutation handler still calls
   /// `_ensureCanEdit` so a stale screen cannot bypass the permission check.
-  bool get canEdit => !isArchived && currentUserRole != Board.roleViewer;
+  bool get canEdit =>
+      !isArchived && !isPaused && currentUserRole != Board.roleViewer;
 
   static bool _setEquals(Set<String> a, Set<String> b) {
     if (identical(a, b)) return true;
@@ -566,6 +596,7 @@ class CanvasState {
           voiceParticipants == other.voiceParticipants &&
           isVoiceCallActive == other.isVoiceCallActive &&
           isMicMuted == other.isMicMuted &&
+          isSpeakerOn == other.isSpeakerOn &&
           isChatDrawerOpen == other.isChatDrawerOpen &&
           isCommentsTrayOpen == other.isCommentsTrayOpen &&
           activeCommentId == other.activeCommentId &&
@@ -593,6 +624,7 @@ class CanvasState {
           hasMoreHistoryVersions == other.hasMoreHistoryVersions &&
           historyNextBeforeVersion == other.historyNextBeforeVersion &&
           undoRequests == other.undoRequests &&
+          myUndoRequests == other.myUndoRequests &&
           activeRevertPlan == other.activeRevertPlan &&
           isHistoryLoading == other.isHistoryLoading &&
           undoConflict == other.undoConflict &&
@@ -655,6 +687,7 @@ class CanvasState {
       voiceParticipants.hashCode ^
       isVoiceCallActive.hashCode ^
       isMicMuted.hashCode ^
+      isSpeakerOn.hashCode ^
       isChatDrawerOpen.hashCode ^
       isCommentsTrayOpen.hashCode ^
       activeCommentId.hashCode ^
@@ -682,6 +715,7 @@ class CanvasState {
       hasMoreHistoryVersions.hashCode ^
       historyNextBeforeVersion.hashCode ^
       undoRequests.hashCode ^
+      myUndoRequests.hashCode ^
       activeRevertPlan.hashCode ^
       isHistoryLoading.hashCode ^
       undoConflict.hashCode ^
@@ -694,22 +728,6 @@ class CanvasState {
 
 class CanvasInitial extends CanvasState {
   const CanvasInitial({super.currentUserId});
-}
-
-class CanvasCreating extends CanvasState {
-  const CanvasCreating() : super(isLoading: true);
-}
-
-class CanvasReady extends CanvasState {
-  final String boardId;
-
-  const CanvasReady(this.boardId) : super();
-}
-
-class CanvasErrorState extends CanvasState {
-  final String message;
-
-  const CanvasErrorState(this.message) : super(error: message);
 }
 
 /// An undo/redo entry could not be applied because the element(s) it would
@@ -760,8 +778,8 @@ class UndoRequestDraft {
   }
 
   /// Draft with the member's drawn [area] and the scope the screen resolved
-  /// for it (the area's overlapping elements plus any explicitly double-tapped
-  /// extras outside it). Replaces any previous area and the whole scope.
+  /// for it (exactly the elements inside that area). Replaces any previous
+  /// area and the whole scope, including elements picked before it.
   UndoRequestDraft withArea(UndoRequestArea area, List<String> elementIds) =>
       UndoRequestDraft(
         elementIds: List<String>.unmodifiable(elementIds),

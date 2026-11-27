@@ -64,14 +64,27 @@ module.exports = async (request) => {
     }
   }
 
-  // 4. Extract all @mentions from verified comment text
-  const mentionMatches = actualCommentText.match(/@([a-zA-Z0-9_\.\-]+)/g) || [];
-  if (mentionMatches.length === 0) {
+  // 4. Determine target mentions: prefer explicit UIDs chosen from the UI picker
+  const hasExplicitUids = Array.isArray(data.mentionedUids);
+  const explicitUids = hasExplicitUids
+    ? [...new Set(data.mentionedUids.filter((id) => typeof id === 'string' && id.trim().length > 0))]
+    : [];
+
+  const mentionMatches = hasExplicitUids
+    ? []
+    : (actualCommentText.match(/@([a-zA-Z0-9_\.\-]+)/g) || []);
+
+  if (hasExplicitUids ? explicitUids.length === 0 : mentionMatches.length === 0) {
     return { success: true, notifiedCount: 0 };
   }
 
   const rawTokens = [...new Set(mentionMatches.map((m) => m.substring(1)))];
-  logger.info('Parsed mentions from comment', { boardId, commentId, rawTokens });
+  logger.info('Parsed mentions from comment', {
+    boardId,
+    commentId,
+    explicitUidsCount: explicitUids.length,
+    rawTokens,
+  });
 
   // 5. Load verified sender profile and board title from Firestore (prevent spoofing)
   const senderUserDoc = await firestore.collection(FirestorePaths.USERS).doc(senderUid).get();
@@ -120,32 +133,37 @@ module.exports = async (request) => {
   let notifiedCount = 0;
   const notifiedUids = new Set();
 
-  for (const token of rawTokens) {
+  const targetsToNotify = hasExplicitUids
+    ? explicitUids
+        .map((uid) => memberProfiles.find((p) => p.uid === uid))
+        .filter(Boolean)
+    : rawTokens
+        .map((token) => {
+          const tokenLower = token.toLowerCase();
+          const matchedMember = memberProfiles.find((p) => {
+            const dName = (p.displayName || '').toLowerCase();
+            const dNameNoSpaces = dName.replace(/\s+/g, '');
+            const dNameUnderscores = dName.replace(/\s+/g, '_');
+            const uName = (p.username || '').toLowerCase();
+            const emailPrefix = (p.email || '').split('@')[0].toLowerCase();
+
+            return (
+              dName === tokenLower ||
+              dNameNoSpaces === tokenLower ||
+              dNameUnderscores === tokenLower ||
+              (uName && uName === tokenLower) ||
+              (emailPrefix && emailPrefix === tokenLower)
+            );
+          });
+          if (!matchedMember) {
+            logger.debug('Mentioned user not found among board members', { token });
+          }
+          return matchedMember;
+        })
+        .filter(Boolean);
+
+  for (const matchedMember of targetsToNotify) {
     try {
-      const tokenLower = token.toLowerCase();
-
-      // Match token against board members case-insensitively & with space/underscore normalization
-      const matchedMember = memberProfiles.find((p) => {
-        const dName = (p.displayName || '').toLowerCase();
-        const dNameNoSpaces = dName.replace(/\s+/g, '');
-        const dNameUnderscores = dName.replace(/\s+/g, '_');
-        const uName = (p.username || '').toLowerCase();
-        const emailPrefix = (p.email || '').split('@')[0].toLowerCase();
-
-        return (
-          dName === tokenLower ||
-          dNameNoSpaces === tokenLower ||
-          dNameUnderscores === tokenLower ||
-          (uName && uName === tokenLower) ||
-          (emailPrefix && emailPrefix === tokenLower)
-        );
-      });
-
-      if (!matchedMember) {
-        logger.debug('Mentioned user not found among board members', { token });
-        continue;
-      }
-
       const recipientUid = matchedMember.uid;
       if (notifiedUids.has(recipientUid)) continue;
       notifiedUids.add(recipientUid);
@@ -176,7 +194,10 @@ module.exports = async (request) => {
 
       notifiedCount++;
     } catch (userErr) {
-      logger.warn('Failed to notify mentioned user', { token, error: userErr.message });
+      logger.warn('Failed to notify mentioned user', {
+        uid: matchedMember.uid,
+        error: userErr.message,
+      });
     }
   }
 

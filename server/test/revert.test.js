@@ -56,8 +56,8 @@ stub('../src/history/r2', {
   getGzipJson: async () => state.blocks,
 });
 
-stub('firebase-admin', {
-  firestore: () => ({
+stub('firebase-admin/firestore', {
+  getFirestore: () => ({
     collection: () => ({
       doc: () => ({
         collection: () => ({

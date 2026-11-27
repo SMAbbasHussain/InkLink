@@ -191,4 +191,4 @@ async function buildUserTimeline(boardId, targetUid, opts = {}, redis) {
   };
 }
 
-module.exports = { buildUserTimeline, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE };
+module.exports = { buildUserTimeline, MAX_PAGE_SIZE };

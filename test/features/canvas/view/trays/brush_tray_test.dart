@@ -103,6 +103,8 @@ void main() {
     await tester.pumpAndSettle();
 
     final pressureSwitch = find.byKey(const ValueKey('stylusPressureSwitch'));
+    await tester.ensureVisible(pressureSwitch);
+    await tester.pumpAndSettle();
     await tester.tap(pressureSwitch);
     await tester.pumpAndSettle();
 
@@ -230,5 +232,62 @@ void main() {
     final slider = tester.widget<Slider>(find.byType(Slider).first);
     expect(slider.min, greaterThanOrEqualTo(2.0));
     expect(slider.max, greaterThan(20.0));
+  });
+
+  testWidgets('toggles between recent colors and palettes and between palettes', (
+    tester,
+  ) async {
+    Color? picked;
+    await tester.pumpWidget(
+      _host(
+        BrushTray(
+          isOpen: true,
+          strokeWidth: 5,
+          selectedColor: Colors.black,
+          brushOpacity: 1,
+          brushType: 'solid',
+          eraserEraseEverything: false,
+          recentColors: const [Colors.red],
+          palettes: const {
+            'Warm': [Colors.orange],
+            'Cool': [Colors.blue],
+          },
+          onStrokeWidthChanged: (_) {},
+          onColorSelected: (c) => picked = c,
+          onOpacityChanged: (_) {},
+          onBrushPresetSelected: (_) {},
+          onEraserEraseEverythingChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Custom Color'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('brush-preset-solid')),
+        matching: find.textContaining('px ·'),
+      ),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('brush-colors-palettes-tab')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('brush-palette-tab-Warm')), findsOneWidget);
+    expect(find.byKey(const ValueKey('brush-palette-tab-Cool')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('brush-palette-tab-Cool')));
+    await tester.pumpAndSettle();
+
+    // Tap the blue swatch from the Cool palette.
+    final coolSwatch = find.byWidgetPredicate(
+      (w) =>
+          w is Container &&
+          w.decoration is BoxDecoration &&
+          (w.decoration! as BoxDecoration).color == Colors.blue,
+    );
+    await tester.tap(coolSwatch.first);
+    await tester.pumpAndSettle();
+    expect(picked, Colors.blue);
   });
 }

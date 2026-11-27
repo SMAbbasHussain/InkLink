@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/models/board.dart';
 import '../../dashboard/bloc/dashboard_bloc.dart';
+import '../bloc/canvas_bloc.dart';
 import '../../dashboard/view/board_settings_route.dart';
 
 /// Opens the board settings screen from the canvas (phones).
@@ -15,6 +16,7 @@ void openBoardSettings(
   BuildContext context, {
   required String boardId,
   required String currentTitle,
+  CanvasBloc? canvasBloc,
 }) {
   final dashboardBloc = context.read<DashboardBloc>();
   final dashboardState = dashboardBloc.state;
@@ -48,6 +50,10 @@ void openBoardSettings(
 
   Navigator.push(
     context,
-    buildBoardSettingsRoute(context, board: board ?? fallback),
+    buildBoardSettingsRoute(
+      context,
+      board: board ?? fallback,
+      canvasBloc: canvasBloc,
+    ),
   );
 }

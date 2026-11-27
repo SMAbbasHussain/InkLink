@@ -9,9 +9,8 @@ class WebThemeController {
   final ValueNotifier<ThemeMode> mode;
   final bool _persist;
 
-  WebThemeController(ThemeMode initial, {bool persist = true})
-    : mode = ValueNotifier(initial),
-      _persist = persist {
+  WebThemeController(ThemeMode initial, {this._persist = true})
+    : mode = ValueNotifier(initial) {
     if (_persist) _load();
   }
 

@@ -4,6 +4,7 @@ import '../../../core/utils/helpers.dart';
 import '../../repositories/profile/profile_repository.dart';
 import '../../repositories/friends/friends_repository.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 class ProfileViewData {
   final Map<String, dynamic> userData;
@@ -64,14 +65,11 @@ class ProfileServiceImpl implements ProfileService {
   final FriendsRepository _friendsRepository;
 
   ProfileServiceImpl({
-    required ProfileRepository profileRepository,
-    required AuthService authService,
-    required CloudFunctionsService cloudFunctionsService,
-    required FriendsRepository friendsRepository,
-  }) : _profileRepository = profileRepository,
-       _authService = authService,
-       _cloudFunctionsService = cloudFunctionsService,
-       _friendsRepository = friendsRepository;
+    required this._profileRepository,
+    required this._authService,
+    required this._cloudFunctionsService,
+    required this._friendsRepository,
+  });
 
   @override
   Future<ProfileViewData> loadProfile(String userId) async {
@@ -118,8 +116,8 @@ class ProfileServiceImpl implements ProfileService {
       }
     }
 
-    final friendCount = _toInt(userData['friendCount']);
-    final boardCount = _toInt(userData['boardCount']);
+    final friendCount = parseIntValue(userData['friendCount']);
+    final boardCount = parseIntValue(userData['boardCount']);
 
     return ProfileViewData(
       userData: userData,
@@ -175,6 +173,14 @@ class ProfileServiceImpl implements ProfileService {
       await _profileRepository.updateUserFields(user.uid, {
         'photoURL': photoUrl,
       });
+
+      // Mirror the new avatar onto the auth profile so surfaces that read the
+      // signed-in user (settings header, chat, comments, voice) stop showing the
+      // previous picture. Firestore remains the source of truth, so a failed
+      // mirror must not fail the upload.
+      try {
+        await user.updatePhotoURL(photoUrl.toString());
+      } catch (_) {}
 
       return photoUrl.toString();
     } on FirebaseFunctionsException catch (e) {
@@ -283,10 +289,4 @@ class ProfileServiceImpl implements ProfileService {
     return _profileRepository.getUserById(user.uid);
   }
 
-  int _toInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 0;
-    return 0;
-  }
 }

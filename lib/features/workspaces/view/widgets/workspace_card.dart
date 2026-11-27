@@ -29,12 +29,13 @@ class WorkspaceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
-    final boards = previewBoards.take(3).toList();
+    // Four boards in a 2x2 grid, most recently edited first.
+    final boards = previewBoards.take(4).toList();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: InkSpacing.s20),
       child: SizedBox(
-        height: 190,
+        height: 220,
         child: Stack(
           clipBehavior: Clip.none,
           children: [
@@ -80,17 +81,37 @@ class WorkspaceCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     SizedBox(
-                      height: 88,
-                      child: Row(
+                      height: 108,
+                      child: Column(
                         children: [
-                          for (var i = 0; i < 3; i++) ...[
-                            if (i > 0) const SizedBox(width: 6),
+                          for (var row = 0; row < 2; row++)
                             Expanded(
-                              child: _BoardPreviewTile(
-                                board: i < boards.length ? boards[i] : null,
+                              child: Padding(
+                                padding: EdgeInsets.only(
+                                  top: row == 0 ? 0 : 6,
+                                ),
+                                child: Row(
+                                  children: [
+                                    for (var column = 0; column < 2; column++)
+                                      Expanded(
+                                        child: Padding(
+                                          padding: EdgeInsets.only(
+                                            left: column == 0 ? 0 : 6,
+                                          ),
+                                          child: _BoardPreviewTile(
+                                            board: () {
+                                              final index = row * 2 + column;
+                                              return index < boards.length
+                                                  ? boards[index]
+                                                  : null;
+                                            }(),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
-                          ],
                         ],
                       ),
                     ),

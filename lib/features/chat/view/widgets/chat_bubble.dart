@@ -12,6 +12,7 @@ import '../../../../domain/models/chat/chat_share_payload.dart';
 import '../../../../domain/services/workspace/workspace_service.dart';
 import '../../../../core/utils/app_error_formatter.dart';
 import '../../../../core/utils/app_snackbar.dart';
+import '../../../../core/utils/time_format.dart';
 import '../../theme/chat_theme.dart';
 import 'message_reactions_sheet.dart';
 
@@ -378,7 +379,7 @@ class ChatBubble extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    _formatTime(message.timestamp),
+                    formatClockTime(message.timestamp),
                     style: TextStyle(
                       color: colors.textSecondary.withOpacity(0.7),
                       fontSize: 10,
@@ -988,12 +989,6 @@ class ChatBubble extends StatelessWidget {
         child: Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
       ),
     );
-  }
-
-  String _formatTime(DateTime time) {
-    final hour = time.hour.toString().padLeft(2, '0');
-    final minute = time.minute.toString().padLeft(2, '0');
-    return '$hour:$minute';
   }
 
   String _formatFileSize(int bytes) {

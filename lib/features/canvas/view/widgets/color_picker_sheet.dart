@@ -137,40 +137,14 @@ class _ColorPickerSheetState extends State<ColorPickerSheet> {
     required String confirmLabel,
     String initialValue = '',
   }) {
-    final controller = TextEditingController(text: initialValue);
     return showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          key: const ValueKey('palette-name-field'),
-          controller: controller,
-          autofocus: true,
-          maxLength: 24,
-          decoration: const InputDecoration(
-            labelText: 'Palette name',
-            counterText: '',
-          ),
-          onSubmitted: (value) {
-            final name = value.trim();
-            if (name.isNotEmpty) Navigator.of(dialogContext).pop(name);
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final name = controller.text.trim();
-              if (name.isNotEmpty) Navigator.of(dialogContext).pop(name);
-            },
-            child: Text(confirmLabel),
-          ),
-        ],
+      builder: (dialogContext) => _PaletteNameDialog(
+        title: title,
+        confirmLabel: confirmLabel,
+        initialValue: initialValue,
       ),
-    ).whenComplete(controller.dispose);
+    );
   }
 
   Future<void> _createPalette() async {
@@ -793,4 +767,70 @@ class _SaturationValuePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _SaturationValuePainter oldDelegate) =>
       oldDelegate.hue != hue;
+}
+
+class _PaletteNameDialog extends StatefulWidget {
+  const _PaletteNameDialog({
+    required this.title,
+    required this.confirmLabel,
+    this.initialValue = '',
+  });
+
+  final String title;
+  final String confirmLabel;
+  final String initialValue;
+
+  @override
+  State<_PaletteNameDialog> createState() => _PaletteNameDialogState();
+}
+
+class _PaletteNameDialogState extends State<_PaletteNameDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _controller.text.trim();
+    if (name.isNotEmpty) {
+      Navigator.of(context).pop(name);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: TextField(
+        key: const ValueKey('palette-name-field'),
+        controller: _controller,
+        autofocus: true,
+        maxLength: 24,
+        decoration: const InputDecoration(
+          labelText: 'Palette name',
+          counterText: '',
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _submit,
+          child: Text(widget.confirmLabel),
+        ),
+      ],
+    );
+  }
 }

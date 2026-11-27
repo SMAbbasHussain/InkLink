@@ -10,8 +10,7 @@ abstract class ThemeService {
 class ThemeServiceImpl implements ThemeService {
   final ThemeRepository _themeRepository;
 
-  ThemeServiceImpl({required ThemeRepository themeRepository})
-    : _themeRepository = themeRepository;
+  ThemeServiceImpl({required this._themeRepository});
 
   @override
   Future<void> saveThemeMode(ThemeMode mode) {

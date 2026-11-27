@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:inklink/app_view.dart';
+import 'package:inklink/core/services/crashlytics_service.dart';
 import 'package:inklink/ui/theme/ink_theme.dart';
 import 'package:inklink/ui/theme/ink_tokens.dart';
 import 'package:inklink/ui/theme/ink_type.dart';
@@ -97,6 +99,14 @@ void main() async {
     await _startApp();
   } catch (e, st) {
     debugPrint("Startup failed: $e\n$st");
+    unawaited(
+      CrashlyticsService.instance.recordError(
+        e,
+        st,
+        reason: 'App startup failed',
+        fatal: true,
+      ),
+    );
     runApp(InitializationErrorApp(error: e.toString()));
   }
 }
@@ -104,6 +114,7 @@ void main() async {
 Future<void> _startApp() async {
   final sharedPreferences = await SharedPreferences.getInstance();
   await _ensureFirebaseInitialized();
+  CrashlyticsService.instance.initialize();
   final rtdbUrl = dotenv.env['FIREBASE_RTDB_URL'];
   final FirebaseDatabase rtdb;
   if (rtdbUrl != null && rtdbUrl.isNotEmpty) {

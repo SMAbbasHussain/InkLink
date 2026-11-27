@@ -1,14 +1,4 @@
-DateTime _parseDate(dynamic value) {
-  if (value == null) return DateTime.now();
-  if (value is DateTime) return value;
-  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
-  if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
-  try {
-    return (value as dynamic).toDate() as DateTime? ?? DateTime.now();
-  } catch (_) {
-    return DateTime.now();
-  }
-}
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 class BoardInvitation {
   final String id;
@@ -48,8 +38,8 @@ class BoardInvitation {
       senderPic: map['senderPic']?.toString(),
       status: (map['status'] ?? 'pending').toString(),
       targetRole: (map['targetRole'] ?? 'viewer').toString(),
-      timestamp: _parseDate(map['timestamp']),
-      expiresAt: map['expiresAt'] != null ? _parseDate(map['expiresAt']) : null,
+      timestamp: parseDateTimeValue(map['timestamp']),
+      expiresAt: map['expiresAt'] != null ? parseDateTimeValue(map['expiresAt']) : null,
     );
   }
 

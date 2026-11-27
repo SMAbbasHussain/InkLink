@@ -53,8 +53,6 @@ class StrokeStabilizer {
   Offset? _direction;
   Duration? _lastTime;
 
-  Offset? get lastRaw => _lastRaw;
-
   List<Offset> add(Offset raw, {Duration? elapsed}) {
     final smoothed = _smoothed;
     final previousRaw = _lastRaw;
@@ -77,7 +75,7 @@ class StrokeStabilizer {
       _direction = null;
       return [raw];
     }
-    if (_detectCorner(raw)) {
+    if (_detectCorner(raw, previousRaw)) {
       _smoothed = raw;
       // Include the raw corner before resetting, rather than cutting across it.
       return [previousRaw!, raw];
@@ -87,7 +85,7 @@ class StrokeStabilizer {
     return [next];
   }
 
-  bool _detectCorner(Offset raw) {
+  bool _detectCorner(Offset raw, Offset? previousRaw) {
     final anchor = _directionAnchor ?? raw;
     final delta = raw - anchor;
     final length = delta.distance;
@@ -97,6 +95,14 @@ class StrokeStabilizer {
     _direction = direction;
     _directionAnchor = raw;
     if (previous == null) return false;
+    // In continuous fine-grained pointer streams where individual steps are
+    // smaller than [minCornerSegment], snapping [_smoothed] directly to [raw]
+    // would teleport across the stabilizer lag and inject a jagged spike on
+    // curves or hand tremor. Only snap on discrete corner segments.
+    if (previousRaw != null &&
+        (raw - previousRaw).distance < minCornerSegment) {
+      return false;
+    }
     final dot = (direction.dx * previous.dx + direction.dy * previous.dy).clamp(
       -1.0,
       1.0,
@@ -113,10 +119,15 @@ class StrokeStabilizer {
 
 List<Offset> smoothStrokePoints(List<Offset> points) {
   if (points.length < 4) return points;
-  return [
-    points.first,
-    for (var i = 1; i < points.length - 1; i++)
-      (points[i - 1] + points[i] + points[i + 1]) / 3,
-    points.last,
-  ];
+  var current = points;
+  final passes = points.length > 6 ? 3 : 1;
+  for (var pass = 0; pass < passes; pass++) {
+    current = [
+      current.first,
+      for (var i = 1; i < current.length - 1; i++)
+        (current[i - 1] + current[i] + current[i + 1]) / 3,
+      current.last,
+    ];
+  }
+  return current;
 }

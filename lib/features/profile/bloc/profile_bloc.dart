@@ -167,20 +167,45 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
           }
         }
 
+        final nextFriendCount = event.userData.containsKey('friendCount')
+            ? _parseCount(
+                mergedUserData['friendCount'],
+                currentState.friendCount,
+              )
+            : currentState.friendCount;
+        final nextBoardCount = event.userData.containsKey('boardCount')
+            ? _parseCount(
+                mergedUserData['boardCount'],
+                currentState.boardCount,
+              )
+            : currentState.boardCount;
+
         emit(
           ProfileLoaded(
             userData: mergedUserData,
             isSelf: currentState.isSelf,
             isFriend: currentState.isFriend,
             isBlocked: currentState.isBlocked,
-            friendCount: currentState.friendCount,
-            boardCount: currentState.boardCount,
+            friendCount: nextFriendCount,
+            boardCount: nextBoardCount,
             isOnline: currentState.isOnline,
             lastActive: currentState.lastActive,
           ),
         );
       } else if (currentState is ProfilePhotoUploading) {
         final mergedUserData = {...currentState.userData, ...event.userData};
+        final nextFriendCount = event.userData.containsKey('friendCount')
+            ? _parseCount(
+                mergedUserData['friendCount'],
+                currentState.friendCount,
+              )
+            : currentState.friendCount;
+        final nextBoardCount = event.userData.containsKey('boardCount')
+            ? _parseCount(
+                mergedUserData['boardCount'],
+                currentState.boardCount,
+              )
+            : currentState.boardCount;
 
         emit(
           ProfilePhotoUploading(
@@ -188,8 +213,8 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
             isSelf: currentState.isSelf,
             isFriend: currentState.isFriend,
             isBlocked: currentState.isBlocked,
-            friendCount: currentState.friendCount,
-            boardCount: currentState.boardCount,
+            friendCount: nextFriendCount,
+            boardCount: nextBoardCount,
             isOnline: currentState.isOnline,
             lastActive: currentState.lastActive,
           ),
@@ -403,6 +428,13 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
     await _presenceSubscription?.cancel();
     _presenceSubscription = null;
     add(ProfileCleared());
+  }
+
+  int _parseCount(dynamic value, int fallback) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? fallback;
+    return fallback;
   }
 
   @override

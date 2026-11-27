@@ -22,10 +22,13 @@ class VoiceServiceImpl implements VoiceService {
       StreamController<bool>.broadcast();
   final StreamController<bool> _isMutedController =
       StreamController<bool>.broadcast();
+  final StreamController<bool> _isSpeakerOnController =
+      StreamController<bool>.broadcast();
 
   final List<VoiceParticipant> _participants = [];
   bool _isInCall = false;
   bool _isMuted = false;
+  bool _isSpeakerOn = false;
   String? _activeBoardId;
   String? _presenceBoardId;
   String? _connectedUserId;
@@ -37,10 +40,9 @@ class VoiceServiceImpl implements VoiceService {
   bool _disposed = false;
 
   VoiceServiceImpl({
-    required AuthService authService,
+    required this._authService,
     RtcMediaClient? rtcMediaClient,
-  }) : _authService = authService,
-       _rtcMediaClient = rtcMediaClient ?? DefaultRtcMediaClient() {
+  }) : _rtcMediaClient = rtcMediaClient ?? DefaultRtcMediaClient() {
     // Drive local speaking state from the RTC engine's volume indication.
     // The server broadcasts `voice_speaking_changed` to the whole voice room
     // (including the sender), but the socket handler below only refreshes the
@@ -60,6 +62,9 @@ class VoiceServiceImpl implements VoiceService {
   bool get isMuted => _isMuted;
 
   @override
+  bool get isSpeakerOn => _isSpeakerOn;
+
+  @override
   List<VoiceParticipant> get currentParticipants =>
       List.unmodifiable(_participants);
 
@@ -76,6 +81,9 @@ class VoiceServiceImpl implements VoiceService {
 
   @override
   Stream<bool> watchIsMuted() => _isMutedController.stream;
+
+  @override
+  Stream<bool> watchIsSpeakerOn() => _isSpeakerOnController.stream;
 
   io.Socket _buildSocket(String token) {
     final socket = io.io(
@@ -409,9 +417,12 @@ class VoiceServiceImpl implements VoiceService {
                 token: token,
                 uid: currentUid,
               );
-              // Preserve local mute state across (re)joins.
+              // Preserve local mute and speakerphone state across (re)joins.
               try {
                 await _rtcMediaClient.setMicrophoneMuted(_isMuted);
+              } catch (_) {}
+              try {
+                await _rtcMediaClient.setSpeakerphoneEnabled(_isSpeakerOn);
               } catch (_) {}
             } catch (mediaErr) {
               developer.log(
@@ -438,6 +449,7 @@ class VoiceServiceImpl implements VoiceService {
             // Only force-unmute on a fresh call — rejoining after a socket
             // reconnect must not silently unmute a muted user.
             _isMutedController.add(_isMuted);
+            _isSpeakerOnController.add(_isSpeakerOn);
 
             final selfPart = res['participant'] as Map?;
             if (selfPart != null) {
@@ -517,11 +529,23 @@ class VoiceServiceImpl implements VoiceService {
     } catch (_) {}
 
     _isMuted = false;
+    _isSpeakerOn = false;
     _participants.clear();
 
     _isInCallController.add(false);
     _isMutedController.add(false);
+    _isSpeakerOnController.add(false);
     _participantsController.add([]);
+  }
+
+  @override
+  Future<void> toggleSpeaker() async {
+    _isSpeakerOn = !_isSpeakerOn;
+    _isSpeakerOnController.add(_isSpeakerOn);
+
+    try {
+      await _rtcMediaClient.setSpeakerphoneEnabled(_isSpeakerOn);
+    } catch (_) {}
   }
 
   @override
@@ -582,6 +606,7 @@ class VoiceServiceImpl implements VoiceService {
     _activeBoardId = null;
     _isInCall = false;
     _isMuted = false;
+    _isSpeakerOn = false;
     _participants.clear();
     if (!_participantsController.isClosed) {
       _participantsController.add(const []);
@@ -591,6 +616,9 @@ class VoiceServiceImpl implements VoiceService {
     }
     if (!_isMutedController.isClosed) {
       _isMutedController.add(false);
+    }
+    if (!_isSpeakerOnController.isClosed) {
+      _isSpeakerOnController.add(false);
     }
     _connectingFuture = null;
     _connectingUserId = null;
@@ -612,5 +640,6 @@ class VoiceServiceImpl implements VoiceService {
     await _participantsController.close();
     await _isInCallController.close();
     await _isMutedController.close();
+    await _isSpeakerOnController.close();
   }
 }

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/core/crdt/canvas_crdt_adapter.dart';
+import 'package:inklink/domain/models/canvas/canvas_board_settings.dart';
 import 'package:inklink/domain/services/canvas/canvas_service.dart';
 import 'package:inklink/domain/models/board.dart';
 import 'package:inklink/features/canvas/bloc/canvas_bloc.dart';
@@ -263,4 +265,81 @@ void main() {
     expect(state.stabilizerStrength, 0.9);
     expect(state.copyWith(stabilizerStrength: 0), isNot(state));
   });
+
+  test(
+    'Given inkSpillEnabled in boardSettings, Then dwell pressures > 1.0 are preserved',
+    () async {
+      final bloc = await _editor();
+      bloc.add(
+        const CanvasSetBoardSettings(
+          CanvasBoardSettings(inkSpillEnabled: true),
+        ),
+      );
+      await _until(bloc, (state) => state.boardSettings.inkSpillEnabled);
+      bloc.add(const CanvasStartStroke(Offset.zero, pressure: 0.7));
+      await _until(bloc, (state) => state.currentStroke.isNotEmpty);
+      await _point(bloc, const Offset(15, 0), 0.9);
+      await _point(bloc, const Offset(15.1, 0), 1.65);
+      bloc.add(const CanvasEndStroke());
+      final state = await _until(bloc, (state) => state.elements.isNotEmpty);
+      final stroke = state.elements.single as StrokeElement;
+      expect(stroke.pressures.last, closeTo(1.65, 1e-6));
+    },
+  );
+
+  test(
+    'Given a huge circle at 10% zoom, Then CanvasEndStroke keeps all points and undo works',
+    () async {
+      final adapter = await CanvasCrdtAdapter.create();
+      final service = _RecordingCanvasService();
+      final bloc = CanvasBloc(
+        crdtAdapter: adapter,
+        canvasService: service,
+        boardId: 'test-board',
+      );
+      addTearDown(bloc.close);
+      bloc.add(
+        const CanvasBoardTitleUpdated(null, currentUserRole: Board.roleEditor),
+      );
+      await _until(bloc, (state) => state.canEdit);
+
+      bloc.add(const CanvasStartStroke(Offset(3000, 0), pressure: 1.0));
+      await _until(bloc, (state) => state.currentStroke.isNotEmpty);
+      const count = 120;
+      for (var i = 1; i <= count; i++) {
+        final angle = (i / count) * 6.283185307179586;
+        final pt = Offset(
+          3000 * (i == count ? 1.0 : (angle == 0 ? 1.0 : 0.0) + 1.0),
+          0,
+        );
+        // Circle of radius 3000 around (0, 0)
+        final cx = 3000.0 * (i == count ? 1.0 : 0.0);
+        bloc.add(
+          CanvasAppendStroke(
+            Offset(
+              3000 * (i == count ? 1.0 : math.cos(angle)),
+              3000 * (i == count ? 0.0 : math.sin(angle)),
+            ),
+            pressure: 1.0,
+          ),
+        );
+        final _ = (pt, cx);
+      }
+      await _until(bloc, (state) => state.currentStroke.length > count);
+      bloc.add(const CanvasEndStroke(smoothAfterDrawing: false));
+      final committed = await _until(
+        bloc,
+        (state) => state.elements.isNotEmpty && state.currentStroke.isEmpty,
+      );
+      final stroke = committed.elements.single as StrokeElement;
+      expect(stroke.points.length, greaterThan(100));
+
+      bloc.add(const CanvasUndo());
+      final undone = await _until(
+        bloc,
+        (state) => state.elements.isEmpty && state.infoMessageRedoable,
+      );
+      expect(undone.infoMessageRedoable, isTrue);
+    },
+  );
 }

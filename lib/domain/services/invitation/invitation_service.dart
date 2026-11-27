@@ -17,12 +17,10 @@ class InvitationServiceImpl implements InvitationService {
   final CloudFunctionsService _cloudFunctionsService;
 
   InvitationServiceImpl({
-    required InvitationRepository invitationRepository,
-    required BoardRepository boardRepository,
-    required CloudFunctionsService cloudFunctionsService,
-  }) : _invitationRepository = invitationRepository,
-       _boardRepository = boardRepository,
-       _cloudFunctionsService = cloudFunctionsService;
+    required this._invitationRepository,
+    required this._boardRepository,
+    required this._cloudFunctionsService,
+  });
 
   @override
   Stream<List<Map<String, dynamic>>> watchPendingInvites() {

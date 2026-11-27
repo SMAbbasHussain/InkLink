@@ -33,10 +33,9 @@ class PresenceServiceImpl implements PresenceService {
   StreamSubscription<bool>? _connectedSubscription;
 
   PresenceServiceImpl({
-    required PresenceRepository presenceRepository,
-    required AuthService authService,
-  }) : _presenceRepository = presenceRepository,
-       _authService = authService;
+    required this._presenceRepository,
+    required this._authService,
+  });
 
   @override
   Future<void> setUserOnline() async {

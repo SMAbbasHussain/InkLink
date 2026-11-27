@@ -14,6 +14,7 @@ import 'features/workspaces/bloc/workspace_bloc.dart';
 import 'features/notifications/bloc/notifications_bloc.dart';
 import 'features/board_invitations/bloc/board_invitations_bloc.dart';
 import 'features/friends/bloc/friends_bloc.dart';
+import 'core/services/crashlytics_service.dart';
 import 'core/services/data_prefetch_service.dart';
 import 'core/services/deep_link_service.dart';
 import 'domain/services/auth/auth_session_service.dart';
@@ -57,6 +58,7 @@ class _AppViewState extends State<AppView> {
   void _initializeAuthenticatedSession(String uid) {
     if (_initializedAuthUid == uid) return;
     _initializedAuthUid = uid;
+    CrashlyticsService.instance.setUserId(uid);
 
     // Phase 4E: Prefetch data on auth
     context.read<DataPrefetchService>().prefetchInitialData(uid);
@@ -88,6 +90,7 @@ class _AppViewState extends State<AppView> {
 
   Future<void> _stopBlocsForLogout() async {
     _initializedAuthUid = null;
+    await CrashlyticsService.instance.setUserId(null);
     if (!mounted) return;
     final friendsBloc = context.read<FriendsBloc>();
     final workspaceBloc = context.read<WorkspaceBloc>();
@@ -117,9 +120,10 @@ class _AppViewState extends State<AppView> {
           (previous is! Authenticated && current is Authenticated) ||
           (previous is Authenticated && current is! Authenticated) ||
           current is AuthEmailUnverified ||
-          current is AuthDeletingAccount,
+          current is AuthDeletingAccount ||
+          current is AuthLoggingOut,
       listener: (context, state) async {
-        if (state is AuthDeletingAccount) {
+        if (state is AuthDeletingAccount || state is AuthLoggingOut) {
           Navigator.of(context, rootNavigator: true)
               .popUntil((route) => route.isFirst);
         } else if (state is AuthEmailUnverified) {
@@ -161,6 +165,36 @@ class _AppViewState extends State<AppView> {
                     const SizedBox(height: 8),
                     Text(
                       "Permanently purging boards, memberships, and profile",
+                      style: TextStyle(fontSize: 13, color: tokens.inkSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        if (state is AuthLoggingOut) {
+          final tokens = context.ink;
+          return Scaffold(
+            body: DeskBackground(
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(color: tokens.accent),
+                    const SizedBox(height: 24),
+                    Text(
+                      "Logging out...",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: tokens.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Closing your session safely",
                       style: TextStyle(fontSize: 13, color: tokens.inkSecondary),
                     ),
                   ],

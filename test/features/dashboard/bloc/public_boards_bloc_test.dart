@@ -44,6 +44,8 @@ class FakeBoardService implements BoardService {
   @override
   Future<void> archiveBoard(String boardId) async {}
   @override
+  Future<void> setBoardPaused(String boardId, {required bool isPaused}) async {}
+  @override
   Future<CreateBoardResult> createBoard({
     String? title,
     required String visibility,

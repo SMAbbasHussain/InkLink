@@ -23,8 +23,10 @@ class CanvasActionsTray extends StatelessWidget {
   final bool isArrowPreset;
   final bool isLayersOpen;
   final bool isShapesPopupOpen;
+  final bool isSymmetryActive;
   final List<CanvasToolbarAction> bottomBarActions;
   final ValueChanged<CanvasToolbarAction> onActionSelected;
+  final VoidCallback? onSymmetry;
   final VoidCallback? onCustomizeBottomBar;
   final VoidCallback? onClose;
 
@@ -37,7 +39,9 @@ class CanvasActionsTray extends StatelessWidget {
     this.isArrowPreset = false,
     this.isLayersOpen = false,
     this.isShapesPopupOpen = false,
+    this.isSymmetryActive = false,
     this.bottomBarActions = CanvasToolbarAction.defaultBottomBarActions,
+    this.onSymmetry,
     this.onCustomizeBottomBar,
     this.onClose,
   });
@@ -124,6 +128,66 @@ class CanvasActionsTray extends StatelessWidget {
                 canEdit: canEdit,
                 isSelected: _isSelected,
                 onTap: onActionSelected,
+              ),
+            ],
+            if (onSymmetry != null) ...[
+              const SizedBox(height: 12),
+              _SectionLabel('DRAWING AIDS'),
+              const SizedBox(height: 6),
+              SizedBox(
+                width: 76,
+                height: 70,
+                child: InkWell(
+                  key: const ValueKey('canvas-tools-symmetry-button'),
+                  onTap: canEdit
+                      ? () {
+                          HapticFeedback.selectionClick();
+                          onSymmetry!();
+                        }
+                      : null,
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSymmetryActive
+                          ? tokens.accentSoft
+                          : tokens.field,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          LucideIcons.flipHorizontal,
+                          size: 19,
+                          color: !canEdit
+                              ? tokens.inkMuted.withValues(alpha: 0.45)
+                              : isSymmetryActive
+                              ? tokens.accent
+                              : tokens.ink,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Symmetry',
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: InkType.caption(
+                            !canEdit
+                                ? tokens.inkMuted.withValues(alpha: 0.45)
+                                : isSymmetryActive
+                                ? tokens.accentText
+                                : tokens.ink,
+                          ).copyWith(fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ],
           ],

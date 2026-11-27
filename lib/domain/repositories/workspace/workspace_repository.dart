@@ -26,6 +26,7 @@ abstract class WorkspaceRepository {
     required String workspaceId,
     required List<String> invitedUserIds,
   });
+  Stream<Set<String>> getPendingSentWorkspaceInviteUserIds(String workspaceId);
   Future<void> leaveWorkspace({
     String? workspaceId,
     List<String>? importedBoardsToKeep,

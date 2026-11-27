@@ -2,7 +2,9 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const Redis = require('ioredis');
-const admin = require('firebase-admin');
+const { initializeApp, applicationDefault, cert, getApps } = require('firebase-admin/app');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+const { getAuth } = require('firebase-admin/auth');
 const cors = require('cors');
 const Y = require('yjs');
 const crypto = require('crypto');
@@ -196,6 +198,7 @@ const server = http.createServer(app);
 // Comment 3: Explicit origin check for Socket.IO WebSocket handshakes via Engine.IO allowRequest
 const io = new Server(server, {
   cors: corsOptions,
+  maxHttpBufferSize: 5 * 1024 * 1024,
   allowRequest: (req, callback) => {
     const origin = req.headers.origin;
     if (isOriginAllowed(origin)) {
@@ -283,14 +286,49 @@ function isValidBoardId(value) {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= 128;
 }
 
+// Payload ceilings. Socket.IO caps a frame at 5 MB (maxHttpBufferSize), so
+// these bound what can be *persisted and fanned out* well below that.
+const MAX_UPDATE_BASE64_LENGTH = 4 * 1024 * 1024;
+const MAX_PREVIEW_BASE64_LENGTH = 1024 * 1024;
+const MAX_ID_LENGTH = 128;
+const MAX_PREVIEW_KEYS = 16;
+const MAX_PREVIEW_STRING = MAX_PREVIEW_BASE64_LENGTH;
+
 function isValidUpdate(update) {
-  if (!update || typeof update !== 'object') return false;
-  return typeof update.updateId === 'string' && update.updateId.length > 0;
+  if (!update || typeof update !== 'object' || Array.isArray(update)) return false;
+  if (typeof update.updateId !== 'string') return false;
+  if (update.updateId.length === 0 || update.updateId.length > MAX_ID_LENGTH) return false;
+  // A CRDT update without a usable payload would still occupy a version slot in
+  // the durable stream and be replayed by every later reconstruct, so reject it
+  // here rather than persisting an empty op.
+  if (typeof update.payloadBase64 !== 'string') return false;
+  if (update.payloadBase64.length === 0
+    || update.payloadBase64.length > MAX_UPDATE_BASE64_LENGTH) return false;
+  if (update.elementId != null) {
+    if (typeof update.elementId !== 'string') return false;
+    if (update.elementId.length > MAX_ID_LENGTH) return false;
+  }
+  return true;
 }
 
 function isValidPreview(preview) {
-  if (!preview || typeof preview !== 'object') return false;
-  return preview.previewId != null;
+  if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return false;
+  if (preview.previewId == null) return false;
+  const keys = Object.keys(preview);
+  // Previews are relayed to every collaborator on the board at up to
+  // RATE_LIMIT_MAX_PREVIEWS per second, so an unbounded preview body becomes
+  // room-wide fan-out amplification from a single socket.
+  if (keys.length > MAX_PREVIEW_KEYS) return false;
+  for (const key of keys) {
+    const value = preview[key];
+    if (typeof value === 'string' && value.length > MAX_PREVIEW_STRING) return false;
+    if (typeof value === 'number' && !Number.isFinite(value)) return false;
+    if (value !== null && typeof value === 'object') return false;
+  }
+  if (typeof preview.previewId === 'string' && preview.previewId.length > MAX_ID_LENGTH) {
+    return false;
+  }
+  return true;
 }
 
 redis.on('connect', () => {
@@ -308,13 +346,13 @@ redis.on('error', (error) => {
 // ============================================================
 try {
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    admin.initializeApp({
-      credential: admin.credential.applicationDefault(),
+    initializeApp({
+      credential: applicationDefault(),
     });
   } else {
     const serviceAccount = loadFirebaseServiceAccount();
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+    initializeApp({
+      credential: cert(serviceAccount),
     });
   }
 } catch (error) {
@@ -323,7 +361,7 @@ try {
   );
 }
 
-const db = admin.firestore?.() || null;
+const db = getFirestore() || null;
 
 // ============================================================
 // REDIS SUBSCRIBER — Real-time Room Eviction
@@ -418,6 +456,16 @@ redisSub.on('message', async (channel, message) => {
             redis.srem(`board_editors:${data.boardId}`, data.uid).catch(() => { });
           }
         }
+      } else if (data.type === 'board_paused_changed' && data.boardId) {
+        invalidateCachedBoardAccess(data.boardId);
+        const paused = Boolean(data.isPaused);
+        if (redisAvailable) {
+          redis.set(`board_paused:${data.boardId}`, paused ? '1' : '0', 'EX', 86400).catch(() => { });
+        }
+        io.to(`board_room:${data.boardId}`).emit('board_pause_changed', {
+          boardId: data.boardId,
+          isPaused: paused,
+        });
       } else if (data.type === 'board_deleted' && data.boardId) {
         invalidateCachedBoardAccess(data.boardId);
         seededBoards.delete(data.boardId);
@@ -454,8 +502,13 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
   try {
     if (redisAvailable) {
       if (requireEdit) {
+        const pausedFlag = await redis.get(`board_paused:${boardId}`);
+        if (pausedFlag === '1') {
+          setCachedBoardAccess(boardId, uid, true, false);
+          return false;
+        }
         const isEditor = await redis.sismember(`board_editors:${boardId}`, uid);
-        if (isEditor) {
+        if (isEditor && pausedFlag === '0') {
           setCachedBoardAccess(boardId, uid, true, true);
           return true;
         }
@@ -476,9 +529,17 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
       const boardDoc = await db.collection('boards').doc(boardId).get();
       if (!boardDoc.exists) return false;
       const data = boardDoc.data() || {};
+      const isPaused = data.isPaused === true;
+
+      if (redisAvailable) {
+        redis
+          .set(`board_paused:${boardId}`, isPaused ? '1' : '0', 'EX', EDITORS_REDIS_TTL_SEC)
+          .catch(() => { });
+      }
 
       if (data.ownerId === uid) {
-        setCachedBoardAccess(boardId, uid, true, true);
+        const ownerCanEdit = !isPaused;
+        setCachedBoardAccess(boardId, uid, true, ownerCanEdit);
         if (redisAvailable) {
           const p = redis.pipeline();
           p.sadd(`board_members:${boardId}`, uid);
@@ -487,7 +548,7 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
           p.expire(`board_editors:${boardId}`, EDITORS_REDIS_TTL_SEC);
           p.exec().catch(() => { });
         }
-        return true;
+        return requireEdit ? ownerCanEdit : true;
       }
 
       // Allow read-only access for public boards
@@ -513,6 +574,10 @@ async function canUserAccessBoard(boardId, uid, requireEdit = false) {
       }
 
       if (requireEdit) {
+        if (isPaused) {
+          setCachedBoardAccess(boardId, uid, true, false);
+          return false;
+        }
         const memberDoc = await db.collection('boards').doc(boardId)
           .collection('members').doc(uid).get();
         if (memberDoc.exists) {
@@ -564,11 +629,6 @@ function logWsEvent(title, lines) {
     console.log(line);
   }
   console.log('==================================================');
-}
-
-async function getConnectedSocketsInRoom(roomName) {
-  const sockets = await io.in(roomName).fetchSockets();
-  return sockets.map(s => s.data.uid).filter(Boolean);
 }
 
 // ============================================================
@@ -795,11 +855,11 @@ function sanitizeAgoraUid(uid) {
 async function authenticateFirebaseRequest(req) {
   const header = req.headers.authorization || '';
   if (!header.startsWith('Bearer ')) return null;
-  if (!db || !admin.apps || !admin.apps.length) return null;
+  if (!db || !getApps().length) return null;
 
   const idToken = header.slice('Bearer '.length).trim();
   try {
-    return await admin.auth().verifyIdToken(idToken, true);
+    return await getAuth().verifyIdToken(idToken, true);
   } catch (error) {
     // Same transient fallback as the socket middleware: only when the
     // verification backend itself is unavailable, verify without the
@@ -813,7 +873,7 @@ async function authenticateFirebaseRequest(req) {
     if (!transient) return null;
     console.warn('[agora] Revocation check unavailable, verifying without it:', error.message);
     try {
-      return await admin.auth().verifyIdToken(idToken);
+      return await getAuth().verifyIdToken(idToken);
     } catch (_) {
       return null;
     }
@@ -1357,7 +1417,7 @@ async function runSnapshot(boardId) {
     stateVector,
     elementCount,
     snapshotVersion: lastSnapshotVersion + 1,
-    lastSnapshotAt: admin.firestore.FieldValue.serverTimestamp(),
+    lastSnapshotAt: FieldValue.serverTimestamp(),
     updatedBy: '__snapshot_worker__',
   });
   batch.set(indexRef, {
@@ -1368,7 +1428,7 @@ async function runSnapshot(boardId) {
     operationCount: rawOps.length,
     firstOpAt: rawOps.length ? rawOps[0].timestamp : null,
     lastOpAt: rawOps.length ? rawOps[rawOps.length - 1].timestamp : null,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
     contributorUids,
     summary,
     ...(summaryTruncated ? { summaryTruncated: true } : {}),
@@ -1594,7 +1654,7 @@ io.use(async (socket, next) => {
     const { token } = socket.handshake.auth;
     if (!token) return next(new Error('Authentication error: Token missing'));
 
-    if (!db || !admin.apps || !admin.apps.length) {
+    if (!db || !getApps().length) {
       if (process.env.NODE_ENV === 'development' && process.env.ALLOW_DEV_AUTH === 'true') {
         socket.data.uid = socket.handshake.auth.uid || "test-user";
         return next();
@@ -1604,7 +1664,7 @@ io.use(async (socket, next) => {
 
     let decodedToken;
     try {
-      decodedToken = await admin.auth().verifyIdToken(token, true);
+      decodedToken = await getAuth().verifyIdToken(token, true);
     } catch (error) {
       // Fall back to a non-revocation check only when the verification
       // backend itself is unavailable (transient errors) — genuine
@@ -1617,7 +1677,7 @@ io.use(async (socket, next) => {
       );
       if (!transient) throw error;
       console.warn('[Socket.IO auth] Revocation check unavailable, verifying without it:', error.message);
-      decodedToken = await admin.auth().verifyIdToken(token);
+      decodedToken = await getAuth().verifyIdToken(token);
     }
     socket.data.uid = decodedToken.uid;
     next();
@@ -1671,13 +1731,16 @@ io.on('connection', (socket) => {
       return;
     }
     socket.leave(`board_room:${boardId}`);
+    if (socket.data.currentBoardId === boardId) {
+      socket.data.currentBoardId = null;
+    }
     console.log(`[leave_board] User ${uid} left board ${boardId}`);
   });
 
   // ============================================================
   // crdt_update — LIVE UPDATE RELAY + PERSISTENCE
   // ============================================================
-  socket.on('crdt_update', async ({ boardId, update }, ack) => {
+  socket.on('crdt_update', async ({ boardId, update } = {}, ack) => {
     if (isRateLimited(socket.id)) {
       console.warn(`[crdt_update] Rate limited ${uid} (socket: ${socket.id})`);
       if (typeof ack === 'function') ack({ status: 'error', message: 'rate_limited' });
@@ -2076,11 +2139,18 @@ io.on('connection', (socket) => {
     if (!(await isBoardOwner(boardId, uid))) return historyError(ack, 'forbidden');
     try {
       let opts;
-      if (requestId && !payload.mode) {
+      if (requestId && (!payload.mode || (payload.mode === 'user' && !payload.targetUid))) {
         const reqDoc = await db.collection('boards').doc(boardId)
           .collection('undo_requests').doc(String(requestId)).get();
         if (!reqDoc.exists) return historyError(ack, 'not_found');
         const req = reqDoc.data() || {};
+        // A resolved request must not be re-planned. resolveUndoRequest records
+        // `status`, and honouring it stops a denied or already-applied request
+        // from being turned into a fresh revert. Legacy requests predate the
+        // field, so an absent status stays allowed.
+        if (req.status !== undefined && req.status !== 'pending') {
+          return historyError(ack, 'request_not_pending');
+        }
         if (req.scopeMode === 'area_state' && req.targetVersion != null) {
           opts = {
             mode: 'restore',
@@ -2361,7 +2431,7 @@ io.on('connection', (socket) => {
   // ----------------------------------------------------------
   // crdt_preview — EPHEMERAL RELAY (unchanged)
   // ----------------------------------------------------------
-  socket.on('crdt_preview', async ({ boardId, preview }, ack) => {
+  socket.on('crdt_preview', async ({ boardId, preview } = {}, ack) => {
     if (isRateLimited(socket.id, true)) {
       console.warn(`[crdt_preview] Rate limited ${uid} (socket: ${socket.id})`);
       if (typeof ack === 'function') ack({ status: 'error', message: 'rate_limited' });

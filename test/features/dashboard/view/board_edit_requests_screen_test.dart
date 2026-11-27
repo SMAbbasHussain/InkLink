@@ -18,6 +18,7 @@ class MockNotificationsBloc
     on<NotificationsEvent>((event, emit) {
       if (event is NotificationRespondToAccessRequest) {
         lastRespondEvent = event;
+        event.onCompleted?.call(true, null);
       }
     });
   }

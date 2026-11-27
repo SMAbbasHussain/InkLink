@@ -1,6 +1,10 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../domain/models/workspace.dart';
 import '../../../ui/theme/ink_theme.dart';
@@ -18,6 +22,9 @@ import 'workspace_detail_route.dart';
 import 'workspace_invites_screen.dart';
 import '../../../core/utils/app_snackbar.dart';
 
+/// Height of a workspace card in the grid (card + its bottom padding).
+const double _workspaceCardExtent = 240;
+
 class WorkspacesScreen extends StatefulWidget {
   const WorkspacesScreen({super.key});
 
@@ -27,14 +34,75 @@ class WorkspacesScreen extends StatefulWidget {
 
 class _WorkspacesScreenState extends State<WorkspacesScreen>
     with AutomaticKeepAliveClientMixin {
+  static const String _activityPrefsKey = 'workspace_activity_timestamps';
+  final Map<String, int> _workspaceActivityMs = <String, int>{};
+  bool _hasSeededInitialWorkspaces = false;
+
   @override
   bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
+    unawaited(_loadWorkspaceActivity());
     context.read<WorkspaceBloc>().add(LoadWorkspacesRequested());
     context.read<WorkspaceBloc>().add(LoadIncomingInvitesRequested());
+  }
+
+  Future<void> _loadWorkspaceActivity() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_activityPrefsKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final loaded = <String, int>{};
+      for (final entry in decoded.entries) {
+        final ms = entry.value;
+        if (ms is num) {
+          loaded[entry.key.toString()] = ms.toInt();
+        }
+      }
+      if (!mounted || loaded.isEmpty) return;
+      setState(() {
+        for (final entry in loaded.entries) {
+          _workspaceActivityMs.putIfAbsent(entry.key, () => entry.value);
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _persistWorkspaceActivity() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_activityPrefsKey, jsonEncode(_workspaceActivityMs));
+    } catch (_) {}
+  }
+
+  void _recordWorkspaceOpened(String workspaceId) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    setState(() {
+      _workspaceActivityMs[workspaceId] = nowMs;
+    });
+    unawaited(_persistWorkspaceActivity());
+  }
+
+  void _syncWorkspaceActivity(WorkspaceLoaded state) {
+    final all = [...state.ownedWorkspaces, ...state.memberWorkspaces];
+    if (all.isEmpty) return;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    var changed = false;
+    for (final ws in all) {
+      if (_workspaceActivityMs.containsKey(ws.id)) continue;
+      _workspaceActivityMs[ws.id] = _hasSeededInitialWorkspaces
+          ? nowMs
+          : ws.updatedAt.millisecondsSinceEpoch;
+      changed = true;
+    }
+    _hasSeededInitialWorkspaces = true;
+    if (changed) {
+      unawaited(_persistWorkspaceActivity());
+    }
   }
 
   void _showCreateWorkspaceDialog() {
@@ -117,6 +185,28 @@ class _WorkspacesScreenState extends State<WorkspacesScreen>
     }
   }
 
+  /// Most recently opened or newly joined workspaces first.
+  List<Workspace> _orderWorkspaces(WorkspaceLoaded state) {
+    final byId = <String, Workspace>{};
+    for (final ws in state.ownedWorkspaces) {
+      byId[ws.id] = ws;
+    }
+    for (final ws in state.memberWorkspaces) {
+      byId.putIfAbsent(ws.id, () => ws);
+    }
+    final ordered = byId.values.toList(growable: false)
+      ..sort((a, b) {
+        final aMs =
+            _workspaceActivityMs[a.id] ?? a.updatedAt.millisecondsSinceEpoch;
+        final bMs =
+            _workspaceActivityMs[b.id] ?? b.updatedAt.millisecondsSinceEpoch;
+        final cmp = bMs.compareTo(aMs);
+        if (cmp != 0) return cmp;
+        return b.createdAt.compareTo(a.createdAt);
+      });
+    return ordered;
+  }
+
   Future<void> _confirmLeave(String workspaceId) async {
     final confirmed = await showInkConfirmDialog(
       context,
@@ -142,6 +232,7 @@ class _WorkspacesScreenState extends State<WorkspacesScreen>
           (previous.actionError != current.actionError ||
               previous.actionInfo != current.actionInfo),
       listener: (context, state) {
+        if (ModalRoute.of(context)?.isCurrent != true) return;
         if (state is WorkspaceLoaded) {
           if (state.actionError != null) {
             AppSnackBar.show(
@@ -240,10 +331,8 @@ class _WorkspacesScreenState extends State<WorkspacesScreen>
                         );
                       }
 
-                      final workspaces = [
-                        ...state.ownedWorkspaces,
-                        ...state.memberWorkspaces,
-                      ];
+                      _syncWorkspaceActivity(state);
+                      final workspaces = _orderWorkspaces(state);
 
                       return Column(
                         children: [
@@ -254,28 +343,62 @@ class _WorkspacesScreenState extends State<WorkspacesScreen>
                                     text: 'No workspaces yet',
                                     subtitle: 'Create your first workspace to get started',
                                   )
-                                : ListView.builder(
-                                    padding: const EdgeInsets.all(InkSpacing.s16),
-                                    itemCount: workspaces.length,
-                                    itemBuilder: (context, index) {
-                                      final workspace = workspaces[index];
-                                      return WorkspaceCard(
-                                        workspace: workspace,
-                                        previewBoards:
-                                            state.previewBoardsByWorkspace[workspace
-                                                .id] ??
-                                            const [],
-                                        onTap: () {
-                                          Navigator.push(
-                                            context,
-                                            buildWorkspaceDetailRoute(
-                                              context,
-                                              workspace.id,
+                                : LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      // One column on phones, two once the
+                                      // screen is wide enough for side-by-side
+                                      // cards.
+                                      final columns =
+                                          constraints.maxWidth >= 720 ? 2 : 1;
+                                      return GridView.builder(
+                                        padding: const EdgeInsets.all(
+                                          InkSpacing.s16,
+                                        ),
+                                        gridDelegate:
+                                            SliverGridDelegateWithFixedCrossAxisCount(
+                                              crossAxisCount: columns,
+                                              crossAxisSpacing: InkSpacing.s16,
+                                              mainAxisSpacing: 0,
+                                              mainAxisExtent:
+                                                  _workspaceCardExtent,
                                             ),
+                                        itemCount: workspaces.length,
+                                        itemBuilder: (context, index) {
+                                          final workspace = workspaces[index];
+                                          return WorkspaceCard(
+                                            workspace: workspace,
+                                            previewBoards:
+                                                state.previewBoardsByWorkspace[workspace
+                                                    .id] ??
+                                                const [],
+                                            onTap: () async {
+                                              _recordWorkspaceOpened(
+                                                workspace.id,
+                                              );
+                                              await Navigator.push(
+                                                context,
+                                                buildWorkspaceDetailRoute(
+                                                  context,
+                                                  workspace.id,
+                                                ),
+                                              );
+                                              if (!context.mounted) return;
+                                              // Board previews land on the
+                                              // device while a board is open,
+                                              // so re-read them on the way
+                                              // back.
+                                              context
+                                                  .read<WorkspaceBloc>()
+                                                  .add(
+                                                    RefreshWorkspacePreviewsRequested(),
+                                                  );
+                                            },
+                                            onOptionsPressed: () =>
+                                                _showWorkspaceActions(
+                                                  workspace,
+                                                ),
                                           );
                                         },
-                                        onOptionsPressed: () =>
-                                            _showWorkspaceActions(workspace),
                                       );
                                     },
                                   ),

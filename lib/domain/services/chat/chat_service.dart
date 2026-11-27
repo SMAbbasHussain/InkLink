@@ -115,6 +115,10 @@ abstract class ChatService {
     required String messageId,
   });
 
+  /// Refreshes local conversation/thread streams after a partner's profile
+  /// (e.g. avatarUrl or displayName) has been updated in Isar.
+  Future<void> notifyPartnerProfileUpdated(String partnerUid);
+
   // Group Management
   Future<ChatConversationModel> createGroup({
     required String name,

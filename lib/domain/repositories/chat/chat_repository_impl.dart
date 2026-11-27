@@ -798,24 +798,109 @@ class ChatRepositoryImpl implements ChatRepository {
         : dmKey(currentUid, model.conversationId);
 
     await isar.writeTxn(() async {
-      final existingMsg = await isar.localChatMessages
+      var existingMsg = await isar.localChatMessages
           .filter()
           .messageIdEqualTo(scopedMsgId, caseSensitive: true)
           .findFirst();
 
+      // If this is an echo of our own message whose `localMessageId` attribute
+      // was stripped by Agora (e.g. after `modifyMessage` + history sync),
+      // match the existing local message in the same conversation instead of
+      // inserting a duplicate row.
+      if (existingMsg == null && model.senderId == currentUid) {
+        final windowStart = model.timestamp.subtract(const Duration(seconds: 15));
+        final windowEnd = model.timestamp.add(const Duration(seconds: 15));
+        final candidates = await isar.localChatMessages
+            .filter()
+            .conversationIdEqualTo(scopedConvId, caseSensitive: true)
+            .and()
+            .senderIdEqualTo(currentUid, caseSensitive: true)
+            .and()
+            .timestampBetween(windowStart, windowEnd)
+            .findAll();
+        for (final candidate in candidates) {
+          if (candidate.type == model.type.asString &&
+              (candidate.content == model.content || candidate.isEdited)) {
+            existingMsg = candidate;
+            break;
+          }
+        }
+      }
+
+      final existingConv = await isar.localChatConversations
+          .filter()
+          .conversationIdEqualTo(scopedConvId, caseSensitive: true)
+          .findFirst();
+
+      // Resolve senderName/avatar without ever degrading a known display name
+      // to a raw Firebase UID (e.g. when Agora strips `attributes` after edit).
+      final hasRealModelName =
+          model.senderName.isNotEmpty && model.senderName != model.senderId;
+      var resolvedSenderName = model.senderName;
+      var resolvedSenderAvatar = model.senderAvatar;
+
+      if (!hasRealModelName) {
+        if (existingMsg != null &&
+            existingMsg.senderName.isNotEmpty &&
+            existingMsg.senderName != model.senderId) {
+          resolvedSenderName = existingMsg.senderName;
+        } else {
+          final profile = await isar.localProfiles
+              .filter()
+              .uidEqualTo(model.senderId, caseSensitive: true)
+              .findFirst();
+          if (profile != null && profile.displayName.isNotEmpty) {
+            resolvedSenderName = profile.displayName;
+            if ((resolvedSenderAvatar == null || resolvedSenderAvatar.isEmpty) &&
+                profile.photoURL != null &&
+                profile.photoURL!.isNotEmpty) {
+              resolvedSenderAvatar = profile.photoURL;
+            }
+          } else if (!isGroup &&
+              model.senderId != currentUid &&
+              existingConv != null &&
+              existingConv.name.isNotEmpty &&
+              existingConv.name != 'User' &&
+              existingConv.name != model.senderId) {
+            resolvedSenderName = existingConv.name;
+          } else {
+            final priorMsg = await isar.localChatMessages
+                .filter()
+                .conversationIdEqualTo(scopedConvId, caseSensitive: true)
+                .and()
+                .senderIdEqualTo(model.senderId, caseSensitive: true)
+                .findFirst();
+            if (priorMsg != null &&
+                priorMsg.senderName.isNotEmpty &&
+                priorMsg.senderName != model.senderId) {
+              resolvedSenderName = priorMsg.senderName;
+              if (resolvedSenderAvatar == null || resolvedSenderAvatar.isEmpty) {
+                resolvedSenderAvatar = priorMsg.senderAvatar;
+              }
+            }
+          }
+        }
+      }
+
+      if ((resolvedSenderAvatar == null || resolvedSenderAvatar.isEmpty) &&
+          existingMsg?.senderAvatar != null &&
+          existingMsg!.senderAvatar!.isNotEmpty) {
+        resolvedSenderAvatar = existingMsg.senderAvatar;
+      }
+
       final localMsg = existingMsg ?? LocalChatMessage();
       localMsg
-        ..messageId = scopedMsgId
+        ..messageId = existingMsg?.messageId ?? scopedMsgId
         ..conversationId = scopedConvId
         ..senderId = model.senderId
-        ..senderName = model.senderName
-        ..senderAvatar = model.senderAvatar
+        ..senderName = resolvedSenderName
+        ..senderAvatar = resolvedSenderAvatar
         ..type = model.type.asString
         ..content = model.content
         ..timestamp = model.timestamp
         ..status = model.status.name
         ..reactionsJson = jsonEncode(model.reactions)
-        ..isEdited = model.isEdited
+        ..isEdited = (existingMsg?.isEdited ?? false) || model.isEdited
         ..isDeleted = model.isDeleted
         ..fileName = model.fileName
         ..fileSize = model.fileSize
@@ -825,11 +910,6 @@ class ChatRepositoryImpl implements ChatRepository {
         ..replyToText = model.replyToText;
 
       await isar.localChatMessages.put(localMsg);
-
-      final existingConv = await isar.localChatConversations
-          .filter()
-          .conversationIdEqualTo(scopedConvId, caseSensitive: true)
-          .findFirst();
 
       final conv = existingConv ?? LocalChatConversation();
       conv.conversationId = scopedConvId;
@@ -841,11 +921,9 @@ class ChatRepositoryImpl implements ChatRepository {
       } else if (isGroup) {
         if (conv.name.isEmpty) conv.name = 'Group Chat';
       } else if (!isFromSelf &&
-          model.senderName.isNotEmpty &&
-          (conv.name.isEmpty ||
-              conv.name == 'User' ||
-              conv.name == model.conversationId)) {
-        conv.name = model.senderName;
+          resolvedSenderName.isNotEmpty &&
+          resolvedSenderName != model.senderId) {
+        conv.name = resolvedSenderName;
       } else if (conv.name.isEmpty) {
         conv.name = 'User';
       }
@@ -854,10 +932,9 @@ class ChatRepositoryImpl implements ChatRepository {
         conv.avatarUrl = conversationAvatar;
       } else if (!isGroup &&
           !isFromSelf &&
-          model.senderAvatar != null &&
-          model.senderAvatar!.isNotEmpty &&
-          (conv.avatarUrl == null || conv.avatarUrl!.isEmpty)) {
-        conv.avatarUrl = model.senderAvatar;
+          resolvedSenderAvatar != null &&
+          resolvedSenderAvatar.isNotEmpty) {
+        conv.avatarUrl = resolvedSenderAvatar;
       }
 
       conv.isGroup = isGroup || conv.isGroup;
@@ -1024,6 +1101,24 @@ class ChatRepositoryImpl implements ChatRepository {
           ..content = newContent
           ..isEdited = true;
         await isar.localChatMessages.put(msg);
+
+        final latest = await isar.localChatMessages
+            .filter()
+            .conversationIdEqualTo(msg.conversationId, caseSensitive: true)
+            .and()
+            .isDeletedEqualTo(false)
+            .sortByTimestampDesc()
+            .findFirst();
+        if (latest != null && latest.messageId == msg.messageId) {
+          final conv = await isar.localChatConversations
+              .filter()
+              .conversationIdEqualTo(msg.conversationId, caseSensitive: true)
+              .findFirst();
+          if (conv != null) {
+            conv.lastMessage = msg.type == 'text' ? newContent : '[${msg.type}]';
+            await isar.localChatConversations.put(conv);
+          }
+        }
       }
     });
   }

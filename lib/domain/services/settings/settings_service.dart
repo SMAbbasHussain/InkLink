@@ -22,8 +22,7 @@ abstract class SettingsService {
 class SettingsServiceImpl implements SettingsService {
   final SettingsRepository _settingsRepository;
 
-  SettingsServiceImpl({required SettingsRepository settingsRepository})
-    : _settingsRepository = settingsRepository;
+  SettingsServiceImpl({required this._settingsRepository});
 
   @override
   Future<bool> getShowTrayTips() => _settingsRepository.getShowTrayTips();

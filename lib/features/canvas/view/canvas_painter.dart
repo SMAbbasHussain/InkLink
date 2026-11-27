@@ -41,6 +41,7 @@ class _CanvasElement {
   final String lineStyle;
   final bool hasArrowhead;
   final Map<String, dynamic> data;
+  final CanvasElement? sourceElement;
 
   /// World-space bounds used to composite this element's opacity layer.
   final Rect? layerBounds;
@@ -141,6 +142,7 @@ class _CanvasElement {
     this.hasArrowhead = true,
     this.data = const {},
     this.layerBounds,
+    this.sourceElement,
   });
 
   factory _CanvasElement.stroke({
@@ -157,6 +159,7 @@ class _CanvasElement {
     double spacing = 0.25,
     int textureSeed = 0,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -173,6 +176,7 @@ class _CanvasElement {
       spacing: spacing,
       textureSeed: textureSeed,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -186,6 +190,7 @@ class _CanvasElement {
     required double strokeWidth,
     required bool isFilled,
     required Map<String, dynamic> data,
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -199,6 +204,7 @@ class _CanvasElement {
       isFilled: isFilled,
       rotation: (data['rotation'] as num?)?.toDouble() ?? 0.0,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -219,6 +225,7 @@ class _CanvasElement {
     int maxLines = 0,
     Color? backgroundColor,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -238,6 +245,7 @@ class _CanvasElement {
       maxLines: maxLines,
       textBackgroundColor: backgroundColor,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -249,6 +257,7 @@ class _CanvasElement {
     required double height,
     required String imageBase64,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -261,6 +270,7 @@ class _CanvasElement {
       color: Colors.transparent,
       rotation: (data['rotation'] as num?)?.toDouble() ?? 0.0,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -274,6 +284,7 @@ class _CanvasElement {
     required Color color,
     double rotation = 0,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -287,6 +298,7 @@ class _CanvasElement {
       color: color,
       rotation: rotation,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -300,6 +312,7 @@ class _CanvasElement {
     required Color color,
     double cornerRadius = 12,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -313,6 +326,7 @@ class _CanvasElement {
       color: color,
       strokeWidth: cornerRadius,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -327,6 +341,7 @@ class _CanvasElement {
     double opacity = 1,
     Rect? layerBounds,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     return _CanvasElement._(
       id: id,
@@ -341,6 +356,7 @@ class _CanvasElement {
       opacity: opacity,
       layerBounds: layerBounds,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -358,6 +374,7 @@ class _CanvasElement {
     required double strokeWidth,
     bool hasArrowhead = true,
     Map<String, dynamic> data = const {},
+    CanvasElement? sourceElement,
   }) {
     final center = Offset(
       (startPoint.dx + endPoint.dx) / 2,
@@ -383,6 +400,7 @@ class _CanvasElement {
       strokeWidth: strokeWidth,
       hasArrowhead: hasArrowhead,
       data: data,
+      sourceElement: sourceElement,
     );
   }
 
@@ -402,10 +420,19 @@ class _CanvasElement {
     int? textureSeed,
     double? rotation,
     String? text,
+    double? fontSize,
+    int? fontWeight,
+    String? fontFamily,
+    String? textAlign,
+    double? lineHeight,
+    int? maxLines,
+    Color? textBackgroundColor,
     Map<String, dynamic>? data,
     bool? isFilled,
     double? opacity,
     Rect? layerBounds,
+    CanvasElement? sourceElement,
+    bool clearSourceElement = false,
   }) {
     return _CanvasElement._(
       id: id,
@@ -418,6 +445,7 @@ class _CanvasElement {
       brushType: brushType ?? this.brushType,
       brushId: brushId ?? this.brushId,
       pressures: pressures ?? this.pressures,
+      tilts: tilts,
       spacing: spacing ?? this.spacing,
       textureSeed: textureSeed ?? this.textureSeed,
       shapeType: shapeType,
@@ -428,6 +456,13 @@ class _CanvasElement {
       imageBase64: imageBase64,
       isFilled: isFilled ?? this.isFilled,
       text: text ?? this.text,
+      fontSize: fontSize ?? this.fontSize,
+      fontWeight: fontWeight ?? this.fontWeight,
+      fontFamily: fontFamily ?? this.fontFamily,
+      textAlign: textAlign ?? this.textAlign,
+      lineHeight: lineHeight ?? this.lineHeight,
+      maxLines: maxLines ?? this.maxLines,
+      textBackgroundColor: textBackgroundColor ?? this.textBackgroundColor,
       rotation: rotation ?? this.rotation,
       startElementId: startElementId,
       startPoint: startPoint,
@@ -439,8 +474,270 @@ class _CanvasElement {
       hasArrowhead: hasArrowhead,
       data: data ?? this.data,
       layerBounds: layerBounds ?? this.layerBounds,
+      sourceElement: clearSourceElement
+          ? null
+          : (sourceElement ?? this.sourceElement),
     );
   }
+
+  /// Adapter: the domain element this view model draws.
+  ///
+  /// The painter feeds the result to the one shared dispatch, so it no longer
+  /// decides *how* an element is drawn — only which of its live fields feed
+  /// the shared painters. Constructions are carried over verbatim from the old
+  /// per-kind paint methods; defaults here are the canvas's own and must not
+  /// be replaced with `CanvasElement.fromMap`, which would change how gradient
+  /// shapes and attached connectors render on screen.
+  CanvasElement? toPaintable(List<_CanvasElement> siblings) {
+    switch (kind) {
+      case _ElementKind.stroke:
+        return StrokeElement(
+          id: id,
+          z: z,
+          points: points,
+          color: color,
+          strokeWidth: strokeWidth,
+          opacity: opacity,
+          brushType: brushType,
+          brushId: brushId,
+          pressures: pressures,
+          tilts: tilts,
+          spacing: spacing,
+          textureSeed: textureSeed,
+          fillColor: data['fillColor'] == null
+              ? null
+              : Color((data['fillColor'] as num).toInt()),
+        );
+
+      case _ElementKind.shape:
+        final shapeType = this.shapeType ?? CanvasShapeType.square;
+        final labelColorValue = data['labelColor'];
+        return ShapeElement(
+          id: id,
+          z: z,
+          shapeType: shapeType,
+          center: center,
+          size: size,
+          width: (data['width'] as num?)?.toDouble() ?? 0.0,
+          height: (data['height'] as num?)?.toDouble() ?? 0.0,
+          color: color,
+          strokeColor: data['strokeColor'] == null
+              ? null
+              : Color((data['strokeColor'] as num).toInt()),
+          strokeWidth: strokeWidth,
+          strokeOpacity: (data['strokeOpacity'] as num?)?.toDouble() ?? 1.0,
+          dashPattern: (data['dashPattern'] as List?)
+              ?.map((e) => (e as num).toDouble())
+              .toList(),
+          isFilled: isFilled,
+          fillMode:
+              (data['fillMode'] as String?) ?? (isFilled ? 'solid' : 'none'),
+          fillColor: data['fillColor'] == null
+              ? null
+              : Color((data['fillColor'] as num).toInt()),
+          gradientStart: data['gradientStart'] == null
+              ? null
+              : Color((data['gradientStart'] as num).toInt()),
+          gradientEnd: data['gradientEnd'] == null
+              ? null
+              : Color((data['gradientEnd'] as num).toInt()),
+          gradientAngle: (data['gradientAngle'] as num?)?.toDouble() ?? 0,
+          rotation: rotation,
+          borderRadius: (data['borderRadius'] as num?)?.toDouble() ?? 0.0,
+          opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
+          label: (data['label'] as String?) ?? '',
+          labelColor: labelColorValue == null
+              ? null
+              : Color((labelColorValue as num).toInt()),
+          labelFontSize: (data['labelFontSize'] as num?)?.toDouble() ?? 14.0,
+          labelFontWeight: (data['labelFontWeight'] as num?)?.toInt() ?? 600,
+          labelTextAlign: (data['labelTextAlign'] as String?) ?? 'center',
+          startArrowhead: (data['startArrowhead'] as bool?) ?? false,
+          endArrowhead:
+              (data['endArrowhead'] as bool?) ??
+              (shapeType == CanvasShapeType.arrow),
+          flipH: (data['flipH'] as bool?) ?? false,
+          flipV: (data['flipV'] as bool?) ?? false,
+        );
+
+      case _ElementKind.text:
+        return TextElement(
+          id: id,
+          z: z,
+          text: text,
+          center: center,
+          color: color,
+          width: width,
+          height: height,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          fontFamily: fontFamily,
+          textAlign: textAlign,
+          lineHeight: lineHeight,
+          maxLines: maxLines,
+          rotation: rotation,
+          backgroundColor: textBackgroundColor,
+          // The element's own inset, which the exporter also honours.
+          padding: (data['padding'] as num?)?.toDouble() ?? 4,
+        );
+
+      case _ElementKind.image:
+        final parsed = sourceElement ?? CanvasElement.fromMap(id, data);
+        final base = parsed is ImageElement
+            ? parsed
+            : ImageElement(id: id, z: 0, center: center);
+        // Transform previews update the mapped element ahead of its payload.
+        return base.copyWith(
+          center: center,
+          width: width > 0 ? width : 160.0,
+          height: height > 0 ? height : 160.0,
+          rotation: rotation,
+        );
+
+      case _ElementKind.stickyNote:
+        final parsed = sourceElement ?? CanvasElement.fromMap(id, data);
+        final note = parsed as StickyNoteElement;
+        return note.copyWith(
+          center: center,
+          width: width,
+          height: height,
+          color: color,
+          text: text,
+          rotation: rotation,
+        );
+
+      case _ElementKind.frame:
+        return FrameElement(
+          id: id,
+          z: z,
+          center: center,
+          width: width,
+          height: height,
+          title: text,
+          color: color,
+          cornerRadius: strokeWidth,
+          clipContents: (data['clipContents'] as bool?) ?? false,
+        );
+
+      case _ElementKind.table:
+        final source = sourceElement;
+        if (source is TableElement) {
+          return source.copyWith(
+            center: center,
+            width: width,
+            height: height,
+            rotation: rotation,
+          );
+        }
+        final parsed = CanvasElement.fromMap(id, {
+          ...data,
+          'type': 'table',
+          'z': z,
+          'cx': center.dx,
+          'cy': center.dy,
+          'width': width,
+          'height': height,
+          'rotation': rotation,
+        });
+        return parsed is TableElement ? parsed : null;
+
+      case _ElementKind.connector:
+        final model = sourceElement ?? CanvasElement.fromMap(id, data);
+        final connector = model is ConnectorElement ? model : null;
+        final (start, end) = resolveConnectorEnds(siblings);
+        return ConnectorElement(
+          id: id,
+          z: z,
+          startElementId: startElementId,
+          startPoint: start,
+          startAnchor: startAnchor,
+          endElementId: endElementId,
+          endPoint: end,
+          endAnchor: endAnchor,
+          lineStyle: lineStyle,
+          color: color,
+          strokeWidth: strokeWidth,
+          hasArrowhead: hasArrowhead,
+          startArrowhead: connector?.startArrowhead ?? false,
+          cornerRadius: connector?.cornerRadius ?? 0,
+          dashPattern: connector?.dashPattern,
+          label: connector?.label ?? '',
+          labelColor: connector?.labelColor,
+          labelFontSize: connector?.labelFontSize ?? 14,
+        );
+    }
+  }
+
+  /// Both connector ends, resolved against the live view models.
+  (Offset, Offset) resolveConnectorEnds(List<_CanvasElement> siblings) {
+    final startRaw = _resolveConnectorEnd(
+      siblings,
+      elementId: startElementId,
+      anchor: 'center',
+      fallback: startPoint,
+    );
+    final endRaw = _resolveConnectorEnd(
+      siblings,
+      elementId: endElementId,
+      anchor: 'center',
+      fallback: endPoint,
+    );
+    final start = _resolveConnectorEnd(
+      siblings,
+      elementId: startElementId,
+      anchor: startAnchor,
+      fallback: startPoint,
+      towards: endRaw,
+    );
+    final end = _resolveConnectorEnd(
+      siblings,
+      elementId: endElementId,
+      anchor: endAnchor,
+      fallback: endPoint,
+      towards: startRaw,
+    );
+    return (start, end);
+  }
+}
+
+/// Placeholder for an image whose bytes are still decoding: shows the pending
+/// size so the author can keep working. Exports deliberately use a neutral
+/// plate instead (see `docs/canvas/paint-parity.md`).
+void _paintCanvasImagePlaceholder(
+  Canvas canvas,
+  Rect rect,
+  RRect rrect,
+) {
+  canvas.drawRRect(
+    rrect,
+    Paint()..color = Colors.grey.withValues(alpha: 0.18),
+  );
+  canvas.drawRRect(
+    rrect,
+    Paint()
+      ..color = Colors.grey.withValues(alpha: 0.5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5,
+  );
+  final textPainter = TextPainter(
+    text: TextSpan(
+      text: '[Image: ${rect.width.toInt()}x${rect.height.toInt()}]',
+      style: const TextStyle(
+        color: Colors.white70,
+        fontSize: 12,
+        fontWeight: FontWeight.w500,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  textPainter.paint(
+    canvas,
+    Offset(
+      rect.center.dx - textPainter.width / 2,
+      rect.center.dy - textPainter.height / 2,
+    ),
+  );
+  textPainter.dispose();
 }
 
 /// Resolves one end of a connector against the element it is attached to.
@@ -605,6 +902,7 @@ class _CanvasPainter extends CustomPainter {
   final Offset viewportOffset;
   final bool showEraserPreview;
   final bool isDrawingShape;
+  final bool isDrawingFrame;
   final Offset? shapeDrawStart;
   final Offset? shapeDrawCurrent;
   final CanvasShapeType? pendingShapeType;
@@ -634,6 +932,7 @@ class _CanvasPainter extends CustomPainter {
     required this.viewportOffset,
     required this.showEraserPreview,
     this.isDrawingShape = false,
+    this.isDrawingFrame = false,
     this.shapeDrawStart,
     this.shapeDrawCurrent,
     this.pendingShapeType,
@@ -683,10 +982,14 @@ class _CanvasPainter extends CustomPainter {
       if (clipFrames.isNotEmpty &&
           element.kind != _ElementKind.frame &&
           bounds != null) {
-        for (final frame in clipFrames.reversed) {
-          if (frameRect(frame).contains(bounds.center)) {
-            clipFrame = frame;
-            break;
+        final elementFrameId = element.data['frameId'] as String?;
+        if (elementFrameId != null) {
+          for (final frame in clipFrames.reversed) {
+            if (frame.id == elementFrameId &&
+                frameRect(frame).overlaps(bounds)) {
+              clipFrame = frame;
+              break;
+            }
           }
         }
       }
@@ -712,49 +1015,30 @@ class _CanvasPainter extends CustomPainter {
             ..color = Colors.white.withValues(alpha: effectiveOpacity),
         );
       }
-      switch (element.kind) {
-        case _ElementKind.stroke:
-          if (selectedShapeId == element.id) {
-            _paintStrokeHighlight(canvas, element);
-          }
-          _paintStroke(
-            canvas,
-            element.points,
-            element.color,
-            element.strokeWidth,
-            opacity: element.opacity,
-            brushType: element.brushType,
-            brushId: element.brushId,
-            pressures: element.pressures,
-            tilts: element.tilts,
-            spacing: element.spacing,
-            textureSeed: element.textureSeed,
-            fillColor: element.data['fillColor'] == null
-                ? null
-                : Color((element.data['fillColor'] as num).toInt()),
-          );
-          break;
-        case _ElementKind.shape:
-          _paintShape(canvas, element);
-          break;
-        case _ElementKind.text:
-          _paintText(canvas, element);
-          break;
-        case _ElementKind.image:
-          _paintImage(canvas, element, decodedImages[element.id]);
-          break;
-        case _ElementKind.stickyNote:
-          _paintStickyNote(canvas, element);
-          break;
-        case _ElementKind.connector:
-          _paintConnector(canvas, element);
-          break;
-        case _ElementKind.frame:
-          _paintFrame(canvas, element);
-          break;
-        case _ElementKind.table:
-          _paintTable(canvas, element);
-          break;
+      if (element.kind == _ElementKind.stroke &&
+          selectedShapeId == element.id) {
+        _paintStrokeHighlight(canvas, element);
+      }
+      // One shared dispatch: the view model adapts to a domain element and the
+      // drawer decides how it is painted, so both render paths route elements
+      // through the same place.
+      final paintable = element.toPaintable(elements);
+      if (paintable != null) {
+        paintSharedElement(
+          canvas,
+          paintable,
+          strokeSpacing: element.spacing,
+          decodedImage: element.kind == _ElementKind.image
+              ? decodedImages[element.id]
+              : null,
+          imagePlaceholder: _paintCanvasImagePlaceholder,
+          resolvedConnectorEnds: paintable is ConnectorElement
+              ? (paintable.startPoint, paintable.endPoint)
+              : null,
+        );
+      }
+      if (paintable is ConnectorElement && selectedShapeId == element.id) {
+        _paintConnectorHighlight(canvas, paintable);
       }
       if (useLayer) canvas.restore();
       if (clipFrame != null) canvas.restore();
@@ -807,30 +1091,36 @@ class _CanvasPainter extends CustomPainter {
     if (currentPoints.isNotEmpty) {
       if (currentBrushType != 'eraser') {
         if (currentPoints.length > 1) {
-          _paintStroke(
+          paintSharedElement(
             canvas,
-            currentPoints,
-            currentColor,
-            currentStrokeWidth,
-            opacity: currentBrushOpacity,
-            brushType: currentBrushType,
-            brushId: currentBrushType,
-            pressures: currentStrokePressures,
-            tilts: currentStrokeTilts,
+            StrokeElement(
+              id: '__preview_stroke__',
+              z: 0,
+              points: currentPoints,
+              color: currentColor,
+              strokeWidth: currentStrokeWidth,
+              opacity: currentBrushOpacity,
+              brushType: currentBrushType,
+              pressures: currentStrokePressures,
+              tilts: currentStrokeTilts,
+            ),
           );
           for (final mirrored
               in symmetryMirroredPolylines(currentPoints, boardSettings)) {
             if (mirrored.length > 1) {
-              _paintStroke(
+              paintSharedElement(
                 canvas,
-                mirrored,
-                currentColor,
-                currentStrokeWidth,
-                opacity: currentBrushOpacity,
-                brushType: currentBrushType,
-                brushId: currentBrushType,
-                pressures: currentStrokePressures,
-                tilts: currentStrokeTilts,
+                StrokeElement(
+                  id: '__preview_stroke_mirrored__',
+                  z: 0,
+                  points: mirrored,
+                  color: currentColor,
+                  strokeWidth: currentStrokeWidth,
+                  opacity: currentBrushOpacity,
+                  brushType: currentBrushType,
+                  pressures: currentStrokePressures,
+                  tilts: currentStrokeTilts,
+                ),
               );
             }
           }
@@ -856,45 +1146,6 @@ class _CanvasPainter extends CustomPainter {
       _paintRulersScreen(canvas, size);
     }
   }
-
-  void _paintStroke(
-    Canvas canvas,
-    List<Offset> points,
-    Color color,
-    double width, {
-    required double opacity,
-    required String brushType,
-    String? brushId,
-    List<double> pressures = const [],
-    List<double> tilts = const [],
-    double? spacing,
-    int textureSeed = 0,
-    Color? fillColor,
-  }) {
-    if (fillColor != null && points.length >= 3) {
-      final fillOpacity = (opacity * fillColor.a).clamp(0.0, 1.0);
-      canvas.drawPath(
-        Path()..addPolygon(points, true),
-        Paint()
-          ..color = fillColor.withValues(alpha: fillOpacity)
-          ..style = PaintingStyle.fill,
-      );
-    }
-    paintCanvasStroke(
-      canvas: canvas,
-      points: points,
-      pressures: pressures,
-      tilts: tilts,
-      color: color,
-      strokeWidth: width,
-      strokeOpacity: opacity,
-      brushType: brushType,
-      brushId: brushId,
-      spacing: spacing,
-      textureSeed: textureSeed,
-    );
-  }
-
   void _paintStrokeHighlight(Canvas canvas, _CanvasElement element) {
     final points = element.points;
     if (points.length < 2) return;
@@ -942,61 +1193,6 @@ class _CanvasPainter extends CustomPainter {
     );
   }
 
-  void _paintShape(Canvas canvas, _CanvasElement element) {
-    final data = element.data;
-    final shapeType = element.shapeType ?? CanvasShapeType.square;
-    final labelColorValue = data['labelColor'];
-    final shape = ShapeElement(
-      id: element.id,
-      z: element.z,
-      shapeType: shapeType,
-      center: element.center,
-      size: element.size,
-      width: (data['width'] as num?)?.toDouble() ?? 0.0,
-      height: (data['height'] as num?)?.toDouble() ?? 0.0,
-      color: element.color,
-      strokeColor: data['strokeColor'] == null
-          ? null
-          : Color((data['strokeColor'] as num).toInt()),
-      strokeWidth: element.strokeWidth,
-      strokeOpacity: (data['strokeOpacity'] as num?)?.toDouble() ?? 1.0,
-      dashPattern: (data['dashPattern'] as List?)
-          ?.map((e) => (e as num).toDouble())
-          .toList(),
-      isFilled: element.isFilled,
-      fillMode:
-          (data['fillMode'] as String?) ??
-          (element.isFilled ? 'solid' : 'none'),
-      fillColor: data['fillColor'] == null
-          ? null
-          : Color((data['fillColor'] as num).toInt()),
-      gradientStart: data['gradientStart'] == null
-          ? null
-          : Color((data['gradientStart'] as num).toInt()),
-      gradientEnd: data['gradientEnd'] == null
-          ? null
-          : Color((data['gradientEnd'] as num).toInt()),
-      gradientAngle: (data['gradientAngle'] as num?)?.toDouble() ?? 0,
-      rotation: element.rotation,
-      borderRadius: (data['borderRadius'] as num?)?.toDouble() ?? 0.0,
-      opacity: (data['opacity'] as num?)?.toDouble() ?? 1.0,
-      label: (data['label'] as String?) ?? '',
-      labelColor: labelColorValue == null
-          ? null
-          : Color((labelColorValue as num).toInt()),
-      labelFontSize: (data['labelFontSize'] as num?)?.toDouble() ?? 14.0,
-      labelFontWeight: (data['labelFontWeight'] as num?)?.toInt() ?? 600,
-      labelTextAlign: (data['labelTextAlign'] as String?) ?? 'center',
-      startArrowhead: (data['startArrowhead'] as bool?) ?? false,
-      endArrowhead:
-          (data['endArrowhead'] as bool?) ??
-          (shapeType == CanvasShapeType.arrow),
-      flipH: (data['flipH'] as bool?) ?? false,
-      flipV: (data['flipV'] as bool?) ?? false,
-    );
-    paintShapeElement(canvas, shape);
-  }
-
   /// Draws the eraser cursor preview. [radius] is the actual erase radius
   /// (state.strokeWidth / 2 — strokeWidth is the eraser diameter).
   void _paintEraserPreview(Canvas canvas, Offset position, double radius) {
@@ -1020,12 +1216,28 @@ class _CanvasPainter extends CustomPainter {
   }
 
   void _paintShapeDrawPreview(Canvas canvas, Offset start, Offset current) {
-    final shapeType = pendingShapeType;
-    if (shapeType == null) return;
-
     final dx = (current.dx - start.dx).abs();
     final dy = (current.dy - start.dy).abs();
     if (dx < 2 && dy < 2) return;
+
+    if (isDrawingFrame) {
+      final rect = Rect.fromPoints(start, current);
+      paintFrameElement(
+        canvas,
+        FrameElement(
+          id: '__preview_frame__',
+          z: 0,
+          center: rect.center,
+          width: rect.width.clamp(2.0, 4000.0),
+          height: rect.height.clamp(2.0, 4000.0),
+          title: 'Frame',
+        ),
+      );
+      return;
+    }
+
+    final shapeType = pendingShapeType;
+    if (shapeType == null) return;
 
     final geom = ShapeGeometry.compute(
       shapeType: shapeType,
@@ -1050,7 +1262,7 @@ class _CanvasPainter extends CustomPainter {
         'endArrowhead': shapeType == CanvasShapeType.arrow,
       },
     );
-    _paintShape(canvas, previewElement);
+    paintSharedElement(canvas, previewElement.toPaintable(elements)!);
   }
 
   /// Board paper, optional pattern and page bounds, all in screen space
@@ -1134,40 +1346,6 @@ class _CanvasPainter extends CustomPainter {
         ..strokeWidth = 1.5,
     );
     canvas.restore();
-  }
-
-  void _paintFrame(Canvas canvas, _CanvasElement element) {
-    // Shared with PNG/PDF export so the frame cannot drift between views.
-    paintFrameElement(
-      canvas,
-      FrameElement(
-        id: element.id,
-        z: element.z,
-        center: element.center,
-        width: element.width,
-        height: element.height,
-        title: element.text,
-        color: element.color,
-        cornerRadius: element.strokeWidth,
-        clipContents: (element.data['clipContents'] as bool?) ?? false,
-      ),
-    );
-  }
-
-  void _paintTable(Canvas canvas, _CanvasElement element) {
-    final parsed = CanvasElement.fromMap(element.id, {
-      ...element.data,
-      'type': 'table',
-      'z': element.z,
-      'cx': element.center.dx,
-      'cy': element.center.dy,
-      'width': element.width,
-      'height': element.height,
-      'rotation': element.rotation,
-    });
-    if (parsed is TableElement) {
-      paintTableElement(canvas, parsed);
-    }
   }
 
   void _paintGuidesAndSymmetryWorld(Canvas canvas, Size size) {
@@ -1260,8 +1438,15 @@ class _CanvasPainter extends CustomPainter {
       }
       canvas.drawCircle(
         settings.symmetryCenter,
-        4.5 * invScale,
-        Paint()..color = accentColor.withValues(alpha: 0.8),
+        7.5 * invScale,
+        Paint()
+          ..color = accentColor.withValues(alpha: 0.25)
+          ..style = PaintingStyle.fill,
+      );
+      canvas.drawCircle(
+        settings.symmetryCenter,
+        5.0 * invScale,
+        Paint()..color = accentColor.withValues(alpha: 0.9),
       );
     }
 
@@ -1375,195 +1560,24 @@ class _CanvasPainter extends CustomPainter {
       tp.dispose();
     }
   }
-
-  void _paintText(Canvas canvas, _CanvasElement element) {
-    if (element.text.isEmpty) return;
-    final maxWidth = element.width > 0
-        ? element.width
-        : CanvasTextLayout.defaultMaxWidth;
-    final layout = CanvasTextLayout.layout(
-      text: element.text,
-      fontSize: element.fontSize,
-      fontWeight: element.fontWeight,
-      fontFamily: element.fontFamily,
-      textAlign: element.textAlign,
-      lineHeight: element.lineHeight,
-      maxWidth: maxWidth,
-      maxLines: element.maxLines,
-      color: element.color,
-    );
-    final boxWidth = element.width > 0 ? element.width : layout.size.width;
-    final boxHeight = element.height > 0 ? element.height : layout.size.height;
-    final box = Rect.fromLTWH(
-      element.center.dx,
-      element.center.dy,
-      boxWidth,
-      boxHeight,
-    );
-
-    canvas.save();
-    if (element.rotation != 0) {
-      canvas.translate(box.center.dx, box.center.dy);
-      canvas.rotate(element.rotation);
-      canvas.translate(-box.center.dx, -box.center.dy);
-    }
-    final background = element.textBackgroundColor;
-    if (background != null) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(box.inflate(4), const Radius.circular(3)),
-        Paint()..color = background,
-      );
-    }
-    layout.painter.paint(canvas, box.topLeft);
-    canvas.restore();
-  }
-
-  void _paintImage(
-    Canvas canvas,
-    _CanvasElement element,
-    ui.Image? decodedImage,
-  ) {
-    final parsed = CanvasElement.fromMap(element.id, element.data);
-    final base = parsed is ImageElement
-        ? parsed
-        : ImageElement(id: element.id, z: 0, center: element.center);
-    // Transform previews update the mapped element ahead of its payload.
-    final image = base.copyWith(
-      center: element.center,
-      width: element.width > 0 ? element.width : 160.0,
-      height: element.height > 0 ? element.height : 160.0,
-      rotation: element.rotation,
-    );
-    paintImageElement(
-      canvas,
-      image,
-      decodedImage,
-      placeholder: (canvas, rect, rrect) {
-        canvas.drawRRect(
-          rrect,
-          Paint()..color = Colors.grey.withValues(alpha: 0.18),
-        );
-        canvas.drawRRect(
-          rrect,
-          Paint()
-            ..color = Colors.grey.withValues(alpha: 0.5)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.5,
-        );
-        final textPainter = TextPainter(
-          text: TextSpan(
-            text: '[Image: ${rect.width.toInt()}x${rect.height.toInt()}]',
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        textPainter.paint(
-          canvas,
-          Offset(
-            rect.center.dx - textPainter.width / 2,
-            rect.center.dy - textPainter.height / 2,
-          ),
-        );
-      },
-    );
-  }
-
-  Offset _resolveAnchor(
-    String? elementId,
-    String anchor,
-    Offset fallback, {
-    Offset? towards,
-  }) {
-    return _resolveConnectorEnd(
-      elements,
-      elementId: elementId,
-      anchor: anchor,
-      fallback: fallback,
-      towards: towards,
-    );
-  }
-
-  void _paintStickyNote(Canvas canvas, _CanvasElement element) {
-    final note =
-        CanvasElement.fromMap(element.id, element.data) as StickyNoteElement;
-    paintStickyNoteElement(
-      canvas,
-      note.copyWith(
-        center: element.center,
-        width: element.width,
-        height: element.height,
-        color: element.color,
-        text: element.text,
-        rotation: element.rotation,
+  /// Selection ring for a connector. View chrome: exports never draw it, so
+  /// it stays in the painter rather than the shared drawer.
+  void _paintConnectorHighlight(Canvas canvas, ConnectorElement connector) {
+    final highlightPaint = Paint()
+      ..color = accentColor.withValues(alpha: 0.5)
+      ..strokeWidth = connector.strokeWidth + 4
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+    canvas.drawPath(
+      connectorPath(
+        connector.startPoint,
+        connector.endPoint,
+        connector.lineStyle,
+        cornerRadius: connector.cornerRadius,
       ),
+      highlightPaint,
     );
-  }
-
-  void _paintConnector(Canvas canvas, _CanvasElement element) {
-    final startRaw = _resolveAnchor(
-      element.startElementId,
-      'center',
-      element.startPoint,
-    );
-    final endRaw = _resolveAnchor(
-      element.endElementId,
-      'center',
-      element.endPoint,
-    );
-    final start = _resolveAnchor(
-      element.startElementId,
-      element.startAnchor,
-      element.startPoint,
-      towards: endRaw,
-    );
-    final end = _resolveAnchor(
-      element.endElementId,
-      element.endAnchor,
-      element.endPoint,
-      towards: startRaw,
-    );
-
-    final model = CanvasElement.fromMap(element.id, element.data);
-    final connector = model is ConnectorElement ? model : null;
-    final cornerRadius = connector?.cornerRadius ?? 0;
-
-    paintConnectorElement(
-      canvas,
-      start,
-      end,
-      lineStyle: element.lineStyle,
-      color: element.color,
-      strokeWidth: element.strokeWidth,
-      cornerRadius: cornerRadius,
-      dashPattern: connector?.dashPattern,
-      startArrowhead: connector?.startArrowhead ?? false,
-      endArrowhead: element.hasArrowhead,
-      label: connector?.label ?? '',
-      labelColor: connector?.labelColor,
-      labelFontSize: connector?.labelFontSize ?? 14,
-    );
-
-    if (selectedShapeId == element.id) {
-      final highlightPaint = Paint()
-        ..color = accentColor.withValues(alpha: 0.5)
-        ..strokeWidth = element.strokeWidth + 4
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..style = PaintingStyle.stroke;
-      canvas.drawPath(
-        connectorPath(
-          start,
-          end,
-          element.lineStyle,
-          cornerRadius: cornerRadius,
-        ),
-        highlightPaint,
-      );
-    }
   }
 
   static bool _erasureCursorsEqual(
@@ -1631,6 +1645,7 @@ class _CanvasPainter extends CustomPainter {
         oldDelegate.viewportScale != viewportScale ||
         oldDelegate.viewportOffset != viewportOffset ||
         oldDelegate.isDrawingShape != isDrawingShape ||
+        oldDelegate.isDrawingFrame != isDrawingFrame ||
         oldDelegate.shapeDrawStart != shapeDrawStart ||
         oldDelegate.shapeDrawCurrent != shapeDrawCurrent ||
         oldDelegate.pendingShapeType != pendingShapeType ||

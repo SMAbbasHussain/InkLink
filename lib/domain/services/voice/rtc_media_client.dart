@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 abstract class RtcMediaClient {
   bool get isConnected;
   bool get isMicrophoneMuted;
+  bool get isSpeakerphoneEnabled;
   String? get currentChannel;
   String? get appId;
 
@@ -24,6 +25,8 @@ abstract class RtcMediaClient {
 
   Future<void> setMicrophoneMuted(bool muted);
 
+  Future<void> setSpeakerphoneEnabled(bool enabled);
+
   Future<void> leaveSession();
 
   Future<void> dispose();
@@ -32,6 +35,7 @@ abstract class RtcMediaClient {
 class DefaultRtcMediaClient implements RtcMediaClient {
   bool _isConnected = false;
   bool _isMicrophoneMuted = false;
+  bool _isSpeakerphoneEnabled = false;
   String? _currentChannel;
   String? _appId;
 
@@ -45,6 +49,9 @@ class DefaultRtcMediaClient implements RtcMediaClient {
 
   @override
   bool get isMicrophoneMuted => _isMicrophoneMuted;
+
+  @override
+  bool get isSpeakerphoneEnabled => _isSpeakerphoneEnabled;
 
   @override
   String? get currentChannel => _currentChannel;
@@ -185,6 +192,7 @@ class DefaultRtcMediaClient implements RtcMediaClient {
       );
       _isConnected = true;
       _isMicrophoneMuted = false;
+      _isSpeakerphoneEnabled = false;
       developer.log(
         'Joined RTC media session for channel: $channelName (appId: $appId, uid: $uid, tokenLength: ${token.length})',
         name: 'RtcMediaClient',
@@ -212,6 +220,35 @@ class DefaultRtcMediaClient implements RtcMediaClient {
   }
 
   @override
+  Future<void> setSpeakerphoneEnabled(bool enabled) async {
+    _isSpeakerphoneEnabled = enabled;
+    if (_engine != null) {
+      try {
+        await _engine!.setDefaultAudioRouteToSpeakerphone(enabled);
+      } catch (e) {
+        developer.log(
+          'setDefaultAudioRouteToSpeakerphone failed: $e',
+          name: 'RtcMediaClient',
+        );
+      }
+      if (_isConnected) {
+        try {
+          await _engine!.setEnableSpeakerphone(enabled);
+        } catch (e) {
+          developer.log(
+            'setEnableSpeakerphone failed: $e',
+            name: 'RtcMediaClient',
+          );
+        }
+      }
+    }
+    developer.log(
+      'RTC audio output set to speakerphone: $enabled',
+      name: 'RtcMediaClient',
+    );
+  }
+
+  @override
   Future<void> leaveSession() async {
     try {
       await _engine?.leaveChannel();
@@ -220,6 +257,7 @@ class DefaultRtcMediaClient implements RtcMediaClient {
     }
     _isConnected = false;
     _isMicrophoneMuted = false;
+    _isSpeakerphoneEnabled = false;
     _currentChannel = null;
     _notifySpeaking(false);
     developer.log('Left RTC media session and stopped audio capture',

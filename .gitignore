@@ -122,7 +122,10 @@ app.*.symbols
 app.*.map.json
 
 android/app/google-services.json
+# Security rules must stay reviewable and deployable from the repo (narrow
+# exception; .env, service accounts and indexes remain ignored below).
 firestore.rules
+!firestore.rules
 .env
 database.rules.json
 db_plan.md
@@ -150,3 +153,19 @@ BOARD_VERSION_HISTORY_AND_AUDIT_LOG_PLAN.md
 CANVAS_TOOLS_IMPLEMENTATION_GUIDE.md
 CANVAS_AGENT_PROMPT.md
 EC2_MIGRATION_GUIDE.md
+doc.md
+
+# Third-party tooling clones (installed, not part of the project)
+.tools/
+.claude/
+.cloud-attachments/
+
+# Local notes and research reports stay out of version control, except the
+# canvas paint-parity catalogue that the render tests link to.
+docs/*
+!docs/canvas/
+!docs/canvas/**
+!docs/refactoring/
+!docs/refactoring/**
+!docs/roadmap/
+!docs/roadmap/**

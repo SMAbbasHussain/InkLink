@@ -193,5 +193,37 @@ void main() {
       },
       timeout: const Timeout(Duration(minutes: 3)),
     );
+
+    test(
+      'three sequential updates -> two undos -> two redos restores final value',
+      () async {
+        final adapter = await CanvasCrdtAdapter.create();
+        adapter.upsertElement('board_settings', {'type': 'board_settings', 'backgroundColor': 0xFFFF0000});
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+        adapter.upsertElement('board_settings', {'type': 'board_settings', 'backgroundColor': 0xFF00FF00});
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+        adapter.upsertElement('board_settings', {'type': 'board_settings', 'backgroundColor': 0xFF0000FF});
+
+        expect(adapter.materializeElements()['board_settings']!['backgroundColor'], 0xFF0000FF);
+
+        final u1 = adapter.undoLast();
+        expect(u1, isNotNull);
+        expect(adapter.materializeElements()['board_settings']!['backgroundColor'], 0xFF00FF00);
+
+        final u2 = adapter.undoLast();
+        expect(u2, isNotNull);
+        expect(adapter.materializeElements()['board_settings']!['backgroundColor'], 0xFFFF0000);
+
+        final r1 = adapter.redoLast();
+        expect(r1, isNotNull);
+        expect(r1, isNotEmpty);
+        expect(adapter.materializeElements()['board_settings']!['backgroundColor'], 0xFF00FF00);
+
+        final r2 = adapter.redoLast();
+        expect(r2, isNotNull);
+        expect(r2, isNotEmpty);
+        expect(adapter.materializeElements()['board_settings']!['backgroundColor'], 0xFF0000FF);
+      },
+    );
   });
 }

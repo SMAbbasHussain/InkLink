@@ -33,6 +33,12 @@ class IsarCrdtLocalStore implements CrdtLocalStore {
     final isar = await _localDatabaseService.database;
     await isar.writeTxn(() async {
       await isar.localCrdtUpdates.filter().boardIdEqualTo(boardId).deleteAll();
+      final existing = await isar.localCanvasSyncStates.getByBoardId(boardId);
+      if (existing != null) {
+        await isar.localCanvasSyncStates.putByBoardId(
+          existing..lastSeenCursor = null,
+        );
+      }
     });
   }
 

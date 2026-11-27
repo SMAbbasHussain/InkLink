@@ -812,6 +812,11 @@ void _paintElement(Canvas canvas, CanvasElement element) {
   }
 }
 
+// Deliberately NOT the shared element painters. These draw a schematic
+// thumbnail at its own scale (flat inks, no brush texture, no gradient/dash
+// fills, simplified geometry keyed to [_boundsFor]); delegating to
+// paintCanvasStroke/paintShapeElement would visibly change every preview card.
+// Kept local and explicit so the divergence stays intentional.
 void _paintStroke(Canvas canvas, StrokeElement stroke) {
   if (stroke.points.isEmpty) return;
   final paint = Paint()

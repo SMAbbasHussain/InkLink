@@ -161,5 +161,30 @@ void main() {
         CanvasToolbarAction.layers,
       ]);
     });
+
+    testWidgets('long-pressing an action invokes onActionLongPressed', (
+      tester,
+    ) async {
+      final tapped = <CanvasToolbarAction>[];
+      final longPressed = <CanvasToolbarAction>[];
+      await tester.pumpWidget(
+        _wrap(
+          CanvasToolbar(
+            activeTool: CanvasToolMode.select,
+            canEdit: true,
+            onToolSelected: (_) {},
+            onActionSelected: tapped.add,
+            onActionLongPressed: longPressed.add,
+            onMore: () {},
+          ),
+        ),
+      );
+
+      await tester.longPress(find.text('Pen'));
+      await tester.pumpAndSettle();
+
+      expect(longPressed, [CanvasToolbarAction.pen]);
+      expect(tapped, isEmpty);
+    });
   });
 }

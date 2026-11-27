@@ -1,16 +1,5 @@
 import 'dart:math' as math;
-
-DateTime _parseDate(dynamic value) {
-  if (value == null) return DateTime.now();
-  if (value is DateTime) return value;
-  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
-  if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
-  try {
-    return (value as dynamic).toDate() as DateTime? ?? DateTime.now();
-  } catch (_) {
-    return DateTime.now();
-  }
-}
+import 'package:inklink/core/utils/dynamic_parsing.dart';
 
 class Board {
   static const String visibilityPublic = 'public';
@@ -38,6 +27,8 @@ class Board {
   final String currentUserRole;
   final bool? _isArchived;
   bool get isArchived => _isArchived ?? false;
+  final bool? _isPaused;
+  bool get isPaused => _isPaused ?? false;
   final bool? _allowMembersToCopy;
   bool get allowMembersToCopy => _allowMembersToCopy ?? false;
   final int membersCount;
@@ -57,14 +48,13 @@ class Board {
     this.whoCanInvite = inviteOwnerOnly,
     this.defaultLinkJoinRole = roleViewer,
     this.currentUserRole = roleViewer,
-    bool isArchived = false,
-    bool allowMembersToCopy = false,
+    bool this._isArchived = false,
+    bool this._isPaused = false,
+    bool this._allowMembersToCopy = false,
     int? membersCount,
     required this.createdAt,
     required this.updatedAt,
-  }) : _isArchived = isArchived,
-       _allowMembersToCopy = allowMembersToCopy,
-       membersCount = membersCount ?? members.length;
+  }) : membersCount = membersCount ?? members.length;
 
   factory Board.fromMap(Map<String, dynamic> map, String id) {
     final invitePolicy = map['invitePolicy'] as Map<String, dynamic>?;
@@ -92,10 +82,11 @@ class Board {
           (invitePolicy?['defaultLinkJoinRole'] as String?) ?? roleViewer,
       currentUserRole: (map['currentUserRole'] as String?) ?? roleViewer,
       isArchived: (map['isArchived'] as bool?) ?? false,
+      isPaused: (map['isPaused'] as bool?) ?? false,
       allowMembersToCopy: (map['allowMembersToCopy'] as bool?) ?? false,
       membersCount: membersCount,
-      createdAt: _parseDate(map['createdAt']),
-      updatedAt: _parseDate(map['updatedAt']),
+      createdAt: parseDateTimeValue(map['createdAt']),
+      updatedAt: parseDateTimeValue(map['updatedAt']),
     );
   }
 
@@ -113,6 +104,7 @@ class Board {
     String? defaultLinkJoinRole,
     String? currentUserRole,
     bool? isArchived,
+    bool? isPaused,
     bool? allowMembersToCopy,
     int? membersCount,
     DateTime? createdAt,
@@ -132,6 +124,7 @@ class Board {
       defaultLinkJoinRole: defaultLinkJoinRole ?? this.defaultLinkJoinRole,
       currentUserRole: currentUserRole ?? this.currentUserRole,
       isArchived: isArchived ?? this.isArchived,
+      isPaused: isPaused ?? this.isPaused,
       allowMembersToCopy: allowMembersToCopy ?? this.allowMembersToCopy,
       membersCount: membersCount ?? this.membersCount,
       createdAt: createdAt ?? this.createdAt,
@@ -151,6 +144,7 @@ class Board {
       'tags': tags,
       'joinViaCodeEnabled': joinViaCodeEnabled,
       'isArchived': isArchived,
+      'isPaused': isPaused,
       'allowMembersToCopy': allowMembersToCopy,
       'invitePolicy': {
         'whoCanInvite': whoCanInvite,

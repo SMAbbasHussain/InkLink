@@ -5,7 +5,7 @@
 // Element values are LWW per key, so a revert is an element-level set/delete
 // (never a general Yjs inverse, D10).
 const Y = require('yjs');
-const admin = require('firebase-admin');
+const { getFirestore } = require('firebase-admin/firestore');
 const r2 = require('./r2');
 const { reconstruct, parseStreamFields } = require('./reconstruct');
 const { describeChange, summarizeOperation, elementNoun } = require('./describe');
@@ -125,7 +125,7 @@ function opMatches(op, opts) {
 // before it, which a milestone below the first relevant block supplies. Without
 // a fromTime the whole retained history must be replayed.
 async function replayTouches(boardId, redis, opts = {}) {
-  const db = admin.firestore();
+  const db = getFirestore();
   const doc = new Y.Doc();
   const elements = doc.getMap('elements');
   const touches = new Map();
@@ -326,7 +326,7 @@ function analyzeOpsHistory(touches, selectedVersions) {
 // Read one user's (or all users' when targetUid is empty) ops from archived
 // blocks plus the un-archived Redis tail. Ascending by version.
 async function collectUserOps(boardId, targetUid, opts = {}, redis) {
-  const db = admin.firestore();
+  const db = getFirestore();
   const ops = [];
   const seenVersions = new Set();
   const filterByUser = typeof targetUid === 'string' && targetUid.length > 0;

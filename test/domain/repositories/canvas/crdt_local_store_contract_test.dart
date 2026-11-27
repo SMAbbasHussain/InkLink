@@ -159,9 +159,14 @@ void _contract(StoreFactory factory) {
   test('deleting a board removes only that board', () async {
     await store.putUpdate(crdtUpdate('a'));
     await store.putUpdate(crdtUpdate('b', boardId: 'board-2'));
+    await store.saveLastSeenCursor('board-1', '0-0:3');
+    await store.saveLastSeenCursor('board-2', '0-0:8');
     await store.deleteUpdatesForBoard('board-1');
     expect(await store.updatesForBoard('board-1'), isEmpty);
     expect(await store.updatesForBoard('board-2'), hasLength(1));
+    // Its cursor is forgotten too (the next load is a full snapshot).
+    expect(await store.getLastSeenCursor('board-1'), isNull);
+    expect(await store.getLastSeenCursor('board-2'), '0-0:8');
   });
 
   test('cursor round-trips per board', () async {

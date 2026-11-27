@@ -78,11 +78,6 @@ class AppErrorFormatter {
     return formatted.message;
   }
 
-  /// Returns only the title.
-  static String cleanTitle(dynamic error) {
-    return format(error).title;
-  }
-
   // ──────────────────────────────────────────────
   // Firebase Auth Error Code Mapping
   // ──────────────────────────────────────────────

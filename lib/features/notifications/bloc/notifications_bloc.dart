@@ -21,12 +21,16 @@ class NotificationsDeleteRequested extends NotificationsEvent {
   const NotificationsDeleteRequested(this.notificationId);
 }
 
+typedef AccessRequestDecisionCallback =
+    void Function(bool success, String? error);
+
 class NotificationRespondToAccessRequest extends NotificationsEvent {
   final String notificationId;
   final String boardId;
   final String requesterUid;
   final String action;
   final String requestType;
+  final AccessRequestDecisionCallback? onCompleted;
 
   const NotificationRespondToAccessRequest({
     required this.notificationId,
@@ -34,6 +38,7 @@ class NotificationRespondToAccessRequest extends NotificationsEvent {
     required this.requesterUid,
     required this.action,
     required this.requestType,
+    this.onCompleted,
   });
 }
 
@@ -81,8 +86,12 @@ class NotificationsLoading extends NotificationsState {
 
 class NotificationsLoaded extends NotificationsState {
   final List<Map<String, dynamic>> notifications;
+  final Set<String> processingAccessRequestIds;
 
-  const NotificationsLoaded(this.notifications);
+  const NotificationsLoaded(
+    this.notifications, {
+    this.processingAccessRequestIds = const <String>{},
+  });
 }
 
 class NotificationsError extends NotificationsState {
@@ -98,15 +107,13 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
   StreamSubscription<List<Map<String, dynamic>>>? _notificationsSub;
   Set<String> _readIds = <String>{};
   List<Map<String, dynamic>> _rawNotifications = <Map<String, dynamic>>[];
+  final Set<String> _inFlightAccessRequestIds = <String>{};
 
   NotificationsBloc({
-    required NotificationService notificationService,
-    required NotificationPreferences notificationPreferences,
-    BoardService? boardService,
-  }) : _notificationService = notificationService,
-       _notificationPreferences = notificationPreferences,
-       _boardService = boardService,
-       super(const NotificationsInitial()) {
+    required this._notificationService,
+    required this._notificationPreferences,
+    this._boardService,
+  }) : super(const NotificationsInitial()) {
     on<NotificationsLoadRequested>(_onLoadRequested);
     on<_NotificationsUpdated>(_onNotificationsUpdated);
     on<_NotificationsErrorOccurred>(_onErrorOccurred);
@@ -143,7 +150,14 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
       event.notifications,
     )..sort((left, right) => _timestampOf(right).compareTo(_timestampOf(left)));
 
-    emit(NotificationsLoaded(sorted));
+    emit(
+      NotificationsLoaded(
+        sorted,
+        processingAccessRequestIds: Set<String>.unmodifiable(
+          _inFlightAccessRequestIds,
+        ),
+      ),
+    );
   }
 
   void _onErrorOccurred(
@@ -229,8 +243,20 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     NotificationRespondToAccessRequest event,
     Emitter<NotificationsState> emit,
   ) async {
+    if (event.notificationId.isEmpty ||
+        _inFlightAccessRequestIds.contains(event.notificationId)) {
+      return;
+    }
+
     final boardService = _boardService;
-    if (boardService == null) return;
+    if (boardService == null) {
+      event.onCompleted?.call(false, 'Board service is unavailable.');
+      return;
+    }
+
+    _inFlightAccessRequestIds.add(event.notificationId);
+    _emitSortedNotifications(emit);
+
     try {
       await boardService.respondToBoardAccessRequest(
         boardId: event.boardId,
@@ -239,25 +265,41 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
         action: event.action,
         requestType: event.requestType,
       );
-
-      final updatedRaw = _rawNotifications.map((item) {
-        if (item['id']?.toString() == event.notificationId) {
-          return {
-            ...item,
-            'status': event.action == 'accept' ? 'accepted' : 'declined',
-          };
-        }
-        return item;
-      }).toList();
-      _rawNotifications = updatedRaw;
-      add(_NotificationsUpdated(_normalizeNotifications(_rawNotifications)));
+      _rawNotifications = _rawNotifications
+          .map(
+            (item) => item['id']?.toString() == event.notificationId
+                ? {
+                    ...item,
+                    'status': event.action == 'accept' ? 'accepted' : 'declined',
+                  }
+                : item,
+          )
+          .toList();
+      _inFlightAccessRequestIds.remove(event.notificationId);
+      _emitSortedNotifications(emit);
+      event.onCompleted?.call(true, null);
     } catch (e) {
-      emit(
-        NotificationsError(
-          'Failed to process request: ${AppErrorFormatter.cleanMessage(e)}',
-        ),
-      );
+      final cleanError = AppErrorFormatter.cleanMessage(e);
+      _inFlightAccessRequestIds.remove(event.notificationId);
+      _emitSortedNotifications(emit);
+      event.onCompleted?.call(false, cleanError);
     }
+  }
+
+  void _emitSortedNotifications(Emitter<NotificationsState> emit) {
+    final normalized = _normalizeNotifications(_rawNotifications);
+    final sorted = List<Map<String, dynamic>>.from(normalized)
+      ..sort(
+        (left, right) => _timestampOf(right).compareTo(_timestampOf(left)),
+      );
+    emit(
+      NotificationsLoaded(
+        sorted,
+        processingAccessRequestIds: Set<String>.unmodifiable(
+          _inFlightAccessRequestIds,
+        ),
+      ),
+    );
   }
 
   List<Map<String, dynamic>> _normalizeNotifications(
@@ -303,6 +345,7 @@ class NotificationsBloc extends Bloc<NotificationsEvent, NotificationsState> {
     _notificationsSub = null;
     _readIds = <String>{};
     _rawNotifications = <Map<String, dynamic>>[];
+    _inFlightAccessRequestIds.clear();
   }
 
   @override

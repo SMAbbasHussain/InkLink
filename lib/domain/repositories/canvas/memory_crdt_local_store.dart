@@ -80,6 +80,7 @@ class MemoryCrdtLocalStore implements CrdtLocalStore {
   Future<void> deleteUpdatesForBoard(String boardId) async {
     final before = _byUpdateId.length;
     _byUpdateId.removeWhere((_, u) => u.boardId == boardId);
+    _cursors.remove(boardId);
     if (_byUpdateId.length != before) _changes.add(boardId);
   }
 

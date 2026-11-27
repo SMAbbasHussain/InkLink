@@ -32,6 +32,7 @@ abstract class CanvasSyncRepository {
     DateTime? since,
     String? lastSeenCursor,
     bool preferSocket = true,
+    bool ignoreCursor = false,
   });
   Stream<List<LocalCrdtUpdate>> watchRemoteCanvasPreviews(String boardId);
   Stream<List<LocalCrdtUpdate>> watchLocalCrdtUpdates(String boardId);

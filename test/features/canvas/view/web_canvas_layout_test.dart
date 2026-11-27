@@ -147,7 +147,7 @@ void main() {
     await pumpCanvas(tester, web: false);
     expect(find.byTooltip('Export board'), findsNothing);
     expect(find.byTooltip('Share board'), findsNothing);
-    expect(find.byTooltip('Find on board'), findsOneWidget); // phone top bar
+    expect(find.byTooltip('Reset View'), findsOneWidget); // phone zoom pill
     await finish(tester);
   });
 

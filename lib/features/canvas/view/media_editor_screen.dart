@@ -33,7 +33,7 @@ class MediaEditorScreen extends StatefulWidget {
 }
 
 class _MediaEditorScreenState extends State<MediaEditorScreen> {
-  static const int _maxPersistedImageBytes = 650000;
+  static const int _maxPersistedImageBytes = 450000;
   static const int _minPersistedImageSide = 512;
   double _scale = 1.0;
   double _backgroundThreshold = 225;
@@ -160,9 +160,40 @@ class _MediaEditorScreenState extends State<MediaEditorScreen> {
 
     final output = _backgroundWasRemoved
         ? _encodePngWithinLimit(resized)
-        : Uint8List.fromList(img.encodeJpg(resized, quality: 78));
+        : _encodeJpegWithinLimit(resized);
     if (!mounted) return;
     Navigator.of(context).pop(MediaEditorResult(output, _style));
+  }
+
+  Uint8List _encodeJpegWithinLimit(img.Image image) {
+    var current = image;
+    var quality = 78;
+    var bytes = Uint8List.fromList(img.encodeJpg(current, quality: quality));
+    while (bytes.length > _maxPersistedImageBytes && quality > 25) {
+      quality -= 12;
+      bytes = Uint8List.fromList(img.encodeJpg(current, quality: quality));
+    }
+    while (bytes.length > _maxPersistedImageBytes &&
+        (current.width > _minPersistedImageSide ||
+            current.height > _minPersistedImageSide)) {
+      final nextWidth = math.max(
+        (current.width * 0.8).round(),
+        _minPersistedImageSide,
+      );
+      final nextHeight = math.max(
+        (current.height * 0.8).round(),
+        _minPersistedImageSide,
+      );
+      if (nextWidth == current.width && nextHeight == current.height) break;
+      current = img.copyResize(
+        current,
+        width: nextWidth,
+        height: nextHeight,
+        interpolation: img.Interpolation.average,
+      );
+      bytes = Uint8List.fromList(img.encodeJpg(current, quality: quality));
+    }
+    return bytes;
   }
 
   Future<void> _removeBackground() async {

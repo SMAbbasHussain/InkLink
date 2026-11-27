@@ -35,11 +35,9 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
 
   FirestoreWorkspaceRepository({
     required FirestoreService firestoreService,
-    required AuthService authService,
-    required LocalDatabaseService localDatabaseService,
-  }) : _firestoreService = firestoreService,
-       _authService = authService,
-       _localDatabaseService = localDatabaseService {
+    required this._authService,
+    required this._localDatabaseService,
+  }) : _firestoreService = firestoreService {
     _batchFetcher = FirestoreBatchFetcher(firestoreService: firestoreService);
   }
 
@@ -233,8 +231,7 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
             }
             final linkedBoardId =
                 (linkData[FirestorePaths.boardId] as String?) ?? linkDoc.id;
-            if (linkedBoardId.isNotEmpty &&
-                readableBoardIds.contains(linkedBoardId)) {
+            if (linkedBoardId.isNotEmpty) {
               visibleBoardIds.add(linkedBoardId);
             }
           }
@@ -254,6 +251,20 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
           for (final linkedBoardId in visibleBoardIds) {
             final boardData = boardDataById[linkedBoardId];
             if (boardData == null) {
+              continue;
+            }
+            // A workspace member who has never opened a board has no local
+            // `users/{uid}/boards` entry yet, so fall back to the board
+            // document's own access list. Otherwise the board (and its
+            // preview tile) would be missing until the user opened it.
+            final boardOwnerId = boardData[FirestorePaths.ownerId];
+            final boardMembers =
+                (boardData['members'] as List?) ?? const <dynamic>[];
+            final hasBoardAccess =
+                readableBoardIds.contains(linkedBoardId) ||
+                boardOwnerId == currentUid ||
+                boardMembers.contains(currentUid);
+            if (!hasBoardAccess) {
               continue;
             }
             final firestoreBoardData = Map<String, dynamic>.from(boardData);
@@ -698,6 +709,48 @@ class FirestoreWorkspaceRepository implements WorkspaceRepository {
         FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
       });
     });
+  }
+
+  @override
+  Stream<Set<String>> getPendingSentWorkspaceInviteUserIds(String workspaceId) {
+    final uid = currentUserId;
+    final trimmedWorkspaceId = workspaceId.trim();
+    if (uid == null || trimmedWorkspaceId.isEmpty) {
+      return Stream.value(const <String>{});
+    }
+
+    return _firestoreService
+        .collection(FirestorePaths.workspaceInvites)
+        .where(FirestorePaths.fromUid, isEqualTo: uid)
+        .snapshots()
+        .handleError((_) {})
+        .map((snapshot) {
+          try {
+            return snapshot.docs
+                .where((doc) {
+                  final data = doc.data();
+                  final docWorkspaceId =
+                      (data[FirestorePaths.workspaceId] as String?)?.trim() ??
+                      '';
+                  final status =
+                      (data[FirestorePaths.status] as String?)
+                          ?.trim()
+                          .toLowerCase() ??
+                      'pending';
+                  return docWorkspaceId == trimmedWorkspaceId &&
+                      status == 'pending';
+                })
+                .map(
+                  (doc) =>
+                      (doc.data()[FirestorePaths.toUid] as String?)?.trim() ??
+                      '',
+                )
+                .where((id) => id.isNotEmpty)
+                .toSet();
+          } catch (_) {
+            return const <String>{};
+          }
+        });
   }
 
   @override

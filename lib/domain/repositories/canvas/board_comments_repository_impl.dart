@@ -8,8 +8,8 @@ class FirestoreBoardCommentsRepository implements BoardCommentsRepository {
   final FirestoreService _firestoreService;
 
   FirestoreBoardCommentsRepository({
-    required FirestoreService firestoreService,
-  }) : _firestoreService = firestoreService;
+    required this._firestoreService,
+  });
 
   CollectionReference<Map<String, dynamic>> _commentsRef(String boardId) {
     return _firestoreService

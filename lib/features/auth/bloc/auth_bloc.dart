@@ -171,6 +171,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
     on<LogoutRequested>((event, emit) async {
       developer.log('LogoutRequested: start', name: 'AuthBloc');
+      emit(AuthLoggingOut());
       await authService.signOut();
       developer.log('LogoutRequested: emitting Unauthenticated', name: 'AuthBloc');
       emit(Unauthenticated());
@@ -191,10 +192,27 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
     on<AuthenticatedUserAvailable>((event, emit) async {
       developer.log('AuthenticatedUserAvailable: uid=${event.user.uid}, state is Authenticated=${state is Authenticated}', name: 'AuthBloc');
-      if (state is Authenticated ||
-          state is AuthLoading ||
-          state is AuthEmailUnverified ||
-          state is AuthDeletingAccount) {
+      final current = state;
+      if (current is Authenticated) {
+        // Already signed in: keep the cached identity in step with auth profile
+        // changes (e.g. a newly uploaded avatar) instead of ignoring them.
+        if (event.user.photoURL != current.photoUrl) {
+          emit(
+            Authenticated(
+              current.userName,
+              uid: current.uid,
+              email: current.email,
+              photoUrl: event.user.photoURL,
+              isPasswordProvider: current.isPasswordProvider,
+            ),
+          );
+        }
+        return;
+      }
+      if (current is AuthLoading ||
+          current is AuthEmailUnverified ||
+          current is AuthDeletingAccount ||
+          current is AuthLoggingOut) {
         developer.log('AuthenticatedUserAvailable: skipping (state=${state.runtimeType})', name: 'AuthBloc');
         return;
       }

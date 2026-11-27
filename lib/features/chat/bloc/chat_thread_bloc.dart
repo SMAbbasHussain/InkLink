@@ -4,29 +4,33 @@ import '../../../../core/utils/app_error_formatter.dart';
 import '../../../../domain/models/chat/chat_message_model.dart';
 import '../../../../domain/services/chat/chat_service.dart';
 import '../../../../domain/services/presence/presence_service.dart';
+import '../../../../domain/services/profile/profile_service.dart';
 import 'chat_thread_event.dart';
 import 'chat_thread_state.dart';
 
 class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
   final ChatService _chatService;
   final PresenceService? _presenceService;
+  final ProfileService? _profileService;
   final String _currentUid;
   String? _activeConversationId;
   bool? _partnerIsOnline;
+  String? _partnerAvatarUrl;
+  String? _partnerName;
   StreamSubscription<List<ChatMessageModel>>? _sub;
   StreamSubscription<UserPresence>? _presenceSub;
+  StreamSubscription<Map<String, dynamic>?>? _profileSub;
 
   ChatThreadBloc({
-    required ChatService chatService,
-    required String currentUid,
-    PresenceService? presenceService,
-  })  : _chatService = chatService,
-        _presenceService = presenceService,
-        _currentUid = currentUid,
-        super(const ChatThreadInitial()) {
+    required this._chatService,
+    required this._currentUid,
+    this._presenceService,
+    this._profileService,
+  })  : super(const ChatThreadInitial()) {
     on<LoadChatThread>(_onLoadChatThread);
     on<MessagesUpdated>(_onMessagesUpdated);
     on<PartnerPresenceUpdated>(_onPartnerPresenceUpdated);
+    on<PartnerProfileUpdated>(_onPartnerProfileUpdated);
     on<SendTextMessageRequested>(_onSendTextMessage);
     on<SendImageMessageRequested>(_onSendImageMessage);
     on<SendGifMessageRequested>(_onSendGifMessage);
@@ -45,16 +49,35 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
     emit(const ChatThreadLoading());
     await _sub?.cancel();
     await _presenceSub?.cancel();
+    await _profileSub?.cancel();
 
     _sub = _chatService.watchMessages(event.conversationId).listen((messages) {
       add(MessagesUpdated(messages));
     });
 
+    final isDm = !event.conversationId.startsWith('group_');
     final presenceService = _presenceService;
-    if (presenceService != null && !event.conversationId.startsWith('group_')) {
+    if (presenceService != null && isDm) {
       _presenceSub = presenceService.watchUserPresence(event.conversationId).listen(
         (presence) {
           add(PartnerPresenceUpdated(presence.isOnline));
+        },
+        onError: (_) {},
+      );
+    }
+
+    final profileService = _profileService;
+    if (profileService != null && isDm) {
+      _profileSub = profileService.watchUserById(event.conversationId).listen(
+        (userData) {
+          if (userData == null) return;
+          final displayName = userData['displayName']?.toString();
+          final photoUrl = userData['photoURL']?.toString();
+          add(PartnerProfileUpdated(
+            displayName: displayName,
+            avatarUrl: photoUrl,
+          ));
+          unawaited(_chatService.notifyPartnerProfileUpdated(event.conversationId));
         },
         onError: (_) {},
       );
@@ -74,6 +97,8 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
       conversationId: _activeConversationId!,
       messages: event.messages,
       isOnline: _partnerIsOnline,
+      partnerAvatarUrl: _partnerAvatarUrl,
+      partnerName: _partnerName,
     ));
     unawaited(_chatService.markConversationAsRead(_activeConversationId!));
   }
@@ -85,6 +110,20 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
     _partnerIsOnline = event.isOnline;
     if (state is ChatThreadLoaded) {
       emit((state as ChatThreadLoaded).copyWith(isOnline: event.isOnline));
+    }
+  }
+
+  void _onPartnerProfileUpdated(
+    PartnerProfileUpdated event,
+    Emitter<ChatThreadState> emit,
+  ) {
+    _partnerAvatarUrl = event.avatarUrl;
+    _partnerName = event.displayName;
+    if (state is ChatThreadLoaded) {
+      emit((state as ChatThreadLoaded).copyWith(
+        partnerAvatarUrl: event.avatarUrl,
+        partnerName: event.displayName,
+      ));
     }
   }
 
@@ -288,6 +327,7 @@ class ChatThreadBloc extends Bloc<ChatThreadEvent, ChatThreadState> {
   Future<void> close() async {
     await _sub?.cancel();
     await _presenceSub?.cancel();
+    await _profileSub?.cancel();
     return super.close();
   }
 }

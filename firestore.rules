@@ -1,0 +1,378 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function boardDoc(boardId) {
+      return get(/databases/$(database)/documents/boards/$(boardId));
+    }
+
+    function boardDocAfter(boardId) {
+      return getAfter(/databases/$(database)/documents/boards/$(boardId));
+    }
+
+    function boardMemberDoc(boardId, uid) {
+      return get(/databases/$(database)/documents/boards/$(boardId)/members/$(uid));
+    }
+
+    function isBoardOwner(boardId) {
+      return signedIn()
+        && boardDoc(boardId).data != null
+        && boardDoc(boardId).data.ownerId == request.auth.uid;
+    }
+
+    function isActiveBoardMember(boardId) {
+      return signedIn()
+        && boardMemberDoc(boardId, request.auth.uid).data != null
+        && boardMemberDoc(boardId, request.auth.uid).data.status == 'active';
+    }
+
+    function boardRole(boardId) {
+      return isBoardOwner(boardId)
+        ? 'owner'
+        : boardMemberDoc(boardId, request.auth.uid).data.role;
+    }
+
+    function isPublicBoard(boardId) {
+      return boardDoc(boardId).data != null
+        && boardDoc(boardId).data.visibility == 'public';
+    }
+
+    function isBoardPaused(boardId) {
+      return boardDoc(boardId).data.isPaused == true;
+    }
+
+    function canReadBoard(boardId) {
+      return isBoardOwner(boardId) || isActiveBoardMember(boardId) || isPublicBoard(boardId);
+    }
+
+    function canEditBoard(boardId) {
+      return canReadBoard(boardId)
+        && !isBoardPaused(boardId)
+        && (boardRole(boardId) == 'owner' || boardRole(boardId) == 'editor');
+    }
+
+    function canUpdateBoardDocument(boardId) {
+      return isBoardOwner(boardId);
+    }
+
+    function workspaceDoc(workspaceId) {
+      return get(/databases/$(database)/documents/workspaces/$(workspaceId));
+    }
+
+    function workspaceDocAfter(workspaceId) {
+      return getAfter(/databases/$(database)/documents/workspaces/$(workspaceId));
+    }
+
+    function workspaceMemberDoc(workspaceId, uid) {
+      return get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid));
+    }
+
+    function isWorkspaceOwner(workspaceId) {
+      return signedIn() && workspaceDoc(workspaceId).data.ownerId == request.auth.uid;
+    }
+
+    function isActiveWorkspaceMemberDoc(workspaceId) {
+      return signedIn()
+        && workspaceMemberDoc(workspaceId, request.auth.uid).data != null
+        && workspaceMemberDoc(workspaceId, request.auth.uid).data.status == 'active';
+    }
+
+    function isWorkspaceMember(workspaceId) {
+      return signedIn() && (
+        isWorkspaceOwner(workspaceId)
+        || isActiveWorkspaceMemberDoc(workspaceId)
+      );
+    }
+
+    // NOTE: chat helpers removed — chat no longer uses Firestore. Chat data
+    // moved to Agora Chat (see CHAT_REMEDIATION_PLAN.md); the /chats tree and
+    // board chat_messages are deny-all below, and any legacy chat documents
+    // should be deleted.
+
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.uid == userId;
+
+      // FCM push tokens — writable by the owner, never readable by clients
+      // (Admin SDK bypasses rules). Tokens must not live on the user document,
+      // which is readable by any signed-in user.
+      match /fcm_tokens/{tokenId} {
+        allow read: if false;
+        allow write: if signedIn() && request.auth.uid == userId;
+      }
+
+      match /friends/{friendId} {
+        allow read: if signedIn() && (request.auth.uid == userId || request.auth.uid == friendId);
+        allow delete: if signedIn() && (request.auth.uid == userId || request.auth.uid == friendId);
+        allow create, update: if false;
+      }
+
+      match /notifications/{notificationId} {
+        allow read: if signedIn() && request.auth.uid == userId;
+        allow delete: if signedIn() && request.auth.uid == userId;
+        allow create, update: if false;
+      }
+
+      match /boards/{boardId} {
+        allow read: if signedIn() && request.auth.uid == userId;
+
+        allow create, update: if signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.boardId == boardId
+          && request.resource.data.relation in ['owned', 'joined']
+          && (
+            (request.resource.data.relation == 'owned'
+              && boardDocAfter(boardId).data.ownerId == request.auth.uid)
+            || (request.resource.data.relation == 'joined'
+              && isActiveBoardMember(boardId))
+          );
+
+        allow delete: if signedIn() && request.auth.uid == userId;
+      }
+    }
+
+    match /board_invites/{inviteId} {
+      allow read: if signedIn()
+        && request.auth.uid == resource.data.toUid;
+
+      allow create: if false;
+      allow delete: if signedIn()
+        && (request.auth.uid == resource.data.toUid || request.auth.uid == resource.data.fromUid);
+      allow update: if false;
+    }
+
+    match /workspace_invites/{inviteId} {
+      allow read: if signedIn()
+        && (
+          request.auth.uid == resource.data.toUid
+          || request.auth.uid == resource.data.fromUid
+        );
+
+      allow delete: if signedIn()
+        && (request.auth.uid == resource.data.toUid || request.auth.uid == resource.data.fromUid);
+      allow create, update: if false;
+    }
+
+    match /friend_requests/{requestId} {
+      // Enforce the blocklist on create (block id is `${blockerUid}_${blockedUid}`):
+      // deny if the target blocked the sender OR the sender blocked the target.
+      allow create: if signedIn()
+        && request.auth.uid == request.resource.data.fromUid
+        && request.resource.data.toUid is string
+        && !exists(/databases/$(database)/documents/blocked_users/$(request.resource.data.toUid + '_' + request.auth.uid))
+        && !exists(/databases/$(database)/documents/blocked_users/$(request.auth.uid + '_' + request.resource.data.toUid));
+      allow read, delete: if signedIn()
+        && (request.auth.uid == resource.data.toUid || request.auth.uid == resource.data.fromUid);
+      allow update: if false;
+    }
+
+    match /blocked_users/{blockId} {
+      // "get" must also permit the blocked side so that other rules can
+      // check the blocklist with exists() before performing writes.
+      allow get: if signedIn()
+        && (blockId.matches('^' + request.auth.uid + '_.*$')
+            || blockId.matches('^.*_' + request.auth.uid + '$'));
+      allow list: if signedIn()
+        && resource.data.blockerUid == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /boards/{boardId} {
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid;
+
+      allow read: if signedIn() && (
+        resource.data.visibility == 'public'
+        || resource.data.ownerId == request.auth.uid
+        || isActiveBoardMember(boardId)
+      );
+
+      allow update: if canUpdateBoardDocument(boardId);
+
+      allow delete: if signedIn() && (
+        resource.data.ownerId == request.auth.uid
+        || isBoardOwner(boardId)
+      );
+
+      match /members/{memberUid} {
+        allow read: if canReadBoard(boardId);
+
+        allow create: if signedIn()
+          && request.auth.uid == memberUid
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.role == 'owner'
+          && request.resource.data.status == 'active'
+          && (
+            boardDoc(boardId).data.ownerId == request.auth.uid
+            || boardDocAfter(boardId).data.ownerId == request.auth.uid
+          );
+
+        allow delete: if signedIn() && (
+          boardDoc(boardId).data.ownerId == request.auth.uid
+          || isBoardOwner(boardId)
+          || request.auth.uid == memberUid
+        );
+
+        allow update: if signedIn() && (
+          boardDoc(boardId).data.ownerId == request.auth.uid
+          || isBoardOwner(boardId)
+          || (
+            request.auth.uid == memberUid
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.status == resource.data.status
+          )
+        );
+      }
+
+      // Legacy operation log (kept for compatibility)
+      match /operations/{opId} {
+        allow read: if canReadBoard(boardId);
+        allow create: if canEditBoard(boardId);
+        allow delete: if signedIn() && (
+          boardDoc(boardId).data.ownerId == request.auth.uid
+          || isBoardOwner(boardId)
+        );
+        allow update: if false;
+      }
+
+      // CRDT snapshot — materialized board state.
+      // Owner-only writes: this document is authoritative for cold loads and it
+      // seeds the realtime server's version counter and archive cursor, so an
+      // editor rewriting it could corrupt board state for every client and stall
+      // archival. The only client write path is board duplication, which targets
+      // a board the duplicator owns; the server writes snapshots with the Admin
+      // SDK, which bypasses these rules.
+      match /snapshot/{snapshotId} {
+        allow read: if canReadBoard(boardId);
+        allow create, update: if isBoardOwner(boardId)
+          && request.resource.data.boardId == boardId
+          && request.resource.data.lastAppliedVersion is number
+          && request.resource.data.stateUpdate is string;
+        allow delete: if signedIn() && (
+          boardDoc(boardId).data.ownerId == request.auth.uid
+          || isBoardOwner(boardId)
+        );
+      }
+
+      // Board history activity index — OWNER-ONLY read; server writes only
+      // (the socket server uses the Admin SDK, which bypasses these rules).
+      match /activity_index/{blockId} {
+        allow read: if isBoardOwner(boardId);
+        allow write: if false;
+      }
+
+      // Undo requests — owner reads all; requester reads own.
+      // Writes go through the submitUndoRequest/resolveUndoRequest callables.
+      match /undo_requests/{requestId} {
+        allow read: if isBoardOwner(boardId)
+          || (signedIn() && resource.data.requesterUid == request.auth.uid);
+        allow create, update, delete: if false;
+      }
+
+      // Board Comments (FR12-01..03, FR12-05)
+      match /comments/{commentId} {
+        allow read: if canReadBoard(boardId);
+        allow create: if canReadBoard(boardId)
+          && signedIn()
+          && request.resource.data.authorUid == request.auth.uid;
+        allow update: if canReadBoard(boardId)
+          && signedIn()
+          && resource.data.authorUid == request.auth.uid
+          && request.resource.data.authorUid == resource.data.authorUid;
+        allow delete: if signedIn()
+          && (resource.data.authorUid == request.auth.uid || isBoardOwner(boardId));
+      }
+
+      // Board Chat Messages — chat is Agora-only (Socket.IO live + Redis
+      // history). No client read or write; any legacy documents should be
+      // removed (see CHAT_REMEDIATION_PLAN.md).
+      match /chat_messages/{messageId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /workspaces/{workspaceId} {
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid;
+
+      allow read: if signedIn() && (
+        resource.data.ownerId == request.auth.uid
+        || isActiveWorkspaceMemberDoc(workspaceId)
+      );
+
+      allow update: if isWorkspaceOwner(workspaceId)
+        || (
+          isWorkspaceMember(workspaceId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['boardCount', 'updatedAt'])
+        );
+
+      allow delete: if signedIn() && (
+        resource.data.ownerId == request.auth.uid
+        || isWorkspaceOwner(workspaceId)
+      );
+
+      match /members/{memberUid} {
+        allow read: if isWorkspaceMember(workspaceId);
+
+        allow create: if signedIn()
+          && request.auth.uid == memberUid
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.role == 'owner'
+          && request.resource.data.status == 'active'
+          && (
+            workspaceDoc(workspaceId).data.ownerId == request.auth.uid
+            || workspaceDocAfter(workspaceId).data.ownerId == request.auth.uid
+          );
+
+        allow delete: if signedIn() && (
+          workspaceDoc(workspaceId).data.ownerId == request.auth.uid
+          || isWorkspaceOwner(workspaceId)
+          || request.auth.uid == memberUid
+        );
+
+        allow update: if signedIn() && (
+          workspaceDoc(workspaceId).data.ownerId == request.auth.uid
+          || isWorkspaceOwner(workspaceId)
+          || (
+            request.auth.uid == memberUid
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.status == resource.data.status
+          )
+        );
+      }
+
+      match /boards/{boardId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create: if signedIn()
+          && (
+            (
+              workspaceDoc(workspaceId).data != null
+              && workspaceDoc(workspaceId).data.ownerId == request.auth.uid
+            )
+            || (
+              workspaceDocAfter(workspaceId).data != null
+              && workspaceDocAfter(workspaceId).data.ownerId == request.auth.uid
+            )
+            || isWorkspaceMember(workspaceId)
+          );
+        allow update, delete: if isWorkspaceOwner(workspaceId)
+          || isBoardOwner(boardId);
+      }
+    }
+
+    // CHAT (DM + group inbox) — deny all. Transport is Agora Chat only; this
+    // tree is legacy. Any existing documents here should be deleted server-side
+    // (Admin SDK) per the user's decision to not migrate history.
+    match /chats/{chatId} {
+      allow read, write: if false;
+
+      match /messages/{messageId} {
+        allow read, write: if false;
+      }
+    }
+  }
+}
+

@@ -23,9 +23,8 @@ class AiImageBloc extends Bloc<AiImageEvent, AiImageState> {
   int _nextSequence = 0;
   final Set<String> _requestedUrls = <String>{};
 
-  AiImageBloc({required AiImageService aiImageService})
-    : _aiImageService = aiImageService,
-      super(const AiImageState()) {
+  AiImageBloc({required this._aiImageService})
+    : super(const AiImageState()) {
     on<AiImageGenerateRequested>(_onGenerate);
     on<AiImageEditRequested>(_onEdit);
     on<AiImageInpaintRequested>(_onInpaint);

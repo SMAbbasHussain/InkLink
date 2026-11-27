@@ -13,11 +13,9 @@ class PublicBoardsBloc extends Bloc<PublicBoardsEvent, PublicBoardsState> {
   StreamSubscription<Map<String, dynamic>?>? _userProfileSub;
 
   PublicBoardsBloc({
-    required BoardService boardService,
-    required ProfileService profileService,
-  })  : _boardService = boardService,
-        _profileService = profileService,
-        super(const PublicBoardsState()) {
+    required this._boardService,
+    required this._profileService,
+  })  : super(const PublicBoardsState()) {
     on<PublicBoardsFetchStarted>(_onFetchStarted);
     on<PublicBoardsRefreshRequested>(_onRefreshRequested);
     on<PublicBoardsTagSelected>(_onTagSelected);

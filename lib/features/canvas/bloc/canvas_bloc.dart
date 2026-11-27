@@ -90,8 +90,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   StreamSubscription<List<VoiceParticipant>>? _voiceParticipantsSub;
   StreamSubscription<bool>? _voiceCallStatusSub;
   StreamSubscription<bool>? _voiceMuteStatusSub;
+  StreamSubscription<bool>? _voiceSpeakerStatusSub;
   StreamSubscription<List<BoardActivityBlock>>? _historyFeedSub;
   StreamSubscription<List<UndoRequest>>? _undoRequestsSub;
+  StreamSubscription<List<UndoRequest>>? _myUndoRequestsSub;
   List<BoardActivityBlock> _archivedBlocks = const [];
   BoardActivityBlock? _liveTailBlock;
   Timer? _liveTailDebounceTimer;
@@ -143,30 +145,24 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   String _currentUserRole = Board.roleViewer;
   DateTime? _lastViewerWarningAt;
   DateTime? _lastArchivedWarningAt;
+  DateTime? _lastPausedWarningAt;
 
   final BoardExportService _boardExportService;
 
   CanvasBloc({
-    CanvasService? canvasService,
-    BoardService? boardService,
+    this._canvasService,
+    this._boardService,
     BoardExportService? boardExportService,
-    BoardCommentsService? boardCommentsService,
-    BoardChatService? boardChatService,
-    VoiceService? voiceService,
+    this._boardCommentsService,
+    this._boardChatService,
+    this._voiceService,
     CanvasDocAdapter? crdtAdapter,
-    BoardHistoryService? historyService,
+    this._historyService,
     String currentUserId = '',
-    String boardId = '',
-  }) : _canvasService = canvasService,
-       _boardService = boardService,
-       _boardExportService =
+    this._boardId = '',
+  }) : _boardExportService =
            boardExportService ?? const BoardExportServiceImpl(),
-       _boardCommentsService = boardCommentsService,
-       _boardChatService = boardChatService,
-       _voiceService = voiceService,
        _crdtAdapter = crdtAdapter,
-       _historyService = historyService,
-       _boardId = boardId,
        super(CanvasInitial(currentUserId: currentUserId)) {
     if (crdtAdapter != null) {
       for (final entry in crdtAdapter.materializeElements().entries) {
@@ -203,6 +199,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasAddFrame>(_onAddFrame);
     on<CanvasUpdateFrame>(_onUpdateFrame);
     on<CanvasDeleteFrame>(_onDeleteFrame);
+    on<CanvasCaptureElementsInFrame>(_onCaptureElementsInFrame);
     on<CanvasAddTable>(_onAddTable);
     on<CanvasUpdateTableCell>(_onUpdateTableCell);
     on<CanvasUpdateTableStyle>(_onUpdateTableStyle);
@@ -291,6 +288,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasUpdateSelectedStrokeBrushType>(_onUpdateSelectedStrokeBrushType);
     on<CanvasCommitSelectedStrokeEdits>(_onCommitSelectedStrokeEdits);
     on<CanvasSaveBoardPreviewRequested>(_onSaveBoardPreviewRequested);
+    on<CanvasSetBoardPausedRequested>(_onSetBoardPausedRequested);
     on<CanvasBoardMembersUpdated>(_onBoardMembersUpdated);
     on<CanvasMemberSearchQueryChanged>(_onMemberSearchQueryChanged);
     on<CanvasRemoveBoardMember>(_onRemoveBoardMember);
@@ -311,6 +309,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasVoiceParticipantsUpdated>(_onCanvasVoiceParticipantsUpdated);
     on<CanvasVoiceCallStatusChanged>(_onCanvasVoiceCallStatusChanged);
     on<CanvasVoiceMuteStatusChanged>(_onCanvasVoiceMuteStatusChanged);
+    on<CanvasVoiceSpeakerStatusChanged>(_onCanvasVoiceSpeakerStatusChanged);
     on<CanvasToggleChatDrawer>(_onCanvasToggleChatDrawer);
     on<CanvasToggleCommentsTray>(_onCanvasToggleCommentsTray);
     on<CanvasToggleCommentPlacementMode>(_onCanvasToggleCommentPlacementMode);
@@ -322,6 +321,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     on<CanvasJoinVoiceCallRequested>(_onCanvasJoinVoiceCallRequested);
     on<CanvasLeaveVoiceCallRequested>(_onCanvasLeaveVoiceCallRequested);
     on<CanvasToggleVoiceMuteRequested>(_onCanvasToggleVoiceMuteRequested);
+    on<CanvasToggleVoiceSpeakerRequested>(_onCanvasToggleVoiceSpeakerRequested);
     on<CanvasVoiceSpeakingChanged>(_onCanvasVoiceSpeakingChanged);
     on<CanvasHistoryFeedRequested>(_onHistoryFeedRequested);
     on<CanvasHistoryLoadOlderVersionsRequested>(
@@ -362,6 +362,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
     on<CanvasHistoryAreaScrubRequested>(_onHistoryAreaScrubRequested);
     on<CanvasUndoRequestsUpdated>(_onUndoRequestsUpdated);
+    on<CanvasMyUndoRequestsUpdated>(_onMyUndoRequestsUpdated);
     on<CanvasUndoConflictDismissed>(_onUndoConflictDismissed);
     on<CanvasUndoRequestDraftStarted>(_onUndoRequestDraftStarted);
     on<CanvasUndoRequestDraftScopeModeChanged>(
@@ -413,6 +414,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) {
     final wasOwner = _currentUserRole == Board.roleOwner;
     final wasArchived = state.isArchived;
+    final wasPaused = state.isPaused;
     _currentUserRole = event.currentUserRole;
     _syncHistorySubscriptions();
     // The role can resolve AFTER the owner already opened the history screen
@@ -430,14 +432,22 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           : 'This board was archived by the owner. Edits are disabled.';
     } else if (wasArchived && !event.isArchived) {
       transitionInfo = 'Board has been unarchived. Editing is enabled.';
+    } else if (!wasPaused && event.isPaused) {
+      transitionInfo = _currentUserRole == Board.roleOwner
+          ? 'Board paused. No one can edit until you resume it.'
+          : 'This board is paused by the owner. Edits are disabled until resumed.';
+    } else if (wasPaused && !event.isPaused) {
+      transitionInfo = 'Board resumed. Editing is enabled.';
     }
 
+    final isLocked = event.isArchived || event.isPaused;
     emit(
       state.copyWith(
         boardTitle: event.title,
         currentUserRole: event.currentUserRole,
         isArchived: event.isArchived,
-        currentStroke: event.isArchived ? const [] : null,
+        isPaused: event.isPaused,
+        currentStroke: isLocked ? const [] : null,
         infoMessage: transitionInfo,
       ),
     );
@@ -476,12 +486,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     try {
       if (isClosed) return;
       _startBoardMetadataListener();
-      await _ensureCrdtReady();
-      if (isClosed) return;
-      _startCrdtUpdatesListener();
-      _startPreviewUpdatesListener();
       _startCommunicationListeners(event.boardId);
-      _refreshFromCrdtAdapter(emit);
+      if (_canSync) {
+        await _ensureCrdtReady();
+        if (isClosed) return;
+        _startCrdtUpdatesListener();
+        _startPreviewUpdatesListener();
+        _refreshFromCrdtAdapter(emit);
+      } else if (_crdtAdapter != null) {
+        _refreshFromCrdtAdapter(emit);
+      }
       if (!isClosed) {
         emit(
           state.copyWith(
@@ -600,6 +614,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             board.title,
             currentUserRole: board.currentUserRole,
             isArchived: board.isArchived,
+            isPaused: board.isPaused,
           ),
         );
       }
@@ -654,6 +669,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     // Separate snapshot from regular updates
     List<LocalCrdtUpdate> snapshotUpdate = [];
     List<LocalCrdtUpdate> regularUpdates = [];
+    var appliedAny = false;
 
     for (final update in event.updates) {
       if (update.updateId.startsWith('__snapshot__')) {
@@ -665,11 +681,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
     // Apply snapshot FIRST (full state restore via CRDT hydration)
     for (final snapshot in snapshotUpdate) {
-      if (snapshot.payloadBase64.isEmpty) continue;
+      if (_appliedCrdtUpdateIds.contains(snapshot.updateId)) continue;
+      if (snapshot.payloadBase64.isEmpty) {
+        _appliedCrdtUpdateIds.add(snapshot.updateId);
+        continue;
+      }
       try {
         final bytes = base64Decode(snapshot.payloadBase64);
         if (bytes.isEmpty) continue;
         adapter.applyUpdate(bytes, origin: 'remote');
+        appliedAny = true;
         // A full-state hydration replaces the board, so the local stack is
         // meaningless afterwards (D14).
         adapter.clearLocalHistory();
@@ -688,11 +709,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
 
     // Then apply remaining deltas in order
     for (final update in regularUpdates) {
-      if (update.elementId != null) {
+      if (update.elementId != null &&
+          _remotePreviewElements.containsKey(update.elementId)) {
+        appliedAny = true;
+        _forgetPreviews(update.elementId!);
+      } else if (update.elementId != null) {
         _forgetPreviews(update.elementId!);
       }
       if (update.affectedElementIds != null) {
         for (final id in update.affectedElementIds!) {
+          if (_remotePreviewElements.containsKey(id)) appliedAny = true;
           _forgetPreviews(id);
         }
       }
@@ -712,6 +738,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           continue;
         }
         adapter.applyUpdate(bytes, origin: 'remote');
+        appliedAny = true;
         // D14: an owner's revert/restore/clear is authoritative locally — the
         // member may redraw but cannot resurrect the reverted work via Ctrl+Z.
         if (update.sourceClientId != state.currentUserId) {
@@ -755,7 +782,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       for (final id in materialized.keys) {
         _forgetPreviews(id);
       }
+      appliedAny = true;
     }
+    if (!appliedAny) return;
     _refreshFromCrdtAdapter(emit);
     if (regularUpdates.isNotEmpty || snapshotUpdate.isNotEmpty) {
       _scheduleLiveTailRefresh();
@@ -1191,7 +1220,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   Map<String, dynamic>? _committedElementPayload(String elementId) {
     final adapter = _crdtAdapter;
     if (adapter != null) {
-      final payload = adapter.materializeElements()[elementId];
+      final payload = adapter.materializeElement(elementId);
       if (payload != null) return Map<String, dynamic>.from(payload);
     }
     for (final element in state.elements) {
@@ -1206,6 +1235,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     String elementId,
     Map<String, dynamic> data,
   ) async {
+    await _publishSelectedShapePreviewLazy(elementId, () => data);
+  }
+
+  Future<void> _publishSelectedShapePreviewLazy(
+    String elementId,
+    Map<String, dynamic> Function() dataBuilder,
+  ) async {
     final canvasService = _canvasService;
     if (canvasService == null || _boardId.isEmpty) return;
     final preview = _pendingPreviewPublishes.putIfAbsent(
@@ -1214,7 +1250,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
     preview.previewId = _uuid.v4();
     preview.elementId = elementId;
-    preview.payload = Uint8List.fromList(utf8.encode(jsonEncode(data)));
+    preview.payloadBuilder = dataBuilder;
     preview.dirty = true;
     if (preview.timer != null) return;
     _flushQueuedPreviewPublish(elementId);
@@ -1229,6 +1265,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       return;
     }
     preview.dirty = false;
+    final builder = preview.payloadBuilder;
+    if (builder != null) {
+      preview.payload = Uint8List.fromList(utf8.encode(jsonEncode(builder())));
+      preview.payloadBuilder = null;
+    }
     unawaited(
       canvasService.publishCanvasPreview(
         boardId: _boardId,
@@ -1295,6 +1336,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               z: z,
               hidden: _parseBool(payload['hidden']),
               locked: _parseBool(payload['locked']),
+              frameId: payload['frameId'] as String?,
               color: Color(
                 (payload['color'] as num?)?.toInt() ?? Colors.black.value,
               ),
@@ -1351,6 +1393,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               z: z,
               hidden: _parseBool(payload['hidden']),
               locked: _parseBool(payload['locked']),
+              frameId: payload['frameId'] as String?,
               shapeType: shapeType,
               center: Offset(
                 (payload['cx'] as num?)?.toDouble() ?? 0.0,
@@ -1421,6 +1464,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               z: z,
               hidden: _parseBool(payload['hidden']),
               locked: _parseBool(payload['locked']),
+              frameId: payload['frameId'] as String?,
               text: (payload['text'] as String?) ?? '',
               center: Offset(
                 (payload['cx'] as num?)?.toDouble() ?? 0.0,
@@ -1505,6 +1549,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               z: z,
               hidden: _parseBool(payload['hidden']),
               locked: _parseBool(payload['locked']),
+              frameId: payload['frameId'] as String?,
               startElementId: payload['startElementId'] as String?,
               startPoint: Offset(
                 (payload['sx'] as num?)?.toDouble() ?? 0.0,
@@ -1567,7 +1612,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
                   FrameElement.defaultHeight,
               title: (payload['title'] as String?) ?? '',
               color: Color((payload['color'] as num?)?.toInt() ?? 0xFF64748B),
-              cornerRadius: (payload['cornerRadius'] as num?)?.toDouble() ?? 12,
+              cornerRadius: (payload['cornerRadius'] as num?)?.toDouble() ?? 0,
               clipContents: _parseBool(payload['clipContents']),
             ),
           );
@@ -1714,7 +1759,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         ? [event.point]
         : _strokeStabilizer!.add(event.point, elapsed: _strokeClock.elapsed);
     final updated = List<Offset>.from(state.currentStroke)..addAll(points);
-    final pressure = state.stylusPressureEnabled ? event.pressure : 1.0;
+    final allowPressure =
+        state.stylusPressureEnabled ||
+        (state.boardSettings.inkSpillEnabled && event.pressure > 1.0);
+    final pressure = allowPressure ? event.pressure : 1.0;
     final updatedPressures = List<double>.from(state.currentStrokePressures)
       ..addAll([
         if (points.length == 2) state.currentStrokePressures.last,
@@ -1744,21 +1792,28 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final canvasService = _canvasService;
     final strokeId = _activeStrokeId;
     if (canvasService == null || strokeId == null || _boardId.isEmpty) return;
-    final previewData = {
-      'type': 'stroke',
-      'z': _nextZIndex(),
-      'color': state.selectedColor.value,
-      'strokeWidth': state.strokeWidth,
-      'opacity': state.brushOpacity,
-      'brushType': state.brushType,
-      'brushId': state.brushType,
-      'pressures': updatedPressures,
-      'tilts': updatedTilts,
-      'points': updated
-          .map((p) => {'x': p.dx, 'y': p.dy})
-          .toList(growable: false),
-    };
-    await _publishSelectedShapePreview(strokeId, previewData);
+    final z = _nextZIndex();
+    final colorValue = state.selectedColor.value;
+    final strokeWidth = state.strokeWidth;
+    final brushOpacity = state.brushOpacity;
+    final brushType = state.brushType;
+    await _publishSelectedShapePreviewLazy(
+      strokeId,
+      () => {
+        'type': 'stroke',
+        'z': z,
+        'color': colorValue,
+        'strokeWidth': strokeWidth,
+        'opacity': brushOpacity,
+        'brushType': brushType,
+        'brushId': brushType,
+        'pressures': updatedPressures,
+        'tilts': updatedTilts,
+        'points': updated
+            .map((p) => {'x': p.dx, 'y': p.dy})
+            .toList(growable: false),
+      },
+    );
   }
 
   Future<void> _onEndStroke(
@@ -1791,8 +1846,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       );
       return;
     }
-    var usePressures = state.stylusPressureEnabled
-        ? event.pressures ?? state.currentStrokePressures
+    final rawCandidatePressures =
+        event.pressures ?? state.currentStrokePressures;
+    final hasSpillPressure =
+        state.boardSettings.inkSpillEnabled &&
+        rawCandidatePressures.any((p) => p > 1.0);
+    var usePressures = (state.stylusPressureEnabled || hasSpillPressure)
+        ? rawCandidatePressures
         : List<double>.filled(usePoints.length, 1.0);
     if (usePressures.length != usePoints.length) {
       if (usePressures.isEmpty) {
@@ -1863,8 +1923,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         ),
     ];
 
+    final attachedStrokes = [
+      for (final s in createdStrokes)
+        _attachOrDetachFrame(s, state.elements) as StrokeElement,
+    ];
     final nextElements = List<CanvasElement>.from(state.elements)
-      ..addAll(createdStrokes);
+      ..addAll(attachedStrokes);
     _committedElements = nextElements;
     emit(
       state.copyWith(
@@ -1875,17 +1939,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       ),
     );
     _activeStrokeId = null;
-    if (createdStrokes.length == 1) {
+    if (attachedStrokes.length == 1) {
+      final created = attachedStrokes.first;
       await _saveCrdtOperation(
         action: 'create',
-        type: _elementType(stroke),
-        objectId: strokeId,
-        data: stroke.toMap(),
+        type: _elementType(created),
+        objectId: created.id,
+        data: created.toMap(),
         emit: emit,
       );
     } else {
       await _saveCrdtBatch([
-        for (final s in createdStrokes)
+        for (final s in attachedStrokes)
           (
             action: 'create',
             type: _elementType(s),
@@ -1935,7 +2000,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _activeStrokeId = null;
     _strokeStabilizer = null;
     _strokeClock.stop();
-    final shape = ShapeElement(
+    final rawShape = ShapeElement(
       id: id,
       z: _nextZIndex(),
       shapeType: match.shapeType,
@@ -1948,6 +2013,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       opacity: state.brushOpacity,
       rotation: match.rotation,
     );
+    final shape =
+        _attachOrDetachFrame(rawShape, state.elements) as ShapeElement;
     final next = List<CanvasElement>.from(state.elements)..add(shape);
     emit(
       state.copyWith(
@@ -2026,16 +2093,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit, {
     bool resetDrawState = false,
   }) async {
-    final nextElements = List<CanvasElement>.from(state.elements)..add(shape);
+    final attached = _attachOrDetachFrame(shape, state.elements) as ShapeElement;
+    final nextElements = List<CanvasElement>.from(state.elements)
+      ..add(attached);
     _committedElements = nextElements;
     var next = state.copyWith(
       elements: nextElements,
       activeTray: null,
-      selectedShapeId: shape.id,
-      selectedIds: <String>{shape.id},
-      selectedShapeRotation: shape.rotation,
-      selectedShapeIsFilled: shape.isFilled,
-      selectedShapeBorderRadius: shape.borderRadius,
+      selectedShapeId: attached.id,
+      selectedIds: <String>{attached.id},
+      selectedShapeRotation: attached.rotation,
+      selectedShapeIsFilled: attached.isFilled,
+      selectedShapeBorderRadius: attached.borderRadius,
     );
     if (resetDrawState) {
       next = next.copyWith(
@@ -2049,9 +2118,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(next);
     await _saveCrdtOperation(
       action: 'create',
-      type: _elementType(shape),
-      objectId: shape.id,
-      data: shape.toMap(),
+      type: _elementType(attached),
+      objectId: attached.id,
+      data: attached.toMap(),
       emit: emit,
     );
   }
@@ -2080,7 +2149,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final text = event.text.trim();
     if (text.isEmpty) return;
     final textId = _uuid.v4();
-    final textElement = _measureText(
+    final measuredText = _measureText(
       TextElement(
         id: textId,
         z: _nextZIndex(),
@@ -2093,6 +2162,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         rotation: event.rotation,
       ),
     );
+    final textElement =
+        _attachOrDetachFrame(measuredText, state.elements) as TextElement;
     final nextElements = List<CanvasElement>.from(state.elements)
       ..add(textElement);
     emit(
@@ -2113,20 +2184,52 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
   }
 
+  /// Width the text would need on a single line, with no wrapping.
+  ///
+  /// Compared against a text element's box width to tell a box the user
+  /// resized from one that still auto-fits its text.
+  double _naturalTextWidth(TextElement element) {
+    final layout = CanvasTextLayout.layout(
+      text: element.text,
+      fontSize: element.fontSize,
+      fontWeight: element.fontWeight,
+      fontFamily: element.fontFamily,
+      textAlign: element.textAlign,
+      lineHeight: element.lineHeight,
+      maxWidth: 1e6,
+      maxLines: 0,
+      color: element.color,
+    );
+    try {
+      return layout.size.width;
+    } finally {
+      layout.dispose();
+    }
+  }
+
   /// Rewrites the measured width/height from the element's real text style.
-  TextElement _measureText(TextElement element) {
+  ///
+  /// With [keepWidth] the box keeps the requested wrapping width instead of
+  /// collapsing back to the text's natural width, so widening a text box stays
+  /// wide until the text itself changes.
+  TextElement _measureText(TextElement element, {bool keepWidth = false}) {
     final layout = CanvasTextLayout.forElement(element);
+    final size = layout.size;
+    layout.dispose();
     return TextElement(
       id: element.id,
       z: element.z,
       hidden: element.hidden,
       locked: element.locked,
       opacity: element.opacity,
+      frameId: element.frameId,
       text: element.text,
       center: element.center,
       color: element.color,
-      width: layout.size.width,
-      height: layout.size.height,
+      width: keepWidth && element.width > 0
+          ? element.width
+          : size.width,
+      height: size.height,
       fontSize: element.fontSize,
       fontWeight: element.fontWeight,
       fontFamily: element.fontFamily,
@@ -2170,6 +2273,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       hidden: existing.hidden,
       locked: existing.locked,
       opacity: existing.opacity,
+      frameId: existing.frameId,
       text: nextText,
       center: event.topLeft ?? existing.center,
       color: event.color ?? existing.color,
@@ -2186,7 +2290,23 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       backgroundColor: event.backgroundColor ?? existing.backgroundColor,
       padding: existing.padding,
     );
-    if (needsMeasure) updated = _measureText(updated);
+    if (needsMeasure) {
+      // Changing the text size (or any other style) must not throw away a
+      // width the user dragged: keep a customised width, but still let an
+      // untouched box keep fitting its text.
+      final wasResized =
+          existing.width > 0 &&
+          (existing.width - _naturalTextWidth(existing)).abs() > 1.0;
+      updated = _measureText(
+        updated,
+        keepWidth:
+            event.autoSize != true && (event.width != null || wasResized),
+      );
+    }
+    if (event.topLeft != null) {
+      final attached = _attachOrDetachFrame(updated, state.elements);
+      if (attached is TextElement) updated = attached;
+    }
     if (updated == existing) return;
     final next = state.elements
         .map((e) => e.id == updated.id ? updated : e)
@@ -2233,7 +2353,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         z = band.elements.map((element) => element.z).reduce(math.min) - 1;
       }
     }
-    final imageElement =
+    final rawImage =
         CanvasElement.fromMap(imageId, {
               ...?style?.toMap(),
               'type': 'image',
@@ -2246,6 +2366,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               'imageBase64': base64Encode(event.imageBytes),
             })
             as ImageElement;
+    final imageElement = style?.isReference == true
+        ? rawImage
+        : _attachOrDetachFrame(rawImage, state.elements) as ImageElement;
     final nextElements = List<CanvasElement>.from(state.elements)
       ..add(imageElement);
     emit(state.copyWith(elements: nextElements, activeTray: null));
@@ -2283,14 +2406,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         (newW - oldElement.width).abs() < 0.1 &&
         (newH - oldElement.height).abs() < 0.1;
     if (unchanged) return;
-    final updated = oldElement.copyWith(
+    final moved = oldElement.copyWith(
       center: Offset(newCx, newCy),
       width: newW,
       height: newH,
     );
+    final updated = _attachOrDetachFrame(moved, state.elements) as ImageElement;
+    final meta = updated.toMap()..remove('imageBase64');
+    if (updated.frameId == null) meta['frameId'] = null;
     await _updateElementMeta(
       event.elementId,
-      updated.toMap()..remove('imageBase64'),
+      meta,
       emit,
       syncConnectors: true,
     );
@@ -2434,7 +2560,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     if (!_ensureCanEdit(emit)) return;
     final imageId = _uuid.v4();
-    final imageElement = ImageElement(
+    final rawAiImage = ImageElement(
       id: imageId,
       z: _nextZIndex(),
       center: event.center,
@@ -2445,6 +2571,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       aiPrompt: ImageElement.optionalString(event.aiPrompt),
       generationId: ImageElement.optionalString(event.generationId),
     );
+    final imageElement =
+        _attachOrDetachFrame(rawAiImage, state.elements) as ImageElement;
     final nextElements =
         List<CanvasElement>.from(state.elements)..add(imageElement);
     emit(state.copyWith(elements: nextElements));
@@ -2484,6 +2612,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       hidden: oldElement.hidden,
       locked: oldElement.locked,
       opacity: oldElement.opacity,
+      frameId: oldElement.frameId,
       center: oldElement.center,
       width: size.width,
       height: size.height,
@@ -2546,7 +2675,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     if (!_ensureCanEdit(emit)) return;
     final noteId = _uuid.v4();
-    final note = fitStickyNoteHeight(
+    final rawNote = fitStickyNoteHeight(
       StickyNoteElement(
         id: noteId,
         z: _nextZIndex(),
@@ -2565,6 +2694,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         authorUid: _canvasService?.currentClientId,
       ),
     );
+    final note = _attachOrDetachFrame(rawNote, state.elements) as StickyNoteElement;
     final nextElements = List<CanvasElement>.from(state.elements)..add(note);
     emit(
       state.copyWith(
@@ -2597,6 +2727,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             center: note.center,
             hidden: note.hidden,
             opacity: note.opacity,
+            frameId: note.frameId,
             shapeType: CanvasShapeType.rectangle,
             size: math.max(note.width, note.height),
             width: note.width,
@@ -2619,6 +2750,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             center: note.center - Offset(note.width / 2, note.height / 2),
             hidden: note.hidden,
             opacity: note.opacity,
+            frameId: note.frameId,
             text: note.text,
             width: note.width,
             height: note.height,
@@ -2886,6 +3018,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       center: event.center,
       width: event.width?.clamp(120.0, 4000.0),
       height: event.height?.clamp(80.0, 4000.0),
+      cornerRadius: event.cornerRadius?.clamp(0.0, 48.0),
       clipContents: event.clipContents,
     );
     if (updated == target) return;
@@ -2930,29 +3063,143 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
   }
 
-  /// Moves only the frame. Art is never captured by geometric containment:
-  /// an element that happens to sit inside a section stays where the user put
-  /// it when the section is dragged away.
+  /// Captures all background elements (not already on a frame) whose bounds lie
+  /// within the target frame and attaches them to that frame.
+  Future<void> _onCaptureElementsInFrame(
+    CanvasCaptureElementsInFrame event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (!_ensureCanEdit(emit)) return;
+    final frame = state.elements
+        .whereType<FrameElement>()
+        .where((e) => e.id == event.frameId)
+        .firstOrNull;
+    if (frame == null || frame.locked) return;
+
+    final updatedById = <String, CanvasElement>{};
+    final writes = <_CrdtWrite>[];
+    var nextZ = _nextZIndex();
+    for (final element in state.elements) {
+      if (element is FrameElement || element is LayerElement) continue;
+      if (element.locked || element.frameId != null) continue;
+      if (!frameContainsElement(frame, element)) continue;
+      final map = Map<String, dynamic>.from(element.toMap())
+        ..['frameId'] = frame.id;
+      if (element.z <= frame.z) {
+        map['z'] = nextZ++;
+      }
+      updatedById[element.id] = CanvasElement.fromMap(element.id, map);
+      writes.add((
+        action: 'update',
+        type: _elementType(element),
+        objectId: element.id,
+        data: map,
+      ));
+    }
+    if (writes.isEmpty) {
+      emit(
+        state.copyWith(
+          infoMessage: 'No background elements inside frame bounds',
+          infoMessageUndoable: false,
+          infoMessageRedoable: false,
+        ),
+      );
+      return;
+    }
+    final next =
+        state.elements
+            .map((element) => updatedById[element.id] ?? element)
+            .toList()
+          ..sort(_compareByZ);
+    emit(state.copyWith(elements: next));
+    await _saveCrdtBatch(writes, emit);
+  }
+
+  FrameElement? _containingFrameFor(
+    CanvasElement element,
+    List<CanvasElement> elements,
+  ) {
+    if (element is FrameElement || element is LayerElement) return null;
+    // Keep the element on its current frame as long as any part of it still
+    // overlaps the frame; only detach when the whole element leaves.
+    if (element.frameId != null) {
+      for (final candidate in elements) {
+        if (candidate is FrameElement &&
+            candidate.id == element.frameId &&
+            !candidate.hidden &&
+            frameOverlapsElement(candidate, element)) {
+          return candidate;
+        }
+      }
+    }
+    for (var i = elements.length - 1; i >= 0; i--) {
+      final candidate = elements[i];
+      if (candidate is FrameElement &&
+          !candidate.hidden &&
+          _shouldAttachToFrame(candidate, element)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  /// Whether an unattached [element] was placed inside [frame] (as opposed to
+  /// merely enclosing or passing across a small frame at low zoom).
+  bool _shouldAttachToFrame(FrameElement frame, CanvasElement element) {
+    final rect = frameRect(frame);
+    final bounds = elementBounds(element);
+    if (bounds == null || !rect.overlaps(bounds)) return false;
+    if (element is StrokeElement) {
+      if (element.points.isEmpty) return false;
+      if (rect.contains(element.points.first)) return true;
+      var insideCount = 0;
+      for (final point in element.points) {
+        if (rect.contains(point)) insideCount++;
+      }
+      return insideCount * 2 >= element.points.length;
+    }
+    final intersection = rect.intersect(bounds);
+    if (intersection.width <= 0 || intersection.height <= 0) {
+      return rect.contains(bounds.center) &&
+          bounds.width <= rect.width &&
+          bounds.height <= rect.height;
+    }
+    final boundsArea = bounds.width * bounds.height;
+    if (boundsArea <= 0) return rect.contains(bounds.center);
+    return intersection.width * intersection.height * 2 >= boundsArea;
+  }
+
+  CanvasElement _attachOrDetachFrame(
+    CanvasElement element,
+    List<CanvasElement> elements,
+  ) {
+    if (element is FrameElement || element is LayerElement) return element;
+    final host = _containingFrameFor(element, elements);
+    final nextFrameId = host?.id;
+    if (nextFrameId == element.frameId) return element;
+    final map = Map<String, dynamic>.from(element.toMap());
+    if (nextFrameId == null) {
+      map.remove('frameId');
+    } else {
+      map['frameId'] = nextFrameId;
+      if (element.z <= host!.z) {
+        map['z'] = _nextZIndex();
+      }
+    }
+    return CanvasElement.fromMap(element.id, map);
+  }
+
+  /// Moves the frame together with any elements explicitly attached to it
+  /// (`frameId == frame.id`). Background elements that only overlap
+  /// geometrically stay where the user put them.
   Future<void> _moveFrame(
     FrameElement frame,
     Offset center,
     Emitter<CanvasState> emit,
   ) async {
-    if (center == frame.center) return;
-    final updatedFrame = frame.copyWith(center: center);
-    final next =
-        state.elements
-            .map((element) => element.id == frame.id ? updatedFrame : element)
-            .toList()
-          ..sort(_compareByZ);
-    emit(state.copyWith(elements: next));
-    await _saveCrdtOperation(
-      action: 'update',
-      type: 'frame',
-      objectId: frame.id,
-      data: updatedFrame.toMap(),
-      emit: emit,
-    );
+    final delta = center - frame.center;
+    if (delta == Offset.zero) return;
+    await _applySelectionDeltas({frame.id: delta}, emit);
     _announceUndoable(emit, _singleActionMessage('Moved'));
   }
 
@@ -2972,7 +3219,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     );
     final cols = event.columns.clamp(1, maxCols);
     final id = _uuid.v4();
-    final table = TableElement(
+    final rawTable = TableElement(
       id: id,
       z: _nextZIndex(),
       center: event.center,
@@ -2987,6 +3234,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       cells: TableElement.normalizeCells(const [], rows, cols),
       headerRow: event.headerRow,
     );
+    final table = _attachOrDetachFrame(rawTable, state.elements) as TableElement;
     final next = <CanvasElement>[...state.elements, table]..sort(_compareByZ);
     emit(
       state.copyWith(
@@ -3163,7 +3411,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   ) async {
     if (!_ensureCanEdit(emit)) return;
     final connectorId = _uuid.v4();
-    final connector = ConnectorElement(
+    final rawConnector = ConnectorElement(
       id: connectorId,
       z: _nextZIndex(),
       startElementId: event.startElementId,
@@ -3177,6 +3425,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       strokeWidth: event.strokeWidth,
       hasArrowhead: event.hasArrowhead,
     );
+    final connector =
+        _attachOrDetachFrame(rawConnector, state.elements) as ConnectorElement;
     final nextElements = List<CanvasElement>.from(state.elements)
       ..add(connector);
     emit(
@@ -3215,6 +3465,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       hidden: target.hidden,
       locked: target.locked,
       opacity: target.opacity,
+      frameId: target.frameId,
       startElementId: target.startElementId,
       startPoint: target.startPoint,
       startAnchor: target.startAnchor,
@@ -3293,6 +3544,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       hidden: connector.hidden,
       locked: connector.locked,
       opacity: connector.opacity,
+      frameId: connector.frameId,
       startElementId: event.isStart
           ? event.targetElementId
           : connector.startElementId,
@@ -3382,11 +3634,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   List<String> _myCommitConflicts(Set<String> ids) {
     final adapter = _crdtAdapter;
     if (adapter == null) return const [];
-    final live = adapter.materializeElements();
     final conflicts = <String>[];
     for (final id in ids) {
       final recorded = _myCommittedPayload[id];
-      final current = live[id];
+      final current = adapter.materializeElement(id);
       if (_payloadEquals(current, recorded)) continue;
       conflicts.add(id);
     }
@@ -3401,9 +3652,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   void _refreshCommitRecords(Set<String> ids) {
     final adapter = _crdtAdapter;
     if (adapter == null || ids.isEmpty) return;
-    final live = adapter.materializeElements();
     for (final id in ids) {
-      _myCommittedPayload[id] = live[id];
+      _myCommittedPayload[id] = adapter.materializeElement(id);
     }
   }
 
@@ -3437,13 +3687,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   List<String> _myRedoConflicts(Set<String> ids) {
     final adapter = _crdtAdapter;
     if (adapter == null) return const [];
-    final live = adapter.materializeElements();
     final conflicts = <String>[];
     for (final id in ids) {
+      final live = adapter.materializeElement(id);
       final target = _myRedoTarget[id] ?? _myCommittedPayload[id];
       final baseline = _myCommittedPayload[id];
-      if (_payloadEquals(live[id], baseline)) continue;
-      if (_payloadEquals(live[id], target)) continue;
+      if (_payloadEquals(live, baseline)) continue;
+      if (_payloadEquals(live, target)) continue;
       conflicts.add(id);
     }
     return conflicts;
@@ -3690,11 +3940,23 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(selectedColor: event.color));
   }
 
+  static String _brushSizeKey(String brushType) =>
+      brushType == 'eraser' ? 'eraser' : brushPresetFor(brushType).id;
+
+  static double _defaultWidthForBrushKey(String key) =>
+      key == 'eraser' ? 12.0 : brushPresetFor(key).defaultWidth;
+
   void _onUpdateStrokeWidth(
     CanvasUpdateStrokeWidth event,
     Emitter<CanvasState> emit,
   ) {
-    emit(state.copyWith(strokeWidth: event.strokeWidth));
+    final key = _brushSizeKey(state.brushType);
+    emit(
+      state.copyWith(
+        strokeWidth: event.strokeWidth,
+        brushWidths: {...state.brushWidths, key: event.strokeWidth},
+      ),
+    );
   }
 
   void _onUpdateBrushOpacity(
@@ -3708,14 +3970,23 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasUpdateBrushType event,
     Emitter<CanvasState> emit,
   ) {
+    final currentKey = _brushSizeKey(state.brushType);
+    final nextKey = _brushSizeKey(event.brushType);
+    final updatedWidths = <String, double>{
+      ...state.brushWidths,
+      currentKey: state.strokeWidth,
+    };
+    final nextWidth =
+        updatedWidths[nextKey] ?? _defaultWidthForBrushKey(nextKey);
     if (event.brushType == 'marker') {
-      // The marker preset starts at its own width and opacity; the sliders
+      // The marker preset starts at its own opacity; the sliders
       // remain free to adjust it afterwards.
       final preset = brushPresetFor(event.brushType);
       emit(
         state.copyWith(
           brushType: event.brushType,
-          strokeWidth: preset.defaultWidth,
+          strokeWidth: nextWidth,
+          brushWidths: updatedWidths,
           brushOpacity: preset.defaultOpacity,
           currentToolMode: _toolModeForBrush(event.brushType),
         ),
@@ -3725,6 +3996,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(
       state.copyWith(
         brushType: event.brushType,
+        strokeWidth: nextWidth,
+        brushWidths: updatedWidths,
         currentToolMode: _toolModeForBrush(event.brushType),
       ),
     );
@@ -3735,10 +4008,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     final preset = brushPresetFor(event.presetId);
+    final currentKey = _brushSizeKey(state.brushType);
+    final nextKey = _brushSizeKey(preset.id);
+    final updatedWidths = <String, double>{
+      ...state.brushWidths,
+      currentKey: state.strokeWidth,
+    };
+    final nextWidth = updatedWidths[nextKey] ?? preset.defaultWidth;
     emit(
       state.copyWith(
         brushType: preset.id,
-        strokeWidth: preset.defaultWidth,
+        strokeWidth: nextWidth,
+        brushWidths: updatedWidths,
         brushOpacity: preset.defaultOpacity,
         currentToolMode: _toolModeForBrush(preset.id),
       ),
@@ -3795,6 +4076,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
             : state.brushType,
       _ => state.brushType,
     };
+    var updatedWidths = state.brushWidths;
+    var nextWidth = state.strokeWidth;
+    if (nextBrushType != state.brushType) {
+      final currentKey = _brushSizeKey(state.brushType);
+      final nextKey = _brushSizeKey(nextBrushType);
+      updatedWidths = <String, double>{
+        ...state.brushWidths,
+        currentKey: state.strokeWidth,
+      };
+      nextWidth = updatedWidths[nextKey] ?? _defaultWidthForBrushKey(nextKey);
+    }
     emit(
       state.copyWith(
         currentToolMode: event.mode,
@@ -3803,6 +4095,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         shapeDrawStart: null,
         shapeDrawCurrent: null,
         brushType: nextBrushType,
+        strokeWidth: nextWidth,
+        brushWidths: updatedWidths,
         // Drawing tools start from a clean slate; Select keeps the selection.
         selectedShapeId: event.mode == CanvasToolMode.select
             ? state.selectedShapeId
@@ -3820,6 +4114,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Emitter<CanvasState> emit,
   ) {
     if (!_ensureCanEdit(emit)) return;
+    if (state.currentToolMode == CanvasToolMode.frame) {
+      _activeShapeDrawingId = null;
+      emit(
+        state.copyWith(
+          isDrawingShape: true,
+          shapeDrawStart: event.point,
+          shapeDrawCurrent: event.point,
+        ),
+      );
+      return;
+    }
     final isArrow =
         state.currentToolMode == CanvasToolMode.arrow ||
         (state.currentToolMode == CanvasToolMode.shape &&
@@ -3902,6 +4207,33 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (!state.isDrawingShape) return;
     final start = state.shapeDrawStart;
     final current = state.shapeDrawCurrent;
+    if (state.currentToolMode == CanvasToolMode.frame) {
+      if (start == null || current == null) return;
+      final dx = (current.dx - start.dx).abs();
+      final dy = (current.dy - start.dy).abs();
+      if (dx < 10 && dy < 10) {
+        await _onCancelShapeDraw(CanvasCancelShapeDraw(), emit);
+        return;
+      }
+      final rect = Rect.fromPoints(start, current);
+      emit(
+        state.copyWith(
+          currentToolMode: CanvasToolMode.select,
+          isDrawingShape: false,
+          shapeDrawStart: null,
+          shapeDrawCurrent: null,
+        ),
+      );
+      await _onAddFrame(
+        CanvasAddFrame(
+          center: rect.center,
+          width: rect.width,
+          height: rect.height,
+        ),
+        emit,
+      );
+      return;
+    }
     final shapeType =
         state.pendingShapeType ??
         (state.currentToolMode == CanvasToolMode.arrow
@@ -3995,6 +4327,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         ids.add(element.id);
       }
     }
+    final selectedFrameIds = {
+      for (final element in state.elements)
+        if (element is FrameElement && ids.contains(element.id)) element.id,
+    };
+    if (selectedFrameIds.isNotEmpty) {
+      ids.removeWhere((id) {
+        final el = _findElement(id);
+        return el != null &&
+            el.frameId != null &&
+            selectedFrameIds.contains(el.frameId);
+      });
+    }
     _emitSelection(ids, emit);
   }
 
@@ -4061,6 +4405,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           path.contains(elementBox.bottomLeft) &&
           path.contains(elementBox.bottomRight);
       if (centreInside || fullyInside) ids.add(element.id);
+    }
+    final selectedFrameIds = {
+      for (final element in state.elements)
+        if (element is FrameElement && ids.contains(element.id)) element.id,
+    };
+    if (selectedFrameIds.isNotEmpty) {
+      ids.removeWhere((id) {
+        final el = _findElement(id);
+        return el != null &&
+            el.frameId != null &&
+            selectedFrameIds.contains(el.frameId);
+      });
     }
     _emitSelection(ids, emit);
   }
@@ -5206,17 +5562,49 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     Map<String, Offset> deltas,
     Emitter<CanvasState> emit,
   ) async {
+    final effectiveDeltas = Map<String, Offset>.from(deltas);
+    final movedFrameIds = <String>{};
+    for (final element in state.elements) {
+      if (element is FrameElement &&
+          !element.locked &&
+          effectiveDeltas.containsKey(element.id)) {
+        movedFrameIds.add(element.id);
+        final frameDelta = effectiveDeltas[element.id]!;
+        if (frameDelta == Offset.zero) continue;
+        for (final child in state.elements) {
+          if (!child.locked &&
+              hostFrameId(child, state.elements) == element.id) {
+            effectiveDeltas.putIfAbsent(child.id, () => frameDelta);
+          }
+        }
+      }
+    }
+
     final updatedById = <String, CanvasElement>{};
     final payloads = <String, Map<String, dynamic>>{};
     final types = <String, String>{};
     for (final element in state.elements) {
       if (element.locked) continue;
-      final delta = deltas[element.id];
+      final delta = effectiveDeltas[element.id];
       if (delta == null || delta == Offset.zero) continue;
       final data = _translatedPayload(element, delta);
-      updatedById[element.id] = CanvasElement.fromMap(element.id, data);
-      payloads[element.id] = data;
-      types[element.id] = _elementType(element);
+      var moved = CanvasElement.fromMap(element.id, data);
+      final host = hostFrameId(element, state.elements);
+      if (host != null && movedFrameIds.contains(host)) {
+        // Travels with its frame: keep (and persist) the membership.
+        if (moved.frameId != host) {
+          moved = CanvasElement.fromMap(element.id, {
+            ...moved.toMap(),
+            'frameId': host,
+          });
+        }
+      } else {
+        moved = _attachOrDetachFrame(moved, state.elements);
+      }
+      final finalData = moved.toMap();
+      updatedById[element.id] = moved;
+      payloads[element.id] = finalData;
+      types[element.id] = _elementType(moved);
     }
     if (updatedById.isEmpty) return;
     final elementById = <String, CanvasElement>{
@@ -5316,9 +5704,40 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     if (shape is TableElement) {
       if (shape.center == event.center) return;
+      final moved = TableElement(
+        id: shape.id,
+        z: shape.z,
+        hidden: shape.hidden,
+        locked: shape.locked,
+        opacity: shape.opacity,
+        frameId: shape.frameId,
+        center: event.center,
+        width: shape.width,
+        height: shape.height,
+        rows: shape.rows,
+        columns: shape.columns,
+        cells: shape.cells,
+        headerRow: shape.headerRow,
+        borderColor: shape.borderColor,
+        borderWidth: shape.borderWidth,
+        cellPadding: shape.cellPadding,
+        fontSize: shape.fontSize,
+        textColor: shape.textColor,
+        backgroundColor: shape.backgroundColor,
+        headerBackgroundColor: shape.headerBackgroundColor,
+        columnFractions: shape.columnFractions,
+        rowFractions: shape.rowFractions,
+        rotation: shape.rotation,
+      );
+      final updated = _attachOrDetachFrame(moved, state.elements);
       await _updateElementMeta(
         shape.id,
-        {'cx': event.center.dx, 'cy': event.center.dy},
+        {
+          'cx': event.center.dx,
+          'cy': event.center.dy,
+          'frameId': updated.frameId,
+          if (updated.z != shape.z) 'z': updated.z,
+        },
         emit,
         syncConnectors: true,
       );
@@ -5342,12 +5761,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       );
       final delta = event.center - currentCenter;
       if (delta == Offset.zero) return;
-      final updated = ConnectorElement(
+      final moved = ConnectorElement(
         id: shape.id,
         z: shape.z,
         hidden: shape.hidden,
         locked: shape.locked,
         opacity: shape.opacity,
+        frameId: shape.frameId,
         startElementId: shape.startElementId,
         startPoint: shape.startElementId == null
             ? shape.startPoint + delta
@@ -5363,6 +5783,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         strokeWidth: shape.strokeWidth,
         hasArrowhead: shape.hasArrowhead,
       );
+      final updated = _attachOrDetachFrame(moved, state.elements);
       final next = state.elements
           .map((e) => e.id == updated.id ? updated : e)
           .toList();
@@ -5384,6 +5805,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final data = Map<String, dynamic>.from(_committedElementPayload(shape.id) ?? shape.toMap())
       ..['cx'] = event.center.dx
       ..['cy'] = event.center.dy;
+    final moved = CanvasElement.fromMap(shape.id, data);
+    final host = _containingFrameFor(moved, state.elements);
+    if (host == null) {
+      data.remove('frameId');
+    } else {
+      data['frameId'] = host.id;
+      if (moved.z <= host.z) {
+        data['z'] = _nextZIndex();
+      }
+    }
     final changed = await _updateShape(shape.id, data, emit);
     if (changed) {
       _announceUndoable(emit, _singleActionMessage('Moved'));
@@ -5489,8 +5920,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     final clampedSize = event.size.clamp(24.0, 320.0);
     if (shape is TextElement) {
+      // Text has no `size`: the resize handle sets its box width, and the
+      // height follows from how the text wraps at that width.
+      final width = (event.width > 0 ? event.width : clampedSize)
+          .clamp(40.0, 4000.0)
+          .toDouble();
       await _onUpdateText(
-        CanvasUpdateText(elementId: shape.id, width: clampedSize),
+        CanvasUpdateText(elementId: shape.id, width: width),
         emit,
         infoMessage: _singleActionMessage('Resized'),
       );
@@ -5821,7 +6257,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (element is! StrokeElement || element.locked) return;
     if (event.delta == Offset.zero) return;
     final newPoints = element.points.map((p) => p + event.delta).toList();
-    final updated = element.copyWith(points: newPoints);
+    final updated = _attachOrDetachFrame(
+      element.copyWith(points: newPoints),
+      state.elements,
+    );
     final next = state.elements
         .map((e) => e.id == element.id ? updated : e)
         .toList();
@@ -6178,6 +6617,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         hidden: el.hidden,
         locked: el.locked,
         opacity: el.opacity,
+        frameId: el.frameId,
         startElementId: el.startElementId,
         startPoint: newStart,
         startAnchor: el.startAnchor,
@@ -6365,9 +6805,12 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final nextText = (data['text'] as String?) ?? currentText;
     final currentZ = existing.z;
     final nextZ = (data['z'] as num?)?.toInt() ?? currentZ;
+    final currentFrameId = existing.frameId;
+    final nextFrameId = data['frameId'] as String?;
     final unchanged = existing is ShapeElement
         ? _shapeFingerprint(shapeId, existing.toMap()) ==
-              _shapeFingerprint(shapeId, data)
+                  _shapeFingerprint(shapeId, data) &&
+              nextFrameId == currentFrameId
         : (nextCx - currentCx).abs() < 0.01 &&
               (nextCy - currentCy).abs() < 0.01 &&
               (nextSize - currentSize).abs() < 0.01 &&
@@ -6378,9 +6821,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
               nextColor == currentColor &&
               nextFilled == currentFilled &&
               nextText == currentText &&
-              nextZ == currentZ;
+              nextZ == currentZ &&
+              nextFrameId == currentFrameId;
     if (unchanged) return false;
-    final fingerprint = _shapeFingerprint(shapeId, data);
+    final fingerprint = '${_shapeFingerprint(shapeId, data)}|frame:$nextFrameId';
     if (_lastShapePayloadFingerprint[shapeId] == fingerprint) return false;
     _lastShapePayloadFingerprint[shapeId] = fingerprint;
     final updatedTarget = CanvasElement.fromMap(shapeId, data);
@@ -6495,6 +6939,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         40.0,
         480.0,
       );
+    } else if (shape is TextElement) {
+      // Preview the wider/narrower text box; the receiver measures the height
+      // from the wrapping width, so a stale height would draw the wrong box.
+      data['width'] = (event.width > 0 ? event.width : event.size)
+          .clamp(40.0, 4000.0)
+          .toDouble();
+      data.remove('height');
     } else if (shape is ShapeElement && (event.width > 0 || event.height > 0)) {
       final w = event.width.clamp(1.0, 4000.0);
       final h = shape.isLinear ? 0.0 : event.height.clamp(1.0, 4000.0);
@@ -6856,6 +7307,50 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasBoardMembersUpdated event,
     Emitter<CanvasState> emit,
   ) {
+    // Keep the current user's effective role in sync with live member changes
+    // (e.g. when the owner promotes/demotes them from the Members tray)
+    // without waiting for a separate board metadata snapshot.
+    String? nextRole;
+    final uid = state.currentUserId;
+    if (uid.isNotEmpty && _currentUserRole != Board.roleOwner) {
+      for (final member in event.members) {
+        if (member.uid == uid) {
+          nextRole =
+              (member.role == Board.roleEditor ||
+                  member.role == Board.roleOwner)
+              ? member.role
+              : Board.roleViewer;
+          break;
+        }
+      }
+    }
+
+    if (nextRole != null && nextRole != _currentUserRole) {
+      final wasOwner = _currentUserRole == Board.roleOwner;
+      _currentUserRole = nextRole;
+      _syncHistorySubscriptions();
+      if (!wasOwner && _currentUserRole == Board.roleOwner) {
+        _ensureHistoryFeedSubscription();
+        unawaited(_refreshLiveTail());
+      }
+      if (nextRole == Board.roleViewer && state.currentStroke.isNotEmpty) {
+        _activeStrokeId = null;
+        _strokeStabilizer = null;
+        _strokeClock.stop();
+      }
+      emit(
+        state.copyWith(
+          boardMembers: event.members,
+          currentUserRole: nextRole,
+          currentStroke: nextRole == Board.roleViewer ? const [] : null,
+          currentStrokePressures:
+              nextRole == Board.roleViewer ? const [] : null,
+          currentStrokeTilts: nextRole == Board.roleViewer ? const [] : null,
+        ),
+      );
+      return;
+    }
+
     emit(state.copyWith(boardMembers: event.members));
   }
 
@@ -6912,11 +7407,47 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     CanvasSaveBoardPreviewRequested event,
     Emitter<CanvasState> emit,
   ) async {
-    final canvasService = _canvasService;
-    if (canvasService == null || _boardId.isEmpty) return;
     try {
+      final canvasService = _canvasService;
+      if (canvasService == null || _boardId.isEmpty) return;
       await canvasService.saveBoardPreview(_boardId, event.pngBytes);
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (event.completer != null && !event.completer!.isCompleted) {
+        event.completer!.complete();
+      }
+    }
+  }
+
+  Future<void> _onSetBoardPausedRequested(
+    CanvasSetBoardPausedRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    if (_currentUserRole != Board.roleOwner) {
+      emit(state.copyWith(error: 'Only the board owner can pause or resume this board.'));
+      return;
+    }
+    final boardService = _boardService;
+    if (boardService == null || _boardId.isEmpty) return;
+
+    try {
+      await boardService.setBoardPaused(_boardId, isPaused: event.isPaused);
+      emit(
+        state.copyWith(
+          isPaused: event.isPaused,
+          currentStroke: event.isPaused ? const [] : null,
+          infoMessage: event.isPaused
+              ? 'Board paused. No one can edit until you resume it.'
+              : 'Board resumed. Editing is enabled.',
+        ),
+      );
+    } catch (_) {
+      emit(
+        state.copyWith(
+          error: 'Failed to update board pause state. Please try again.',
+        ),
+      );
+    }
   }
 
   int _activeExportCount = 0;
@@ -7073,6 +7604,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           return 'Board history is temporarily unavailable. Please try again.';
         case 'plan_expired':
           return 'That revert expired. Please try again.';
+        case 'pending_exists':
+          return 'You already have a pending undo request on this board. '
+              'The owner has to approve or deny it first.';
+        case 'board_missing':
+          return 'This board no longer exists.';
+        case 'invalid_request':
+          return error.message.isNotEmpty && error.message != error.code
+              ? error.message
+              : 'That undo request was not accepted. Please try again.';
+        case 'submit_unavailable':
+          return 'Could not reach the undo request service. Please retry.';
         case 'socket_unavailable':
         case 'unauthenticated':
           return 'Could not reach the history service. Please retry.';
@@ -7091,15 +7633,50 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final service = _historyService;
     if (service == null || _boardId.isEmpty || isClosed) return;
     if (_currentUserRole == Board.roleOwner) {
+      _myUndoRequestsSub?.cancel();
+      _myUndoRequestsSub = null;
       _undoRequestsSub ??= service.watchUndoRequests(_boardId).listen(
         (requests) {
           if (!isClosed) add(CanvasUndoRequestsUpdated(requests));
         },
-        onError: (_) {},
+        onError: (Object error, StackTrace stackTrace) {
+          // A listener that errored (rules/network hiccup while the board doc
+          // was still loading) never delivers again, and `??=` would keep it
+          // forever. Drop it so the next board update or history-screen open
+          // subscribes afresh — otherwise undo requests silently never reach
+          // the owner.
+          debugPrint(
+            'Undo request feed failed for board $_boardId: $error',
+          );
+          unawaited(_undoRequestsSub?.cancel());
+          _undoRequestsSub = null;
+        },
       );
     } else {
       _undoRequestsSub?.cancel();
       _undoRequestsSub = null;
+      if (_currentUserRole == Board.roleEditor &&
+          state.currentUserId.isNotEmpty) {
+        // Members see their own pending request so the canvas can say it is
+        // waiting on the owner instead of letting them send it twice.
+        _myUndoRequestsSub ??= service
+            .watchMyUndoRequests(_boardId, state.currentUserId)
+            .listen(
+              (requests) {
+                if (!isClosed) add(CanvasMyUndoRequestsUpdated(requests));
+              },
+              onError: (Object error, StackTrace stackTrace) {
+                debugPrint(
+                  'My undo request feed failed for board $_boardId: $error',
+                );
+                unawaited(_myUndoRequestsSub?.cancel());
+                _myUndoRequestsSub = null;
+              },
+            );
+      } else {
+        _myUndoRequestsSub?.cancel();
+        _myUndoRequestsSub = null;
+      }
     }
   }
 
@@ -7552,6 +8129,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       isSelectingUndoRequestArea: enable,
       isSelectingHistoryArea: false,
       activeTray: null,
+      // Picking a new area starts from a clean canvas selection: whatever was
+      // selected before (the previous area's elements) must not stay marked.
+      selectedIds: enable ? const <String>{} : state.selectedIds,
       selectedShapeId: null,
     ));
   }
@@ -7572,6 +8152,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       isSelectingHistoryArea: enable,
       isSelectingUndoRequestArea: false,
       activeTray: null,
+      // A new area history selection replaces the previous one, including the
+      // elements that were selected on the canvas.
+      selectedIds: enable ? const <String>{} : state.selectedIds,
       selectedShapeId: null,
     ));
   }
@@ -7815,6 +8398,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     final draft = state.undoRequestDraft;
     final scrub = state.historyScrub;
     if (service == null || draft == null) return;
+    // One pending request per board: submitting again would be rejected by the
+    // server, so refuse locally and point the member at the one waiting.
+    if (state.myPendingUndoRequest != null) {
+      emit(state.copyWith(
+        isHistoryLoading: false,
+        error:
+            'You already have an undo request waiting for the owner. '
+            'They have to approve or deny it first.',
+      ));
+      return;
+    }
     final reason = event.reason.trim();
     if (reason.isEmpty) {
       emit(state.copyWith(error: 'A reason is required.'));
@@ -8186,6 +8780,42 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
   }
 
+  /// Applies one update during a history replay.
+  ///
+  /// An archived update can be unreadable — a partial or corrupt CRDT payload
+  /// recorded by an older client — and `applyUpdate` answers with a bare
+  /// `RangeError`. Letting it escape aborted the whole replay (the member's
+  /// undo-request preview died with "RangeError (length): …"), so a bad delta
+  /// is skipped and the replay continues from the last state that did apply.
+  void _applyHistoryUpdate(
+    CanvasDocAdapter adapter,
+    Uint8List bytes, {
+    required String label,
+  }) {
+    if (bytes.isEmpty) return;
+    try {
+      adapter.applyUpdate(bytes, origin: 'remote');
+    } catch (error, stackTrace) {
+      debugPrint('Skipped unreadable history $label: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
+  /// Materializes a replayed document, falling back to [fallback] when the
+  /// document is left unreadable by an update that could not be applied.
+  List<CanvasElement> _materializeHistoryElements(
+    CanvasDocAdapter adapter,
+    List<CanvasElement> fallback,
+  ) {
+    try {
+      return _rebuildElementsFromCrdtState(adapter.materializeElements());
+    } catch (error, stackTrace) {
+      debugPrint('Unreadable history replay state: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      return fallback;
+    }
+  }
+
   /// Aligns `timeline.steps` 1:1 with `timeline.ops` by version, falling back
   /// to positional index or an empty delta when the server omitted a step.
   List<Uint8List> _alignedStepDeltas(UserTimeline timeline) {
@@ -8205,14 +8835,18 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (scrub.stops.isEmpty) return scrub;
     final stepElements = <List<CanvasElement>>[];
     final adapter = await CanvasDocAdapterFactory.create();
-    if (scrub.baseStateBytes.isNotEmpty) {
-      adapter.applyUpdate(scrub.baseStateBytes, origin: 'remote');
-    }
+    _applyHistoryUpdate(adapter, scrub.baseStateBytes, label: 'base state');
     for (var i = 0; i < scrub.stops.length; i++) {
-      final delta = scrub.deltaAt(i);
-      if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
+      _applyHistoryUpdate(
+        adapter,
+        scrub.deltaAt(i),
+        label: 'step ${i + 1} of the replay',
+      );
       stepElements.add(
-        _rebuildElementsFromCrdtState(adapter.materializeElements()),
+        _materializeHistoryElements(
+          adapter,
+          stepElements.isEmpty ? const <CanvasElement>[] : stepElements.last,
+        ),
       );
     }
     final reference =
@@ -8349,18 +8983,22 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
   }) async {
     final enrichedScrub = await _computeScrubWithDiffs(scrub);
     final adapter = await CanvasDocAdapterFactory.create();
-    if (enrichedScrub.baseStateBytes.isNotEmpty) {
-      adapter.applyUpdate(enrichedScrub.baseStateBytes, origin: 'remote');
-    }
+    _applyHistoryUpdate(
+      adapter,
+      enrichedScrub.baseStateBytes,
+      label: 'base state',
+    );
     final index =
         (startIndex ?? enrichedScrub.lastIndex).clamp(0, enrichedScrub.lastIndex);
     for (var i = 0; i <= index; i++) {
-      final delta = enrichedScrub.deltaAt(i);
-      if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
+      _applyHistoryUpdate(
+        adapter,
+        enrichedScrub.deltaAt(i),
+        label: 'step ${i + 1} of the preview',
+      );
     }
     _historyScrubAdapter = adapter;
-    final rawPreview =
-        _rebuildElementsFromCrdtState(adapter.materializeElements());
+    final rawPreview = _materializeHistoryElements(adapter, state.elements);
     final previewElements =
         _composeScopedScrubPreviewElements(enrichedScrub, rawPreview);
     final stepDiff = enrichedScrub.diffAt(index);
@@ -8403,24 +9041,30 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     if (index == state.historyScrubIndex) return;
     if (index > state.historyScrubIndex) {
       for (var i = state.historyScrubIndex + 1; i <= index; i++) {
-        final delta = scrub.deltaAt(i);
-        if (delta.isNotEmpty) adapter.applyUpdate(delta, origin: 'remote');
+        _applyHistoryUpdate(
+          adapter,
+          scrub.deltaAt(i),
+          label: 'step ${i + 1} of the preview',
+        );
       }
     } else {
       final rebuilt = await CanvasDocAdapterFactory.create();
-      if (scrub.baseStateBytes.isNotEmpty) {
-        rebuilt.applyUpdate(scrub.baseStateBytes, origin: 'remote');
-      }
+      _applyHistoryUpdate(rebuilt, scrub.baseStateBytes, label: 'base state');
       for (var i = 0; i <= index; i++) {
-        final delta = scrub.deltaAt(i);
-        if (delta.isNotEmpty) rebuilt.applyUpdate(delta, origin: 'remote');
+        _applyHistoryUpdate(
+          rebuilt,
+          scrub.deltaAt(i),
+          label: 'step ${i + 1} of the preview',
+        );
       }
       _historyScrubAdapter = rebuilt;
     }
     final active = _historyScrubAdapter;
     if (active == null || isClosed) return;
-    final rawPreview =
-        _rebuildElementsFromCrdtState(active.materializeElements());
+    final rawPreview = _materializeHistoryElements(
+      active,
+      state.historyPreviewElements,
+    );
     final previewElements =
         _composeScopedScrubPreviewElements(scrub, rawPreview);
     emit(state.copyWith(
@@ -8739,6 +9383,14 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(undoRequests: event.requests));
   }
 
+  void _onMyUndoRequestsUpdated(
+    CanvasMyUndoRequestsUpdated event,
+    Emitter<CanvasState> emit,
+  ) {
+    if (_currentUserRole == Board.roleOwner) return;
+    emit(state.copyWith(myUndoRequests: event.requests));
+  }
+
   // ──────────────────────────────────────────────
   // Permission checks
   // ──────────────────────────────────────────────
@@ -8762,7 +9414,16 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     }
     if (state.isArchived) {
       if (clearStroke && state.currentStroke.isNotEmpty) {
-        emit(state.copyWith(currentStroke: const []));
+        _activeStrokeId = null;
+        _strokeStabilizer = null;
+        _strokeClock.stop();
+        emit(
+          state.copyWith(
+            currentStroke: const [],
+            currentStrokePressures: const [],
+            currentStrokeTilts: const [],
+          ),
+        );
       }
       final now = DateTime.now();
       final shouldShowWarning = _lastArchivedWarningAt == null ||
@@ -8774,6 +9435,33 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           error: _currentUserRole == Board.roleOwner
               ? 'This board is archived. Unarchive it from Settings to edit.'
               : 'This board was archived by the owner. Edits are disabled.',
+        ));
+      }
+      return false;
+    }
+    if (state.isPaused) {
+      if (clearStroke && state.currentStroke.isNotEmpty) {
+        _activeStrokeId = null;
+        _strokeStabilizer = null;
+        _strokeClock.stop();
+        emit(
+          state.copyWith(
+            currentStroke: const [],
+            currentStrokePressures: const [],
+            currentStrokeTilts: const [],
+          ),
+        );
+      }
+      final now = DateTime.now();
+      final shouldShowWarning = _lastPausedWarningAt == null ||
+          now.difference(_lastPausedWarningAt!).inMilliseconds > 1200;
+      if (shouldShowWarning) {
+        _lastPausedWarningAt = now;
+        emit(state.copyWith(error: null));
+        emit(state.copyWith(
+          error: _currentUserRole == Board.roleOwner
+              ? 'This board is paused. Resume it to continue editing.'
+              : 'This board is paused by the owner. Edits are disabled.',
         ));
       }
       return false;
@@ -8822,6 +9510,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _voiceParticipantsSub?.cancel();
     _voiceCallStatusSub?.cancel();
     _voiceMuteStatusSub?.cancel();
+    _voiceSpeakerStatusSub?.cancel();
 
     final commentsService = _boardCommentsService;
     if (commentsService != null) {
@@ -8858,6 +9547,11 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       }, onError: (_) {});
       _voiceMuteStatusSub = voiceService.watchIsMuted().listen((isMuted) {
         if (!isClosed) add(CanvasVoiceMuteStatusChanged(isMuted));
+      }, onError: (_) {});
+      _voiceSpeakerStatusSub = voiceService.watchIsSpeakerOn().listen((
+        isSpeakerOn,
+      ) {
+        if (!isClosed) add(CanvasVoiceSpeakerStatusChanged(isSpeakerOn));
       }, onError: (_) {});
       // Presence is separate from joining: keep the board observing the voice
       // room so a call started by another member is visible immediately.
@@ -8922,6 +9616,13 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     emit(state.copyWith(isMicMuted: event.isMuted));
   }
 
+  void _onCanvasVoiceSpeakerStatusChanged(
+    CanvasVoiceSpeakerStatusChanged event,
+    Emitter<CanvasState> emit,
+  ) {
+    emit(state.copyWith(isSpeakerOn: event.isSpeakerOn));
+  }
+
   void _onCanvasToggleChatDrawer(
     CanvasToggleChatDrawer event,
     Emitter<CanvasState> emit,
@@ -8975,6 +9676,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         text: event.text,
         canvasPosition: event.canvasPosition,
         boardTitle: state.boardTitle,
+        mentions: event.mentions,
       );
       emit(state.copyWith(isPlacingComment: false));
     } catch (e) {
@@ -8998,6 +9700,7 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
         commentId: event.commentId,
         text: event.text,
         boardTitle: state.boardTitle,
+        mentions: event.mentions,
       );
     } catch (e) {
       emit(
@@ -9108,6 +9811,17 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     } catch (_) {}
   }
 
+  Future<void> _onCanvasToggleVoiceSpeakerRequested(
+    CanvasToggleVoiceSpeakerRequested event,
+    Emitter<CanvasState> emit,
+  ) async {
+    final voiceService = _voiceService;
+    if (voiceService == null || _boardId.isEmpty) return;
+    try {
+      await voiceService.toggleSpeaker();
+    } catch (_) {}
+  }
+
   Future<void> _onCanvasVoiceSpeakingChanged(
     CanvasVoiceSpeakingChanged event,
     Emitter<CanvasState> emit,
@@ -9144,6 +9858,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _voiceCallStatusSub = null;
     await _voiceMuteStatusSub?.cancel();
     _voiceMuteStatusSub = null;
+    await _voiceSpeakerStatusSub?.cancel();
+    _voiceSpeakerStatusSub = null;
     if (_boardId.isNotEmpty && state.isVoiceCallActive) {
       _voiceService?.leaveCall(_boardId);
     }
@@ -9160,6 +9876,8 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
     _historyFeedSub = null;
     await _undoRequestsSub?.cancel();
     _undoRequestsSub = null;
+    await _myUndoRequestsSub?.cancel();
+    _myUndoRequestsSub = null;
     await _previewUpdatesSub?.cancel();
     _previewUpdatesSub = null;
     await _canvasService?.stopCrdtRemoteSync(_boardId);

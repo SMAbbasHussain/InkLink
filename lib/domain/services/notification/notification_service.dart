@@ -9,8 +9,8 @@ class NotificationServiceImpl implements NotificationService {
   final NotificationRepository _notificationRepository;
 
   NotificationServiceImpl({
-    required NotificationRepository notificationRepository,
-  }) : _notificationRepository = notificationRepository;
+    required this._notificationRepository,
+  });
 
   @override
   Stream<List<Map<String, dynamic>>> watchNotifications() {

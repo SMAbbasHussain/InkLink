@@ -21,10 +21,9 @@ class ThemeBloc extends Bloc<ThemeEvent, ThemeMode> {
   final ThemeService _themeService;
 
   ThemeBloc({
-    required ThemeService themeService,
+    required this._themeService,
     required ThemeMode initialMode,
-  }) : _themeService = themeService,
-       super(initialMode) {
+  }) : super(initialMode) {
     // 1. Load theme from storage on app start
     on<LoadTheme>((event, emit) async {
       final mode = await _themeService.getThemeMode();

@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../domain/models/chat/chat_conversation_model.dart';
 import '../../../../domain/services/chat/chat_service.dart';
 import '../../../../domain/services/presence/presence_service.dart';
+import '../../../../domain/services/profile/profile_service.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../auth/bloc/auth_state.dart';
 import '../bloc/chat_thread_bloc.dart';
@@ -20,6 +21,10 @@ Route<void> buildChatThreadRoute(
   try {
     presenceService = context.read<PresenceService>();
   } catch (_) {}
+  ProfileService? profileService;
+  try {
+    profileService = context.read<ProfileService>();
+  } catch (_) {}
 
   return MaterialPageRoute(
     builder: (_) => BlocProvider(
@@ -27,6 +32,7 @@ Route<void> buildChatThreadRoute(
         chatService: context.read<ChatService>(),
         currentUid: currentUid,
         presenceService: presenceService,
+        profileService: profileService,
       )..add(LoadChatThread(conversation.id)),
       child: ChatThreadScreen(conversation: conversation),
     ),

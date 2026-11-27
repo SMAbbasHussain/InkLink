@@ -162,11 +162,9 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
   final ProfileService? _profileService;
 
   SettingsBloc({
-    required SettingsService settingsService,
-    ProfileService? profileService,
-  })  : _settingsService = settingsService,
-        _profileService = profileService,
-        super(const SettingsState()) {
+    required this._settingsService,
+    this._profileService,
+  })  : super(const SettingsState()) {
     on<SettingsLoadRequested>(_onLoadRequested);
     on<SettingsTrayTipsToggled>(_onTrayTipsToggled);
     on<SettingsClearCacheRequested>(_onClearCacheRequested);

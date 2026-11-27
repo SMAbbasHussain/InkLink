@@ -7,17 +7,25 @@ import '../services/firestore_service.dart';
 class BatchFetchResult {
   final Map<String, Map<String, dynamic>> docsById;
   final Set<String> missingIds;
+  final Set<String> deniedIds;
 
-  const BatchFetchResult({required this.docsById, required this.missingIds});
+  const BatchFetchResult({
+    required this.docsById,
+    required this.missingIds,
+    this.deniedIds = const <String>{},
+  });
 }
 
 class FirestoreBatchFetcher {
   final FirestoreService _firestoreService;
 
-  FirestoreBatchFetcher({required FirestoreService firestoreService})
-    : _firestoreService = firestoreService;
+  FirestoreBatchFetcher({required this._firestoreService});
 
-  static const int chunkSize = 30;
+  /// Kept at 10 (rather than Firestore's 30-element `whereIn` syntax limit) so
+  /// security rules that perform a `get()` per candidate document (e.g.
+  /// membership checks on `/boards` and `/workspaces`) stay within Firestore's
+  /// 10-`get()` per-query limit.
+  static const int chunkSize = 10;
 
   Future<BatchFetchResult> fetchDocumentsByIdSet({
     required String collectionPath,
@@ -26,6 +34,7 @@ class FirestoreBatchFetcher {
   }) async {
     final docsById = <String, Map<String, dynamic>>{};
     final missingIds = <String>{};
+    final deniedIds = <String>{};
     final uniqueIds = ids.toSet().toList(growable: false);
 
     for (var i = 0; i < uniqueIds.length; i += chunkSize) {
@@ -51,22 +60,14 @@ class FirestoreBatchFetcher {
               .toList(growable: false);
 
           for (final id in missingChunkIds) {
-            try {
-              final doc = await _firestoreService
-                  .collection(collectionPath)
-                  .doc(id)
-                  .get();
-              if (doc.exists) {
-                docsById[id] = doc.data() ?? const <String, dynamic>{};
-              } else {
-                missingIds.add(id);
-              }
-            } catch (e) {
-              developer.log(
-                'BatchFetch: individual get for $id failed: $e',
-                name: 'FirestoreBatchFetcher',
-              );
-            }
+            await _fetchSingleDoc(
+              collectionPath: collectionPath,
+              id: id,
+              trackMissingIds: trackMissingIds,
+              docsById: docsById,
+              missingIds: missingIds,
+              deniedIds: deniedIds,
+            );
           }
         }
       } catch (e) {
@@ -75,26 +76,53 @@ class FirestoreBatchFetcher {
           name: 'FirestoreBatchFetcher',
         );
         for (final id in chunk) {
-          try {
-            final doc = await _firestoreService
-                .collection(collectionPath)
-                .doc(id)
-                .get();
-            if (doc.exists) {
-              docsById[id] = doc.data() ?? const <String, dynamic>{};
-            } else if (trackMissingIds) {
-              missingIds.add(id);
-            }
-          } catch (e) {
-            developer.log(
-              'BatchFetch: individual get for $id failed (fallback): $e',
-              name: 'FirestoreBatchFetcher',
-            );
-          }
+          await _fetchSingleDoc(
+            collectionPath: collectionPath,
+            id: id,
+            trackMissingIds: trackMissingIds,
+            docsById: docsById,
+            missingIds: missingIds,
+            deniedIds: deniedIds,
+          );
         }
       }
     }
 
-    return BatchFetchResult(docsById: docsById, missingIds: missingIds);
+    return BatchFetchResult(
+      docsById: docsById,
+      missingIds: missingIds,
+      deniedIds: deniedIds,
+    );
+  }
+
+  Future<void> _fetchSingleDoc({
+    required String collectionPath,
+    required String id,
+    required bool trackMissingIds,
+    required Map<String, Map<String, dynamic>> docsById,
+    required Set<String> missingIds,
+    required Set<String> deniedIds,
+  }) async {
+    try {
+      final doc = await _firestoreService.collection(collectionPath).doc(id).get();
+      if (doc.exists) {
+        docsById[id] = doc.data() ?? const <String, dynamic>{};
+      } else if (trackMissingIds && !doc.metadata.isFromCache) {
+        missingIds.add(id);
+      }
+    } on FirebaseException catch (e) {
+      if (trackMissingIds && e.code == 'permission-denied') {
+        deniedIds.add(id);
+      }
+      developer.log(
+        'BatchFetch: individual get for $id failed (${e.code}): $e',
+        name: 'FirestoreBatchFetcher',
+      );
+    } catch (e) {
+      developer.log(
+        'BatchFetch: individual get for $id failed: $e',
+        name: 'FirestoreBatchFetcher',
+      );
+    }
   }
 }

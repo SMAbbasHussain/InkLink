@@ -38,6 +38,7 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
   late final TextEditingController _inviteSearchController;
   bool _isSaving = false;
   bool _showInviteComposer = false;
+  final Set<String> _localInvitingKeys = <String>{};
 
   @override
   void initState() {
@@ -81,11 +82,45 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
     );
   }
 
-  Future<void> _inviteMember(String targetUid) async {
-    context.read<WorkspaceBloc>().add(
+  String _normalizeInviteKey(String identifier) {
+    final trimmed = identifier.trim();
+    return trimmed.contains('@') ? trimmed.toLowerCase() : trimmed;
+  }
+
+  Future<void> _inviteMember(String targetIdentifier) async {
+    final trimmed = targetIdentifier.trim();
+    if (trimmed.isEmpty) return;
+    final key = _normalizeInviteKey(trimmed);
+    if (_localInvitingKeys.contains(key)) return;
+
+    final bloc = context.read<WorkspaceBloc>();
+    final state = bloc.state;
+    if (state is WorkspaceLoaded) {
+      final pending =
+          state.pendingInviteUserIdsByWorkspace[widget.workspaceId] ??
+          const <String>{};
+      if (state.invitingUserIds.contains(trimmed) ||
+          state.invitingUserIds.contains(key) ||
+          pending.contains(trimmed) ||
+          pending.contains(key)) {
+        return;
+      }
+    }
+
+    setState(() {
+      _localInvitingKeys.add(key);
+    });
+
+    bloc.add(
       InviteToWorkspaceRequested(
         workspaceId: widget.workspaceId,
-        invitedUserIds: [targetUid],
+        invitedUserIds: [trimmed],
+        onCompleted: (_) {
+          if (!mounted) return;
+          setState(() {
+            _localInvitingKeys.remove(key);
+          });
+        },
       ),
     );
   }
@@ -437,6 +472,9 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
           final members =
               state.membersByWorkspace[widget.workspaceId] ?? const [];
           final memberUids = members.map((member) => member.uid).toSet();
+          final pendingInviteUserIds =
+              state.pendingInviteUserIdsByWorkspace[widget.workspaceId] ??
+              const <String>{};
 
           return SafeArea(
             child: ListView(
@@ -571,12 +609,19 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                       }).toList();
 
                       Widget buildFriendRow(Map<String, dynamic> friend) {
-                        final uid = (friend['uid'] ?? '').toString();
+                        final uid = (friend['uid'] ?? '').toString().trim();
                         final displayName = (friend['displayName'] ?? '')
                             .toString();
-                        final email = (friend['email'] ?? '').toString();
+                        final email = (friend['email'] ?? '').toString().trim();
+                        final normalizedEmail = email.toLowerCase();
                         final isAlreadyMember = memberUids.contains(uid);
-                        final isInviting = state.invitingUserIds.contains(uid);
+                        final isSent =
+                            pendingInviteUserIds.contains(uid) ||
+                            (normalizedEmail.isNotEmpty &&
+                                pendingInviteUserIds.contains(normalizedEmail));
+                        final isInviting =
+                            _localInvitingKeys.contains(uid) ||
+                            state.invitingUserIds.contains(uid);
                         final title = displayName.isNotEmpty
                             ? displayName
                             : (email.isNotEmpty ? email : uid);
@@ -608,26 +653,25 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                                   ],
                                 ),
                               ),
-                              isAlreadyMember
-                                  ? StatusChip(status: InkStatus.accepted, label: 'Member')
-                                  : InkButton.primary(
-                                      label: isInviting ? '' : 'Invite',
-                                      compact: true,
-                                      expand: false,
-                                      icon: isInviting
-                                          ? const SizedBox(
-                                              height: 16,
-                                              width: 16,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                color: Colors.white,
-                                              ),
-                                            )
-                                          : null,
-                                      onPressed: uid.isEmpty || isInviting
-                                          ? null
-                                          : () => _inviteMember(uid),
-                                    ),
+                              if (isAlreadyMember)
+                                StatusChip(status: InkStatus.accepted, label: 'Member')
+                              else if (isSent)
+                                const InkButton.secondary(
+                                  label: 'Sent',
+                                  compact: true,
+                                  expand: false,
+                                  onPressed: null,
+                                )
+                              else
+                                InkButton.primary(
+                                  label: isInviting ? '' : 'Invite',
+                                  compact: true,
+                                  expand: false,
+                                  isLoading: isInviting,
+                                  onPressed: uid.isEmpty || isInviting
+                                      ? null
+                                      : () => _inviteMember(uid),
+                                ),
                             ],
                           ),
                         );
@@ -649,7 +693,14 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
 
                       if (isValidEmail(query)) {
                         final typedEmail = _inviteSearchController.text.trim();
-                        final isInviting = state.invitingUserIds.contains(typedEmail);
+                        final normalizedEmail = typedEmail.toLowerCase();
+                        final isSent =
+                            pendingInviteUserIds.contains(normalizedEmail) ||
+                            pendingInviteUserIds.contains(typedEmail);
+                        final isInviting =
+                            _localInvitingKeys.contains(normalizedEmail) ||
+                            state.invitingUserIds.contains(typedEmail) ||
+                            state.invitingUserIds.contains(normalizedEmail);
                         return Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: InkSpacing.s12,
@@ -676,22 +727,21 @@ class _WorkspaceSettingsScreenState extends State<WorkspaceSettingsScreen> {
                                   ],
                                 ),
                               ),
-                              InkButton.primary(
-                                label: isInviting ? '' : 'Invite',
-                                compact: true,
-                                expand: false,
-                                icon: isInviting
-                                    ? const SizedBox(
-                                        height: 16,
-                                        width: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : null,
-                                onPressed: isInviting ? null : () => _inviteMember(typedEmail),
-                              ),
+                              if (isSent)
+                                const InkButton.secondary(
+                                  label: 'Sent',
+                                  compact: true,
+                                  expand: false,
+                                  onPressed: null,
+                                )
+                              else
+                                InkButton.primary(
+                                  label: isInviting ? '' : 'Invite',
+                                  compact: true,
+                                  expand: false,
+                                  isLoading: isInviting,
+                                  onPressed: isInviting ? null : () => _inviteMember(typedEmail),
+                                ),
                             ],
                           ),
                         );

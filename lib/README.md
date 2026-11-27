@@ -55,19 +55,24 @@ lib/
 │
 ├── core/
 │   ├── constants/                 # Shared collections, Firestore paths, routes, and styling tokens
-│   ├── crdt/                      # Yjs & HLC implementations for conflict-free state resolution
-│   ├── database/                  # Isar schemas (LocalBoard, LocalChatMessage, LocalProfile, etc.)
-│   ├── services/                  # Low-level service adapters (Auth, Firestore, CloudFunctions, Push)
-│   ├── theme/                     # InkTheme design system, typographic scales, tokens, and dark/light modes
-│   └── utils/                     # Network resolvers, debouncers, coordinate converters, and formatters
+│   ├── crdt/                      # Yjs & HLC implementations (CanvasCrdtAdapter, undo ledger)
+│   ├── database/                  # Isar schemas (12 collections: LocalBoard, LocalCrdtUpdate, LocalChatMessage, etc.)
+│   ├── services/                  # Low-level service adapters (Auth, Firestore, CloudFunctions, DeepLink, Push)
+│   └── utils/                     # Network resolvers, AI feature flag, error formatters, and preferences
+│
+├── ui/
+│   ├── theme/                     # InkTheme design system (InkColors, InkTokens, InkType)
+│   └── widgets/                   # Shared design-system widgets (PaperCard, GlassPanel, DeskBackground, etc.)
 │
 ├── domain/
-│   ├── models/                    # Immutable domain entities (Board, Message, Profile, Workspace, etc.)
+│   ├── models/                    # Immutable domain entities (ai, canvas, chat, friends, history, invitation, notification)
 │   ├── repositories/              # Repository contracts & implementations
 │   │   ├── auth/
 │   │   ├── board/
 │   │   ├── canvas/
+│   │   ├── chat/
 │   │   ├── friends/
+│   │   ├── history/
 │   │   ├── invitation/
 │   │   ├── notification/
 │   │   ├── presence/
@@ -76,14 +81,16 @@ lib/
 │   │   ├── theme/
 │   │   └── workspace/
 │   └── services/                  # Domain orchestration services
+│       ├── ai/                    # AI image generation/editing/inpainting client service
 │       ├── auth/                  # Auth session bootstrap & token lifecycle
 │       ├── board/                 # Board business rules & search
-│       ├── canvas/                # Canvas snapshotting, export & board chat
+│       ├── canvas/                # Canvas snapshotting, export, comments & board chat
 │       ├── chat/                  # Agora Chat SDK integration & Isar message sync
 │       ├── friends/               # Social graph operations
+│       ├── history/               # Board version history, timeline & revert orchestration
 │       ├── invitation/            # Inbound/outbound invites
 │       ├── notification/          # Notification dispatching & stream listeners
-│       ├── presence/              # Realtime presence heartbeats & online tracking
+│       ├── presence/              # Realtime Database presence heartbeats & online tracking
 │       ├── profile/               # User profiles & Cloudflare R2 uploads
 │       ├── settings/              # User preferences & cache invalidation
 │       ├── theme/                 # App aesthetic preferences
@@ -93,9 +100,9 @@ lib/
 └── features/
     ├── auth/                      # Login, Registration, Google Sign-in, and Password Reset
     ├── board_invitations/         # Board invitation inbox & approval sheets
-    ├── canvas/                    # Collaborative drawing viewport, tools HUD, pin comments, & voice
+    ├── canvas/                    # Collaborative viewport, CanvasBloc, AiImageBloc, geometry/, trays/, widgets/, HistoryScreen, MediaEditorScreen, AiRepaintScreen
     ├── chat/                      # Direct messaging, group chats, reaction sheets, & media attachments
-    ├── dashboard/                 # Board gallery, recent canvases, and creation dialogs
+    ├── dashboard/                 # Board gallery, recent canvases, public boards, and creation dialogs
     ├── friends/                   # Friend list, user search, incoming requests, & block list
     ├── navigation/                # Bottom navigation bar & MainWrapper lifecycle listener
     ├── notifications/             # Notification feed with interactive action pills
@@ -115,9 +122,9 @@ Located in [`lib/main.dart`](main.dart):
 2. **Firebase Initialization:** Configure `Firebase.initializeApp` with `DefaultFirebaseOptions`.
 3. **Core Services:** Initialize notifications (local notifications & push handlers) and open the local Isar database.
 4. **Dependency Injection Hierarchy:**
-   - **Infrastructure Services:** `FirestoreService`, `AuthService`, `CloudFunctionsService`, `LocalDatabaseService`, `ThemeService`.
-   - **Repositories:** Instantiated with their respective data wrappers.
-   - **Domain Services:** Wired with repositories and platform bridges (e.g. `AgoraChatServiceImpl`, `AgoraVoiceServiceImpl`).
+   - **Infrastructure Services:** `FirestoreService`, `AuthService`, `CloudFunctionsService`, `LocalDatabaseService`, `ThemeService`, `FirebaseDatabase` (RTDB).
+   - **Repositories:** Instantiated with their respective data wrappers (including `CanvasSyncRepositoryImpl`, `BoardHistoryRepositoryImpl`, `ChatRepositoryImpl`, etc.).
+   - **Domain Services:** Wired with repositories and platform bridges (e.g. `AgoraChatServiceImpl`, `AgoraVoiceServiceImpl`, `BoardHistoryServiceImpl`, `AiImageService`, `BoardExportService`).
    - **App-Level BLoCs:** `AuthBloc`, `ThemeBloc`, `NavBloc`, `DashboardBloc`, `FriendsBloc`, `NotificationsBloc`, `BoardInvitationsBloc`, `WorkspaceBloc`.
 
 ---
@@ -125,9 +132,10 @@ Located in [`lib/main.dart`](main.dart):
 ## Feature Deep-Dives
 
 ### 1. Canvas Collaboration (`features/canvas/`)
-- **CRDT Architecture:** Changes made to canvas elements produce delta packets synchronized over Socket.IO to the relay server.
-- **Export Engine:** Uses vector converters to output high-resolution PNG, PDF, or SVG formats without clipping viewport boundaries.
-- **Pin Comments:** Allows drop-pin discussions anchored to relative canvas coordinates $(x, y)$.
+- **CRDT Architecture:** `CanvasCrdtAdapter` wraps `yjs_dart` (`YMap('elements')` + `UndoManager` with a 15-minute local undo ledger) to produce binary delta updates persisted in Isar (`LocalCrdtUpdate`) and synchronized over Socket.IO.
+- **History, AI & Media:** Includes `HistoryScreen` & `UserHistoryTimeline` for version/area scrubbing and undo requests, `AiImageBloc` & `AiRepaintScreen` for AI generation/editing/inpainting, and `MediaEditorScreen` for non-destructive image cropping/filtering.
+- **Export Engine:** `BoardExportService` outputs whole-board, selection, frame, or page-preset bounds to high-resolution PNG (1×/2×/4×), PDF, or SVG formats.
+- **Pin Comments:** Allows drop-pin discussions anchored to relative canvas coordinates $(x, y)$ with `@mention` notifications.
 
 ### 2. Agora-Powered Chat (`features/chat/`)
 - **Zero-Firestore Chat Path:** Chat messages, group memberships, read receipts, and delivery acks run completely over the Agora Chat SDK.

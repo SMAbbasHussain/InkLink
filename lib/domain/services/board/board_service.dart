@@ -80,6 +80,7 @@ abstract class BoardService {
   Future<void> deleteBoard(String boardId);
   Future<void> archiveBoard(String boardId);
   Future<void> unarchiveBoard(String boardId);
+  Future<void> setBoardPaused(String boardId, {required bool isPaused});
   Future<String> duplicateBoard(String boardId, {String? customTitle});
   Future<void> updateBoardTags(String boardId, List<String> tags);
   Stream<List<BoardMember>> getBoardMembers(String boardId);
@@ -126,10 +127,9 @@ class BoardServiceImpl implements BoardService {
   final CloudFunctionsService _cloudFunctionsService;
 
   BoardServiceImpl({
-    required BoardRepository boardRepository,
-    required CloudFunctionsService cloudFunctionsService,
-  }) : _boardRepository = boardRepository,
-       _cloudFunctionsService = cloudFunctionsService;
+    required this._boardRepository,
+    required this._cloudFunctionsService,
+  });
 
   @override
   Future<void> startBoardsSync() => _boardRepository.startBoardsSync();
@@ -323,6 +323,22 @@ class BoardServiceImpl implements BoardService {
   @override
   Future<void> unarchiveBoard(String boardId) {
     return _boardRepository.unarchiveBoard(boardId.trim());
+  }
+
+  @override
+  Future<void> setBoardPaused(String boardId, {required bool isPaused}) async {
+    final resolvedBoardId = boardId.trim();
+    if (resolvedBoardId.isEmpty) return;
+    await _boardRepository.setBoardPaused(resolvedBoardId, isPaused: isPaused);
+    try {
+      await _cloudFunctionsService.httpsCallable('setBoardPaused').call({
+        'boardId': resolvedBoardId,
+        'isPaused': isPaused,
+      });
+    } catch (_) {
+      // Firestore and local cache are already updated; Cloud Function call
+      // primarily broadcasts the state change to Redis/Socket collaboration.
+    }
   }
 
   @override

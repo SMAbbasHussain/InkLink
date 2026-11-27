@@ -3,7 +3,7 @@ import 'dart:ui';
 
 import '../models/canvas_tool_mode.dart';
 
-const double minCanvasZoom = 0.5;
+const double minCanvasZoom = 0.1;
 const double maxCanvasZoom = 4.0;
 const double _scrollZoomSensitivity = 0.0015;
 

@@ -24,12 +24,21 @@ class CanvasBoardTitleUpdated extends CanvasEvent {
   final String? title;
   final String currentUserRole;
   final bool isArchived;
+  final bool isPaused;
 
   const CanvasBoardTitleUpdated(
     this.title, {
     this.currentUserRole = 'viewer',
     this.isArchived = false,
+    this.isPaused = false,
   });
+}
+
+/// Toggle pause state for the active board (owner-only).
+class CanvasSetBoardPausedRequested extends CanvasEvent {
+  final bool isPaused;
+
+  const CanvasSetBoardPausedRequested(this.isPaused);
 }
 
 /// Board metadata is no longer available (deleted or access lost).
@@ -367,6 +376,7 @@ class CanvasUpdateFrame extends CanvasEvent {
   final Offset? center;
   final double? width;
   final double? height;
+  final double? cornerRadius;
   final bool? clipContents;
 
   const CanvasUpdateFrame({
@@ -376,8 +386,17 @@ class CanvasUpdateFrame extends CanvasEvent {
     this.center,
     this.width,
     this.height,
+    this.cornerRadius,
     this.clipContents,
   });
+}
+
+/// Captures all background elements (not already on a frame) whose bounds lie
+/// within [frameId] and attaches them to the frame.
+class CanvasCaptureElementsInFrame extends CanvasEvent {
+  final String frameId;
+
+  const CanvasCaptureElementsInFrame(this.frameId);
 }
 
 /// Delete a frame, either keeping its contents on the board or deleting them
@@ -1289,8 +1308,9 @@ class CanvasDismissTrayTips extends CanvasEvent {
 
 class CanvasSaveBoardPreviewRequested extends CanvasEvent {
   final Uint8List pngBytes;
+  final Completer<void>? completer;
 
-  const CanvasSaveBoardPreviewRequested(this.pngBytes);
+  const CanvasSaveBoardPreviewRequested(this.pngBytes, {this.completer});
 }
 
 /// Revoke a member's access from the board (Owner only)
@@ -1374,6 +1394,12 @@ class CanvasVoiceMuteStatusChanged extends CanvasEvent {
   const CanvasVoiceMuteStatusChanged(this.isMuted);
 }
 
+/// Voice call speaker status changed
+class CanvasVoiceSpeakerStatusChanged extends CanvasEvent {
+  final bool isSpeakerOn;
+  const CanvasVoiceSpeakerStatusChanged(this.isSpeakerOn);
+}
+
 /// Toggle chat drawer open/close
 class CanvasToggleChatDrawer extends CanvasEvent {
   const CanvasToggleChatDrawer();
@@ -1400,18 +1426,25 @@ class CanvasSetActiveComment extends CanvasEvent {
 class CanvasAddCommentRequested extends CanvasEvent {
   final String text;
   final Offset? canvasPosition;
+  final List<String>? mentions;
 
-  const CanvasAddCommentRequested({required this.text, this.canvasPosition});
+  const CanvasAddCommentRequested({
+    required this.text,
+    this.canvasPosition,
+    this.mentions,
+  });
 }
 
 /// Add reply to comment thread
 class CanvasAddCommentReplyRequested extends CanvasEvent {
   final String commentId;
   final String text;
+  final List<String>? mentions;
 
   const CanvasAddCommentReplyRequested({
     required this.commentId,
     required this.text,
+    this.mentions,
   });
 }
 
@@ -1440,6 +1473,11 @@ class CanvasLeaveVoiceCallRequested extends CanvasEvent {
 /// Toggle mic mute
 class CanvasToggleVoiceMuteRequested extends CanvasEvent {
   const CanvasToggleVoiceMuteRequested();
+}
+
+/// Toggle speakerphone output
+class CanvasToggleVoiceSpeakerRequested extends CanvasEvent {
+  const CanvasToggleVoiceSpeakerRequested();
 }
 
 /// Report speaking activity
@@ -1772,6 +1810,13 @@ class CanvasToggleUndoRequestAreaSelection extends CanvasEvent {
 class CanvasUndoRequestsUpdated extends CanvasEvent {
   final List<UndoRequest> requests;
   const CanvasUndoRequestsUpdated(this.requests);
+}
+
+/// The signed-in member's own undo requests changed, so their pending request
+/// can be shown on the canvas (and resubmission blocked) without the owner log.
+class CanvasMyUndoRequestsUpdated extends CanvasEvent {
+  final List<UndoRequest> requests;
+  const CanvasMyUndoRequestsUpdated(this.requests);
 }
 
 /// Internal: a plan-build request failed.

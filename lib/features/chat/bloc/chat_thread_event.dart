@@ -15,6 +15,12 @@ class MessagesUpdated extends ChatThreadEvent {
   const MessagesUpdated(this.messages);
 }
 
+class PartnerProfileUpdated extends ChatThreadEvent {
+  final String? displayName;
+  final String? avatarUrl;
+  const PartnerProfileUpdated({this.displayName, this.avatarUrl});
+}
+
 class SendTextMessageRequested extends ChatThreadEvent {
   final String text;
   final bool isGroup;

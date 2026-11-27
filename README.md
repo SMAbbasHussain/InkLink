@@ -11,26 +11,30 @@ InkLink is a real-time collaborative canvas and digital whiteboard application b
                       |                 Flutter Client                 |
                       |  UI (Screens/Widgets) -> BLoC -> Domain Service|
                       |            -> Repository -> Data Sources       |
-                      +-------------------+-------+--------------------+
-                                          |       |
-            +-----------------------------+       +-----------------------------+
-            | HTTP / REST                         | WebSockets (Socket.IO)       | Agora SDK
-            v                                     v                             v
-+-----------------------+              +-----------------------+     +--------------------+
-| Firebase Cloud Funct. |              | Node.js Relay Server  |     | Agora Cloud Netw.  |
-| - Auth & Profiles     |              | - Realtime CRDT Relay |     | - P2P/Group Chat   |
-| - Friends & Relations |              | - Offline Redis Queue |     | - Voice RTC Call   |
-| - Workspace Mgmt      |              | - Board Chat History  |     | - Presence/Receipts|
-| - Cloudflare R2 Upload|              | - Voice State Signals |     +--------------------+
-+-----------+-----------+              | - Agora Token Minting |
-            |                          +-----------+-----------+
-            v                                      |
-+-----------------------+                          v
-| Cloud Firestore & RDB |              +-----------------------+
-| - Metadata & Presence |              | Redis (Persistence)  |
-+-----------------------+              | - CRDT Buffer (7-day) |
-                                       | - Board Chat (90-day) |
-                                       +-----------------------+
+                      +-------+---------------+---------------+--------+
+                              |               |               |
+            +-----------------+               |               +-----------------+
+            | HTTP / Callable                 | WebSockets (Socket.IO)          | Agora SDK
+            v                                 v                                 v
++-----------------------+         +-----------------------+         +--------------------+
+| Firebase Cloud Funct. |         | Node.js Relay Server  |         | Agora Cloud Netw.  |
+| - Auth & Profiles     |         | - Realtime CRDT Relay |         | - P2P/Group Chat   |
+| - Friends & Relations |         | - Redis Stream Buffer |         | - Voice RTC Call   |
+| - Workspace & Boards  |         | - History & Revert    |         | - Presence/Receipts|
+| - AI Image (WorkersAI)|         | - Board Chat History  |         +--------------------+
+| - Cloudflare R2 Upload|         | - Voice State Signals |
++-----------+-----------+         | - Agora Token Minting |
+            |                     +-----------+-----------+
+            v                                 |
++-----------------------+                     +-------------------+
+| Cloud Firestore & RDB |                     |                   |
+| - Metadata & Presence |                     v                   v
+| - Activity Index      |         +-------------------+ +--------------------+
++-----------------------+         | Redis (Cache/Log) | | Cloudflare R2      |
+                                  | - CRDT Stream Log | | - History Blocks   |
+                                  | - Board Chat (90d)| | - State Milestones |
+                                  +-------------------+ | - Avatars & AI Img |
+                                                        +--------------------+
 ```
 
 ---
@@ -41,12 +45,13 @@ InkLink is a real-time collaborative canvas and digital whiteboard application b
 - **Yjs CRDT Engine:** Low-latency vector strokes (8 brush presets, pressure/tilt, stabilizer, QuickShape), shapes (labels, free aspect, independent fill/stroke colors, flips, dashes, arrowheads), sticky notes, rich-styled text, tables (`TableElement` up to 200 cells), and smart connectors (straight/curved/elbow with labels & anchors) synchronized with conflict-free replicated data types.
 - **Layers, Frames & Media Tools:** Named layers as paint bands with per-layer opacity & blend modes, lock/hide, titled section frames with optional content clipping and frame-or-contents deletion, auto-layout/mind-map arrangement (`grid`/`row`/`column`/`tree`/`flow`), rulers/guides/snap/symmetry/perspective guides, mobile camera/gallery media editor (non-destructive crop, filters, flips, reference mode), starter templates (gallery filters + board creation flow), mobile long-press context menu, and minimap/pan/zoom controls.
 - **Scoped Export Formats:** Export whole board, current selection, frame, or page preset bounds to PNG (1×/2×/4×, optional transparent background & pattern), PDF, and SVG with live pixel output dimensions and native share sheet integration.
-- **Version History & Undo Requests:** Owner version history refresh & older-version fetching, area-scoped history scrub/revert, and member desired-state sliders (`Only my changes` vs `Whole area state`) with owner Requested ↔ Current comparison.
+- **Version History & Undo Requests:** Owner version history refresh & older-version fetching, R2-archived op blocks & milestone checkpoints, area-scoped history scrub/revert, and member desired-state sliders (`Only my changes` vs `Whole area state`) with owner Requested ↔ Current comparison.
+- **AI Image Generation & Editing:** Prompt-based image generation, image-to-image editing, and masked inpainting (`generateAiImage`, `editAiImage`, `inpaintAiImage`) powered by Cloudflare Workers AI (`flux-2-klein-4b` / `flux-1-schnell`) and stored in Cloudflare R2, gated by `AI_IMAGE_ENABLED`.
 - **Pin Comments & Threads:** Contextual pin annotations anchored to canvas coordinates with @mention alert delivery.
 
 #### Known Canvas Gaps
 - **Desktop & Web Input (`C-16`, `F-21` desktop):** Desktop keyboard shortcuts and secondary-click context menus are intentionally omitted in favor of mobile touch gestures and the mobile long-press menu; Isar's 64-bit IDs target native mobile/desktop builds rather than Flutter web.
-- **Text & AI Placeholders:** Rich inline multi-style text spans and AI image generation (`_onGenerateImagePlaceholder`) are not implemented; the AI prompt tray inserts text notes or uploaded images rather than calling an image-generation model.
+- **Rich Text Spans:** Multi-style inline text spans within a single text element are omitted in favor of element-level typography styling.
 - **Table & Frame Scope Limits:** Tables omit merged `colSpan`/`rowSpan` cells, and frames omit nested sub-frames.
 
 ### 2. High-Performance In-App Communication
@@ -69,8 +74,9 @@ InkLink is a real-time collaborative canvas and digital whiteboard application b
 | Directory | Purpose | Primary Technologies |
 | :--- | :--- | :--- |
 | **`lib/`** | Multiplatform Flutter application client | Flutter 3.35+, Dart 3.9.2+, BLoC, Isar, Agora Chat/RTC SDKs |
-| **`server/`** | Real-time WebSocket relay & Agora token minter | Node.js, Express, Socket.IO, Redis (ioredis), Firebase Admin, Agora Token SDK |
-| **`functions/`** | Serverless backend callable cloud functions | Node.js 22, Firebase Functions v2, Cloud Firestore, Cloudflare R2 |
+| **`packages/yjs_dart/`** | Local pure-Dart Yjs v14 CRDT package override | Dart 3+ (`yjs_dart` v1.1.15) |
+| **`server/`** | Real-time WebSocket relay, history/revert engine & Agora token minter | Node.js, Express 5, Socket.IO, Yjs, Redis (ioredis), Cloudflare R2, Firebase Admin, Agora Token SDK |
+| **`functions/`** | Serverless backend callable cloud functions | Node.js 22, Firebase Functions v2, Cloud Firestore, Cloudflare R2 & Workers AI, Sharp |
 | **`tool/`** | Developer tooling and architecture validation scripts | Dart CLI |
 
 ---
@@ -93,8 +99,8 @@ Enforced locally and in CI via `tool/architecture_guardrails.dart`:
 ## Local Development & Setup
 
 ### Prerequisites
-- **Flutter SDK:** Stable channel (3.35+ / Dart 3.9.2+, matching `sdk: ^3.9.2` in `pubspec.yaml`)
-- **Node.js:** v20+ or v22 LTS
+- **Flutter SDK:** Stable channel (3.44+ / Dart 3.12+, matching `sdk: ^3.12.0` in `pubspec.yaml`)
+- **Node.js:** v22 LTS (required by `firebase-admin` 14)
 - **Redis Server:** Running locally (`redis://127.0.0.1:6379`) or a provisioned cloud instance
 - **Firebase CLI:** Installed and authenticated (`firebase login`)
 - **Agora Console Account:** App ID, App Certificate, and Chat REST credentials
@@ -107,17 +113,17 @@ Enforced locally and in CI via `tool/architecture_guardrails.dart`:
    ```bash
    cp .env.example .env
    ```
-   Fill in your Firebase web client ID, Agora App ID, WebSocket URL, and server endpoints.
+   Fill in your Firebase platform keys, `FIREBASE_RTDB_URL`, `WEBSOCKET_URL`, `AGORA_APP_ID`, `AI_IMAGE_ENABLED`, and Cloudflare R2 config.
 
 2. **Server Configuration (`server/.env`):**
    ```bash
    cd server
    cp .env.example .env
    ```
-   Configure `REDIS_URL`, `FIREBASE_SERVICE_ACCOUNT_JSON` (or `SERVICE_ACCOUNT_PATH`), `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE`, and `AGORA_CHAT_*` credentials.
+   Configure `REDIS_URL`, Firebase Admin credentials (`FIREBASE_SERVICE_ACCOUNT_JSON`, `SERVICE_ACCOUNT_PATH`, etc.), `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE`, `AGORA_CHAT_*`, and `CLOUDFLARE_R2_HISTORY_BUCKET` credentials.
 
 3. **Cloud Functions Configuration (`functions/`):**
-   Ensure runtime secrets for Cloudflare R2 (`CLOUDFLARE_R2_ACCESS_KEY`, `CLOUDFLARE_R2_SECRET_KEY`, etc.) are configured if deploying photo uploads.
+   Configure runtime secrets for Cloudflare R2 (`CLOUDFLARE_R2_ACCESS_KEY`, `CLOUDFLARE_R2_SECRET_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_R2_BUCKET`, `CLOUDFLARE_R2_PUBLIC_URL`, `CLOUDFLARE_R2_HISTORY_BUCKET`) and Cloudflare Workers AI (`CLOUDFLARE_AI_API_TOKEN`, `CLOUDFLARE_AI_ACCOUNT_ID`) for AI image generation.
 
 ---
 
@@ -169,8 +175,10 @@ dart run tool/architecture_guardrails.dart
 # 2. Dart static code analysis
 flutter analyze
 
-# 3. Automated unit and widget tests
+# 3. Automated unit and widget tests (Flutter + Server + Functions)
 flutter test
+cd server && npm test && cd ..
+cd functions && npm test && cd ..
 ```
 
 ---
@@ -190,3 +198,4 @@ GitHub Actions workflow (`.github/workflows/architecture-guardrails.yml`) automa
 - [Flutter Client Architecture & Module Map](lib/README.md)
 - [Node.js WebSocket & Agora Relay Server](server/README.md)
 - [Firebase Cloud Functions Specification](functions/README.md)
+- [Yjs Dart CRDT Package](packages/yjs_dart/README.md)

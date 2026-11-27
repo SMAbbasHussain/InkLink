@@ -571,18 +571,26 @@ class ProfileScreen extends StatelessWidget {
                     onPressed: (isAccepting || isDeclining)
                         ? null
                         : () {
+                            final friendName =
+                                state.userData['displayName']?.toString() ??
+                                'User';
                             context.read<FriendsBloc>().add(
                               AcceptFriendRequestRequested(
                                 incomingRequestId,
                                 userId,
+                                onCompleted: (success, error) {
+                                  if (!context.mounted) return;
+                                  if (success) {
+                                    AppSnackBar.showSuccess(
+                                      context,
+                                      'Friend request from $friendName accepted!',
+                                    );
+                                  } else if (error != null &&
+                                      error.isNotEmpty) {
+                                    AppSnackBar.showError(context, error);
+                                  }
+                                },
                               ),
-                            );
-                            final friendName =
-                                state.userData['displayName']?.toString() ??
-                                    'User';
-                            AppSnackBar.showSuccess(
-                              context,
-                              'Friend request from $friendName accepted!',
                             );
                           },
                   ),
@@ -602,11 +610,21 @@ class ProfileScreen extends StatelessWidget {
                         ? null
                         : () {
                             context.read<FriendsBloc>().add(
-                              DeclineFriendRequestRequested(incomingRequestId),
-                            );
-                            AppSnackBar.showMessage(
-                              context,
-                              'Friend request declined.',
+                              DeclineFriendRequestRequested(
+                                incomingRequestId,
+                                onCompleted: (success, error) {
+                                  if (!context.mounted) return;
+                                  if (success) {
+                                    AppSnackBar.showMessage(
+                                      context,
+                                      'Friend request declined.',
+                                    );
+                                  } else if (error != null &&
+                                      error.isNotEmpty) {
+                                    AppSnackBar.showError(context, error);
+                                  }
+                                },
+                              ),
                             );
                           },
                   ),
