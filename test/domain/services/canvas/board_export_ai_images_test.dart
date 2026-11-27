@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:inklink/domain/models/canvas/canvas_export_options.dart';
 import 'package:inklink/domain/services/canvas/board_export_service.dart';
 import 'package:inklink/features/canvas/models/canvas_element.dart';
 import 'package:inklink/features/canvas/view/trays/canvas_shape_type.dart';
@@ -176,6 +177,21 @@ void main() {
 
       expect(downloads, 1);
       expect(resolved.whereType<ImageElement>().every((e) => e.imageBase64 == _fullBase64), isTrue);
+    });
+
+    test('canvas exports (the export sheet and the web download) use the full image', () async {
+      final service = BoardExportServiceImpl(
+        imageDownloader: (url) async => base64Decode(_fullBase64),
+      );
+
+      final webExport = await service.renderCanvasExport(
+        boardTitle: 'Board',
+        elements: const <CanvasElement>[_aiImage],
+        options: const CanvasExportOptions(format: BoardExportFormat.svg),
+      );
+      final svg = utf8.decode(webExport.bytes);
+      expect(svg, contains('href="data:image/png;base64,$_fullBase64"'));
+      expect(svg, isNot(contains('href="data:image/png;base64,$_thumbnailBase64"')));
     });
   });
 }

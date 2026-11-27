@@ -208,6 +208,9 @@ class BoardExportServiceImpl implements BoardExportService {
       selectedIds: selectedIds,
       settings: settings,
     );
+    // AI images keep only a thumbnail inline; fetch the full image for the
+    // elements actually being exported (falls back to the thumbnail).
+    final exportElements = await resolveExportElements(plan.elements);
     final sanitizedTitle = sanitizeExportFileName(boardTitle);
     final rawSuffix = options.suffix?.trim();
     final suffix = rawSuffix == null || rawSuffix.isEmpty
@@ -224,7 +227,7 @@ class BoardExportServiceImpl implements BoardExportService {
     switch (options.format) {
       case BoardExportFormat.png:
         final pngBytes = await renderToPng(
-          plan.elements,
+          exportElements,
           scale: plan.scale,
           settings: settings,
           exportBounds: plan.bounds,
@@ -238,7 +241,7 @@ class BoardExportServiceImpl implements BoardExportService {
       case BoardExportFormat.pdf:
         final pdfBytes = await renderToPdf(
           boardTitle,
-          plan.elements,
+          exportElements,
           settings: settings,
           exportBounds: plan.bounds,
           transparentBackground: options.hasTransparentBackground,
@@ -252,7 +255,7 @@ class BoardExportServiceImpl implements BoardExportService {
       case BoardExportFormat.svg:
         final svgString = renderToSvg(
           boardTitle,
-          plan.elements,
+          exportElements,
           settings: settings,
           exportBounds: plan.bounds,
           transparentBackground: options.hasTransparentBackground,
@@ -279,6 +282,8 @@ class BoardExportServiceImpl implements BoardExportService {
       selectedIds: selectedIds,
       settings: settings,
     );
+    // As in [exportCanvas]: export the full image, not the inline thumbnail.
+    final exportElements = await resolveExportElements(plan.elements);
     final rawSuffix = options.suffix?.trim();
     final suffix = rawSuffix == null || rawSuffix.isEmpty
         ? ''
@@ -293,7 +298,7 @@ class BoardExportServiceImpl implements BoardExportService {
           fileName: '$fileBase.png',
           mimeType: 'image/png',
           bytes: await renderToPng(
-            plan.elements,
+            exportElements,
             scale: plan.scale,
             settings: settings,
             exportBounds: plan.bounds,
@@ -307,7 +312,7 @@ class BoardExportServiceImpl implements BoardExportService {
           mimeType: 'application/pdf',
           bytes: await renderToPdf(
             boardTitle,
-            plan.elements,
+            exportElements,
             settings: settings,
             exportBounds: plan.bounds,
             transparentBackground: options.hasTransparentBackground,
@@ -323,7 +328,7 @@ class BoardExportServiceImpl implements BoardExportService {
             utf8.encode(
               renderToSvg(
                 boardTitle,
-                plan.elements,
+                exportElements,
                 settings: settings,
                 exportBounds: plan.bounds,
                 transparentBackground: options.hasTransparentBackground,
