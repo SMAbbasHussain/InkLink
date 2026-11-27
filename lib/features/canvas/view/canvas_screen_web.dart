@@ -329,11 +329,10 @@ extension _CanvasWebLayout on _CanvasScreenState {
                 badge: pendingRequestsCount,
                 onPressed: () => Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => BoardEditRequestsScreen(
-                      boardId: widget.boardId,
-                      boardTitle: state.boardTitle ?? 'Board',
-                    ),
+                  BoardEditRequestsScreen.routeFrom(
+                    context,
+                    boardId: widget.boardId,
+                    boardTitle: state.boardTitle ?? 'Board',
                   ),
                 ),
               ),

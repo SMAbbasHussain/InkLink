@@ -311,11 +311,10 @@ class _MembersTrayState extends State<MembersTray> {
                           onPressed: () {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(
-                                builder: (_) => BoardEditRequestsScreen(
-                                  boardId: boardId,
-                                  boardTitle: state.boardTitle,
-                                ),
+                              BoardEditRequestsScreen.routeFrom(
+                                context,
+                                boardId: boardId,
+                                boardTitle: state.boardTitle,
                               ),
                             );
                           },

@@ -208,6 +208,19 @@ void main() {
     await finish(tester);
   });
 
+  // On the web the notifications bloc lives in the board page (not above
+  // the app), so the pushed Edit Requests page must be handed it.
+  testWidgets('Edit Requests opens from the board without a provider '
+      'above the app', (tester) async {
+    await pumpCanvas(tester, web: true);
+    await tester.tap(find.byTooltip('No edit requests'));
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+    expect(find.text('Edit Requests'), findsOneWidget);
+    expect(find.text('No pending edit requests'), findsOneWidget);
+    await finish(tester);
+  });
+
   testWidgets('shortcuts are off on phones', (tester) async {
     await pumpCanvas(tester, web: false);
     final before = canvas.state.currentToolMode;

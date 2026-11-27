@@ -9889,11 +9889,10 @@ class _CanvasScreenState extends State<CanvasScreen>
         if (value == 'requests') {
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (_) => BoardEditRequestsScreen(
-                boardId: widget.boardId,
-                boardTitle: state.boardTitle ?? 'Board',
-              ),
+            BoardEditRequestsScreen.routeFrom(
+              context,
+              boardId: widget.boardId,
+              boardTitle: state.boardTitle ?? 'Board',
             ),
           );
         } else if (value == 'settings') {
