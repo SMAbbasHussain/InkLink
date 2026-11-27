@@ -33,6 +33,85 @@ second device, offline reconnect, AI generate/edit, comments, chat, voice,
 export, old board) still needs a human pass, as does a browser pass of the
 companion pages and the board.
 
+## Coverage of the merge
+
+The change set below is everything the merge brought into `main`:
+
+```bash
+git diff --name-status a01b40d^1 a01b40d   # 64 entries
+```
+
+| File | Kind | Verdict |
+|---|---|---|
+| `WEB_AUDIT.md` | doc | No issue — Phase A audit, kept as the record of the pre-work state |
+| `WEB_CANVAS.md` | doc | No issue — matches the implemented canvas, entry point and owner steps |
+| `WEB_CANVAS_PLAN.md` | doc | Fixed — Problem 11 (wrong `IsarCrdtLocalStore` path and file list) |
+| `WEB_COMPANION.md` | doc | No issue — page list, limitations and run commands match the code |
+| `lib/core/utils/app_snackbar.dart` | shared | No issue — `!kIsWeb &&` guard, identical on phones |
+| `lib/core/utils/sync_server_socket.dart` | shared | No issue — new socket helper; covered by `sync_server_socket_test.dart` |
+| `lib/domain/models/canvas/crdt_update.dart` | shared | No issue — conditional export only |
+| `lib/domain/models/canvas/local_crdt_update_web.dart` | shared | No issue — field parity checked by `crdt_update_web_test.dart` |
+| `lib/domain/repositories/canvas/canvas_sync_repository.dart` | shared | No issue — import swap |
+| `lib/domain/repositories/canvas/canvas_sync_repository_impl.dart` | shared | No issue — Isar calls replaced by the store, same ordering and transactions |
+| `lib/domain/repositories/canvas/crdt_local_store.dart` | shared | No issue — interface; contract test runs both stores |
+| `lib/domain/repositories/canvas/isar_crdt_local_store.dart` | shared | No issue — moved Isar code, contract-tested |
+| `lib/domain/repositories/canvas/memory_crdt_local_store.dart` | shared | No issue — online-only store, contract-tested |
+| `lib/domain/services/canvas/board_chat_service_impl.dart` | shared | No issue — chat now opens its own socket through the helper |
+| `lib/domain/services/canvas/board_export_service.dart` | shared | Fixed — Problem 2 (full AI image in canvas/web exports) |
+| `lib/domain/services/canvas/canvas_service.dart` | shared | No issue — import swap |
+| `lib/domain/services/canvas/export_directories.dart` | shared | No issue — conditional export, mobile path unchanged |
+| `lib/domain/services/canvas/export_directories_web.dart` | shared | No issue — web stub |
+| `lib/features/canvas/bloc/canvas_bloc.dart` | shared | No issue — web download branch is inside the existing try/catch, so `isExporting` is always cleared |
+| `lib/features/canvas/view/board_settings_opener.dart` | shared | No issue — phone behaviour moved verbatim |
+| `lib/features/canvas/view/board_settings_opener_web.dart` | shared | No issue — web dialog |
+| `lib/features/canvas/view/canvas_screen.dart` | shared | No issue — conditional opener, `kIsWeb` guards for voice/share |
+| `lib/features/canvas/view/canvas_screen_web.dart` | shared | No issue — desktop bars/rail/shortcuts; widget tests cover the layout |
+| `lib/features/canvas/view/trays/members_tray.dart` | shared | No issue — voice explains it is mobile-only on web; edit requests use `routeFrom` |
+| `lib/features/canvas/view/widgets/sliding_tray.dart` | shared | No issue — web trays behind `useWebLayout` (web + ≥700 px only) |
+| `lib/features/dashboard/view/board_edit_requests_screen.dart` | shared | No issue — `routeFrom` supplies the board's `NotificationsBloc` |
+| `lib/main.dart` | shared | No issue — passes `IsarCrdtLocalStore`, same database |
+| `lib/ui/widgets/glass_nav_bar.dart` | shared | No issue — badge is additive, default 0 |
+| `lib/web/canvas/web_board_repository.dart` | web | Open — follow-up 1 (`noSuchMethod` runtime trap) |
+| `lib/web/canvas/web_canvas.dart` | web | No issue — services wiring and back navigation |
+| `lib/web/canvas/web_canvas_support.dart` | web | No issue — settings, notification feed and mobile-only voice stubs |
+| `lib/web/data/firebase_web_companion_repository.dart` | web | Open — follow-up 2 (workspace board index re-reads) |
+| `lib/web/data/web_account.dart` | web | No issue |
+| `lib/web/data/web_companion_repository.dart` | web | No issue — interface |
+| `lib/web/data/web_mappers.dart` | web | Open — follow-up 2 (`chunked` default 10) |
+| `lib/web/main_web.dart` | web | No issue — dotenv, Firebase, canvas services |
+| `lib/web/preview/main_web_preview.dart` | web | No issue — preview entry only |
+| `lib/web/preview/sample_web_repository.dart` | web | No issue — in-memory sample data, preview/tests only |
+| `lib/web/screens/boards_page.dart` | web | No issue — tabs, search, archive/delete dialogs |
+| `lib/web/screens/friends_page.dart` | web | No issue |
+| `lib/web/screens/home_shell.dart` | web | No issue — sidebar/top bar, live counts |
+| `lib/web/screens/invites_page.dart` | web | No issue |
+| `lib/web/screens/notifications_page.dart` | web | No issue |
+| `lib/web/screens/profile_page.dart` | web | No issue |
+| `lib/web/screens/sign_in_screen.dart` | web | Fixed — Problem 6 (Resend busy state) |
+| `lib/web/screens/web_shell_nav.dart` | web | No issue |
+| `lib/web/screens/workspaces_page.dart` | web | No issue — list/detail, fresh query per visit |
+| `lib/web/web_companion_app.dart` | web | No issue — sign-in gate and theme |
+| `lib/web/web_theme.dart` | web | No issue — browser-stored light/dark choice |
+| `lib/web/widgets/web_widgets.dart` | web | No issue — headers, stream lists, error/empty states |
+| `test/core/utils/sync_server_socket_test.dart` | test | No issue |
+| `test/domain/models/canvas/crdt_update_web_test.dart` | test | No issue |
+| `test/domain/repositories/canvas/crdt_local_store_contract_test.dart` | test | No issue |
+| `test/domain/repositories/canvas/crdt_store_test_support.dart` | test | No issue |
+| `test/domain/services/canvas/board_export_web_download_test.dart` | test | No issue |
+| `test/features/canvas/canvas_bloc_store_parity_test.dart` | test | No issue |
+| `test/features/canvas/view/text_selection_editing_bar_test.dart` | test | No issue — covers the missing-`type` crash |
+| `test/features/canvas/view/web_canvas_layout_test.dart` | test | Fixed — Problem 1 (real-time wait before delete) |
+| `test/web/web_companion_imports_test.dart` | test | No issue — guard against Isar/path_provider/Agora in the web graph |
+| `test/web/web_mappers_test.dart` | test | No issue |
+| `test/web/web_pages_test.dart` | test | No issue |
+| `test/web/web_review_fixes_test.dart` | test | No issue |
+| `web/index.html` | config | No issue — title/description and splash container updated |
+| `web/manifest.json` | config | No issue — name, theme and icons updated |
+
+Counts: 4 docs, 24 shared-source files, 22 web-source files, 12 tests, 2 web
+config files = 64, matching the merge exactly. "No issue" means the hunks were
+read and no defect was found, not that a browser run was performed.
+
 ---
 
 ## Problems found
@@ -188,10 +267,22 @@ difference from the phones and should be in the release notes.
 `openSyncServerSocket` uses `forceNew` so board sync and board chat no longer
 share (and no longer clear) each other's listeners. This is the right fix for
 the lost-live-updates bug, but a device now holds separate sync, history and
-chat connections instead of one. The sync server needs no change; just be
-aware of the extra concurrent sockets per user when looking at server load.
+chat connections instead of one. The sync server needs no change; just be aware of the extra concurrent sockets per user when looking at server load.
+
+### 11. [Fixed, low / documentation] The web canvas plan named the wrong path for `IsarCrdtLocalStore`
+
+**Where:** `WEB_CANVAS_PLAN.md` (§2 B and the file table).
+
+The plan placed the store at `lib/core/database/isar_crdt_local_store.dart`
+and said four files (including `canvas_event.dart`) switched to the
+`LocalCrdtUpdate` conditional export. The store lives at
+`lib/domain/repositories/canvas/isar_crdt_local_store.dart`, and
+`canvas_event.dart` never imported the Isar record, so it was not changed by
+the merge. Both statements are corrected, so the plan matches the merged
+tree.
 
 ---
+
 
 ## Shared-code review (phone impact)
 

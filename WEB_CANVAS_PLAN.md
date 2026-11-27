@@ -53,7 +53,7 @@ The following were checked and are fine on web:
       if (dart.library.js_interop) 'local_crdt_update_web.dart';
   ```
 - `local_crdt_update_web.dart` is a plain class with the **same name and fields**, no Isar annotations, and `int id = 0`.
-- The four files that import `LocalCrdtUpdate` (bloc, event, service, sync-repo interface) switch to this one import.
+- Every file that imports `LocalCrdtUpdate` (the canvas bloc, the canvas service and the sync-repo interface) switches to this one import.
 - Mobile gets the **identical** Isar class, so there is no mapping, no schema change and no test churn.
 - The alternative from the prompt is a new plain `CrdtUpdate` type mapped inside the Isar repository. It changes the `CanvasService` and `CanvasSyncRepository` signatures and the fakes in about 17 test files, so it is a bigger and riskier diff. I'd only do it if you prefer it.
 
@@ -66,7 +66,7 @@ The following were checked and are fine on web:
   - list unsynced;
   - get/put the board sync cursor (as primitives, so `LocalCanvasSyncState` stays Isar-only);
   - a `transaction` wrapper for the places that currently write several things in one `writeTxn`.
-- `IsarCrdtLocalStore` (`lib/core/database/isar_crdt_local_store.dart`, mobile): the existing Isar query code moved **verbatim**, including the same `writeTxn` boundaries.
+- `IsarCrdtLocalStore` (`lib/domain/repositories/canvas/isar_crdt_local_store.dart`, mobile): the existing Isar query code moved **verbatim**, including the same `writeTxn` boundaries.
 - `MemoryCrdtLocalStore` (web): online-only. A page refresh reloads from the server through the existing fetch/peer paths.
 - `canvas_sync_repository_impl.dart` keeps all its socket/Firestore logic and calls the store instead of `isar`. It then compiles on web, so web and phone run the **same sync protocol code** with no copy that could drift.
 - `main.dart` passes `IsarCrdtLocalStore(localDatabaseService)`.
