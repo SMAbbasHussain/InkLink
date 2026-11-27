@@ -23,7 +23,7 @@ commit (`a01b40d`); the branch's history is preserved.
 |---|---|
 | `dart run tool/architecture_guardrails.dart` | passed |
 | `flutter analyze` | No issues found |
-| `flutter test` | 950 tests passed at merge; 951 after the post-merge fixes |
+| `flutter test` | 950 tests passed at merge; 960 after the follow-up fixes |
 | `flutter build web -t lib/web/main_web.dart` | built successfully (only the wasm dry-run notice from `socket_io_common`) |
 | GitHub Actions `Architecture Guardrails` on the PR head | ▲ failed before the fix → ✅ passes after it |
 
@@ -47,7 +47,7 @@ git diff --name-status a01b40d^1 a01b40d   # 64 entries
 | `WEB_CANVAS.md` | doc | No issue — matches the implemented canvas, entry point and owner steps |
 | `WEB_CANVAS_PLAN.md` | doc | Fixed — Problem 11 (wrong `IsarCrdtLocalStore` path and file list) |
 | `WEB_COMPANION.md` | doc | No issue — page list, limitations and run commands match the code |
-| `lib/core/utils/app_snackbar.dart` | shared | No issue — `!kIsWeb &&` guard, identical on phones |
+| `lib/core/utils/app_snackbar.dart` | shared | Fixed — Problem 7 (test check moved behind a conditional import) |
 | `lib/core/utils/sync_server_socket.dart` | shared | No issue — new socket helper; covered by `sync_server_socket_test.dart` |
 | `lib/domain/models/canvas/crdt_update.dart` | shared | No issue — conditional export only |
 | `lib/domain/models/canvas/local_crdt_update_web.dart` | shared | No issue — field parity checked by `crdt_update_web_test.dart` |
@@ -57,7 +57,7 @@ git diff --name-status a01b40d^1 a01b40d   # 64 entries
 | `lib/domain/repositories/canvas/isar_crdt_local_store.dart` | shared | No issue — moved Isar code, contract-tested |
 | `lib/domain/repositories/canvas/memory_crdt_local_store.dart` | shared | No issue — online-only store, contract-tested |
 | `lib/domain/services/canvas/board_chat_service_impl.dart` | shared | No issue — chat now opens its own socket through the helper |
-| `lib/domain/services/canvas/board_export_service.dart` | shared | Fixed — Problem 2 (full AI image in canvas/web exports) |
+| `lib/domain/services/canvas/board_export_service.dart` | shared | Fixed — Problem 2 (full AI image in canvas/web exports) and Problem 7 (export folder resolution) |
 | `lib/domain/services/canvas/canvas_service.dart` | shared | No issue — import swap |
 | `lib/domain/services/canvas/export_directories.dart` | shared | No issue — conditional export, mobile path unchanged |
 | `lib/domain/services/canvas/export_directories_web.dart` | shared | No issue — web stub |
@@ -71,13 +71,13 @@ git diff --name-status a01b40d^1 a01b40d   # 64 entries
 | `lib/features/dashboard/view/board_edit_requests_screen.dart` | shared | No issue — `routeFrom` supplies the board's `NotificationsBloc` |
 | `lib/main.dart` | shared | No issue — passes `IsarCrdtLocalStore`, same database |
 | `lib/ui/widgets/glass_nav_bar.dart` | shared | No issue — badge is additive, default 0 |
-| `lib/web/canvas/web_board_repository.dart` | web | Open — follow-up 1 (`noSuchMethod` runtime trap) |
+| `lib/web/canvas/web_board_repository.dart` | web | Fixed — Problem 3 (every interface member explicit, no `noSuchMethod`) |
 | `lib/web/canvas/web_canvas.dart` | web | No issue — services wiring and back navigation |
 | `lib/web/canvas/web_canvas_support.dart` | web | No issue — settings, notification feed and mobile-only voice stubs |
-| `lib/web/data/firebase_web_companion_repository.dart` | web | Open — follow-up 2 (workspace board index re-reads) |
+| `lib/web/data/firebase_web_companion_repository.dart` | web | Fixed — Problem 4 (shared board index, no per-card reads) |
 | `lib/web/data/web_account.dart` | web | No issue |
 | `lib/web/data/web_companion_repository.dart` | web | No issue — interface |
-| `lib/web/data/web_mappers.dart` | web | Open — follow-up 2 (`chunked` default 10) |
+| `lib/web/data/web_mappers.dart` | web | Fixed — Problem 5 (`whereIn` batches) and the `combineLatest2` join helper |
 | `lib/web/main_web.dart` | web | No issue — dotenv, Firebase, canvas services |
 | `lib/web/preview/main_web_preview.dart` | web | No issue — preview entry only |
 | `lib/web/preview/sample_web_repository.dart` | web | No issue — in-memory sample data, preview/tests only |
@@ -183,40 +183,64 @@ and no board element is mutated. Covered by a new test in
 web export for an AI image and asserts the SVG embeds the downloaded full
 image, not the thumbnail.
 
-### 3. [Not fixed, low] `WebBoardRepository` fails at runtime for any unimplemented method
+### 3. [Fixed, low] `WebBoardRepository` had a runtime-only `noSuchMethod` fallback
 
-**Where:** `lib/web/canvas/web_board_repository.dart:180`.
+**Where:** `lib/web/canvas/web_board_repository.dart`.
 
-The class implements `BoardRepository` and uses `noSuchMethod` to throw
-`UnsupportedError`. Nothing is broken today: the canvas only reaches
-`getBoardById`, `ensureBoardCached`, `deactivateBoard` and
-`saveBoardPreview`, and board management (roles, revoke, pause, members) goes
-through `BoardService` → Cloud Functions. But any future canvas call to
-another repository method becomes a runtime error on the web only, and the
-compiler will not point at it.
+The class implemented `BoardRepository` but relied on `noSuchMethod` to throw
+`UnsupportedError`: a new canvas call to any other repository method failed in
+the browser only, and the compiler had nothing to point at.
 
-Suggested follow-up: implement the used subset explicitly (or split a smaller
-interface for the canvas) so the compiler flags new uses.
+**Fix:** every `BoardRepository` member is declared explicitly. The canvas
+subset (`getBoardById`, `getBoardMembers`, `renameBoard`, `ensureBoardCached`,
+`deactivateBoard`, `saveBoardPreview`, and the no-op sync/preview stubs) keeps
+its behaviour; the board-list, creation, archive and discovery members throw
+`UnsupportedError` from named methods via one `_unsupported` helper. Adding a
+member to the interface is now a compile error here.
 
-### 4. [Not fixed, low / performance] Workspace cards re-query the user's board index
+Covered by `test/web/web_board_repository_test.dart` (fake services: the canvas
+subset works without touching Firestore, and every remaining member throws
+`UnsupportedError` naming itself) and by `test/web/web_platform_guards_test.dart`
+(fails if a `noSuchMethod` implementation comes back).
 
-**Where:** `lib/web/data/firebase_web_companion_repository.dart:279`
+### 4. [Fixed, low / performance] Workspace cards re-queried the user's board index
+
+**Where:** `lib/web/data/firebase_web_companion_repository.dart`
 (`watchWorkspaceBoards`).
 
-Every workspace card and every workspace-link snapshot re-reads
-`users/{uid}/boards` and then the boards themselves. A user with several
-workspaces pays several reads for the first paint, and again on every link
-change. The results are consistent, so this is a cost/latency issue rather
-than a correctness bug. Caching the board index per session (or listening to
-it once and joining in memory) would remove the N+1.
+Every workspace card and every workspace-link snapshot re-read
+`users/{uid}/boards` before fetching its boards, so a user with several
+workspaces paid several reads for the first paint and again on every link
+change.
 
-### 5. [Not fixed, low / performance] `whereIn` batches are 10 instead of 30
+**Fix:** the repository now listens to the board index once per session
+(`_myBoardIndex` — a shared broadcast stream, rebuilt only if the signed-in user
+changes) and `watchWorkspaceBoards` joins that stream with its own links through
+a new `combineLatest2` helper. Cards no longer read the index themselves, and a
+workspace's board list now also refreshes when the index changes (for example
+after an invite is accepted). `watchMyBoards` uses the same shared stream
+instead of its own listener.
 
-**Where:** `lib/web/data/web_mappers.dart:56` — `chunked(ids, [int size = 10])`.
+`combineLatest2` (emit once both sources have a value, then on either change;
+close when both close; forward errors) is tested in
+`test/web/web_mappers_test.dart`. The repository itself still has no Firestore
+emulator test, which is the remaining gap in this fix.
 
-Firestore accepts up to 30 values in a `whereIn`. Using 10 is safe but triples
-the number of round trips for users with many boards/workspaces. It matters
-most for the workspace queries in Problem 4.
+### 5. [Fixed, low / performance] `whereIn` batches were 10 instead of 30
+
+**Where:** `lib/web/data/web_mappers.dart` — `chunked(ids, [int size = 30])`.
+
+Firestore accepts up to 30 values in a `whereIn`; the helper now defaults to
+30, which cuts the round trips for the users/friends queries.
+
+Boards stay at 10 on purpose. Reading a board is rule-checked with
+`boardMemberDoc()` — a `get()` per candidate document — and Firestore allows 10
+document reads per query, so a 30-value boards query from a user with more than
+10 joined boards would be rejected with `permission-denied`. That is the same
+reason `FirestoreBatchFetcher.chunkSize` is 10; `_fetchBoards` now passes that
+constant explicitly, so raising the helper's default cannot silently break board
+loading. `test/web/web_mappers_test.dart` asserts both the 30 default and the
+explicit 10.
 
 ### 6. [Fixed, low] “Resend email” had no busy state
 
@@ -230,17 +254,36 @@ sent several verification emails. All other web buttons in this PR (`Accept`,
 request, so the button is disabled (with its loading state) until the send
 finishes or fails.
 
-### 7. [Not fixed, low / robustness] Shared files still import `dart:io`
+### 7. [Fixed, low / robustness] Shared files imported `dart:io` and checked `Platform`
 
 `lib/core/utils/app_snackbar.dart` and
-`lib/domain/services/canvas/board_export_service.dart` still import `dart:io`
-and use `Platform`. The web release build succeeds and every use is guarded
-(`!kIsWeb`) or unreachable on web today (`_resolveExportDirectory()` is only
-called from `exportBoard()`/`exportCanvas()`, which the web export path does
-not use). `export_directories.dart` shows the safer pattern: a conditional
-export with web stubs. Moving the remaining `Platform` checks behind the same
-pattern would remove the trap of a future call into `_resolveExportDirectory()`
-crashing a browser session.
+`lib/domain/services/canvas/board_export_service.dart` imported `dart:io` and
+used `Platform`. The web release build succeeded and every use was guarded
+(`!kIsWeb`) or unreachable on web, but a future call into
+`_resolveExportDirectory()` would have crashed a browser session.
+
+**Fix:** both checks now live behind conditional imports, the pattern
+`export_directories.dart` already used:
+
+* `lib/core/utils/test_environment.dart` exports `isFlutterTestEnvironment` from
+  `test_environment_io.dart` (`Platform.environment['FLUTTER_TEST']`) or
+  `test_environment_web.dart` (`false`). `app_snackbar.dart` no longer imports
+  `dart:io` or `kIsWeb`; it uses the shared helper.
+* `lib/domain/services/canvas/export_storage.dart` exports
+  `resolveExportDirectory()`, which returns an `ExportDirectory` path wrapper
+  declared in the shared library. The io branch
+  (`export_storage_io.dart`) holds the previous Android/iOS/desktop folder logic
+  and imports path_provider; the web branch (`export_storage_web.dart`) throws
+  `UnsupportedError`. Only `.path` crosses the seam, so no `Directory` type is
+  needed on the web side.
+
+`board_export_service.dart` still imports `dart:io` for `File`, which is part of
+its phone-only API (`exportBoard`, `exportCanvas`, `shareBoardFile` — the web
+calls `renderCanvasExport`/`saveExportAsDownload` instead); no `Platform` or
+path_provider code remains in it. `test/web/web_platform_guards_test.dart` keeps
+those files free of `Platform.` and `dart:io` and keeps the seams conditional,
+and `flutter build web -t lib/web/main_web.dart` succeeds with the new web
+branches.
 
 ### 8. [Not fixed, informational] Browser context menu is a page-level global
 
@@ -306,10 +349,14 @@ The parts of the diff that touch phone code were reviewed specifically:
 * **Web chrome** — web-only widgets sit behind `SlidingTray.useWebLayout`
   (`kIsWeb` plus a 700 px window), so phone builds never reach them.
 
-## Follow-ups suggested (not done here)
+## Follow-ups
 
-1. Narrow `WebBoardRepository` to a compile-time interface (Problem 3).
-2. Cache the board index for workspace views and raise `chunked` to 30
-   (Problems 4–5).
-3. Move the remaining `Platform` checks behind conditional imports
-   (Problem 7).
+All three follow-ups are done in `840b97f`; Problems 3, 4, 5 and 7 above
+describe the fixes, and the coverage table marks the files they touched.
+
+| Check after the follow-ups | Result |
+|---|---|
+| `flutter test` | 960 tests passed |
+| `flutter analyze` | No issues found |
+| `dart run tool/architecture_guardrails.dart` | passed |
+| `flutter build web -t lib/web/main_web.dart` | built successfully |
