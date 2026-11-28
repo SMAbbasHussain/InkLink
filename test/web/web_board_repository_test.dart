@@ -1,19 +1,24 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/services/firestore_service.dart';
-import 'package:inklink/web/canvas/web_board_repository.dart';
+import 'package:inklink/domain/models/board.dart';
+import 'package:inklink/web/domain/repositories/web_board_repository.dart';
 
 class _FakeAuth implements AuthService {
+  _FakeAuth({this.uid = 'web-user'});
+
+  final String? uid;
+
   @override
   User? getCurrentUser() => null;
 
   @override
-  String? getCurrentUserId() => 'web-user';
+  String? getCurrentUserId() => uid;
 
   @override
   Future<String?> getIdToken({bool forceRefresh = false}) async => null;
@@ -42,9 +47,6 @@ class _FakeFirestore implements FirestoreService {
 
   @override
   FirebaseFirestore getInstance() => throw UnimplementedError();
-
-  @override
-  HttpsCallable getHttpsCallable(String name) => throw UnimplementedError();
 
   @override
   Future<void> enableNetwork() async {}
@@ -79,49 +81,64 @@ void main() {
     await repository.stopBoardsSync();
   });
 
-  test('every other BoardRepository member throws UnsupportedError', () {
-    final calls = <String, void Function()>{
-      'countBoardsForUser': () => repository.countBoardsForUser('u'),
-      'getOwnedBoards': repository.getOwnedBoards,
-      'getJoinedBoards': repository.getJoinedBoards,
-      'createNewBoard': () => repository.createNewBoard(
-        visibility: 'public',
-        privateJoinPolicy: 'open',
-        whoCanInvite: 'owner',
-        defaultLinkJoinRole: 'viewer',
+  test(
+    'no BoardRepository member throws UnsupportedError or calls Cloud Functions',
+    () {
+      final source = File(
+        'lib/web/domain/repositories/web_board_repository.dart',
+      ).readAsStringSync();
+      expect(source, contains('implements BoardRepository'));
+      expect(source.contains('UnsupportedError'), isFalse);
+      expect(source.contains('_unsupported'), isFalse);
+      expect(RegExp(r'noSuchMethod\s*\(').hasMatch(source), isFalse);
+      expect(source.contains('package:cloud_functions'), isFalse);
+      expect(source.contains('httpsCallable'), isFalse);
+      expect(source.contains('getHttpsCallable'), isFalse);
+
+      final companionSource = File(
+        'lib/web/domain/repositories/firebase_web_companion_repository.dart',
+      ).readAsStringSync();
+      expect(companionSource.contains('package:cloud_functions'), isFalse);
+      expect(companionSource.contains('CloudFunctionsService'), isFalse);
+      expect(companionSource.contains('httpsCallable'), isFalse);
+    },
+  );
+
+  test(
+    'board lifecycle calls reject empty ids before touching Firestore',
+    () async {
+      await repository.deleteBoard('  ');
+      await expectLater(
+        repository.joinBoard('  '),
+        throwsA(predicate((error) => error.toString().contains('join code'))),
+      );
+    },
+  );
+
+  test('a signed-out user cannot create or copy a board', () async {
+    final signedOut = WebBoardRepository(
+      authService: _FakeAuth(uid: null),
+      firestoreService: _FakeFirestore(),
+    );
+    await expectLater(
+      signedOut.createNewBoard(
+        name: 'New',
+        visibility: Board.visibilityPrivate,
+        privateJoinPolicy: Board.policyOwnerOnlyInvite,
+        whoCanInvite: Board.inviteOwnerOnly,
+        defaultLinkJoinRole: Board.roleViewer,
         tags: const [],
       ),
-      'joinBoard': () => repository.joinBoard('b'),
-      'deleteBoard': () => repository.deleteBoard('b'),
-      'archiveBoard': () => repository.archiveBoard('b'),
-      'unarchiveBoard': () => repository.unarchiveBoard('b'),
-      'setBoardPaused': () => repository.setBoardPaused('b', isPaused: true),
-      'duplicateBoard': () => repository.duplicateBoard('b'),
-      'updateBoardTags': () => repository.updateBoardTags('b', const []),
-      'updateBoardSettings': () => repository.updateBoardSettings(
-        boardId: 'b',
-        visibility: 'public',
-        privateJoinPolicy: 'open',
-        whoCanInvite: 'owner',
-        defaultLinkJoinRole: 'viewer',
-      ),
-      'getPublicBoards': repository.getPublicBoards,
-      'getRecommendedPublicBoards': () =>
-          repository.getRecommendedPublicBoards(preferredTags: const []),
-    };
-
-    for (final entry in calls.entries) {
-      expect(
-        entry.value,
-        throwsA(
-          isA<UnsupportedError>().having(
-            (e) => e.message,
-            'message',
-            contains(entry.key),
-          ),
-        ),
-        reason: entry.key,
-      );
-    }
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      signedOut.duplicateBoard('b'),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      signedOut.updateBoardTags('b', const ['x']),
+      throwsA(isA<StateError>()),
+    );
+    expect(signedOut.currentUserId, isNull);
   });
 }

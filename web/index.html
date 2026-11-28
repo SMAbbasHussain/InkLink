@@ -19,17 +19,31 @@
   <meta name="description" content="InkLink on the web: manage your collaborative whiteboards, invites and friends from any computer.">
   <meta name="theme-color" content="#6A4EFF">
 
+  <!-- Link previews (Slack, Discord, Messages, social). Board links are
+       hash routes, so these describe the app rather than one board. Prefix
+       the og:image URL with the hosting origin before launch: crawlers
+       prefer absolute URLs. -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="InkLink">
+  <meta property="og:title" content="InkLink - collaborative whiteboards in your browser">
+  <meta property="og:description" content="Open your boards, draw together live and keep up with your team, right from the browser.">
+  <meta property="og:image" content="icons/pwa-512.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="InkLink - collaborative whiteboards in your browser">
+  <meta name="twitter:description" content="Open your boards, draw together live and keep up with your team, right from the browser.">
+  <meta name="twitter:image" content="icons/pwa-512.png">
+
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="InkLink">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png">
 
   <title>InkLink</title>
-  <link rel="manifest" href="manifest.json">
+  <link rel="manifest" href="manifest.webmanifest">
   <style id="splash-screen-style">
     html {
       height: 100%
@@ -38,8 +52,14 @@
     body {
       margin: 0;
       min-height: 100%;
-      background-color: #FFFFFF;
-          background-size: 100% 100%;
+      background-color: #EDEDF0;
+      background-size: 100% 100%;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background-color: #121418;
+      }
     }
 
     .center {
@@ -95,7 +115,7 @@
       document.body.style.background = "transparent";
     }
   </script>
-  <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
 </head>
 <body>
   <picture id="splash">
@@ -104,6 +124,20 @@
       <img class="center" aria-hidden="true" src="splash/img/light-1x.png" alt="">
   </picture>
   <script src="flutter_bootstrap.js" async=""></script>
+  <script>
+    // Installability: a service worker that handles fetch lets the browser
+    // offer to install the app. Registration is best-effort so a blocked or
+    // unsupported worker never stops the app from booting.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker
+          .register('sw.js', { scope: './' })
+          .catch(function (error) {
+            console.warn('InkLink: service worker registration failed', error);
+          });
+      });
+    }
+  </script>
 
 
 </body></html>

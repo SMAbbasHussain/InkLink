@@ -7,7 +7,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../../../core/services/auth_service.dart';
 import '../../../core/utils/network_config.dart';
 import '../../../core/utils/sync_server_socket.dart';
-import '../../../features/canvas/models/board_chat_message.dart';
+import '../../models/canvas/board_chat_message.dart';
 import 'board_chat_service.dart';
 
 /// Thin socket transport abstraction so [BoardChatServiceImpl] can be
@@ -89,7 +89,7 @@ class BoardChatServiceImpl implements BoardChatService {
     required this._authService,
     BoardChatSocketFactory? socketFactory,
     this._connectTimeout = const Duration(seconds: 5),
-  })  : _socketFactory = socketFactory ?? _defaultSocketFactory;
+  }) : _socketFactory = socketFactory ?? _defaultSocketFactory;
 
   static BoardChatSocket _defaultSocketFactory(String token) {
     // Its own connection, not the board sync's (see openSyncServerSocket).
@@ -125,8 +125,9 @@ class BoardChatServiceImpl implements BoardChatService {
       }
       try {
         if (data is Map) {
-          final message =
-              BoardChatMessage.fromMap(Map<String, dynamic>.from(data));
+          final message = BoardChatMessage.fromMap(
+            Map<String, dynamic>.from(data),
+          );
           if (!_chatMessageController.isClosed) {
             _chatMessageController.add(message);
           }
@@ -281,10 +282,7 @@ class BoardChatServiceImpl implements BoardChatService {
       if (!completer.isCompleted) completer.complete();
     });
 
-    await Future.any([
-      completer.future,
-      Future.delayed(_connectTimeout),
-    ]);
+    await Future.any([completer.future, Future.delayed(_connectTimeout)]);
 
     // Verify neither disposal nor an account switch superseded this attempt
     // while awaiting the handshake.

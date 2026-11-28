@@ -1,5 +1,5 @@
 import 'dart:ui';
-import '../../../features/canvas/models/canvas_comment.dart';
+import '../../models/canvas/canvas_comment.dart';
 
 abstract class BoardCommentsService {
   Stream<List<CanvasComment>> watchComments(String boardId);

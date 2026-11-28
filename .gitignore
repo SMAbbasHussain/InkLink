@@ -163,9 +163,19 @@ doc.md
 # Local notes and research reports stay out of version control, except the
 # canvas paint-parity catalogue that the render tests link to.
 docs/*
+!docs/architecture/
+!docs/architecture/**
+!docs/audits/
+!docs/audits/**
 !docs/canvas/
 !docs/canvas/**
+!docs/decisions/
+!docs/decisions/**
+!docs/development/
+!docs/development/**
 !docs/refactoring/
 !docs/refactoring/**
 !docs/roadmap/
 !docs/roadmap/**
+!docs/web/
+!docs/web/**

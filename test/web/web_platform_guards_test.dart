@@ -50,10 +50,22 @@ void main() {
     expect(web, contains('UnsupportedError'));
   });
 
-  test('WebBoardRepository has no noSuchMethod fallback', () {
-    final source = read('lib/web/canvas/web_board_repository.dart');
+  test('WebBoardRepository implements every member', () {
+    final source = read(
+      'lib/web/domain/repositories/web_board_repository.dart',
+    );
     expect(source, contains('implements BoardRepository'));
     expect(RegExp(r'noSuchMethod\s*\(').hasMatch(source), isFalse);
-    expect(source, contains('throw _unsupported'));
+    // The web now implements the whole interface, so nothing may fall back to
+    // a runtime "not available on the web" error.
+    expect(source.contains('UnsupportedError'), isFalse);
+  });
+
+  test('the canvas hides mobile-only UI in the browser', () {
+    final source = read('lib/features/canvas/view/canvas_screen.dart');
+    // Voice calls are mobile-only: the HUD must not mount on the web.
+    expect(source, contains('if (!kIsWeb) const VoiceCallHud()'));
+    // Browsers turn `camera` into a file chooser, so it is hidden on the web.
+    expect(source, contains('if (!kIsWeb) ...['));
   });
 }

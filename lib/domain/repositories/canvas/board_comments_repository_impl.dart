@@ -1,21 +1,20 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../../../core/constants/firestore_paths.dart';
 import '../../../core/services/firestore_service.dart';
-import '../../../features/canvas/models/canvas_comment.dart';
+import '../../models/canvas/canvas_comment.dart';
 import 'board_comments_repository.dart';
 
 class FirestoreBoardCommentsRepository implements BoardCommentsRepository {
   final FirestoreService _firestoreService;
 
-  FirestoreBoardCommentsRepository({
-    required this._firestoreService,
-  });
+  FirestoreBoardCommentsRepository({required this._firestoreService});
 
   CollectionReference<Map<String, dynamic>> _commentsRef(String boardId) {
     return _firestoreService
-        .collection('boards')
+        .collection(FirestorePaths.boards)
         .doc(boardId)
-        .collection('comments');
+        .collection(FirestorePaths.boardCommentsSubcollection);
   }
 
   @override
@@ -24,13 +23,14 @@ class FirestoreBoardCommentsRepository implements BoardCommentsRepository {
         .orderBy('createdAt', descending: false)
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs
-          .map((doc) => CanvasComment.fromMap(doc.id, doc.data()))
-          .toList();
-    }).handleError((error) {
-      // Gracefully handle permission-denied or closed listeners (e.g. board deleted)
-      return <CanvasComment>[];
-    });
+          return snapshot.docs
+              .map((doc) => CanvasComment.fromMap(doc.id, doc.data()))
+              .toList();
+        })
+        .handleError((error) {
+          // Gracefully handle permission-denied or closed listeners (e.g. board deleted)
+          return <CanvasComment>[];
+        });
   }
 
   @override

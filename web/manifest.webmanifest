@@ -1,0 +1,42 @@
+{
+  "id": "./",
+  "name": "InkLink",
+  "short_name": "InkLink",
+  "description": "InkLink on the web: open your boards, draw together live and keep up with your team from any computer.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "theme_color": "#6A4EFF",
+  "background_color": "#EDEDF0",
+  "lang": "en",
+  "categories": ["productivity", "design"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "icons/pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/pwa-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/pwa-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,29 +1,53 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:inklink/web/preview/sample_web_repository.dart';
+import 'package:inklink/ui/widgets/ink_button.dart';
+import 'package:inklink/ui/widgets/ink_chip.dart';
+import 'package:inklink/web/domain/services/web_companion_service.dart';
 import 'package:inklink/web/web_companion_app.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-/// Renders the web companion's signed-in pages from sample data (no
-/// Firebase) on a desktop-sized screen and checks the main content. The
-/// pages use the mobile app's design (Ink theme, desk background, cards) in
-/// a desktop layout: top bar and labelled sidebar.
+import 'fakes/fake_web_companion_service.dart';
+
+/// Renders the web companion's signed-in pages with an in-memory test service
+/// on a desktop-sized screen and checks the main content. The pages use the
+/// mobile app's design (Ink theme, desk background, cards) in a desktop
+/// layout: top bar and labelled sidebar.
 void main() {
-  Future<void> pumpApp(WidgetTester tester, {bool signedIn = true}) async {
-    tester.view.physicalSize = const Size(1440, 900);
+  setUp(() {
+    // The settings page reads and writes browser-stored preferences.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
+  Future<void> pumpApp(
+    WidgetTester tester, {
+    bool signedIn = true,
+    Size size = const Size(1440, 900),
+    WebCompanionService? service,
+  }) async {
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       WebCompanionApp(
-        repository: SampleWebCompanionRepository(signedIn: signedIn),
+        service: service ?? FakeWebCompanionService(signedIn: signedIn),
         themeMode: ThemeMode.light,
       ),
     );
     await settle(tester);
   }
 
+  String roleOf(WidgetTester tester, String uid) =>
+      tester.widget<Text>(find.byKey(ValueKey('member-role-$uid'))).data!;
+
   // Desktop width: sections are in the labelled sidebar.
   Future<void> openSection(WidgetTester tester, String label) async {
     await tester.tap(find.text(label).first);
+    await settle(tester);
+  }
+
+  Future<void> openWorkspace(WidgetTester tester, String name) async {
+    await openSection(tester, 'Workspaces');
+    await tester.tap(find.text(name).first);
     await settle(tester);
   }
 
@@ -162,7 +186,7 @@ void main() {
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       WebCompanionApp(
-        repository: SampleWebCompanionRepository(),
+        service: FakeWebCompanionService(),
         themeMode: ThemeMode.light,
       ),
     );
@@ -195,6 +219,367 @@ void main() {
     await settle(tester);
     expect(find.text('Q3 roadmap'), findsOneWidget);
   });
+
+  // ── Board lifecycle ────────────────────────────────────────────────────
+
+  testWidgets('a board can be created from the web', (tester) async {
+    await pumpApp(tester);
+    await tester.tap(find.text('New board'));
+    await settle(tester);
+    // The button and the dialog title share the label.
+    expect(find.text('New board'), findsNWidgets(2));
+
+    await tester.enterText(find.byType(TextField).last, 'Fresh ideas');
+    await tester.tap(find.text('Create'));
+    await settle(tester);
+
+    expect(find.text('Board created.'), findsOneWidget);
+    expect(find.text('Fresh ideas'), findsOneWidget);
+  });
+
+  testWidgets('a board can be renamed from its card menu', (tester) async {
+    await pumpApp(tester);
+    await tester.tap(find.byTooltip('Board options').first);
+    await settle(tester);
+    await tester.tap(find.text('Rename'));
+    await settle(tester);
+
+    await tester.enterText(find.byType(TextField).last, 'Roadmap 2027');
+    await tester.tap(find.text('Rename').last);
+    await settle(tester);
+
+    expect(find.text('Board renamed.'), findsOneWidget);
+    expect(find.text('Roadmap 2027'), findsOneWidget);
+    expect(find.text('Q3 roadmap'), findsNothing);
+  });
+
+  testWidgets('a board can be archived and restored', (tester) async {
+    await pumpApp(tester);
+    await tester.tap(find.byTooltip('Board options').first);
+    await settle(tester);
+    await tester.tap(find.text('Archive'));
+    await settle(tester);
+
+    expect(find.text('Board archived.'), findsOneWidget);
+    expect(find.text('Q3 roadmap'), findsNothing);
+
+    await tester.tap(find.text('Archived'));
+    await settle(tester);
+    expect(find.text('Q3 roadmap'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Board options').first);
+    await settle(tester);
+    await tester.tap(find.text('Unarchive'));
+    await settle(tester);
+    expect(find.text('Board restored.'), findsOneWidget);
+  });
+
+  testWidgets('a board can be tagged and its settings changed', (tester) async {
+    await pumpApp(tester);
+    await tester.tap(find.byTooltip('Board options').first);
+    await settle(tester);
+    await tester.tap(find.text('Tags'));
+    await settle(tester);
+    await tester.enterText(find.byType(TextField).last, 'Roadmap, Team');
+    await tester.tap(find.text('Save'));
+    await settle(tester);
+    expect(find.text('Tags updated.'), findsOneWidget);
+    expect(find.textContaining('#roadmap #team'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Board options').first);
+    await settle(tester);
+    await tester.tap(find.text('Board settings'));
+    await settle(tester);
+    expect(find.text('Link join role'), findsOneWidget);
+    await tester.tap(find.text('Public'));
+    await tester.tap(find.text('Save'));
+    await settle(tester);
+    expect(find.text('Board settings saved.'), findsOneWidget);
+  });
+
+  testWidgets('a public board can be joined from Discover', (tester) async {
+    await pumpApp(tester);
+    await openSection(tester, 'Discover');
+
+    // The card menu of a board the sample user has not joined.
+    final menu = find.byTooltip('Board options').at(2);
+    await tester.tap(menu);
+    await settle(tester);
+    await tester.tap(find.text('Join board'));
+    await settle(tester);
+
+    expect(find.textContaining('You joined'), findsOneWidget);
+  });
+
+  // ── Notifications ──────────────────────────────────────────────────────
+
+  testWidgets('notifications can all be marked as read', (tester) async {
+    await pumpApp(tester);
+    await openSection(tester, 'Notifications');
+
+    expect(find.text('Mark all read'), findsOneWidget);
+    await tester.tap(find.text('Mark all read'));
+    await settle(tester);
+
+    expect(find.text('All read'), findsOneWidget);
+    expect(find.text('Mark all read'), findsNothing);
+    expect(find.text('All notifications marked as read.'), findsOneWidget);
+  });
+
+  testWidgets('notifications can be filtered by type', (tester) async {
+    await pumpApp(tester);
+    await openSection(tester, 'Notifications');
+
+    // "Friends (1)": the accepted-request notification.
+    await tester.tap(find.textContaining('Friends ('));
+    await settle(tester);
+    expect(find.textContaining('Mia Torres accepted'), findsOneWidget);
+    expect(find.textContaining('mentioned you'), findsNothing);
+  });
+
+  // ── Friends ────────────────────────────────────────────────────────────
+
+  testWidgets('a friend can be added by email', (tester) async {
+    await pumpApp(tester);
+    await openSection(tester, 'Friends');
+
+    await tester.tap(find.text('Add friend'));
+    await settle(tester);
+    await tester.enterText(
+      find.byType(TextField).last,
+      'omar.haddad@example.com',
+    );
+    await tester.tap(find.text('Search'));
+    await settle(tester);
+
+    expect(find.text('Omar Haddad'), findsOneWidget);
+    await tester.tap(find.text('Send request'));
+    await settle(tester);
+    expect(find.text('Request sent to Omar Haddad.'), findsOneWidget);
+  });
+
+  testWidgets('a friend can be blocked and unblocked', (tester) async {
+    await pumpApp(tester);
+    await openSection(tester, 'Friends');
+
+    await tester.tap(find.byTooltip('Friend options').first);
+    await settle(tester);
+    await tester.tap(find.text('Block'));
+    await settle(tester);
+    // The menu is closed, so this is the confirmation dialog's button.
+    await tester.tap(find.text('Block'));
+    await settle(tester);
+
+    expect(find.text('Alex Kim is blocked.'), findsOneWidget);
+    expect(find.text('Alex Kim'), findsOneWidget); // now in Blocked users
+    await tester.tap(find.text('Unblock'));
+    await settle(tester);
+    expect(find.text('Alex Kim is unblocked.'), findsOneWidget);
+  });
+
+  // ── Workspaces and settings ────────────────────────────────────────────
+
+  testWidgets('a workspace can be created from the web', (tester) async {
+    await pumpApp(tester);
+    await openSection(tester, 'Workspaces');
+
+    await tester.tap(find.text('New workspace'));
+    await settle(tester);
+    // The dialog's name field is after the page's search box; its second
+    // field is the description.
+    await tester.enterText(find.byType(TextField).at(1), 'QA Guild');
+    await tester.tap(find.text('Create'));
+    await settle(tester);
+
+    expect(find.text('Workspace created.'), findsOneWidget);
+    expect(find.text('QA Guild'), findsOneWidget);
+  });
+
+  testWidgets('settings open from the sidebar and preferences toggle', (
+    tester,
+  ) async {
+    await pumpApp(tester);
+    await openSection(tester, 'Settings');
+
+    expect(find.text('Show tool tray tips'), findsOneWidget);
+    expect(find.text('Board preview quality'), findsOneWidget);
+
+    final trayTips = find.widgetWithText(SwitchListTile, 'Show tool tray tips');
+    final before = tester.widget<SwitchListTile>(trayTips).value;
+    await tester.tap(trayTips);
+    await settle(tester);
+    expect(tester.widget<SwitchListTile>(trayTips).value, !before);
+  });
+
+  testWidgets('privacy settings and preferred tags save from settings', (
+    tester,
+  ) async {
+    // Tall enough to show every settings section without scrolling.
+    await pumpApp(tester, size: const Size(1440, 2200));
+    await openSection(tester, 'Settings');
+
+    final publicSwitch = find.widgetWithText(SwitchListTile, 'Public profile');
+    expect(publicSwitch, findsOneWidget);
+    final before = tester.widget<SwitchListTile>(publicSwitch).value;
+    await tester.tap(publicSwitch);
+    await settle(tester);
+    expect(tester.widget<SwitchListTile>(publicSwitch).value, !before);
+
+    final emailSwitch = find.widgetWithText(
+      SwitchListTile,
+      'Show email address',
+    );
+    expect(tester.widget<SwitchListTile>(emailSwitch).value, isFalse);
+    await tester.tap(emailSwitch);
+    await settle(tester);
+    expect(tester.widget<SwitchListTile>(emailSwitch).value, isTrue);
+
+    // Suggested tags can be chosen, and chosen tags show as selected.
+    await tester.tap(find.text('#Art'));
+    await settle(tester);
+    final art = tester.widget<InkChip>(find.widgetWithText(InkChip, '#Art'));
+    expect(art.selected, isTrue);
+
+    // A custom tag can be typed and added, then removed again.
+    await tester.enterText(find.byType(TextField).last, 'Surrealism');
+    await tester.tap(find.widgetWithText(InkButton, 'Add'));
+    await settle(tester);
+    expect(find.text('#Surrealism'), findsOneWidget);
+
+    await tester.tap(find.text('#Surrealism'));
+    await settle(tester);
+    expect(find.text('#Surrealism'), findsNothing);
+  });
+
+  testWidgets('workspace owner sees member roles and can change or remove', (
+    tester,
+  ) async {
+    await pumpApp(tester, size: const Size(1440, 1600));
+    await openWorkspace(tester, 'Product Team');
+
+    expect(find.text('Members'), findsOneWidget);
+    expect(find.text('alex.kim@example.com'), findsOneWidget);
+    expect(roleOf(tester, 'u2'), 'Editor');
+
+    // Change a role from the member's menu.
+    await tester.tap(find.byTooltip('Manage Alex Kim'));
+    await settle(tester);
+    await tester.tap(find.widgetWithText(PopupMenuItem<String>, 'Viewer'));
+    await settle(tester);
+    expect(roleOf(tester, 'u2'), 'Viewer');
+
+    // Remove another member through the confirmation dialog.
+    await tester.tap(find.byTooltip('Manage Noah Patel'));
+    await settle(tester);
+    await tester.tap(find.text('Remove member'));
+    await settle(tester);
+    await tester.tap(find.widgetWithText(InkButton, 'Remove'));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('member-row-u3')), findsNothing);
+  });
+
+  testWidgets('a refused workspace write reverts and shows the error', (
+    tester,
+  ) async {
+    await pumpApp(
+      tester,
+      size: const Size(1440, 1600),
+      service: _RefusingWorkspaceService(),
+    );
+    await openWorkspace(tester, 'Product Team');
+
+    await tester.tap(find.byTooltip('Manage Alex Kim'));
+    await settle(tester);
+    await tester.tap(find.widgetWithText(PopupMenuItem<String>, 'Viewer'));
+    await settle(tester);
+
+    // The optimistic change is rolled back and the refusal is visible.
+    expect(roleOf(tester, 'u2'), 'Editor');
+    expect(
+      find.text('Only the workspace owner can change member roles.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a non-owner sees the members but no management menu', (
+    tester,
+  ) async {
+    await pumpApp(tester, size: const Size(1440, 1600));
+    await openWorkspace(tester, 'Home Projects');
+
+    expect(find.text('Members'), findsOneWidget);
+    expect(find.text('Noah Patel'), findsOneWidget);
+    expect(
+      find.text('Only the workspace owner can manage members.'),
+      findsOneWidget,
+    );
+    expect(find.byTooltip('Manage Noah Patel'), findsNothing);
+    expect(find.byTooltip('Manage Sam Rivera'), findsNothing);
+  });
+
+  testWidgets('workspace settings save the name and description', (
+    tester,
+  ) async {
+    await pumpApp(tester, size: const Size(1440, 1600));
+    await openWorkspace(tester, 'Product Team');
+
+    await tester.tap(find.widgetWithText(InkButton, 'Workspace settings'));
+    await settle(tester);
+    // Index 0 is the page's board search field; the dialog owns 1 and 2.
+    await tester.enterText(find.byType(TextField).at(1), 'Product Guild');
+    await tester.enterText(
+      find.byType(TextField).at(2),
+      'Renamed from the web.',
+    );
+    await tester.tap(find.widgetWithText(InkButton, 'Save changes'));
+    await settle(tester);
+
+    expect(find.text('Product Guild'), findsOneWidget);
+    expect(find.textContaining('Renamed from the web.'), findsOneWidget);
+  });
+
+  testWidgets('workspace owner can invite someone by email', (tester) async {
+    await pumpApp(tester, size: const Size(1440, 1600));
+    await openWorkspace(tester, 'Product Team');
+
+    await tester.tap(find.text('Invite'));
+    await settle(tester);
+    // Index 0 is the page's board search field; the dialog owns index 1.
+    await tester.enterText(
+      find.byType(TextField).at(1),
+      'priya.shah@example.com',
+    );
+    await tester.tap(find.widgetWithText(InkButton, 'Send invite'));
+    await settle(tester);
+
+    expect(find.text('Invitation sent.'), findsOneWidget);
+  });
+
+  testWidgets('a member can leave a workspace', (tester) async {
+    await pumpApp(tester, size: const Size(1440, 1600));
+    await openWorkspace(tester, 'Home Projects');
+
+    await tester.tap(find.widgetWithText(InkButton, 'Leave workspace'));
+    await settle(tester);
+    await tester.tap(find.widgetWithText(InkButton, 'Leave'));
+    await settle(tester);
+
+    expect(find.text('Home Projects'), findsNothing);
+    expect(find.text('Product Team'), findsOneWidget);
+  });
+
+  testWidgets('the owner can delete a workspace', (tester) async {
+    await pumpApp(tester, size: const Size(1440, 1600));
+    await openWorkspace(tester, 'Product Team');
+
+    await tester.tap(find.widgetWithText(InkButton, 'Delete workspace'));
+    await settle(tester);
+    await tester.tap(find.widgetWithText(InkButton, 'Delete'));
+    await settle(tester);
+
+    expect(find.text('Product Team'), findsNothing);
+    expect(find.text('Home Projects'), findsOneWidget);
+  });
 }
 
 /// Pumps frames for a while (pages contain looping animations, so
@@ -202,5 +587,17 @@ void main() {
 Future<void> settle(WidgetTester tester) async {
   for (var i = 0; i < 12; i++) {
     await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
+/// In-memory test service with member writes refused, for the rollback test.
+class _RefusingWorkspaceService extends FakeWebCompanionService {
+  @override
+  Future<void> updateWorkspaceMemberRole({
+    required String workspaceId,
+    required String memberUid,
+    required String role,
+  }) async {
+    throw 'Only the workspace owner can change member roles.';
   }
 }

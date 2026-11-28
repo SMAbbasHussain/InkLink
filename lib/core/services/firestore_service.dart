@@ -1,17 +1,15 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 
-/// Abstract interface for Firestore operations
-/// This enables dependency injection and easier testing (can mock implementations)
+/// Abstract interface for Firestore operations.
+///
+/// Enables dependency injection and easier testing without exposing Cloud
+/// Functions (use `CloudFunctionsService` for callable functions instead).
 abstract class FirestoreService {
-  /// Get reference to a collection
+  /// Get reference to a collection.
   CollectionReference<Map<String, dynamic>> collection(String path);
 
-  /// Get Firestore instance (if direct access needed)
+  /// Get Firestore instance (if direct access is needed, e.g. transactions).
   FirebaseFirestore getInstance();
-
-  /// Get a callable Cloud Function by name
-  HttpsCallable getHttpsCallable(String name);
 
   /// Re-enable Firestore network after sign-out.
   Future<void> enableNetwork();
@@ -21,18 +19,13 @@ abstract class FirestoreService {
   Future<void> disableNetwork();
 }
 
-/// Production implementation using Firebase
+/// Production implementation using Firebase.
 class FirestoreServiceImpl implements FirestoreService {
   final FirebaseFirestore _firestore;
-  final FirebaseFunctions _functions;
 
-  /// Constructor accepting optional FirebaseFirestore and FirebaseFunctions instances for testability
-  /// In production, uses default Firebase instances
-  FirestoreServiceImpl({
-    FirebaseFirestore? firestore,
-    FirebaseFunctions? functions,
-  }) : _firestore = firestore ?? FirebaseFirestore.instance,
-       _functions = functions ?? FirebaseFunctions.instance;
+  /// Constructor accepting optional [FirebaseFirestore] for testability.
+  FirestoreServiceImpl({FirebaseFirestore? firestore})
+    : _firestore = firestore ?? FirebaseFirestore.instance;
 
   @override
   CollectionReference<Map<String, dynamic>> collection(String path) {
@@ -42,11 +35,6 @@ class FirestoreServiceImpl implements FirestoreService {
   @override
   FirebaseFirestore getInstance() {
     return _firestore;
-  }
-
-  @override
-  HttpsCallable getHttpsCallable(String name) {
-    return _functions.httpsCallable(name);
   }
 
   @override

@@ -30,7 +30,8 @@
 - Domain services are responsible for interacting with Cloud Functions. Do not place Cloud Function callables in repositories.
 
 ## Project Conventions
-- Prefer existing composition patterns in lib/main.dart and route-level builders in lib/features/*/view/*_route.dart.
+- Prefer existing composition patterns in lib/app/composition/ (SharedCanvasDependencies, MobileDependencies, WebDependencies) and route-level builders in lib/features/*/view/*_route.dart.
+- Both mobile (lib/features/) and web (lib/web/) follow the mandatory 5-layer flow: UI -> BLoC/Cubit -> Domain Service -> Repository -> Backend/DB.
 - Keep Firestore path constants aligned across:
   - lib/core/constants/firestore_paths.dart
   - functions/src/utils/firestore_paths.js
@@ -51,7 +52,9 @@
 ## Link First
 - Read and review existing docs before writing any code:
   - README.md
+  - docs/architecture/layered-architecture.md
   - lib/README.md
+  - docs/web/web-companion.md
   - functions/README.md
   - firestore.rules
   - database.rules.json

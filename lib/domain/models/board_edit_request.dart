@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../core/utils/dynamic_parsing.dart';
 
 /// Represents a user's request for edit permissions on a board.
 class BoardEditRequest {
@@ -36,20 +36,24 @@ class BoardEditRequest {
         ? (map['extraData'] as Map).cast<String, dynamic>()
         : <String, dynamic>{};
 
-    final boardId = extraData['boardId']?.toString() ??
+    final boardId =
+        extraData['boardId']?.toString() ??
         map['targetId']?.toString() ??
         fallbackBoardId;
 
-    final boardTitle = extraData['boardTitle']?.toString() ??
+    final boardTitle =
+        extraData['boardTitle']?.toString() ??
         map['title']?.toString() ??
         'Board';
 
-    final requesterUid = extraData['requesterUid']?.toString() ??
+    final requesterUid =
+        extraData['requesterUid']?.toString() ??
         map['fromUid']?.toString() ??
         map['senderUid']?.toString() ??
         '';
 
-    final requesterName = extraData['requesterName']?.toString() ??
+    final requesterName =
+        extraData['requesterName']?.toString() ??
         map['senderName']?.toString() ??
         'InkLink User';
 
@@ -59,17 +63,7 @@ class BoardEditRequest {
     final message = extraData['message']?.toString() ?? '';
     final status = map['status']?.toString() ?? 'pending';
 
-    DateTime createdAt = DateTime.now();
-    final rawTimestamp = map['timestamp'];
-    if (rawTimestamp is Timestamp) {
-      createdAt = rawTimestamp.toDate();
-    } else if (rawTimestamp is DateTime) {
-      createdAt = rawTimestamp;
-    } else if (rawTimestamp is int) {
-      createdAt = DateTime.fromMillisecondsSinceEpoch(rawTimestamp);
-    } else if (rawTimestamp is String) {
-      createdAt = DateTime.tryParse(rawTimestamp) ?? DateTime.now();
-    }
+    final createdAt = parseDateTimeValue(map['timestamp']);
 
     return BoardEditRequest(
       id: map['id']?.toString() ?? '',
@@ -84,4 +78,3 @@ class BoardEditRequest {
     );
   }
 }
-

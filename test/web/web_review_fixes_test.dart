@@ -1,22 +1,35 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/domain/models/notification/in_app_notification.dart';
-import 'package:inklink/web/data/web_mappers.dart';
+import 'package:inklink/web/core/web_formatters.dart';
+import 'package:inklink/web/domain/models/web_notification_rules.dart';
 
 /// Fixes found while reviewing the web companion with a real account.
 void main() {
   group('boardRoleLabel', () {
     test('owner, member and public', () {
       expect(
-        boardRoleLabel(ownerId: 'me', memberIds: const ['me'], currentUid: 'me'),
+        boardRoleLabel(
+          ownerId: 'me',
+          memberIds: const ['me'],
+          currentUid: 'me',
+        ),
         'Owner',
       );
       expect(
-        boardRoleLabel(ownerId: 'x', memberIds: const ['x', 'me'], currentUid: 'me'),
+        boardRoleLabel(
+          ownerId: 'x',
+          memberIds: const ['x', 'me'],
+          currentUid: 'me',
+        ),
         'Member',
       );
       // A public board the user has not joined must not say "Member".
       expect(
-        boardRoleLabel(ownerId: 'x', memberIds: const ['x', 'y'], currentUid: 'me'),
+        boardRoleLabel(
+          ownerId: 'x',
+          memberIds: const ['x', 'y'],
+          currentUid: 'me',
+        ),
         'Public',
       );
       expect(
@@ -73,10 +86,16 @@ void main() {
     expect(notificationKindOf('board_invite'), NotificationKind.invite);
     expect(notificationKindOf('workspace_invite'), NotificationKind.invite);
     expect(notificationKindOf('friend_request'), NotificationKind.friend);
-    expect(notificationKindOf('friend_request_accepted'), NotificationKind.friend);
+    expect(
+      notificationKindOf('friend_request_accepted'),
+      NotificationKind.friend,
+    );
     expect(notificationKindOf('mention'), NotificationKind.mention);
     expect(notificationKindOf('role_updated'), NotificationKind.access);
-    expect(notificationKindOf('board_access_declined'), NotificationKind.access);
+    expect(
+      notificationKindOf('board_access_declined'),
+      NotificationKind.access,
+    );
     expect(notificationKindOf('member_removed'), NotificationKind.access);
     expect(notificationKindOf('board_deleted'), NotificationKind.board);
     expect(notificationKindOf('undo_request'), NotificationKind.board);
