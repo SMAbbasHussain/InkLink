@@ -2,7 +2,7 @@
 
 Open a board from the web app (`lib/web/main_web.dart`) and draw, edit and collaborate in the browser, live with phones. The board is the **same canvas as the mobile app** (same tools and sync code), with a desktop layout. Phones are unchanged: everything web-specific is behind a browser check, a conditional import or the web entry point.
 
-See [WEB_COMPANION.md](WEB_COMPANION.md) for the rest of the web app (boards list, invites, friends, notifications, profile) and [WEB_CANVAS_PLAN.md](WEB_CANVAS_PLAN.md) for the design decisions.
+See [web-companion.md](web-companion.md) for the rest of the web app (boards list, invites, friends, notifications, profile) and [../decisions/web-canvas-plan.md](../decisions/web-canvas-plan.md) for the historical design decisions.
 
 ## Run and build
 

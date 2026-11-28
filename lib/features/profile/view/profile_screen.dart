@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -87,9 +86,24 @@ class ProfileScreen extends StatelessWidget {
                     }
                   },
                   itemBuilder: (context) => [
-                    _menuItem('edit', LucideIcons.pen, 'Edit profile', tokens.ink),
-                    _menuItem('requests', LucideIcons.userPlus, 'View friend requests', tokens.ink),
-                    _menuItem('blocked', LucideIcons.ban, 'View blocked users', tokens.ink),
+                    _menuItem(
+                      'edit',
+                      LucideIcons.pen,
+                      'Edit profile',
+                      tokens.ink,
+                    ),
+                    _menuItem(
+                      'requests',
+                      LucideIcons.userPlus,
+                      'View friend requests',
+                      tokens.ink,
+                    ),
+                    _menuItem(
+                      'blocked',
+                      LucideIcons.ban,
+                      'View blocked users',
+                      tokens.ink,
+                    ),
                   ],
                 );
               }
@@ -110,12 +124,32 @@ class ProfileScreen extends StatelessWidget {
                   },
                   itemBuilder: (context) => [
                     if (state.isFriend)
-                      _menuItem('unfriend', LucideIcons.userX, 'Remove friend', tokens.danger),
+                      _menuItem(
+                        'unfriend',
+                        LucideIcons.userX,
+                        'Remove friend',
+                        tokens.danger,
+                      ),
                     if (!state.isBlocked)
-                      _menuItem('block', LucideIcons.ban, 'Block user', tokens.danger),
+                      _menuItem(
+                        'block',
+                        LucideIcons.ban,
+                        'Block user',
+                        tokens.danger,
+                      ),
                     if (state.isBlocked)
-                      _menuItem('unblock', LucideIcons.ban, 'Unblock user', tokens.ink),
-                    _menuItem('report', LucideIcons.triangleAlert, 'Report user', tokens.danger),
+                      _menuItem(
+                        'unblock',
+                        LucideIcons.ban,
+                        'Unblock user',
+                        tokens.ink,
+                      ),
+                    _menuItem(
+                      'report',
+                      LucideIcons.triangleAlert,
+                      'Report user',
+                      tokens.danger,
+                    ),
                   ],
                 );
               }
@@ -155,7 +189,12 @@ class ProfileScreen extends StatelessWidget {
             }
 
             if (state is ProfileError) {
-              return Center(child: Text(state.message, style: InkType.body(tokens.inkMuted)));
+              return Center(
+                child: Text(
+                  state.message,
+                  style: InkType.body(tokens.inkMuted),
+                ),
+              );
             }
 
             if (state is ProfilePhotoUploading) {
@@ -177,7 +216,8 @@ class ProfileScreen extends StatelessWidget {
 
             if (state is ProfileLoaded) {
               final user = state.userData;
-              final isProfilePublic = (user['isProfilePublic'] as bool?) ?? true;
+              final isProfilePublic =
+                  (user['isProfilePublic'] as bool?) ?? true;
               final isPrivateToViewer =
                   !state.isSelf && !state.isFriend && !isProfilePublic;
 
@@ -192,7 +232,11 @@ class ProfileScreen extends StatelessWidget {
                     if (!isPrivateToViewer) ...[
                       _buildProfileStats(context, state),
                       const SizedBox(height: InkSpacing.s12),
-                      _buildJoinDate(context, _asDateTime(user['createdAt']), state.isSelf),
+                      _buildJoinDate(
+                        context,
+                        _asDateTime(user['createdAt']),
+                        state.isSelf,
+                      ),
                     ],
                     if (state.isBlocked) const SizedBox(height: InkSpacing.s12),
                     if (state.isBlocked) _buildBlockedBanner(context),
@@ -203,7 +247,10 @@ class ProfileScreen extends StatelessWidget {
                       _buildBioSection(context, user),
                       const SizedBox(height: InkSpacing.s12),
                       if (state.isSelf)
-                        FriendsCollapsibleCard(isSelf: true, isDark: tokens.isDark),
+                        FriendsCollapsibleCard(
+                          isSelf: true,
+                          isDark: tokens.isDark,
+                        ),
                     ],
                     const SizedBox(height: InkSpacing.s32),
                     _buildActionButtons(context, state),
@@ -220,7 +267,12 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  PopupMenuItem<String> _menuItem(String value, IconData icon, String label, Color color) {
+  PopupMenuItem<String> _menuItem(
+    String value,
+    IconData icon,
+    String label,
+    Color color,
+  ) {
     return PopupMenuItem(
       value: value,
       child: Row(
@@ -233,7 +285,11 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context, Map<String, dynamic> user, {bool isSelf = false}) {
+  Widget _buildHeader(
+    BuildContext context,
+    Map<String, dynamic> user, {
+    bool isSelf = false,
+  }) {
     final name = (user['displayName'] ?? 'User').toString();
     final photoUrl = user['photoURL']?.toString();
 
@@ -265,7 +321,11 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildNameEmail(BuildContext context, Map<String, dynamic> user, {bool isSelf = false}) {
+  Widget _buildNameEmail(
+    BuildContext context,
+    Map<String, dynamic> user, {
+    bool isSelf = false,
+  }) {
     final tokens = context.ink;
     final name = (user['displayName'] ?? 'User').toString();
     final showEmail = isSelf || ((user['showEmail'] as bool?) ?? false);
@@ -273,7 +333,11 @@ class ProfileScreen extends StatelessWidget {
 
     return Column(
       children: [
-        Text(name, style: InkType.headline(tokens.ink), textAlign: TextAlign.center),
+        Text(
+          name,
+          style: InkType.headline(tokens.ink),
+          textAlign: TextAlign.center,
+        ),
         if (showEmail && email.isNotEmpty) ...[
           const SizedBox(height: InkSpacing.s4),
           Text(
@@ -289,10 +353,13 @@ class ProfileScreen extends StatelessWidget {
   DateTime? _asDateTime(dynamic value) {
     if (value == null) return null;
     if (value is DateTime) return value;
-    if (value is Timestamp) return value.toDate();
     if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
     if (value is String) return DateTime.tryParse(value);
-    return null;
+    try {
+      return (value as dynamic).toDate() as DateTime?;
+    } catch (_) {
+      return null;
+    }
   }
 
   String _formatJoinDate(DateTime? createdAt) {
@@ -333,8 +400,8 @@ class ProfileScreen extends StatelessWidget {
   Widget _buildProfileStats(BuildContext context, ProfileLoaded state) {
     if (state.isSelf) return const SizedBox.shrink();
 
-    final showOnlineStatus = state.isSelf ||
-        ((state.userData['showOnlineStatus'] as bool?) ?? true);
+    final showOnlineStatus =
+        state.isSelf || ((state.userData['showOnlineStatus'] as bool?) ?? true);
     final String statusText;
     final bool statusOnline;
     if (!showOnlineStatus) {
@@ -352,9 +419,21 @@ class ProfileScreen extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s16),
       child: Row(
         children: [
-          Expanded(child: _buildStatItem(context, state.boardCount.toString(), 'Boards')),
+          Expanded(
+            child: _buildStatItem(
+              context,
+              state.boardCount.toString(),
+              'Boards',
+            ),
+          ),
           const SizedBox(width: InkSpacing.s12),
-          Expanded(child: _buildStatItem(context, state.friendCount.toString(), 'Friends')),
+          Expanded(
+            child: _buildStatItem(
+              context,
+              state.friendCount.toString(),
+              'Friends',
+            ),
+          ),
           const SizedBox(width: InkSpacing.s12),
           Expanded(
             child: _buildStatItem(
@@ -379,12 +458,19 @@ class ProfileScreen extends StatelessWidget {
   }) {
     final tokens = context.ink;
     return PaperCard(
-      padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s8, vertical: InkSpacing.s12),
+      padding: const EdgeInsets.symmetric(
+        horizontal: InkSpacing.s8,
+        vertical: InkSpacing.s12,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (value != null)
-            Text(value, style: InkType.title(tokens.ink), textAlign: TextAlign.center)
+            Text(
+              value,
+              style: InkType.title(tokens.ink),
+              textAlign: TextAlign.center,
+            )
           else
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -393,7 +479,10 @@ class ProfileScreen extends StatelessWidget {
                   Container(
                     width: 8,
                     height: 8,
-                    decoration: BoxDecoration(color: tokens.success, shape: BoxShape.circle),
+                    decoration: BoxDecoration(
+                      color: tokens.success,
+                      shape: BoxShape.circle,
+                    ),
                   ),
                   const SizedBox(width: 4),
                 ],
@@ -413,18 +502,27 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildJoinDate(BuildContext context, DateTime? createdAt, bool isSelf) {
+  Widget _buildJoinDate(
+    BuildContext context,
+    DateTime? createdAt,
+    bool isSelf,
+  ) {
     if (createdAt == null) return const SizedBox.shrink();
     final tokens = context.ink;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s24),
       child: Row(
-        mainAxisAlignment: isSelf ? MainAxisAlignment.center : MainAxisAlignment.start,
+        mainAxisAlignment: isSelf
+            ? MainAxisAlignment.center
+            : MainAxisAlignment.start,
         children: [
           Icon(LucideIcons.calendar, size: 14, color: tokens.inkMuted),
           const SizedBox(width: 6),
-          Text(_formatJoinDate(createdAt), style: InkType.caption(tokens.inkMuted)),
+          Text(
+            _formatJoinDate(createdAt),
+            style: InkType.caption(tokens.inkMuted),
+          ),
         ],
       ),
     );
@@ -458,7 +556,10 @@ class ProfileScreen extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s24),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s16, vertical: InkSpacing.s8 + 2),
+        padding: const EdgeInsets.symmetric(
+          horizontal: InkSpacing.s16,
+          vertical: InkSpacing.s8 + 2,
+        ),
         decoration: BoxDecoration(
           color: tokens.danger.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(12),
@@ -471,7 +572,9 @@ class ProfileScreen extends StatelessWidget {
             Expanded(
               child: Text(
                 'You blocked this user. Unblock from the menu to collaborate again.',
-                style: InkType.caption(tokens.danger).copyWith(fontWeight: FontWeight.w600),
+                style: InkType.caption(
+                  tokens.danger,
+                ).copyWith(fontWeight: FontWeight.w600),
               ),
             ),
           ],
@@ -490,10 +593,7 @@ class ProfileScreen extends StatelessWidget {
           children: [
             Icon(LucideIcons.lock, size: 40, color: tokens.inkMuted),
             const SizedBox(height: InkSpacing.s12),
-            Text(
-              'This Account is Private',
-              style: InkType.title(tokens.ink),
-            ),
+            Text('This Account is Private', style: InkType.title(tokens.ink)),
             const SizedBox(height: InkSpacing.s8),
             Text(
               'Add this user as a friend to view their boards, bio, and activity.',
@@ -603,7 +703,10 @@ class ProfileScreen extends StatelessWidget {
                         ? SizedBox(
                             width: 16,
                             height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: tokens.ink),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: tokens.ink,
+                            ),
                           )
                         : const Icon(LucideIcons.x),
                     onPressed: (isAccepting || isDeclining)
@@ -636,7 +739,11 @@ class ProfileScreen extends StatelessWidget {
           if (!effectiveIsFriend && outgoingForProfile != null) {
             return InkButton.success(
               label: 'Request Sent',
-              icon: const Icon(LucideIcons.check, color: Colors.white, size: 18),
+              icon: const Icon(
+                LucideIcons.check,
+                color: Colors.white,
+                size: 18,
+              ),
               expand: true,
               onPressed: null,
             );
@@ -648,7 +755,9 @@ class ProfileScreen extends StatelessWidget {
               onPressed: () {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('User is blocked. Use the top menu to unblock.'),
+                    content: Text(
+                      'User is blocked. Use the top menu to unblock.',
+                    ),
                   ),
                 );
               },
@@ -656,14 +765,23 @@ class ProfileScreen extends StatelessWidget {
           }
 
           return InkButton.primary(
-            label: isSending ? 'Sending...' : (effectiveIsFriend ? 'Message' : 'Collaborate'),
+            label: isSending
+                ? 'Sending...'
+                : (effectiveIsFriend ? 'Message' : 'Collaborate'),
             icon: isSending
                 ? const SizedBox(
                     width: 20,
                     height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
                   )
-                : Icon(effectiveIsFriend ? LucideIcons.messageCircle : LucideIcons.userPlus),
+                : Icon(
+                    effectiveIsFriend
+                        ? LucideIcons.messageCircle
+                        : LucideIcons.userPlus,
+                  ),
             onPressed: () {
               if (effectiveIsFriend) {
                 final friendConv = ChatConversationModel(
@@ -687,7 +805,8 @@ class ProfileScreen extends StatelessWidget {
                 SendFriendRequestRequested(userId),
               );
 
-              final recipientName = state.userData['displayName']?.toString() ?? 'collaborator';
+              final recipientName =
+                  state.userData['displayName']?.toString() ?? 'collaborator';
               AppSnackBar.showSuccess(
                 context,
                 'Friend request sent to $recipientName!',

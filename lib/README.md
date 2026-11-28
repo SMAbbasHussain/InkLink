@@ -47,18 +47,25 @@ InkLink follows an explicit layered architecture with strict separation of conce
 
 ## Directory Organization
 
+See [docs/architecture/layered-architecture.md](../docs/architecture/layered-architecture.md) for the complete 5-layer contract, mobile/web composition roots, and guardrail rules.
+
 ```text
 lib/
-├── main.dart                      # Composition root: wires all services, repos, and app BLoCs
-├── app_view.dart                  # Top-level routing switch (Auth, EmailVerification, MainWrapper)
-├── firebase_options.dart          # FlutterFire environment platform configurations
+├── main.dart                      # Thin mobile entry point -> MobileDependencies.bootstrap()
+├── app_view.dart                  # Mobile top-level auth/navigation switch
+├── firebase_options.dart          # FlutterFire platform configurations
+│
+├── app/
+│   ├── app.dart                   # MyApp, InitializationErrorApp, appNavigatorKey
+│   ├── bootstrap/                 # Shared .env & Firebase initialization
+│   └── composition/               # SharedCanvasDependencies, MobileDependencies, WebDependencies
 │
 ├── core/
-│   ├── constants/                 # Shared collections, Firestore paths, routes, and styling tokens
+│   ├── constants/                 # Shared FirestorePaths constants (aligned with functions/)
 │   ├── crdt/                      # Yjs & HLC implementations (CanvasCrdtAdapter, undo ledger)
-│   ├── database/                  # Isar schemas (12 collections: LocalBoard, LocalCrdtUpdate, LocalChatMessage, etc.)
-│   ├── services/                  # Low-level service adapters (Auth, Firestore, CloudFunctions, DeepLink, Push)
-│   └── utils/                     # Network resolvers, AI feature flag, error formatters, and preferences
+│   ├── database/                  # Mobile Isar schemas (never imported by web)
+│   ├── services/                  # Low-level service wrappers (Auth, Firestore, CloudFunctions, DeepLink, Push)
+│   └── utils/                     # Network resolvers, AI feature flag, error formatters, preferences
 │
 ├── ui/
 │   ├── theme/                     # InkTheme design system (InkColors, InkTokens, InkType)
@@ -66,50 +73,11 @@ lib/
 │
 ├── domain/
 │   ├── models/                    # Immutable domain entities (ai, canvas, chat, friends, history, invitation, notification)
-│   ├── repositories/              # Repository contracts & implementations
-│   │   ├── auth/
-│   │   ├── board/
-│   │   ├── canvas/
-│   │   ├── chat/
-│   │   ├── friends/
-│   │   ├── history/
-│   │   ├── invitation/
-│   │   ├── notification/
-│   │   ├── presence/
-│   │   ├── profile/
-│   │   ├── settings/
-│   │   ├── theme/
-│   │   └── workspace/
-│   └── services/                  # Domain orchestration services
-│       ├── ai/                    # AI image generation/editing/inpainting client service
-│       ├── auth/                  # Auth session bootstrap & token lifecycle
-│       ├── board/                 # Board business rules & search
-│       ├── canvas/                # Canvas snapshotting, export, comments & board chat
-│       ├── chat/                  # Agora Chat SDK integration & Isar message sync
-│       ├── friends/               # Social graph operations
-│       ├── history/               # Board version history, timeline & revert orchestration
-│       ├── invitation/            # Inbound/outbound invites
-│       ├── notification/          # Notification dispatching & stream listeners
-│       ├── presence/              # Realtime Database presence heartbeats & online tracking
-│       ├── profile/               # User profiles & Cloudflare R2 uploads
-│       ├── settings/              # User preferences & cache invalidation
-│       ├── theme/                 # App aesthetic preferences
-│       ├── voice/                 # Agora RTC voice engine & participant tracking
-│       └── workspace/             # Multi-tenant workspace grouping & access roles
+│   ├── repositories/              # Repository contracts & mobile implementations
+│   └── services/                  # Shared domain services & board rules
 │
-└── features/
-    ├── auth/                      # Login, Registration, Google Sign-in, and Password Reset
-    ├── board_invitations/         # Board invitation inbox & approval sheets
-    ├── canvas/                    # Collaborative viewport, CanvasBloc, AiImageBloc, geometry/, trays/, widgets/, HistoryScreen, MediaEditorScreen, AiRepaintScreen
-    ├── chat/                      # Direct messaging, group chats, reaction sheets, & media attachments
-    ├── dashboard/                 # Board gallery, recent canvases, public boards, and creation dialogs
-    ├── friends/                   # Friend list, user search, incoming requests, & block list
-    ├── navigation/                # Bottom navigation bar & MainWrapper lifecycle listener
-    ├── notifications/             # Notification feed with interactive action pills
-    ├── profile/                   # User profile editor, avatar picker, and account deletion
-    ├── settings/                  # App settings, cache cleaner, and theme selector
-    ├── theme/                     # Theme BLoC & theme switcher
-    └── workspaces/                # Workspace switcher, member roles, invite flows, & board assignment
+├── features/                      # Mobile feature modules + shared canvas feature (`CanvasSessionView`)
+└── web/                           # Web companion entry point, BLoC/Cubits, domain service, web repos & screens
 ```
 
 ---

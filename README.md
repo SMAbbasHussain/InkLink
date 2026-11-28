@@ -195,7 +195,11 @@ GitHub Actions workflow (`.github/workflows/architecture-guardrails.yml`) automa
 
 ## Documentation Sub-Guides
 
+- [Layered Architecture & Multi-Target Composition](docs/architecture/layered-architecture.md)
 - [Flutter Client Architecture & Module Map](lib/README.md)
+- [Web Companion Guide](docs/web/web-companion.md)
+- [Web Canvas Guide](docs/web/web-canvas.md)
+- [AI Image Generation Setup](docs/development/ai-image-setup.md)
 - [Node.js WebSocket & Agora Relay Server](server/README.md)
 - [Firebase Cloud Functions Specification](functions/README.md)
 - [Yjs Dart CRDT Package](packages/yjs_dart/README.md)

@@ -27,11 +27,11 @@
   <meta property="og:site_name" content="InkLink">
   <meta property="og:title" content="InkLink - collaborative whiteboards in your browser">
   <meta property="og:description" content="Open your boards, draw together live and keep up with your team, right from the browser.">
-  <meta property="og:image" content="icons/Icon-512.png">
+  <meta property="og:image" content="icons/pwa-512.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="InkLink - collaborative whiteboards in your browser">
   <meta name="twitter:description" content="Open your boards, draw together live and keep up with your team, right from the browser.">
-  <meta name="twitter:image" content="icons/Icon-512.png">
+  <meta name="twitter:image" content="icons/pwa-512.png">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -52,8 +52,14 @@
     body {
       margin: 0;
       min-height: 100%;
-      background-color: #FFFFFF;
-          background-size: 100% 100%;
+      background-color: #EDEDF0;
+      background-size: 100% 100%;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background-color: #121418;
+      }
     }
 
     .center {
@@ -109,7 +115,7 @@
       document.body.style.background = "transparent";
     }
   </script>
-  <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
 </head>
 <body>
   <picture id="splash">

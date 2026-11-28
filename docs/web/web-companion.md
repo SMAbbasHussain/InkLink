@@ -1,8 +1,8 @@
 # InkLink on the web
 
-The browser version of InkLink: your boards, workspaces, invites, friends, notifications and profile, and **the board itself** (drawing and live editing, see [WEB_CANVAS.md](WEB_CANVAS.md)).
+The browser version of InkLink: your boards, workspaces, invites, friends, notifications and profile, and **the board itself** (drawing and live editing, see [web-canvas.md](web-canvas.md)).
 
-It is a **separate entry point** (`lib/web/main_web.dart`). The phone app (`lib/main.dart`) builds and behaves as before: web code never imports the phone's offline database (Isar), `path_provider` or Agora, and the few shared files that changed only add web-only branches or behaviour-preserving refactors (listed in WEB_CANVAS_PLAN.md and the commit messages).
+It is a **separate entry point** (`lib/web/main_web.dart`), composed via `lib/app/composition/web_dependencies.dart` and `SharedCanvasDependencies` (see [layered-architecture.md](../architecture/layered-architecture.md)). The phone app (`lib/main.dart`) builds and behaves as before: web code never imports the phone's offline database (Isar), `path_provider` or Agora.
 
 ## Pages
 
@@ -54,23 +54,29 @@ Always pass `-t`. `.env` is bundled into the web build and is **publicly downloa
 ## Code layout
 
 ```
+lib/app/composition/
+├── shared_canvas_dependencies.dart  Shared canvas & core service wiring
+└── web_dependencies.dart            Web bootstrap & single-instance Firebase wiring
+
 lib/web/
-├── main_web.dart                 Entry point: dotenv, Firebase, canvas services
-├── web_companion_app.dart        Ink theme (light/dark), services, sign-in gate
-├── web_theme.dart                Light/dark switch, remembered in the browser
-├── canvas/                       The board on the web (see WEB_CANVAS.md)
-├── data/                         Firestore reads + Cloud Function calls, mappers
-├── preview/                      Sample-data preview entry
-├── screens/                      sign_in, home_shell (top bar, sidebar), boards
-│                                 (+ discover), workspaces, invites, friends, notifications,
-│                                 profile
-└── widgets/web_widgets.dart      Shared headers, lists, empty states, dialogs
-test/web/                         Page tests, mappers, import guard
+├── main_web.dart                    Thin entry point delegating to WebDependencies
+├── web_companion_app.dart           Ink theme (light/dark), 6 Cubits, sign-in gate
+├── web_theme.dart                   Light/dark switch, remembered in the browser
+├── bloc/                            WebAuthCubit, WebBoardsCubit, WebWorkspacesCubit,
+│                                    WebSocialCubit, WebNotificationsCubit, WebSettingsCubit
+├── domain/                          WebCompanionService (validation + Cloud Functions)
+├── canvas/                          WebBoardRepository, WebSettingsRepository,
+│                                    WebNotificationRepository, WebVoiceService, buildWebCanvasRoute
+├── data/                            WebCompanionDataRepository, FirebaseWebCompanionRepository, mappers
+├── preview/                         Sample-data preview entry & SampleWebCompanionRepository
+├── screens/                         Presentation-only screens communicating strictly via bloc/
+└── widgets/web_widgets.dart         Shared headers, lists, empty states, dialogs
+test/web/                            Cubit, service, repository, page, PWA & import guard tests
 ```
 
 ## Before putting it online (needs the project Owner)
 
-Firebase Hosting, Firebase Auth authorized domains, the sync server's `CORS_ORIGIN`, and R2 CORS: see [WEB_CANVAS.md](WEB_CANVAS.md#before-putting-it-online-needs-the-project-owner).
+Firebase Hosting, Firebase Auth authorized domains, the sync server's `CORS_ORIGIN`, and R2 CORS: see [web-canvas.md](web-canvas.md#before-putting-it-online-needs-the-project-owner).
 
 ## Known limitations
 

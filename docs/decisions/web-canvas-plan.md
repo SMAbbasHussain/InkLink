@@ -1,5 +1,7 @@
 # Web canvas plan (Phase A: audit only)
 
+> **Historical planning record:** Implemented and later refactored under `lib/app/composition/shared_canvas_dependencies.dart` and `CanvasSessionView`. See [../architecture/layered-architecture.md](../architecture/layered-architecture.md) and [../web/web-canvas.md](../web/web-canvas.md) for current architecture.
+
 Goal: open a board from the web companion and draw, edit, use AI images and sync live with phones, using the **mobile canvas UI unchanged** (no glass restyle). Phones must behave exactly as today and keep Isar (same database, same schemas, no migration).
 
 Branch: `feat/web-canvas` (from `feat/web-glass-redesign` @ `7e1a4d6`).

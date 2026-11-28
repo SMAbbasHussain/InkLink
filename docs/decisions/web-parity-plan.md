@@ -1,6 +1,8 @@
 # Web parity: plan, implementation and verification
 
-Source of truth for *what was missing*: `WEB_PARITY_AUDIT.md` (B1–B11 and modules
+> **Historical planning record:** Implemented; the web companion was subsequently refactored to the 5-layer architecture (`UI -> Cubit -> WebCompanionService -> Repository`). See [../architecture/layered-architecture.md](../architecture/layered-architecture.md) for the current layout.
+
+Source of truth for *what was missing*: `../audits/web-parity-audit-historical.md` (B1–B11 and modules
 1–11). This file records how each gap was closed, what stayed mobile-only on
 purpose, and the tests that now guard the work.
 

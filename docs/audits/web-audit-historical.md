@@ -1,5 +1,7 @@
 # InkLink web version: audit and plan (Phase A)
 
+> **Historical document:** Kept for project history. This initial Phase A audit predates the implemented web companion and web canvas; see [../architecture/layered-architecture.md](../architecture/layered-architecture.md) and [../web/web-companion.md](../web/web-companion.md) for the current architecture.
+>
 > Branch `feature/web-version`, created from `feature/ai-image-generation` at `bc8c411`, 2026-11-17.
 > No app code has been changed yet. This document is for approval before Phase B.
 
