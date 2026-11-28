@@ -14,6 +14,12 @@ String workspaceRoleLabel(String role) => switch (role) {
   _ => 'Member',
 };
 
+/// Formats a workspace summary string such as `"4 members • 3 boards"`.
+String formatWorkspaceCounts(Workspace w) {
+  String n(int count, String word) => '$count $word${count == 1 ? '' : 's'}';
+  return '${n(w.memberCount, 'member')} • ${n(w.boardCount, 'board')}';
+}
+
 /// Members in mobile's order: owner first, then editor, member, viewer,
 /// then alphabetically by display label.
 List<WorkspaceMember> sortWorkspaceMembers(Iterable<WorkspaceMember> members) {

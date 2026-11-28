@@ -7,25 +7,28 @@ import '../core/services/firestore_service.dart';
 import '../domain/services/board/board_service.dart';
 import '../domain/services/settings/settings_service.dart';
 import '../ui/theme/ink_theme.dart';
-import 'bloc/web_auth_cubit.dart';
-import 'bloc/web_boards_cubit.dart';
-import 'bloc/web_notifications_cubit.dart';
-import 'bloc/web_settings_cubit.dart';
-import 'bloc/web_social_cubit.dart';
-import 'bloc/web_workspaces_cubit.dart';
 import 'domain/repositories/firebase_web_companion_repository.dart';
 import 'domain/repositories/web_board_repository.dart';
 import 'domain/repositories/web_notification_repository.dart';
 import 'domain/repositories/web_settings_repository.dart';
 import 'domain/services/web_companion_service.dart';
-import 'screens/home_shell.dart';
-import 'screens/sign_in_screen.dart';
-import 'screens/web_shell_nav.dart';
+import 'features/auth/bloc/web_auth_cubit.dart';
+import 'features/auth/view/web_sign_in_screen.dart';
+import 'features/auth/view/web_verify_email_screen.dart';
+import 'features/boards/bloc/web_boards_cubit.dart';
+import 'features/friends/bloc/web_friends_cubit.dart';
+import 'features/invites/bloc/web_invites_cubit.dart';
+import 'features/navigation/view/web_home_shell.dart';
+import 'features/navigation/view/web_shell_section.dart';
+import 'features/notifications/bloc/web_notifications_cubit.dart';
+import 'features/profile/bloc/web_profile_cubit.dart';
+import 'features/settings/bloc/web_settings_cubit.dart';
+import 'features/workspaces/bloc/web_workspaces_cubit.dart';
 import 'ui/theme/web_theme_controller.dart';
 import 'ui/widgets/web_board_opener.dart';
 
-/// Root of the web companion: theme, domain services, BLoC/Cubit providers,
-/// and the sign-in gate. Uses the mobile app's Ink theme (light and dark).
+/// Root of the web companion: theme, domain services, feature Cubit providers,
+/// and the sign-in gate. Uses InkLink's shared Ink theme (light and dark).
 class WebCompanionApp extends StatefulWidget {
   /// Pre-wired [WebCompanionService] from `WebDependencies.bootstrap()`.
   final WebCompanionService? service;
@@ -41,8 +44,8 @@ class WebCompanionApp extends StatefulWidget {
   /// Board from a `/board/<id>` deep link, opened after the first frame.
   final String? initialBoardId;
 
-  /// What a board card does. The web app (`main_web.dart`) opens the canvas;
-  /// without one, cards show the "open in the app" details.
+  /// Strategy for opening a board card. The production web app (`main_web.dart`)
+  /// opens the shared canvas route; without one, cards show mobile deep links.
   final WebBoardOpener? boardOpener;
 
   const WebCompanionApp({
@@ -60,7 +63,6 @@ class WebCompanionApp extends StatefulWidget {
 }
 
 class _WebCompanionAppState extends State<WebCompanionApp> {
-  // An explicitly fixed theme mode overrides browser-stored preference.
   late final WebThemeController _theme = WebThemeController(
     widget.themeMode,
     persist: widget.themeMode == ThemeMode.system,
@@ -121,8 +123,14 @@ class _WebCompanionAppState extends State<WebCompanionApp> {
           BlocProvider<WebWorkspacesCubit>(
             create: (_) => WebWorkspacesCubit(service: _service),
           ),
-          BlocProvider<WebSocialCubit>(
-            create: (_) => WebSocialCubit(service: _service),
+          BlocProvider<WebFriendsCubit>(
+            create: (_) => WebFriendsCubit(service: _service),
+          ),
+          BlocProvider<WebInvitesCubit>(
+            create: (_) => WebInvitesCubit(service: _service),
+          ),
+          BlocProvider<WebProfileCubit>(
+            create: (_) => WebProfileCubit(service: _service),
           ),
           BlocProvider<WebNotificationsCubit>(
             create: (_) => WebNotificationsCubit(service: _service),
@@ -141,7 +149,9 @@ class _WebCompanionAppState extends State<WebCompanionApp> {
           listener: (context, _) {
             context.read<WebBoardsCubit>().rebind();
             context.read<WebWorkspacesCubit>().rebind();
-            context.read<WebSocialCubit>().rebind();
+            context.read<WebFriendsCubit>().rebind();
+            context.read<WebInvitesCubit>().rebind();
+            context.read<WebProfileCubit>().rebind();
             context.read<WebNotificationsCubit>().rebind();
             context.read<WebSettingsCubit>().rebind();
           },
@@ -165,7 +175,7 @@ class _WebCompanionAppState extends State<WebCompanionApp> {
   }
 }
 
-/// Signed out → sign-in; unverified email → verify; otherwise the app.
+/// Signed out -> sign-in; unverified email -> verify; otherwise the app.
 class _WebAuthGate extends StatelessWidget {
   final WebSection initialSection;
   final String? initialBoardId;

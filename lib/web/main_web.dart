@@ -11,7 +11,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/composition/web_dependencies.dart';
-import 'canvas/web_canvas.dart';
+import 'features/canvas/view/web_canvas_route.dart';
 import 'ui/widgets/web_board_opener.dart';
 import 'web_companion_app.dart';
 
