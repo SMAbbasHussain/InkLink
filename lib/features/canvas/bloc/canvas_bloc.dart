@@ -7477,7 +7477,10 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           settings: state.boardSettings,
           selectedIds: state.selectedIds,
         );
-        var shareOutcome = BoardShareOutcome.dismissed;
+        // Default to unavailable so non-share exports (shareAfterExport == false)
+        // fall straight into the browser download path rather than reporting
+        // "Sharing cancelled."
+        var shareOutcome = BoardShareOutcome.unavailable;
         if (event.shareAfterExport) {
           try {
             final result = await SharePlus.instance.share(
