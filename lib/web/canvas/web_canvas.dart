@@ -4,24 +4,19 @@ import 'package:flutter/services.dart' show BrowserContextMenu;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../app/composition/shared_canvas_dependencies.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/cloud_functions_service.dart';
 import '../../core/services/firestore_service.dart';
 import '../../core/utils/notification_preferences.dart';
 import '../../domain/models/canvas/canvas_toolbar_action.dart';
-import '../../domain/repositories/canvas/board_comments_repository_impl.dart';
-import '../../domain/repositories/canvas/canvas_sync_repository_impl.dart';
 import '../../domain/repositories/canvas/memory_crdt_local_store.dart';
-import '../../domain/repositories/history/board_history_repository_impl.dart';
 import '../../domain/services/ai/ai_image_service.dart';
 import '../../domain/services/board/board_service.dart';
 import '../../domain/services/canvas/board_chat_service.dart';
-import '../../domain/services/canvas/board_chat_service_impl.dart';
 import '../../domain/services/canvas/board_comments_service.dart';
-import '../../domain/services/canvas/board_comments_service_impl.dart';
 import '../../domain/services/canvas/canvas_service.dart';
 import '../../domain/services/history/board_history_service.dart';
-import '../../domain/services/history/board_history_service_impl.dart';
 import '../../domain/services/notification/notification_service.dart';
 import '../../domain/services/settings/settings_service.dart';
 import '../../domain/services/voice/voice_service.dart';
@@ -33,38 +28,26 @@ import '../../ui/theme/ink_theme.dart';
 import 'web_board_repository.dart';
 import 'web_canvas_support.dart';
 
-/// Everything the mobile canvas needs, built from web-safe pieces: the
-/// same services as the phone app, except the board repository
-/// (Firestore only), the CRDT store (in memory, online-only), settings and
-/// notifications (no Isar cache) and voice (mobile-only).
+/// Everything the mobile canvas needs on the web, backed by
+/// [SharedCanvasDependencies] so mobile and web construct the exact same
+/// shared canvas services from platform-supplied repositories.
 class WebCanvasServices {
-  final AuthService authService;
-  final SharedPreferences prefs;
-  final CanvasService canvasService;
-  final BoardService boardService;
-  final BoardExportService exportService;
-  final BoardCommentsService commentsService;
-  final BoardChatService chatService;
-  final BoardHistoryService historyService;
-  final VoiceService voiceService;
-  final AiImageService aiImageService;
-  final SettingsService settingsService;
-  final NotificationService notificationService;
+  final SharedCanvasDependencies shared;
 
-  WebCanvasServices._({
-    required this.authService,
-    required this.prefs,
-    required this.canvasService,
-    required this.boardService,
-    required this.exportService,
-    required this.commentsService,
-    required this.chatService,
-    required this.historyService,
-    required this.voiceService,
-    required this.aiImageService,
-    required this.settingsService,
-    required this.notificationService,
-  });
+  const WebCanvasServices.fromShared(this.shared);
+
+  AuthService get authService => shared.authService;
+  SharedPreferences get prefs => shared.prefs;
+  CanvasService get canvasService => shared.canvasService;
+  BoardService get boardService => shared.boardService;
+  BoardExportService get exportService => shared.exportService;
+  BoardCommentsService get commentsService => shared.commentsService;
+  BoardChatService get chatService => shared.chatService;
+  BoardHistoryService get historyService => shared.historyService;
+  VoiceService get voiceService => shared.voiceService;
+  AiImageService get aiImageService => shared.aiImageService;
+  SettingsService get settingsService => shared.settingsService;
+  NotificationService get notificationService => shared.notificationService;
 
   /// Builds the services once Firebase is initialized.
   static Future<WebCanvasServices> create() async {
@@ -76,47 +59,20 @@ class WebCanvasServices {
       authService: auth,
       firestoreService: firestore,
     );
-    return WebCanvasServices._(
-      authService: auth,
-      prefs: prefs,
-      canvasService: CanvasServiceImpl(
-        boardRepository: boardRepository,
-        syncRepository: FirestoreCanvasSyncRepository(
-          authService: auth,
-          store: MemoryCrdtLocalStore(),
-        ),
-      ),
-      boardService: BoardServiceImpl(
-        boardRepository: boardRepository,
-        cloudFunctionsService: functions,
-      ),
-      exportService: const BoardExportServiceImpl(),
-      commentsService: BoardCommentsServiceImpl(
-        repository: FirestoreBoardCommentsRepository(
-          firestoreService: firestore,
-        ),
+    return WebCanvasServices.fromShared(
+      SharedCanvasDependencies.create(
+        prefs: prefs,
         authService: auth,
+        firestoreService: firestore,
         cloudFunctionsService: functions,
-      ),
-      chatService: BoardChatServiceImpl(authService: auth),
-      historyService: BoardHistoryServiceImpl(
-        authService: auth,
-        cloudFunctionsService: functions,
-        historyRepository: BoardHistoryRepositoryImpl(
-          firestoreService: firestore,
-          authService: auth,
-        ),
-      ),
-      voiceService: WebVoiceService(),
-      aiImageService: AiImageServiceImpl(cloudFunctionsService: functions),
-      settingsService: SettingsServiceImpl(
+        boardRepository: boardRepository,
+        crdtLocalStore: MemoryCrdtLocalStore(),
         settingsRepository: WebSettingsRepository(prefs),
-      ),
-      notificationService: NotificationServiceImpl(
         notificationRepository: WebNotificationRepository(
           authService: auth,
           firestoreService: firestore,
         ),
+        voiceService: WebVoiceService(),
       ),
     );
   }
