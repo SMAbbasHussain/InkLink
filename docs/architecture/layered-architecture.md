@@ -20,10 +20,10 @@ UI (Screens / Widgets)
 
 | Layer | Locations | Responsibilities | Allowed Dependencies | Forbidden Dependencies |
 | :--- | :--- | :--- | :--- | :--- |
-| **1. UI (Screens & Widgets)** | `lib/features/*/view/`, `lib/web/screens/`, `lib/web/widgets/`, `lib/ui/` | Pure presentation, layout, input handling, dispatching BLoC events / Cubit actions | BLoCs/Cubits, domain models, `lib/ui/` design tokens & widgets, pure UI helpers | Repositories, domain services, Firestore/RTDB/Auth SDKs, `SharedPreferences`, local DB |
-| **2. BLoC / Cubit** | `lib/features/*/bloc/`, `lib/web/bloc/` | Presentation state, stream subscriptions, mapping domain outcomes to UI state | Domain services, domain models, pure utilities | Repositories, `cloud_firestore`, `firebase_database`, `isar_community`, `shared_preferences`, `LocalDatabaseService` |
-| **3. Domain Services** | `lib/domain/services/`, `lib/web/domain/` | Business rules, input validation, multi-repository orchestration, Cloud Function callables | Repository abstractions, other domain services, domain models, `CloudFunctionsService` | Concrete `*_impl.dart` repositories, `cloud_firestore`, `firebase_database`, `isar_community`, `FirestoreService`, UI/feature presentation |
-| **4. Repositories** | `lib/domain/repositories/`, `lib/web/data/`, `lib/web/canvas/web_board_repository.dart` | Data access, persistence, mapping, transactions, caching | Domain models, `FirestorePaths`, `FirestoreService`, `AuthService`, local storage (`Isar` on mobile / in-memory & `SharedPreferences` on web) | Domain services, `cloud_functions`, `CloudFunctionsService`, `.httpsCallable()`, UI/presentation |
+| **1. UI (Screens & Widgets)** | `lib/features/*/view/`, `lib/web/features/*/view/`, `lib/web/ui/`, `lib/ui/` | Pure presentation, layout, input handling, dispatching BLoC events / Cubit actions | BLoCs/Cubits, domain models, `lib/ui/` & `lib/web/ui/` tokens & widgets, pure formatters | Repositories, domain services, Firestore/RTDB/Auth SDKs, `SharedPreferences`, local DB |
+| **2. BLoC / Cubit** | `lib/features/*/bloc/`, `lib/web/features/*/bloc/` | Presentation state, stream subscriptions, mapping domain outcomes to UI state | Domain services, domain models, pure utilities | Repositories, `cloud_firestore`, `firebase_database`, `isar_community`, `shared_preferences`, `LocalDatabaseService` |
+| **3. Domain Services** | `lib/domain/services/`, `lib/web/domain/services/` | Business rules, input validation, multi-repository orchestration, Cloud Function callables | Repository abstractions, other domain services, domain models, `CloudFunctionsService` | Concrete `*_impl.dart` / `*_data_source.dart` repositories, `cloud_firestore`, `firebase_database`, `isar_community`, `FirestoreService`, UI/feature presentation |
+| **4. Repositories** | `lib/domain/repositories/`, `lib/web/domain/repositories/` | Data access, persistence, mapping, transactions, caching | Domain models, `FirestorePaths`, `FirestoreService`, `AuthService`, local storage (`Isar` on mobile / in-memory & `SharedPreferences` on web) | Domain services, `cloud_functions`, `CloudFunctionsService`, `.httpsCallable()`, UI/presentation |
 | **5. Backend / Database** | `lib/core/services/`, `lib/core/database/`, `functions/`, `server/` | Firebase SDK wrappers, Isar schemas, Socket.IO relay, Cloud Functions, R2 | External SDKs only | Higher application layers |
 
 ---
@@ -45,14 +45,16 @@ lib/
 │       └── web_dependencies.dart                  # Web-only bootstrap (MemoryCrdtLocalStore, WebBoardRepository, WebCompanionService)
 └── web/
     ├── main_web.dart                              # Thin web entry point
-    ├── web_companion_app.dart                     # MultiRepositoryProvider + MultiBlocProvider (6 web Cubits) + AuthGate
-    ├── bloc/                                      # WebAuthCubit, WebBoardsCubit, WebWorkspacesCubit, WebSocialCubit, WebNotificationsCubit, WebSettingsCubit
-    ├── domain/                                    # WebCompanionService (domain orchestration + Cloud Functions)
-    ├── data/                                      # WebCompanionDataRepository, FirebaseWebCompanionRepository (pure data access), pure mappers
-    ├── canvas/                                    # WebBoardRepository, WebSettingsRepository, WebNotificationRepository, WebVoiceService, buildWebCanvasRoute
-    ├── screens/                                   # Presentation-only web screens communicating strictly with lib/web/bloc/
-    ├── widgets/                                   # Shared web companion widgets
-    └── preview/                                   # Offline sample-data preview entry & SampleWebCompanionRepository
+    ├── web_companion_app.dart                     # MultiRepositoryProvider + MultiBlocProvider (8 feature Cubits) + AuthGate
+    ├── core/                                      # Location parser, stream helpers, display formatters
+    ├── domain/
+    │   ├── models/                                # WebAccount, WebAccountSettings, UserBoardIndex, notification & workspace rules
+    │   ├── repositories/                          # WebCompanionRepository, FirebaseWebCompanionRepository + focused data sources, WebBoardRepository, WebNotificationRepository, WebSettingsRepository
+    │   └── services/                              # WebCompanionService (domain orchestration + Cloud Functions), WebVoiceService
+    ├── ui/
+    │   ├── theme/                                 # WebThemeController
+    │   └── widgets/                               # Shared web layout, feedback, and board-opener widgets
+    └── features/                                  # Feature-scoped {bloc, view} folders mirroring lib/features/ (auth, boards, canvas, friends, invites, navigation, notifications, profile, settings, workspaces)
 ```
 
 ### How Mobile and Web Share Logic Without Platform Leakage

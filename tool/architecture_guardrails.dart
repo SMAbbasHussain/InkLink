@@ -52,6 +52,7 @@ void main() {
     _checkCrossFeatureImports(file, violations);
     _checkScreenDirectBlocCalls(file, violations);
     _checkPlatformIsolationDirectImports(file, violations);
+    _checkNoDummyCodeInProductionWeb(file, violations);
   }
 
   _checkWebTransitivePlatformIsolation(files, violations);
@@ -145,7 +146,6 @@ void _checkDomainModelPurity(_ParsedFile file, List<String> violations) {
         : (uri.startsWith('lib/features/') ||
               uri.startsWith('lib/ui/') ||
               uri.startsWith('lib/app/') ||
-              uri.startsWith('lib/web/screens/') ||
               uri.startsWith('lib/web/features/') ||
               uri.startsWith('lib/web/ui/'));
     if (isOuter) {
@@ -236,9 +236,8 @@ void _checkBlocLayerBoundaries(_ParsedFile file, List<String> violations) {
   final isFeatureBloc =
       file.path.startsWith('lib/features/') && file.path.endsWith('_bloc.dart');
   final isWebBloc =
-      (file.path.startsWith('lib/web/bloc/') ||
-          (file.path.startsWith('lib/web/features/') &&
-              file.path.contains('/bloc/'))) &&
+      file.path.startsWith('lib/web/features/') &&
+      file.path.contains('/bloc/') &&
       (file.path.endsWith('_cubit.dart') || file.path.endsWith('_bloc.dart'));
   if (!isFeatureBloc && !isWebBloc) return;
 
@@ -310,9 +309,7 @@ void _checkRepositoryLayerBoundaries(
 
 void _checkRepositoryUsageInViews(_ParsedFile file, List<String> violations) {
   final isViewFile =
-      file.path.contains('/view/') ||
-      file.path.contains('/views/') ||
-      file.path.startsWith('lib/web/screens/');
+      file.path.contains('/view/') || file.path.contains('/views/');
   if (!isViewFile) return;
 
   final forbiddenMutationPattern = RegExp(
@@ -362,10 +359,9 @@ void _checkScreenLayerBoundaries(_ParsedFile file, List<String> violations) {
 
 void _checkWebScreenBoundaries(_ParsedFile file, List<String> violations) {
   final isWebView =
-      file.path.startsWith('lib/web/screens/') ||
-      (file.path.startsWith('lib/web/features/') &&
-          file.path.contains('/view/') &&
-          file.path != 'lib/web/features/canvas/view/web_canvas_route.dart');
+      file.path.startsWith('lib/web/features/') &&
+      file.path.contains('/view/') &&
+      file.path != 'lib/web/features/canvas/view/web_canvas_route.dart';
   if (!isWebView) return;
 
   for (final uri in file.allTargetUris) {
@@ -475,6 +471,25 @@ void _checkPlatformIsolationDirectImports(
         );
       }
     }
+  }
+}
+
+void _checkNoDummyCodeInProductionWeb(
+  _ParsedFile file,
+  List<String> violations,
+) {
+  if (!file.path.startsWith('lib/web/')) return;
+  final fileName = file.path.split('/').last;
+  final isDummyPath =
+      file.path.contains('/preview/') ||
+      fileName.startsWith('sample_') ||
+      fileName.startsWith('fake_') ||
+      fileName.startsWith('mock_') ||
+      fileName.startsWith('dummy_');
+  if (isDummyPath) {
+    violations.add(
+      '${file.path} belongs under test/web/, not production lib/web/.',
+    );
   }
 }
 

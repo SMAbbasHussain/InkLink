@@ -43,35 +43,44 @@ The mobile app's look (Ink theme, desk background, board cards, sticky notes, pa
 ```bash
 flutter run -d chrome -t lib/web/main_web.dart --web-port 3000
 flutter build web --release -t lib/web/main_web.dart    # -> build/web
-
-# Sample data, no Firebase (design preview): ?light / ?dark / ?signedOut /
-# ?section=workspaces|discover|invites|friends|notifications|profile
-flutter run -d chrome -t lib/web/preview/main_web_preview.dart
 ```
 
 Always pass `-t`. `.env` is bundled into the web build and is **publicly downloadable**: non-secret values only.
 
 ## Code layout
 
-```
+`lib/web/` mirrors the rest of `lib/` (`core/`, `domain/`, `ui/`, `features/<feature>/{bloc,view}/`):
+
+```text
 lib/app/composition/
 ├── shared_canvas_dependencies.dart  Shared canvas & core service wiring
 └── web_dependencies.dart            Web bootstrap & single-instance Firebase wiring
 
 lib/web/
 ├── main_web.dart                    Thin entry point delegating to WebDependencies
-├── web_companion_app.dart           Ink theme (light/dark), 6 Cubits, sign-in gate
-├── web_theme.dart                   Light/dark switch, remembered in the browser
-├── bloc/                            WebAuthCubit, WebBoardsCubit, WebWorkspacesCubit,
-│                                    WebSocialCubit, WebNotificationsCubit, WebSettingsCubit
-├── domain/                          WebCompanionService (validation + Cloud Functions)
-├── canvas/                          WebBoardRepository, WebSettingsRepository,
-│                                    WebNotificationRepository, WebVoiceService, buildWebCanvasRoute
-├── data/                            WebCompanionDataRepository, FirebaseWebCompanionRepository, mappers
-├── preview/                         Sample-data preview entry & SampleWebCompanionRepository
-├── screens/                         Presentation-only screens communicating strictly via bloc/
-└── widgets/web_widgets.dart         Shared headers, lists, empty states, dialogs
-test/web/                            Cubit, service, repository, page, PWA & import guard tests
+├── web_companion_app.dart           Ink theme (light/dark), 8 feature Cubits, sign-in gate
+├── core/                            URL parser, stream helpers, display formatters
+├── domain/
+│   ├── models/                      WebAccount, WebAccountSettings, UserBoardIndex, notification & workspace rules
+│   ├── repositories/                WebCompanionRepository, FirebaseWebCompanionRepository + focused data sources,
+│   │                                WebBoardRepository (+ discovery data source), WebNotificationRepository, WebSettingsRepository
+│   └── services/                    WebCompanionService (validation + Cloud Functions), WebVoiceService
+├── ui/
+│   ├── theme/                       WebThemeController (browser-persisted light/dark mode)
+│   └── widgets/                     WebPageHeader/layout, feedback banners/loaders, WebBoardOpener
+└── features/                        Feature-scoped Cubits (bloc/) and presentation-only screens/dialogs (view/)
+    ├── auth/                        WebAuthCubit, WebSignInScreen, WebVerifyEmailScreen, branding panel
+    ├── boards/                      WebBoardsCubit, WebBoardsPage, WebDiscoverPage, board card grid & dialogs
+    ├── canvas/                      WebCanvasServices & buildWebCanvasRoute (wraps shared CanvasSessionView)
+    ├── friends/                     WebFriendsCubit, WebFriendsPage, add-friend dialog
+    ├── invites/                     WebInvitesCubit, WebInvitesPage
+    ├── navigation/                  WebSection, WebHomeShell, desktop sidebar & top header
+    ├── notifications/               WebNotificationsCubit, WebNotificationsPage
+    ├── profile/                     WebProfileCubit, WebProfilePage
+    ├── settings/                    WebSettingsCubit, WebSettingsPage
+    └── workspaces/                  WebWorkspacesCubit, list, detail view, members section & dialogs
+
+test/web/                            Cubit, service, repository, page, PWA, import-guard tests & test-only fakes/
 ```
 
 ## Before putting it online (needs the project Owner)

@@ -70,7 +70,7 @@ Floating bars in the corners: back, board menu, save status and title, export, s
 
 ## How it is built (for developers)
 
-- **Entry and services:** `lib/web/canvas/web_canvas.dart` builds the canvas with web-safe services: a Firestore-only board repository, settings and notifications without Isar, a "mobile only" voice service, and the shared `FirestoreCanvasSyncRepository` on `MemoryCrdtLocalStore`.
+- **Entry and services:** `lib/web/features/canvas/view/web_canvas_route.dart` (composed via `lib/app/composition/web_dependencies.dart` and `SharedCanvasDependencies`) builds the canvas with web-safe services: `WebBoardRepository`, `WebSettingsRepository`, `WebNotificationRepository`, `WebVoiceService`, and the shared `FirestoreCanvasSyncRepository` on `MemoryCrdtLocalStore`.
 - **Storage seam:** the sync repository stores updates through `CrdtLocalStore` (`IsarCrdtLocalStore` on phones, `MemoryCrdtLocalStore` on the web). `LocalCrdtUpdate` comes through `lib/domain/models/canvas/crdt_update.dart`, a conditional export (the Isar class on phones, a plain class on the web).
 - **Conditional imports:** board settings opener and export folders (`path_provider`) have web versions.
 - **Layout and input:** `lib/features/canvas/view/canvas_screen_web.dart` (desktop bars, rail, shortcuts); trays in `widgets/sliding_tray.dart`. All behind `SlidingTray.useWebLayout`, which is false on phones.

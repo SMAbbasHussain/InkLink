@@ -77,7 +77,7 @@ lib/
 │   └── services/                  # Shared domain services & board rules
 │
 ├── features/                      # Mobile feature modules + shared canvas feature (`CanvasSessionView`)
-└── web/                           # Web companion entry point, BLoC/Cubits, domain service, web repos & screens
+└── web/                           # Web companion mirroring lib/ (core/, domain/, ui/, features/<feature>/{bloc,view}/)
 ```
 
 ---
