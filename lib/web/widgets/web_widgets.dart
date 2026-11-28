@@ -483,7 +483,7 @@ class WebSearchField extends StatelessWidget {
                 ),
         ),
         filled: true,
-        fillColor: tokens.isDark ? tokens.paper : Colors.white,
+        fillColor: tokens.paper,
         border: border,
         enabledBorder: border,
         focusedBorder: border.copyWith(

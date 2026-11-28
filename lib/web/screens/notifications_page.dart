@@ -8,8 +8,8 @@ import '../../ui/theme/ink_tokens.dart';
 import '../../ui/theme/ink_type.dart';
 import '../../ui/widgets/ink_avatar.dart';
 import '../../ui/widgets/paper_card.dart';
+import '../bloc/web_notifications_cubit.dart';
 import '../data/web_board_ops.dart';
-import '../domain/web_companion_service.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
@@ -29,14 +29,13 @@ class WebNotificationsPage extends StatefulWidget {
 }
 
 class _WebNotificationsPageState extends State<WebNotificationsPage> {
-  late final _repo = context.read<WebCompanionService>();
-  late final Stream<List<InAppNotification>> _stream = _repo
-      .watchNotificationsWithReadState();
   NotificationFilter _filter = NotificationFilter.all;
+
+  WebNotificationsCubit get _cubit => context.read<WebNotificationsCubit>();
 
   Future<void> _delete(InAppNotification n) async {
     try {
-      await _repo.deleteNotification(n.id);
+      await _cubit.deleteNotification(n.id);
     } catch (e) {
       if (mounted) showWebMessage(context, webErrorText(e), isError: true);
     }
@@ -44,7 +43,7 @@ class _WebNotificationsPageState extends State<WebNotificationsPage> {
 
   Future<void> _open(InAppNotification n) async {
     try {
-      await _repo.markNotificationRead(n.id);
+      await _cubit.markNotificationRead(n.id);
     } catch (_) {
       // Opening the page matters more than persisting the read state.
     }
@@ -62,7 +61,7 @@ class _WebNotificationsPageState extends State<WebNotificationsPage> {
 
   Future<void> _markAllRead(List<InAppNotification> items) async {
     try {
-      await _repo.markAllNotificationsRead(items.map((n) => n.id));
+      await _cubit.markAllNotificationsRead(items.map((n) => n.id));
       if (mounted) showWebMessage(context, 'All notifications marked as read.');
     } catch (e) {
       if (mounted) showWebMessage(context, webErrorText(e), isError: true);
@@ -71,99 +70,94 @@ class _WebNotificationsPageState extends State<WebNotificationsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<InAppNotification>>(
-      stream: _stream,
-      builder: (context, snapshot) {
-        final items = snapshot.data ?? const <InAppNotification>[];
-        final unread = unreadNotificationCount(items, const {});
-        final visible = items
-            .where((n) => notificationMatchesFilter(n.type, _filter))
-            .toList();
+    final state = context.watch<WebNotificationsCubit>().state;
+    final items = state.notifications;
+    final unread = state.unreadCount;
+    final visible = items
+        .where((n) => notificationMatchesFilter(n.type, _filter))
+        .toList();
 
-        return ListView(
-          padding: EdgeInsets.fromLTRB(
-            InkSpacing.s24,
-            InkSpacing.s24,
-            InkSpacing.s24,
-            webPageBottomPadding(context),
-          ),
-          children: [
-            WebReadableWidth(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  WebPageHeader(
-                    title: 'Notifications',
-                    subtitle:
-                        'Accept invites and friend requests on their own pages.',
-                    trailing: items.isEmpty
-                        ? null
-                        : TextButton.icon(
-                            onPressed: unread == 0
-                                ? null
-                                : () => _markAllRead(items),
-                            icon: Icon(
-                              LucideIcons.checkCheck,
-                              size: 16,
-                              color: unread == 0
-                                  ? context.ink.inkMuted
-                                  : context.ink.ink,
-                            ),
-                            label: Text(
-                              unread == 0 ? 'All read' : 'Mark all read',
-                              style: InkType.bodyStrong(
-                                unread == 0
-                                    ? context.ink.inkMuted
-                                    : context.ink.ink,
-                              ),
-                            ),
+    return ListView(
+      padding: EdgeInsets.fromLTRB(
+        InkSpacing.s24,
+        InkSpacing.s24,
+        InkSpacing.s24,
+        webPageBottomPadding(context),
+      ),
+      children: [
+        WebReadableWidth(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              WebPageHeader(
+                title: 'Notifications',
+                subtitle:
+                    'Accept invites and friend requests on their own pages.',
+                trailing: items.isEmpty
+                    ? null
+                    : TextButton.icon(
+                        onPressed: unread == 0
+                            ? null
+                            : () => _markAllRead(items),
+                        icon: Icon(
+                          LucideIcons.checkCheck,
+                          size: 16,
+                          color: unread == 0
+                              ? context.ink.inkMuted
+                              : context.ink.ink,
+                        ),
+                        label: Text(
+                          unread == 0 ? 'All read' : 'Mark all read',
+                          style: InkType.bodyStrong(
+                            unread == 0
+                                ? context.ink.inkMuted
+                                : context.ink.ink,
                           ),
-                  ),
-                  if (items.isNotEmpty) ...[
-                    _FilterChips(
-                      selected: _filter,
-                      counts: {
-                        for (final filter in NotificationFilter.values)
-                          filter: items
-                              .where(
-                                (n) =>
-                                    notificationMatchesFilter(n.type, filter),
-                              )
-                              .length,
-                      },
-                      onChanged: (filter) => setState(() => _filter = filter),
-                    ),
-                    const SizedBox(height: InkSpacing.s16),
-                  ],
-                  if (snapshot.hasError)
-                    WebErrorBox(message: webErrorText(snapshot.error!))
-                  else if (!snapshot.hasData)
-                    const WebLoading()
-                  else if (items.isEmpty)
-                    const WebEmptyHint(
-                      icon: LucideIcons.bell,
-                      text: "You're all caught up",
-                      subtitle:
-                          'New activity on your boards and friends shows up '
-                          'here.',
-                    )
-                  else if (visible.isEmpty)
-                    const WebEmptyHint(
-                      icon: LucideIcons.filterX,
-                      text: 'No notifications in this filter.',
-                    )
-                  else
-                    _NotificationGroups(
-                      items: visible,
-                      onDelete: _delete,
-                      onOpen: _open,
-                    ),
-                ],
+                        ),
+                      ),
               ),
-            ),
-          ],
-        );
-      },
+              if (items.isNotEmpty) ...[
+                _FilterChips(
+                  selected: _filter,
+                  counts: {
+                    for (final filter in NotificationFilter.values)
+                      filter: items
+                          .where(
+                            (n) => notificationMatchesFilter(n.type, filter),
+                          )
+                          .length,
+                  },
+                  onChanged: (filter) => setState(() => _filter = filter),
+                ),
+                const SizedBox(height: InkSpacing.s16),
+              ],
+              if (state.error != null)
+                WebErrorBox(message: webErrorText(state.error!))
+              else if (state.loading)
+                const WebLoading()
+              else if (items.isEmpty)
+                const WebEmptyHint(
+                  icon: LucideIcons.bell,
+                  text: "You're all caught up",
+                  subtitle:
+                      'New activity on your boards and friends shows up '
+                      'here.',
+                )
+              else if (visible.isEmpty)
+                const WebEmptyHint(
+                  icon: LucideIcons.filterX,
+                  text: 'No notifications in this filter.',
+                )
+              else
+                _NotificationGroups(
+                  items: visible,
+                  onDelete: _delete,
+                  onOpen: _open,
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

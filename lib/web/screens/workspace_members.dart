@@ -13,7 +13,7 @@ import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/paper_card.dart';
-import '../domain/web_companion_service.dart';
+import '../bloc/web_workspaces_cubit.dart';
 import '../data/web_mappers.dart';
 import '../data/web_workspace_ops.dart';
 import '../widgets/web_widgets.dart';
@@ -44,19 +44,21 @@ class WorkspaceMembersSection extends StatefulWidget {
 }
 
 class _WorkspaceMembersSectionState extends State<WorkspaceMembersSection> {
-  late final _repo = context.read<WebCompanionService>();
+  late final _workspaces = context.read<WebWorkspacesCubit>();
   StreamSubscription<List<WorkspaceMember>>? _sub;
   List<WorkspaceMember> _members = const [];
   bool _loading = true;
 
   bool get _isOwner =>
       widget.workspace.ownerId.isNotEmpty &&
-      widget.workspace.ownerId == _repo.currentUser?.uid;
+      widget.workspace.ownerId == _workspaces.currentUserId;
 
   @override
   void initState() {
     super.initState();
-    _sub = _repo.watchWorkspaceMembers(widget.workspace.id).listen((members) {
+    _sub = _workspaces.watchWorkspaceMembers(widget.workspace.id).listen((
+      members,
+    ) {
       if (!mounted) return;
       setState(() {
         _members = members;
@@ -81,7 +83,7 @@ class _WorkspaceMembersSectionState extends State<WorkspaceMembersSection> {
       ];
     });
     try {
-      await _repo.updateWorkspaceMemberRole(
+      await _workspaces.updateWorkspaceMemberRole(
         workspaceId: widget.workspace.id,
         memberUid: member.uid,
         role: role,
@@ -115,7 +117,7 @@ class _WorkspaceMembersSectionState extends State<WorkspaceMembersSection> {
     );
     if (!confirmed || !mounted) return;
     try {
-      await _repo.leaveWorkspace(widget.workspace.id);
+      await _workspaces.leaveWorkspace(widget.workspace.id);
       if (!mounted) return;
       showWebMessage(context, 'You left the workspace.');
       widget.onExited?.call();
@@ -136,7 +138,7 @@ class _WorkspaceMembersSectionState extends State<WorkspaceMembersSection> {
     );
     if (!confirmed || !mounted) return;
     try {
-      await _repo.deleteWorkspace(widget.workspace.id);
+      await _workspaces.deleteWorkspace(widget.workspace.id);
       if (!mounted) return;
       showWebMessage(context, 'Workspace deleted.');
       widget.onExited?.call();
@@ -161,7 +163,7 @@ class _WorkspaceMembersSectionState extends State<WorkspaceMembersSection> {
       ];
     });
     try {
-      await _repo.removeWorkspaceMember(
+      await _workspaces.removeWorkspaceMember(
         workspaceId: widget.workspace.id,
         memberUid: member.uid,
       );
@@ -403,7 +405,7 @@ class _WorkspaceSettingsDialogState extends State<_WorkspaceSettingsDialog> {
       _error = null;
     });
     try {
-      await context.read<WebCompanionService>().updateWorkspace(
+      await context.read<WebWorkspacesCubit>().updateWorkspace(
         workspaceId: widget.workspace.id,
         name: name,
         description: _description.text.trim(),
@@ -512,12 +514,9 @@ class _InviteWorkspaceDialogState extends State<_InviteWorkspaceDialog> {
       _error = null;
     });
     try {
-      final repo = context.read<WebCompanionService>();
-      final users = await repo.searchUsersByEmail(email);
-      if (users.isEmpty) throw 'No user found with that email.';
-      await repo.inviteToWorkspace(
+      await context.read<WebWorkspacesCubit>().inviteToWorkspaceByEmail(
         workspaceId: widget.workspace.id,
-        userIds: [users.first.uid],
+        email: email,
       );
       if (!mounted) return;
       Navigator.of(context).pop(true);

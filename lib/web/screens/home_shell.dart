@@ -1,10 +1,7 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../../domain/models/user_model.dart';
 import '../../ui/theme/ink_theme.dart';
 import '../../ui/theme/ink_tokens.dart';
 import '../../ui/theme/ink_type.dart';
@@ -13,7 +10,9 @@ import '../../ui/widgets/glass_nav_bar.dart';
 import '../../ui/widgets/glass_panel.dart';
 import '../../ui/widgets/ink_avatar.dart';
 import '../../ui/widgets/ink_logo.dart';
-import '../domain/web_companion_service.dart';
+import '../bloc/web_auth_cubit.dart';
+import '../bloc/web_notifications_cubit.dart';
+import '../bloc/web_social_cubit.dart';
 import '../data/web_mappers.dart';
 import '../web_theme.dart';
 import '../widgets/web_widgets.dart';
@@ -23,8 +22,8 @@ import 'invites_page.dart';
 import 'notifications_page.dart';
 import 'profile_page.dart';
 import 'settings_page.dart';
-import 'workspaces_page.dart';
 import 'web_shell_nav.dart';
+import 'workspaces_page.dart';
 
 /// Sections in the bottom nav bar, in order. Notifications and Profile open
 /// from the header, as on the phone.
@@ -70,38 +69,10 @@ class WebHomeShell extends StatefulWidget {
 
 class _WebHomeShellState extends State<WebHomeShell> {
   late WebSection _section = widget.initialSection;
-  final _subs = <StreamSubscription<dynamic>>[];
-  int _boardInvites = 0;
-  int _workspaceInvites = 0;
-  int _friendRequests = 0;
-  int _unread = 0;
 
   @override
   void initState() {
     super.initState();
-    final repo = context.read<WebCompanionService>();
-    void listen<T>(Stream<List<T>> stream, void Function(List<T>) onData) {
-      _subs.add(
-        stream.listen(
-          (items) {
-            if (mounted) setState(() => onData(items));
-          },
-          onError: (_) {}, // Badges are optional; pages show errors.
-        ),
-      );
-    }
-
-    listen(repo.watchBoardInvites(), (l) => _boardInvites = l.length);
-    listen(repo.watchWorkspaceInvites(), (l) => _workspaceInvites = l.length);
-    listen(
-      repo.watchIncomingFriendRequests(),
-      (l) => _friendRequests = l.length,
-    );
-    listen(
-      repo.watchNotificationsWithReadState(),
-      (l) => _unread = l.where((n) => !n.read).length,
-    );
-
     final boardId = widget.initialBoardId?.trim();
     if (boardId != null && boardId.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -119,14 +90,6 @@ class _WebHomeShellState extends State<WebHomeShell> {
     }
   }
 
-  @override
-  void dispose() {
-    for (final s in _subs) {
-      s.cancel();
-    }
-    super.dispose();
-  }
-
   // The tab to keep highlighted while Notifications or Profile is open.
   late int _lastNavIndex = _navSections.contains(widget.initialSection)
       ? _navSections.indexOf(widget.initialSection)
@@ -138,8 +101,14 @@ class _WebHomeShellState extends State<WebHomeShell> {
     if (i >= 0) _lastNavIndex = i;
   });
 
+  int get _unread => context.watch<WebNotificationsCubit>().state.unreadCount;
+  int get _pendingInvites =>
+      context.watch<WebSocialCubit>().state.totalPendingInvites;
+  int get _friendRequests =>
+      context.watch<WebSocialCubit>().state.friendRequests.length;
+
   int _badgeFor(WebSection s) => switch (s) {
-    WebSection.invites => _boardInvites + _workspaceInvites,
+    WebSection.invites => _pendingInvites,
     WebSection.friends => _friendRequests,
     WebSection.notifications => _unread,
     _ => 0,
@@ -287,7 +256,7 @@ class _WebHomeShellState extends State<WebHomeShell> {
                   activeIcon: LucideIcons.mailOpen,
                   inactiveIcon: LucideIcons.mail,
                   label: 'Invites',
-                  badge: _boardInvites + _workspaceInvites,
+                  badge: _pendingInvites,
                 ),
                 GlassNavItem(
                   activeIcon: LucideIcons.users,
@@ -431,7 +400,7 @@ class _SideNavItem extends StatelessWidget {
 
 /// The phone's home header: logo and name, then theme switch,
 /// notifications and the profile avatar.
-class _Header extends StatefulWidget {
+class _Header extends StatelessWidget {
   final int unread;
   final VoidCallback onNotifications;
   final VoidCallback onProfile;
@@ -449,17 +418,13 @@ class _Header extends StatefulWidget {
   });
 
   @override
-  State<_Header> createState() => _HeaderState();
-}
-
-class _HeaderState extends State<_Header> {
-  late final _repo = context.read<WebCompanionService>();
-  late final Stream<UserModel?> _profile = _repo.watchMyProfile();
-
-  @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
     final isDark = tokens.isDark;
+    final authCubit = context.read<WebAuthCubit>();
+    final currentUser = context.watch<WebAuthCubit>().state.user;
+    final profile = context.watch<WebSocialCubit>().state.profile;
+    final name = profile?.displayName ?? currentUser?.displayName ?? 'You';
     return GlassPanel(
       radius: 20,
       padding: const EdgeInsets.symmetric(horizontal: InkSpacing.s16),
@@ -493,101 +458,83 @@ class _HeaderState extends State<_Header> {
                   context.read<WebThemeController>().toggle(isDark: isDark),
             ),
             IconButton(
-              tooltip: widget.unread > 0
-                  ? 'Notifications, ${widget.unread} new'
+              tooltip: unread > 0
+                  ? 'Notifications, $unread new'
                   : 'Notifications',
               icon: Badge(
-                isLabelVisible: widget.unread > 0,
-                label: Text('${widget.unread}'),
+                isLabelVisible: unread > 0,
+                label: Text('$unread'),
                 backgroundColor: tokens.accent,
                 textColor: Colors.white,
                 child: Icon(LucideIcons.bell, color: tokens.ink),
               ),
-              onPressed: widget.onNotifications,
+              onPressed: onNotifications,
             ),
             const SizedBox(width: InkSpacing.s8),
-            StreamBuilder<UserModel?>(
-              stream: _profile,
-              builder: (context, snapshot) {
-                final profile = snapshot.data;
-                final name =
-                    profile?.displayName ??
-                    _repo.currentUser?.displayName ??
-                    'You';
-                return PopupMenuButton<String>(
-                  tooltip: 'Account',
-                  position: PopupMenuPosition.under,
-                  offset: const Offset(0, 8),
-                  onSelected: (value) {
-                    if (value == 'profile') widget.onProfile();
-                    if (value == 'settings') widget.onSettings();
-                    if (value == 'signout') _repo.signOut();
-                  },
-                  itemBuilder: (_) => [
-                    PopupMenuItem<String>(
-                      enabled: false,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(name, style: InkType.bodyStrong(tokens.ink)),
-                          if (profile?.email != null)
-                            Text(
-                              profile!.email,
-                              style: InkType.caption(tokens.inkMuted),
-                            ),
-                        ],
-                      ),
-                    ),
-                    const PopupMenuDivider(),
-                    PopupMenuItem<String>(
-                      value: 'profile',
-                      child: _menuRow(
-                        LucideIcons.user,
-                        'Your profile',
-                        tokens.ink,
-                      ),
-                    ),
-                    PopupMenuItem<String>(
-                      value: 'settings',
-                      child: _menuRow(
-                        LucideIcons.settings,
-                        'Settings',
-                        tokens.ink,
-                      ),
-                    ),
-                    PopupMenuItem<String>(
-                      value: 'signout',
-                      child: _menuRow(
-                        LucideIcons.logOut,
-                        'Sign out',
-                        tokens.danger,
-                      ),
-                    ),
-                  ],
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
+            PopupMenuButton<String>(
+              tooltip: 'Account',
+              position: PopupMenuPosition.under,
+              offset: const Offset(0, 8),
+              onSelected: (value) {
+                if (value == 'profile') onProfile();
+                if (value == 'settings') onSettings();
+                if (value == 'signout') authCubit.signOut();
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem<String>(
+                  enabled: false,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      InkAvatar(
-                        imageUrl: profile?.photoURL,
-                        initials: initialsOf(name),
-                        id: _repo.currentUser?.uid ?? 'me',
-                        size: 36,
-                        ring: true,
-                      ),
-                      if (widget.showName) ...[
-                        const SizedBox(width: InkSpacing.s8),
-                        Text(name, style: InkType.bodyStrong(tokens.ink)),
-                        const SizedBox(width: 2),
-                        Icon(
-                          LucideIcons.chevronDown,
-                          size: 16,
-                          color: tokens.inkMuted,
+                      Text(name, style: InkType.bodyStrong(tokens.ink)),
+                      if (profile?.email != null)
+                        Text(
+                          profile!.email,
+                          style: InkType.caption(tokens.inkMuted),
                         ),
-                      ],
                     ],
                   ),
-                );
-              },
+                ),
+                const PopupMenuDivider(),
+                PopupMenuItem<String>(
+                  value: 'profile',
+                  child: _menuRow(LucideIcons.user, 'Your profile', tokens.ink),
+                ),
+                PopupMenuItem<String>(
+                  value: 'settings',
+                  child: _menuRow(LucideIcons.settings, 'Settings', tokens.ink),
+                ),
+                PopupMenuItem<String>(
+                  value: 'signout',
+                  child: _menuRow(
+                    LucideIcons.logOut,
+                    'Sign out',
+                    tokens.danger,
+                  ),
+                ),
+              ],
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  InkAvatar(
+                    imageUrl: profile?.photoURL,
+                    initials: initialsOf(name),
+                    id: currentUser?.uid ?? 'me',
+                    size: 36,
+                    ring: true,
+                  ),
+                  if (showName) ...[
+                    const SizedBox(width: InkSpacing.s8),
+                    Text(name, style: InkType.bodyStrong(tokens.ink)),
+                    const SizedBox(width: 2),
+                    Icon(
+                      LucideIcons.chevronDown,
+                      size: 16,
+                      color: tokens.inkMuted,
+                    ),
+                  ],
+                ],
+              ),
             ),
           ],
         ),

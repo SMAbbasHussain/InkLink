@@ -1,9 +1,6 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/utils/board_preview_preferences.dart';
 import '../../ui/theme/ink_theme.dart';
@@ -14,16 +11,12 @@ import '../../ui/widgets/ink_chip.dart';
 import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/paper_card.dart';
-import '../canvas/web_canvas_support.dart';
+import '../bloc/web_auth_cubit.dart';
+import '../bloc/web_settings_cubit.dart';
 import '../data/web_account_settings.dart';
-import '../domain/web_companion_service.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
 
-/// A paper card of ListTiles with a transparent Material between them and the
-/// card's painted background (Flutter asserts otherwise: tiles paint their
-/// ink on the nearest Material).
-/// One switch row of a [_TileGroup].
 class _SwitchTile extends StatelessWidget {
   final String title;
   final String? subtitle;
@@ -66,11 +59,8 @@ class _TileGroup extends StatelessWidget {
   );
 }
 
-/// The web companion's settings, backed by the same browser-stored
-/// preferences the canvas reads ([WebSettingsRepository]): tray tips, board
-/// preview quality and compression, alert toggles, cache clearing and the
-/// account actions. The phone's Isar-only settings (offline cache, local
-/// storage) have no web equivalent and are not shown.
+/// The web companion's settings screen. Purely presentational: reads state
+/// from [WebSettingsCubit] and dispatches account actions to [WebAuthCubit].
 class WebSettingsPage extends StatefulWidget {
   const WebSettingsPage({super.key});
 
@@ -79,76 +69,18 @@ class WebSettingsPage extends StatefulWidget {
 }
 
 class _WebSettingsPageState extends State<WebSettingsPage> {
-  WebSettingsRepository? _settings;
-  bool _loading = true;
-  String? _error;
+  final _tagController = TextEditingController();
   bool _busy = false;
 
-  bool _trayTips = true;
-  String _quality = BoardPreviewPreferences.medium;
-  bool _compression = true;
-  bool _push = true;
-  bool _invite = true;
-  bool _friend = true;
-
-  WebAccountSettings _accountSettings = WebAccountSettings.defaults;
-  StreamSubscription<WebAccountSettings>? _accountSub;
-  final _tagController = TextEditingController();
-
-  String? get _uid => context.read<WebCompanionService>().currentUser?.uid;
-
-  @override
-  void initState() {
-    super.initState();
-    _accountSub = context
-        .read<WebCompanionService>()
-        .watchAccountSettings()
-        .listen((settings) {
-          if (mounted) setState(() => _accountSettings = settings);
-        });
-    _load();
-  }
+  WebSettingsCubit get _settingsCubit => context.read<WebSettingsCubit>();
 
   @override
   void dispose() {
-    _accountSub?.cancel();
     _tagController.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final settings = WebSettingsRepository(prefs);
-      final trayTips = await settings.getShowTrayTips();
-      final quality = await settings.getBoardPreviewQuality();
-      final compression = await settings.getBoardPreviewCompressionEnabled();
-      final push = await settings.getPushNotificationsEnabled(_uid);
-      final invite = await settings.getInviteAlertsEnabled(_uid);
-      final friend = await settings.getFriendAlertsEnabled(_uid);
-      if (!mounted) return;
-      setState(() {
-        _settings = settings;
-        _trayTips = trayTips;
-        _quality = quality;
-        _compression = compression;
-        _push = push;
-        _invite = invite;
-        _friend = friend;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = webErrorText(e);
-        _loading = false;
-      });
-    }
-  }
-
-  Future<void> _signOut() async {
-    await context.read<WebCompanionService>().signOut();
-  }
+  Future<void> _signOut() => context.read<WebAuthCubit>().signOut();
 
   Future<void> _deleteAccount() async {
     final confirmed = await showInkConfirmDialog(
@@ -162,7 +94,7 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
-      await context.read<WebCompanionService>().deleteAccount();
+      await context.read<WebAuthCubit>().deleteAccount();
     } catch (e) {
       if (mounted) {
         setState(() => _busy = false);
@@ -173,7 +105,7 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
 
   Future<void> _clearCache() async {
     try {
-      await _settings?.clearLocalCache();
+      await _settingsCubit.clearLocalCache();
       PaintingBinding.instance.imageCache
         ..clear()
         ..clearLiveImages();
@@ -183,48 +115,27 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
     }
   }
 
-  /// Privacy toggles write all three booleans (the phone's
-  /// `updatePrivacySettings` takes them together), optimistically and rolled
-  /// back on failure.
   Future<void> _setPrivacy({
     bool? isProfilePublic,
     bool? showOnlineStatus,
     bool? showEmail,
   }) async {
-    final previous = _accountSettings;
-    final next = previous.copyWith(
-      isProfilePublic: isProfilePublic,
-      showOnlineStatus: showOnlineStatus,
-      showEmail: showEmail,
-    );
-    setState(() => _accountSettings = next);
     try {
-      await context.read<WebCompanionService>().updatePrivacySettings(
-        isProfilePublic: next.isProfilePublic,
-        showOnlineStatus: next.showOnlineStatus,
-        showEmail: next.showEmail,
+      await _settingsCubit.updatePrivacy(
+        isProfilePublic: isProfilePublic,
+        showOnlineStatus: showOnlineStatus,
+        showEmail: showEmail,
       );
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _accountSettings = previous);
-      showWebMessage(context, webErrorText(e), isError: true);
+      if (mounted) showWebMessage(context, webErrorText(e), isError: true);
     }
   }
 
   Future<void> _toggleTag(String tag) async {
-    final previous = _accountSettings;
-    final next = previous.copyWith(
-      preferredTags: WebAccountSettings.toggleTag(previous.preferredTags, tag),
-    );
-    setState(() => _accountSettings = next);
     try {
-      await context.read<WebCompanionService>().updatePreferredTags(
-        next.preferredTags,
-      );
+      await _settingsCubit.togglePreferredTag(tag);
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _accountSettings = previous);
-      showWebMessage(context, webErrorText(e), isError: true);
+      if (mounted) showWebMessage(context, webErrorText(e), isError: true);
     }
   }
 
@@ -238,6 +149,8 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final state = context.watch<WebSettingsCubit>().state;
+    final accountSettings = state.accountSettings;
     return ListView(
       padding: EdgeInsets.fromLTRB(
         InkSpacing.s24,
@@ -254,9 +167,10 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
                 title: 'Settings',
                 subtitle: 'Canvas, notification and account preferences.',
               ),
-              if (_loading) const WebLoading(),
-              if (_error != null) WebErrorBox(message: _error!),
-              if (!_loading && _error == null) ...[
+              if (state.loading) const WebLoading(),
+              if (state.error != null)
+                WebErrorBox(message: webErrorText(state.error!)),
+              if (!state.loading && state.error == null) ...[
                 const WebSectionLabel('Canvas'),
                 _TileGroup(
                   children: <Widget>[
@@ -264,11 +178,8 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
                       title: 'Show tool tray tips',
                       subtitle:
                           'Hints that explain a tool the first time you use it.',
-                      value: _trayTips,
-                      onChanged: (value) {
-                        setState(() => _trayTips = value);
-                        _settings?.setShowTrayTips(value);
-                      },
+                      value: state.trayTips,
+                      onChanged: _settingsCubit.setShowTrayTips,
                     ),
                     Divider(height: 1, color: tokens.glassStroke),
                     Padding(
@@ -293,11 +204,9 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
                               ])
                                 WebChoiceChip(
                                   label: label,
-                                  selected: _quality == value,
-                                  onSelected: () {
-                                    setState(() => _quality = value);
-                                    _settings?.setBoardPreviewQuality(value);
-                                  },
+                                  selected: state.quality == value,
+                                  onSelected: () => _settingsCubit
+                                      .setBoardPreviewQuality(value),
                                 ),
                             ],
                           ),
@@ -308,11 +217,9 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
                     _SwitchTile(
                       title: 'Compress previews',
                       subtitle: 'Smaller previews use less space and battery.',
-                      value: _compression,
-                      onChanged: (value) {
-                        setState(() => _compression = value);
-                        _settings?.setBoardPreviewCompressionEnabled(value);
-                      },
+                      value: state.compression,
+                      onChanged:
+                          _settingsCubit.setBoardPreviewCompressionEnabled,
                     ),
                   ],
                 ),
@@ -322,29 +229,20 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
                   children: <Widget>[
                     _SwitchTile(
                       title: 'Push notifications',
-                      value: _push,
-                      onChanged: (value) {
-                        setState(() => _push = value);
-                        _settings?.setPushNotificationsEnabled(value, _uid);
-                      },
+                      value: state.pushEnabled,
+                      onChanged: _settingsCubit.setPushNotificationsEnabled,
                     ),
                     Divider(height: 1, color: tokens.glassStroke),
                     _SwitchTile(
                       title: 'Invite alerts',
-                      value: _invite,
-                      onChanged: (value) {
-                        setState(() => _invite = value);
-                        _settings?.setInviteAlertsEnabled(value, _uid);
-                      },
+                      value: state.inviteAlertsEnabled,
+                      onChanged: _settingsCubit.setInviteAlertsEnabled,
                     ),
                     Divider(height: 1, color: tokens.glassStroke),
                     _SwitchTile(
                       title: 'Friend alerts',
-                      value: _friend,
-                      onChanged: (value) {
-                        setState(() => _friend = value);
-                        _settings?.setFriendAlertsEnabled(value, _uid);
-                      },
+                      value: state.friendAlertsEnabled,
+                      onChanged: _settingsCubit.setFriendAlertsEnabled,
                     ),
                     Padding(
                       padding: const EdgeInsets.only(bottom: InkSpacing.s12),
@@ -364,14 +262,14 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
                       title: 'Public profile',
                       subtitle:
                           'Let non-friends view your profile and public boards.',
-                      value: _accountSettings.isProfilePublic,
+                      value: accountSettings.isProfilePublic,
                       onChanged: (value) => _setPrivacy(isProfilePublic: value),
                     ),
                     Divider(height: 1, color: tokens.glassStroke),
                     _SwitchTile(
                       title: 'Show online status',
                       subtitle: 'Let collaborators see when you are active.',
-                      value: _accountSettings.showOnlineStatus,
+                      value: accountSettings.showOnlineStatus,
                       onChanged: (value) =>
                           _setPrivacy(showOnlineStatus: value),
                     ),
@@ -379,7 +277,7 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
                     _SwitchTile(
                       title: 'Show email address',
                       subtitle: 'Display your email on your public profile.',
-                      value: _accountSettings.showEmail,
+                      value: accountSettings.showEmail,
                       onChanged: (value) => _setPrivacy(showEmail: value),
                     ),
                   ],
@@ -405,14 +303,14 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
                         spacing: InkSpacing.s8,
                         runSpacing: InkSpacing.s8,
                         children: [
-                          for (final tag in _accountSettings.preferredTags)
+                          for (final tag in accountSettings.preferredTags)
                             InkChip(
                               label: '#$tag',
                               selected: true,
                               onTap: () => _toggleTag(tag),
                             ),
                           for (final tag in WebAccountSettings.suggestedTags)
-                            if (!_accountSettings.preferredTags.any(
+                            if (!accountSettings.preferredTags.any(
                               (chosen) =>
                                   chosen.toLowerCase() == tag.toLowerCase(),
                             ))

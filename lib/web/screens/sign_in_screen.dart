@@ -12,7 +12,7 @@ import '../../ui/widgets/desk_background.dart';
 import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/sticky_note.dart';
-import '../domain/web_companion_service.dart';
+import '../bloc/web_auth_cubit.dart';
 import '../widgets/web_widgets.dart';
 
 /// Wide screens get a two-column layout from this width up.
@@ -55,7 +55,7 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
 
   bool get _creating => _mode == WebSignInMode.signUp;
 
-  WebCompanionService get _repo => context.read<WebCompanionService>();
+  WebAuthCubit get _auth => context.read<WebAuthCubit>();
 
   Future<void> _run(Future<void> Function() action) async {
     setState(() {
@@ -76,7 +76,7 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
       setState(() => _error = 'Please enter your email and password.');
       return;
     }
-    await _run(() => _repo.signInWithEmail(_email.text, _password.text));
+    await _run(() => _auth.signInWithEmail(_email.text, _password.text));
   }
 
   Future<void> _signUp() async {
@@ -93,7 +93,7 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
       return;
     }
     await _run(
-      () => _repo.signUpWithEmail(
+      () => _auth.signUpWithEmail(
         name: _name.text,
         email: _email.text,
         password: _password.text,
@@ -118,7 +118,7 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
       return;
     }
     await _run(() async {
-      await _repo.sendPasswordReset(_email.text);
+      await _auth.sendPasswordReset(_email.text);
       if (mounted) showWebMessage(context, 'Password reset email sent.');
     });
   }
@@ -322,7 +322,7 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
                   child: SocialAuthButton(
                     text: 'Continue with Google',
                     assetPath: 'images/google-logo.png',
-                    onTap: () => _run(_repo.signInWithGoogle),
+                    onTap: () => _run(_auth.signInWithGoogle),
                   ),
                 ),
               ),
@@ -553,14 +553,9 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
   Future<void> _check() async {
     setState(() => _busy = true);
     try {
-      final verified = await context
-          .read<WebCompanionService>()
-          .reloadEmailVerified();
+      final verified = await context.read<WebAuthCubit>().reloadEmailVerified();
       if (!mounted) return;
-      if (verified) {
-        // Rebuild the gate with the refreshed user.
-        context.read<WebAuthRefresh>().refresh();
-      } else {
+      if (!verified) {
         showWebMessage(
           context,
           'Not verified yet. Check your inbox and spam folder.',
@@ -577,7 +572,7 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await context.read<WebCompanionService>().resendVerificationEmail();
+      await context.read<WebAuthCubit>().resendVerificationEmail();
       if (mounted) {
         showWebMessage(context, 'Verification email sent to ${widget.email}.');
       }
@@ -640,8 +635,7 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
                       onPressed: _busy ? null : _resend,
                     ),
                     TextButton(
-                      onPressed: () =>
-                          context.read<WebCompanionService>().signOut(),
+                      onPressed: () => context.read<WebAuthCubit>().signOut(),
                       child: Text(
                         'Use a different account',
                         style: InkType.bodyStrong(ink.inkMuted),

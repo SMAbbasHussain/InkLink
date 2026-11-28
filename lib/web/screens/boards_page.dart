@@ -12,7 +12,9 @@ import '../../ui/widgets/board_card_frame.dart';
 import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_segmented.dart';
-import '../domain/web_companion_service.dart';
+import '../bloc/web_auth_cubit.dart';
+import '../bloc/web_boards_cubit.dart';
+import '../bloc/web_social_cubit.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'board_dialogs.dart';
@@ -31,9 +33,6 @@ class WebBoardsPage extends StatefulWidget {
 }
 
 class _WebBoardsPageState extends State<WebBoardsPage> {
-  late final _repo = context.read<WebCompanionService>();
-  late final Stream<List<Board>> _boards = _repo.watchMyBoards();
-  late final _boardInvites = _repo.watchBoardInvites();
   final _search = TextEditingController();
   _BoardTab _tab = _BoardTab.mine;
 
@@ -61,7 +60,13 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final uid = _repo.currentUser?.uid;
+    final uid = context.watch<WebAuthCubit>().state.user?.uid;
+    final boardsState = context.watch<WebBoardsCubit>().state;
+    final inviteCount = context
+        .watch<WebSocialCubit>()
+        .state
+        .boardInvites
+        .length;
     final nav = WebShellNav.maybeOf(context);
     return ListView(
       padding: EdgeInsets.fromLTRB(
@@ -107,22 +112,14 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
             ],
           ),
         ),
-        StreamBuilder(
-          stream: _boardInvites,
-          builder: (context, snapshot) {
-            final count = snapshot.data?.length ?? 0;
-            if (count == 0) return const SizedBox.shrink();
-            return Padding(
-              padding: const EdgeInsets.only(bottom: InkSpacing.s20),
-              child: _InviteNotice(
-                count: count,
-                onReview: nav == null
-                    ? null
-                    : () => nav.goTo(WebSection.invites),
-              ),
-            );
-          },
-        ),
+        if (inviteCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(bottom: InkSpacing.s20),
+            child: _InviteNotice(
+              count: inviteCount,
+              onReview: nav == null ? null : () => nav.goTo(WebSection.invites),
+            ),
+          ),
         Align(
           alignment: Alignment.centerLeft,
           child: ConstrainedBox(
@@ -135,45 +132,54 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
           ),
         ),
         const SizedBox(height: InkSpacing.s20),
-        WebStreamList<Board>(
-          stream: _boards,
-          compactEmpty: false,
-          emptyIcon: LucideIcons.layoutGrid,
-          emptyText: 'No boards created yet.',
-          emptySubtitle: 'Create your first board to get started.',
-          builder: (context, boards) {
-            final visible = _apply(boards, uid);
-            if (visible.isEmpty) {
-              final query = _search.text.trim();
-              if (query.isNotEmpty) {
+        if (boardsState.myBoardsError != null)
+          WebErrorBox(message: webErrorText(boardsState.myBoardsError!))
+        else if (boardsState.myBoardsLoading)
+          const WebLoading()
+        else if (boardsState.myBoards.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: InkSpacing.s24),
+            child: WebEmptyHint(
+              icon: LucideIcons.layoutGrid,
+              text: 'No boards created yet.',
+              subtitle: 'Create your first board to get started.',
+            ),
+          )
+        else
+          Builder(
+            builder: (context) {
+              final visible = _apply(boardsState.myBoards, uid);
+              if (visible.isEmpty) {
+                final query = _search.text.trim();
+                if (query.isNotEmpty) {
+                  return WebEmptyHint(
+                    icon: LucideIcons.searchX,
+                    text: 'No boards match "$query"',
+                  );
+                }
                 return WebEmptyHint(
-                  icon: LucideIcons.searchX,
-                  text: 'No boards match "$query"',
+                  icon: _tab == _BoardTab.archived
+                      ? LucideIcons.archive
+                      : LucideIcons.layoutGrid,
+                  text: switch (_tab) {
+                    _BoardTab.mine => 'No boards created yet.',
+                    _BoardTab.joined => 'No boards joined yet.',
+                    _BoardTab.archived => 'No archived boards.',
+                  },
+                  subtitle: _tab == _BoardTab.mine
+                      ? 'Use New board above to start one.'
+                      : null,
                 );
               }
-              return WebEmptyHint(
-                icon: _tab == _BoardTab.archived
-                    ? LucideIcons.archive
-                    : LucideIcons.layoutGrid,
-                text: switch (_tab) {
-                  _BoardTab.mine => 'No boards created yet.',
-                  _BoardTab.joined => 'No boards joined yet.',
-                  _BoardTab.archived => 'No archived boards.',
-                },
-                subtitle: _tab == _BoardTab.mine
-                    ? 'Use New board above to start one.'
-                    : null,
+              return WebBoardCardGrid(
+                boards: visible,
+                captionFor: (b) => b.tags.isNotEmpty
+                    ? '${b.tags.map((t) => '#$t').join(' ')} • '
+                          'Edited ${timeAgo(b.updatedAt)}'
+                    : 'Edited ${timeAgo(b.updatedAt)}',
               );
-            }
-            return WebBoardCardGrid(
-              boards: visible,
-              captionFor: (b) => b.tags.isNotEmpty
-                  ? '${b.tags.map((t) => '#$t').join(' ')} • '
-                        'Edited ${timeAgo(b.updatedAt)}'
-                  : 'Edited ${timeAgo(b.updatedAt)}',
-            );
-          },
-        ),
+            },
+          ),
       ],
     );
   }
@@ -291,13 +297,11 @@ class _BoardMenu extends StatelessWidget {
   const _BoardMenu({required this.board, this.showJoin = false});
 
   bool _isOwner(BuildContext context) =>
-      context.read<WebCompanionService>().currentUser?.uid == board.ownerId;
+      context.read<WebBoardsCubit>().currentUserId == board.ownerId;
 
   bool _canJoin(BuildContext context) =>
       showJoin &&
-      !board.members.contains(
-        context.read<WebCompanionService>().currentUser?.uid,
-      );
+      !board.members.contains(context.read<WebBoardsCubit>().currentUserId);
 
   Future<void> _run(
     BuildContext context,
@@ -315,7 +319,7 @@ class _BoardMenu extends StatelessWidget {
   }
 
   Future<void> _onSelected(BuildContext context, String value) async {
-    final repo = context.read<WebCompanionService>();
+    final boards = context.read<WebBoardsCubit>();
     if (value == 'open') {
       context.read<WebBoardOpener>().open(context, board);
       return;
@@ -333,14 +337,14 @@ class _BoardMenu extends StatelessWidget {
     if (value == 'join') {
       return _run(
         context,
-        () => repo.joinBoard(board.id),
+        () => boards.joinBoard(board.id),
         'You joined "${board.title}".',
       );
     }
     if (value == 'duplicate') {
       return _run(
         context,
-        () => repo.duplicateBoard(board.id),
+        () => boards.duplicateBoard(board.id),
         'Board copied.',
       );
     }
@@ -348,7 +352,7 @@ class _BoardMenu extends StatelessWidget {
       final archived = value == 'archive';
       return _run(
         context,
-        () => repo.setBoardArchived(board.id, archived: archived),
+        () => boards.setBoardArchived(board.id, archived: archived),
         archived ? 'Board archived.' : 'Board restored.',
       );
     }
@@ -356,7 +360,7 @@ class _BoardMenu extends StatelessWidget {
       final paused = value == 'pause';
       return _run(
         context,
-        () => repo.setBoardPaused(board.id, paused: paused),
+        () => boards.setBoardPaused(board.id, paused: paused),
         paused
             ? 'Board paused. Editing is disabled until you resume it.'
             : 'Board resumed.',
@@ -371,7 +375,11 @@ class _BoardMenu extends StatelessWidget {
             'This cannot be undone.',
       );
       if (confirmed && context.mounted) {
-        await _run(context, () => repo.deleteBoard(board.id), 'Board deleted.');
+        await _run(
+          context,
+          () => boards.deleteBoard(board.id),
+          'Board deleted.',
+        );
       }
     }
   }
@@ -474,10 +482,14 @@ class WebDiscoverPage extends StatefulWidget {
 }
 
 class _WebDiscoverPageState extends State<WebDiscoverPage> {
-  late final _repo = context.read<WebCompanionService>();
-  late Future<List<Board>> _future = _repo.loadPublicBoards();
   final _search = TextEditingController();
   String? _tag;
+
+  @override
+  void initState() {
+    super.initState();
+    context.read<WebBoardsCubit>().loadPublicBoards();
+  }
 
   @override
   void dispose() {
@@ -488,57 +500,50 @@ class _WebDiscoverPageState extends State<WebDiscoverPage> {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
-    return FutureBuilder<List<Board>>(
-      future: _future,
-      builder: (context, snapshot) {
-        final loading = snapshot.connectionState != ConnectionState.done;
-        return ListView(
-          padding: EdgeInsets.fromLTRB(
-            InkSpacing.s24,
-            InkSpacing.s24,
-            InkSpacing.s24,
-            webPageBottomPadding(context),
-          ),
-          children: [
-            WebPageHeader(
-              title: 'Explore Public Boards',
-              subtitle: 'Boards shared with the InkLink community.',
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 300,
-                    child: WebSearchField(
-                      controller: _search,
-                      hintText: 'Search by title, topic or tag...',
-                      onChanged: (_) => setState(() {}),
-                    ),
-                  ),
-                  const SizedBox(width: InkSpacing.s8),
-                  IconButton(
-                    tooltip: 'Refresh',
-                    icon: Icon(
-                      LucideIcons.rotateCw,
-                      color: tokens.inkSecondary,
-                    ),
-                    onPressed: loading
-                        ? null
-                        : () => setState(
-                            () => _future = _repo.loadPublicBoards(),
-                          ),
-                  ),
-                ],
+    final state = context.watch<WebBoardsCubit>().state;
+    final loading = state.publicBoardsLoading;
+    return ListView(
+      padding: EdgeInsets.fromLTRB(
+        InkSpacing.s24,
+        InkSpacing.s24,
+        InkSpacing.s24,
+        webPageBottomPadding(context),
+      ),
+      children: [
+        WebPageHeader(
+          title: 'Explore Public Boards',
+          subtitle: 'Boards shared with the InkLink community.',
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 300,
+                child: WebSearchField(
+                  controller: _search,
+                  hintText: 'Search by title, topic or tag...',
+                  onChanged: (_) => setState(() {}),
+                ),
               ),
-            ),
-            if (snapshot.hasError)
-              WebErrorBox(message: webErrorText(snapshot.error!))
-            else if (!snapshot.hasData)
-              const WebLoading()
-            else
-              _buildResults(snapshot.data!),
-          ],
-        );
-      },
+              const SizedBox(width: InkSpacing.s8),
+              IconButton(
+                tooltip: 'Refresh',
+                icon: Icon(LucideIcons.rotateCw, color: tokens.inkSecondary),
+                onPressed: loading
+                    ? null
+                    : () => context.read<WebBoardsCubit>().loadPublicBoards(
+                        force: true,
+                      ),
+              ),
+            ],
+          ),
+        ),
+        if (state.publicBoardsError != null)
+          WebErrorBox(message: webErrorText(state.publicBoardsError!))
+        else if (!state.publicBoardsLoaded && loading)
+          const WebLoading()
+        else
+          _buildResults(state.publicBoards),
+      ],
     );
   }
 

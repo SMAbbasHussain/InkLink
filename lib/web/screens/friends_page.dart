@@ -3,7 +3,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../domain/models/friends/friend.dart';
-import '../../domain/models/friends/friend_request.dart';
 import '../../ui/theme/ink_theme.dart';
 import '../../ui/theme/ink_tokens.dart';
 import '../../ui/theme/ink_type.dart';
@@ -12,7 +11,7 @@ import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/paper_card.dart';
-import '../domain/web_companion_service.dart';
+import '../bloc/web_social_cubit.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
@@ -28,15 +27,12 @@ class WebFriendsPage extends StatefulWidget {
 }
 
 class _WebFriendsPageState extends State<WebFriendsPage> {
-  late final _repo = context.read<WebCompanionService>();
-  late final Stream<List<FriendRequest>> _requests = _repo
-      .watchIncomingFriendRequests();
-  late final Stream<List<Friend>> _friends = _repo.watchFriends();
-  late final Stream<List<Friend>> _blocked = _repo.watchBlockedUsers();
+  WebSocialCubit get _social => context.read<WebSocialCubit>();
 
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final state = context.watch<WebSocialCubit>().state;
     return ListView(
       padding: EdgeInsets.fromLTRB(
         InkSpacing.s24,
@@ -63,15 +59,21 @@ class _WebFriendsPageState extends State<WebFriendsPage> {
                 ),
               ),
               const WebSectionLabel('Friend requests'),
-              WebStreamList<FriendRequest>(
-                stream: _requests,
-                emptyIcon: LucideIcons.userPlus,
-                emptyText: 'No pending requests',
-                emptySubtitle: 'New friend requests will appear here.',
-                builder: (context, requests) => Column(
+              if (state.friendRequestsError != null)
+                WebErrorBox(message: webErrorText(state.friendRequestsError!))
+              else if (state.friendRequestsLoading)
+                const WebLoading()
+              else if (state.friendRequests.isEmpty)
+                const WebEmptyHint(
+                  icon: LucideIcons.userPlus,
+                  text: 'No pending requests',
+                  subtitle: 'New friend requests will appear here.',
+                )
+              else
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    for (final r in requests)
+                    for (final r in state.friendRequests)
                       Padding(
                         key: ValueKey(r.id),
                         padding: const EdgeInsets.only(bottom: InkSpacing.s12),
@@ -103,9 +105,10 @@ class _WebFriendsPageState extends State<WebFriendsPage> {
                                 ),
                               ),
                               WebAcceptDecline(
-                                onAccept: () => _repo.acceptFriendRequest(r.id),
+                                onAccept: () =>
+                                    _social.acceptFriendRequest(r.id),
                                 onDecline: () =>
-                                    _repo.declineFriendRequest(r.id),
+                                    _social.declineFriendRequest(r.id),
                                 acceptedMessage:
                                     'You and ${r.senderName} are now friends.',
                                 declinedMessage: 'Request declined.',
@@ -116,61 +119,70 @@ class _WebFriendsPageState extends State<WebFriendsPage> {
                       ),
                   ],
                 ),
-              ),
               const SizedBox(height: InkSpacing.s16),
               const WebSectionLabel('Your friends'),
-              WebStreamList<Friend>(
-                stream: _friends,
-                emptyIcon: LucideIcons.users,
-                emptyText: 'No friends yet',
-                emptySubtitle: 'Add someone by email to get started.',
-                builder: (context, friends) => PaperCard(
+              if (state.friendsError != null)
+                WebErrorBox(message: webErrorText(state.friendsError!))
+              else if (state.friendsLoading)
+                const WebLoading()
+              else if (state.friends.isEmpty)
+                const WebEmptyHint(
+                  icon: LucideIcons.users,
+                  text: 'No friends yet',
+                  subtitle: 'Add someone by email to get started.',
+                )
+              else
+                PaperCard(
                   padding: const EdgeInsets.symmetric(
                     horizontal: InkSpacing.s12,
                   ),
                   child: Column(
                     children: [
-                      for (var i = 0; i < friends.length; i++) ...[
+                      for (var i = 0; i < state.friends.length; i++) ...[
                         if (i > 0)
                           Divider(height: 1, color: tokens.glassStroke),
                         _FriendRow(
-                          key: ValueKey(friends[i].uid),
-                          friend: friends[i],
-                          onBlock: () => _block(friends[i]),
-                          onUnfriend: () => _unfriend(friends[i]),
+                          key: ValueKey(state.friends[i].uid),
+                          friend: state.friends[i],
+                          onBlock: () => _block(state.friends[i]),
+                          onUnfriend: () => _unfriend(state.friends[i]),
                         ),
                       ],
                     ],
                   ),
                 ),
-              ),
               const SizedBox(height: InkSpacing.s16),
               const WebSectionLabel('Blocked users'),
-              WebStreamList<Friend>(
-                stream: _blocked,
-                emptyIcon: LucideIcons.shieldBan,
-                emptyText: 'Nobody is blocked',
-                emptySubtitle:
-                    'Blocked people cannot message or add you as a friend.',
-                builder: (context, blocked) => PaperCard(
+              if (state.blockedUsersError != null)
+                WebErrorBox(message: webErrorText(state.blockedUsersError!))
+              else if (state.blockedUsersLoading)
+                const WebLoading()
+              else if (state.blockedUsers.isEmpty)
+                const WebEmptyHint(
+                  icon: LucideIcons.shieldBan,
+                  text: 'Nobody is blocked',
+                  subtitle:
+                      'Blocked people cannot message or add you as a friend.',
+                )
+              else
+                PaperCard(
                   padding: const EdgeInsets.symmetric(
                     horizontal: InkSpacing.s12,
                   ),
                   child: Column(
                     children: [
-                      for (var i = 0; i < blocked.length; i++) ...[
+                      for (var i = 0; i < state.blockedUsers.length; i++) ...[
                         if (i > 0)
                           Divider(height: 1, color: tokens.glassStroke),
                         _BlockedRow(
-                          key: ValueKey(blocked[i].uid),
-                          friend: blocked[i],
-                          onUnblock: () => _unblock(blocked[i]),
+                          key: ValueKey(state.blockedUsers[i].uid),
+                          friend: state.blockedUsers[i],
+                          onUnblock: () => _unblock(state.blockedUsers[i]),
                         ),
                       ],
                     ],
                   ),
                 ),
-              ),
             ],
           ),
         ),
@@ -189,7 +201,7 @@ class _WebFriendsPageState extends State<WebFriendsPage> {
     );
     if (!confirmed || !mounted) return;
     try {
-      await _repo.blockUser(friend.uid);
+      await _social.blockUser(friend.uid);
       if (mounted) {
         showWebMessage(context, '${friend.displayName} is blocked.');
       }
@@ -207,7 +219,7 @@ class _WebFriendsPageState extends State<WebFriendsPage> {
     );
     if (!confirmed || !mounted) return;
     try {
-      await _repo.unfriend(friend.uid);
+      await _social.unfriend(friend.uid);
       if (mounted) {
         showWebMessage(context, '${friend.displayName} was removed.');
       }
@@ -218,7 +230,7 @@ class _WebFriendsPageState extends State<WebFriendsPage> {
 
   Future<void> _unblock(Friend friend) async {
     try {
-      await _repo.unblockUser(friend.uid);
+      await _social.unblockUser(friend.uid);
       if (mounted) {
         showWebMessage(context, '${friend.displayName} is unblocked.');
       }
@@ -266,9 +278,9 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
       _results = null;
     });
     try {
-      final results = await context
-          .read<WebCompanionService>()
-          .searchUsersByEmail(query);
+      final results = await context.read<WebSocialCubit>().searchUsersByEmail(
+        query,
+      );
       if (mounted) {
         setState(() {
           _results = results;
@@ -287,7 +299,7 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
 
   Future<void> _send(Friend user) async {
     try {
-      await context.read<WebCompanionService>().sendFriendRequest(user.uid);
+      await context.read<WebSocialCubit>().sendFriendRequest(user.uid);
       if (!mounted) return;
       setState(() => _sent.add(user.uid));
       showWebMessage(context, 'Request sent to ${user.displayName}.');

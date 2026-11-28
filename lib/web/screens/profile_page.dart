@@ -12,7 +12,7 @@ import '../../ui/widgets/ink_avatar.dart';
 import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/paper_card.dart';
-import '../domain/web_companion_service.dart';
+import '../bloc/web_social_cubit.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
@@ -29,8 +29,6 @@ class WebProfilePage extends StatefulWidget {
 }
 
 class _WebProfilePageState extends State<WebProfilePage> {
-  late final _repo = context.read<WebCompanionService>();
-  late final Stream<UserModel?> _profile = _repo.watchMyProfile();
   final _name = TextEditingController();
   final _bio = TextEditingController();
   bool _editing = false;
@@ -38,6 +36,8 @@ class _WebProfilePageState extends State<WebProfilePage> {
   bool _uploading = false;
   String? _nameError;
   String? _bioError;
+
+  WebSocialCubit get _social => context.read<WebSocialCubit>();
 
   @override
   void dispose() {
@@ -71,7 +71,7 @@ class _WebProfilePageState extends State<WebProfilePage> {
           ? 'avatar.png'
           : 'avatar.jpg';
       setState(() => _uploading = true);
-      await _repo.uploadProfilePhoto(bytes, filename: filename);
+      await _social.uploadProfilePhoto(bytes, filename: filename);
       if (mounted) showWebMessage(context, 'Profile photo updated.');
     } catch (e) {
       if (mounted) showWebMessage(context, webErrorText(e), isError: true);
@@ -90,7 +90,7 @@ class _WebProfilePageState extends State<WebProfilePage> {
     if (nameError != null || bioError != null) return;
     setState(() => _saving = true);
     try {
-      await _repo.updateProfile(name: _name.text, bio: _bio.text);
+      await _social.updateProfile(name: _name.text, bio: _bio.text);
       if (!mounted) return;
       setState(() => _editing = false);
       showWebMessage(context, 'Profile saved.');
@@ -103,6 +103,7 @@ class _WebProfilePageState extends State<WebProfilePage> {
 
   @override
   Widget build(BuildContext context) {
+    final state = context.watch<WebSocialCubit>().state;
     return ListView(
       padding: EdgeInsets.fromLTRB(
         InkSpacing.s24,
@@ -111,22 +112,17 @@ class _WebProfilePageState extends State<WebProfilePage> {
         webPageBottomPadding(context),
       ),
       children: [
-        StreamBuilder<UserModel?>(
-          stream: _profile,
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              return WebErrorBox(message: webErrorText(snapshot.error!));
-            }
-            final profile = snapshot.data;
-            if (profile == null) return const WebLoading();
-            return Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 640),
-                child: _buildProfile(profile),
-              ),
-            );
-          },
-        ),
+        if (state.profileError != null)
+          WebErrorBox(message: webErrorText(state.profileError!))
+        else if (state.profile == null)
+          const WebLoading()
+        else
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: _buildProfile(state.profile!),
+            ),
+          ),
       ],
     );
   }
@@ -158,14 +154,7 @@ class _WebProfilePageState extends State<WebProfilePage> {
                     const DeskBackground(),
                     DecoratedBox(
                       decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            tokens.accent.withValues(alpha: 0.28),
-                            tokens.accentSoft.withValues(alpha: 0.6),
-                          ],
-                        ),
+                        color: tokens.accentSoft.withValues(alpha: 0.45),
                       ),
                     ),
                   ],

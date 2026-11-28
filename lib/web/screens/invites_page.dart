@@ -2,36 +2,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../../domain/models/invitation/board_invitation.dart';
-import '../../domain/models/workspace.dart';
 import '../../ui/theme/ink_colors.dart';
 import '../../ui/theme/ink_tokens.dart';
 import '../../ui/theme/ink_type.dart';
 import '../../ui/widgets/ink_avatar.dart';
 import '../../ui/widgets/sticky_note.dart';
-import '../domain/web_companion_service.dart';
+import '../bloc/web_social_cubit.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
 
 /// Pending board and workspace invites as the phone shows them: tilted
 /// sticky notes with Decline / Accept (same Cloud Functions as mobile).
-class WebInvitesPage extends StatefulWidget {
+class WebInvitesPage extends StatelessWidget {
   const WebInvitesPage({super.key});
 
   @override
-  State<WebInvitesPage> createState() => _WebInvitesPageState();
-}
-
-class _WebInvitesPageState extends State<WebInvitesPage> {
-  late final _repo = context.read<WebCompanionService>();
-  late final Stream<List<BoardInvitation>> _boardInvites = _repo
-      .watchBoardInvites();
-  late final Stream<List<WorkspaceInvite>> _workspaceInvites = _repo
-      .watchWorkspaceInvites();
-
-  @override
   Widget build(BuildContext context) {
+    final social = context.read<WebSocialCubit>();
+    final state = context.watch<WebSocialCubit>().state;
     return ListView(
       padding: EdgeInsets.fromLTRB(
         InkSpacing.s24,
@@ -45,59 +34,79 @@ class _WebInvitesPageState extends State<WebInvitesPage> {
           subtitle: 'Boards and workspaces you were invited to.',
         ),
         const WebSectionLabel('Board invites'),
-        WebStreamList<BoardInvitation>(
-          stream: _boardInvites,
-          emptyIcon: LucideIcons.mail,
-          emptyText: 'No board invites',
-          emptySubtitle:
-              'When someone invites you to a board, it shows up here.',
-          builder: (context, invites) => _StickyGrid(
+        if (state.boardInvitesError != null)
+          WebErrorBox(message: webErrorText(state.boardInvitesError!))
+        else if (state.boardInvitesLoading)
+          const WebLoading()
+        else if (state.boardInvites.isEmpty)
+          const WebEmptyHint(
+            icon: LucideIcons.mail,
+            text: 'No board invites',
+            subtitle: 'When someone invites you to a board, it shows up here.',
+          )
+        else
+          _StickyGrid(
             children: [
-              for (var i = 0; i < invites.length; i++)
+              for (var i = 0; i < state.boardInvites.length; i++)
                 _InviteNote(
-                  key: ValueKey('b-${invites[i].id}'),
+                  key: ValueKey('b-${state.boardInvites[i].id}'),
                   index: i,
                   color: InkColors.stickyButter,
-                  avatarId: invites[i].fromUid,
-                  avatarUrl: invites[i].senderPic,
-                  name: invites[i].senderName,
-                  text: 'invited you to "${invites[i].boardTitle}"',
+                  avatarId: state.boardInvites[i].fromUid,
+                  avatarUrl: state.boardInvites[i].senderPic,
+                  name: state.boardInvites[i].senderName,
+                  text: 'invited you to "${state.boardInvites[i].boardTitle}"',
                   detail:
-                      'as ${invites[i].targetRole} · '
-                      '${timeAgo(invites[i].timestamp)}',
-                  onAccept: () => _repo.acceptBoardInvite(invites[i].id),
-                  onDecline: () => _repo.declineBoardInvite(invites[i].id),
-                  acceptedMessage: 'You joined "${invites[i].boardTitle}".',
+                      'as ${state.boardInvites[i].targetRole} · '
+                      '${timeAgo(state.boardInvites[i].timestamp)}',
+                  onAccept: () =>
+                      social.acceptBoardInvite(state.boardInvites[i].id),
+                  onDecline: () =>
+                      social.declineBoardInvite(state.boardInvites[i].id),
+                  acceptedMessage:
+                      'You joined "${state.boardInvites[i].boardTitle}".',
                 ),
             ],
           ),
-        ),
         const SizedBox(height: InkSpacing.s24),
         const WebSectionLabel('Workspace invites'),
-        WebStreamList<WorkspaceInvite>(
-          stream: _workspaceInvites,
-          emptyIcon: LucideIcons.briefcase,
-          emptyText: 'No workspace invites',
-          emptySubtitle: 'Workspace invitations from your team appear here.',
-          builder: (context, invites) => _StickyGrid(
+        if (state.workspaceInvitesError != null)
+          WebErrorBox(message: webErrorText(state.workspaceInvitesError!))
+        else if (state.workspaceInvitesLoading)
+          const WebLoading()
+        else if (state.workspaceInvites.isEmpty)
+          const WebEmptyHint(
+            icon: LucideIcons.briefcase,
+            text: 'No workspace invites',
+            subtitle: 'Workspace invitations from your team appear here.',
+          )
+        else
+          _StickyGrid(
             children: [
-              for (var i = 0; i < invites.length; i++)
+              for (var i = 0; i < state.workspaceInvites.length; i++)
                 _InviteNote(
-                  key: ValueKey('w-${invites[i].id}'),
+                  key: ValueKey('w-${state.workspaceInvites[i].id}'),
                   index: i,
                   color: InkColors.stickySky,
-                  avatarId: invites[i].fromUid,
-                  avatarUrl: invites[i].senderPhotoUrl,
-                  name: invites[i].senderName,
-                  text: 'invited you to "${invites[i].workspaceName}"',
-                  detail: 'Workspace · ${timeAgo(invites[i].timestamp)}',
-                  onAccept: () => _repo.acceptWorkspaceInvite(invites[i].id),
-                  onDecline: () => _repo.declineWorkspaceInvite(invites[i].id),
-                  acceptedMessage: 'You joined "${invites[i].workspaceName}".',
+                  avatarId: state.workspaceInvites[i].fromUid,
+                  avatarUrl: state.workspaceInvites[i].senderPhotoUrl,
+                  name: state.workspaceInvites[i].senderName,
+                  text:
+                      'invited you to "${state.workspaceInvites[i].workspaceName}"',
+                  detail:
+                      'Workspace · '
+                      '${timeAgo(state.workspaceInvites[i].timestamp)}',
+                  onAccept: () => social.acceptWorkspaceInvite(
+                    state.workspaceInvites[i].id,
+                  ),
+                  onDecline: () => social.declineWorkspaceInvite(
+                    state.workspaceInvites[i].id,
+                  ),
+                  acceptedMessage:
+                      'You joined "${state.workspaceInvites[i].workspaceName}".',
                 ),
             ],
           ),
-        ),
       ],
     );
   }

@@ -13,7 +13,7 @@ import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/ink_tilt.dart';
 import '../../ui/widgets/paper_card.dart';
-import '../domain/web_companion_service.dart';
+import '../bloc/web_workspaces_cubit.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'boards_page.dart';
@@ -31,10 +31,6 @@ class WebWorkspacesPage extends StatefulWidget {
 }
 
 class _WebWorkspacesPageState extends State<WebWorkspacesPage> {
-  late final _repo = context.read<WebCompanionService>();
-  // A live query can be listened to once, and the list is rebuilt when
-  // you come back from a workspace, so each visit gets a fresh one.
-  late Stream<List<Workspace>> _workspaces = _repo.watchMyWorkspaces();
   final _search = TextEditingController();
 
   /// The open workspace (its boards are shown), or null for the list.
@@ -56,15 +52,16 @@ class _WebWorkspacesPageState extends State<WebWorkspacesPage> {
           : _WorkspaceBoardsView(
               key: ValueKey(open.id),
               workspace: open,
-              onBack: () => setState(() {
-                _open = null;
-                _workspaces = _repo.watchMyWorkspaces();
-              }),
+              onBack: () {
+                setState(() => _open = null);
+                context.read<WebWorkspacesCubit>().refresh();
+              },
             ),
     );
   }
 
   Widget _buildList() {
+    final state = context.watch<WebWorkspacesCubit>().state;
     return ListView(
       padding: EdgeInsets.fromLTRB(
         InkSpacing.s24,
@@ -99,57 +96,66 @@ class _WebWorkspacesPageState extends State<WebWorkspacesPage> {
             ],
           ),
         ),
-        WebStreamList<Workspace>(
-          stream: _workspaces,
-          compactEmpty: false,
-          emptyIcon: LucideIcons.briefcase,
-          emptyText: 'No workspaces yet',
-          emptySubtitle: 'Create one to group boards for your team.',
-          builder: (context, workspaces) {
-            final query = _search.text.trim().toLowerCase();
-            final visible = query.isEmpty
-                ? workspaces
-                : workspaces
-                      .where(
-                        (w) =>
-                            w.name.toLowerCase().contains(query) ||
-                            w.description.toLowerCase().contains(query),
-                      )
-                      .toList();
-            if (visible.isEmpty) {
-              return WebEmptyHint(
-                icon: LucideIcons.searchX,
-                text: 'No workspaces match "${_search.text.trim()}"',
-              );
-            }
-            return LayoutBuilder(
-              builder: (context, constraints) {
-                const gap = InkSpacing.s20;
-                final columns = (constraints.maxWidth / 340).floor().clamp(
-                  1,
-                  4,
+        if (state.error != null)
+          WebErrorBox(message: webErrorText(state.error!))
+        else if (state.loading)
+          const WebLoading()
+        else if (state.workspaces.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: InkSpacing.s24),
+            child: WebEmptyHint(
+              icon: LucideIcons.briefcase,
+              text: 'No workspaces yet',
+              subtitle: 'Create one to group boards for your team.',
+            ),
+          )
+        else
+          Builder(
+            builder: (context) {
+              final query = _search.text.trim().toLowerCase();
+              final visible = query.isEmpty
+                  ? state.workspaces
+                  : state.workspaces
+                        .where(
+                          (w) =>
+                              w.name.toLowerCase().contains(query) ||
+                              w.description.toLowerCase().contains(query),
+                        )
+                        .toList();
+              if (visible.isEmpty) {
+                return WebEmptyHint(
+                  icon: LucideIcons.searchX,
+                  text: 'No workspaces match "${_search.text.trim()}"',
                 );
-                final width =
-                    (constraints.maxWidth - gap * (columns - 1)) / columns;
-                return Wrap(
-                  spacing: gap,
-                  runSpacing: gap,
-                  children: [
-                    for (final w in visible)
-                      SizedBox(
-                        key: ValueKey(w.id),
-                        width: width,
-                        child: _WorkspaceCard(
-                          workspace: w,
-                          onOpen: () => setState(() => _open = w),
+              }
+              return LayoutBuilder(
+                builder: (context, constraints) {
+                  const gap = InkSpacing.s20;
+                  final columns = (constraints.maxWidth / 340).floor().clamp(
+                    1,
+                    4,
+                  );
+                  final width =
+                      (constraints.maxWidth - gap * (columns - 1)) / columns;
+                  return Wrap(
+                    spacing: gap,
+                    runSpacing: gap,
+                    children: [
+                      for (final w in visible)
+                        SizedBox(
+                          key: ValueKey(w.id),
+                          width: width,
+                          child: _WorkspaceCard(
+                            workspace: w,
+                            onOpen: () => setState(() => _open = w),
+                          ),
                         ),
-                      ),
-                  ],
-                );
-              },
-            );
-          },
-        ),
+                    ],
+                  );
+                },
+              );
+            },
+          ),
       ],
     );
   }
@@ -175,7 +181,7 @@ class _WorkspaceCard extends StatefulWidget {
 
 class _WorkspaceCardState extends State<_WorkspaceCard> {
   late final Stream<List<Board>> _boards = context
-      .read<WebCompanionService>()
+      .read<WebWorkspacesCubit>()
       .watchWorkspaceBoards(widget.workspace.id);
 
   @override
@@ -374,7 +380,7 @@ class _WorkspaceBoardsView extends StatefulWidget {
 
 class _WorkspaceBoardsViewState extends State<_WorkspaceBoardsView> {
   late final Stream<List<Board>> _boards = context
-      .read<WebCompanionService>()
+      .read<WebWorkspacesCubit>()
       .watchWorkspaceBoards(widget.workspace.id);
   final _search = TextEditingController();
 
@@ -546,7 +552,7 @@ class _CreateWorkspaceDialogState extends State<_CreateWorkspaceDialog> {
       _error = null;
     });
     try {
-      await context.read<WebCompanionService>().createWorkspace(
+      await context.read<WebWorkspacesCubit>().createWorkspace(
         name: _name.text,
         description: _description.text,
       );
@@ -645,16 +651,15 @@ class _WorkspaceBoardsDialogState extends State<_WorkspaceBoardsDialog> {
   }
 
   Future<void> _load() async {
-    final repo = context.read<WebCompanionService>();
+    final workspaces = context.read<WebWorkspacesCubit>();
     try {
-      final boards = await repo.watchMyBoards().first;
-      final linked = await repo.watchWorkspaceBoards(widget.workspace.id).first;
+      final result = await workspaces.loadManageableBoards(widget.workspace.id);
       if (!mounted) return;
       setState(() {
-        _boards = boards.where((b) => !b.isArchived).toList();
+        _boards = result.activeBoards;
         _linked
           ..clear()
-          ..addAll(linked.map((b) => b.id));
+          ..addAll(result.linkedIds);
         _loading = false;
       });
     } catch (e) {
@@ -667,17 +672,17 @@ class _WorkspaceBoardsDialogState extends State<_WorkspaceBoardsDialog> {
   }
 
   Future<void> _toggle(Board board) async {
-    final repo = context.read<WebCompanionService>();
+    final workspaces = context.read<WebWorkspacesCubit>();
     final adding = !_linked.contains(board.id);
     setState(() => _busy.add(board.id));
     try {
       if (adding) {
-        await repo.addBoardToWorkspace(
+        await workspaces.addBoardToWorkspace(
           workspaceId: widget.workspace.id,
           boardId: board.id,
         );
       } else {
-        await repo.removeBoardFromWorkspace(
+        await workspaces.removeBoardFromWorkspace(
           workspaceId: widget.workspace.id,
           boardId: board.id,
         );

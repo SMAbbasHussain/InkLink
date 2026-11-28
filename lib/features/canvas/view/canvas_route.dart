@@ -22,7 +22,7 @@ Route<void> buildCanvasRoute(
   String? initialTemplateId,
 }) {
   return MaterialPageRoute(
-    builder: (_) => _CanvasRouteWrapper(
+    builder: (_) => CanvasSessionView(
       boardId: boardId,
       showTrayTipsOnEntry: showTrayTipsOnEntry,
       initialTemplateId: initialTemplateId,
@@ -30,22 +30,27 @@ Route<void> buildCanvasRoute(
   );
 }
 
-class _CanvasRouteWrapper extends StatefulWidget {
+/// Shared canvas session host used by both the mobile route (`buildCanvasRoute`)
+/// and the web canvas route (`buildWebCanvasRoute`). Loads canvas preferences
+/// from [SettingsService], constructs [CanvasBloc] and [AiImageBloc] from the
+/// active provider scope, and renders [CanvasScreen].
+class CanvasSessionView extends StatefulWidget {
   final String boardId;
   final bool showTrayTipsOnEntry;
   final String? initialTemplateId;
 
-  const _CanvasRouteWrapper({
+  const CanvasSessionView({
+    super.key,
     required this.boardId,
-    required this.showTrayTipsOnEntry,
+    this.showTrayTipsOnEntry = false,
     this.initialTemplateId,
   });
 
   @override
-  State<_CanvasRouteWrapper> createState() => _CanvasRouteWrapperState();
+  State<CanvasSessionView> createState() => _CanvasSessionViewState();
 }
 
-class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
+class _CanvasSessionViewState extends State<CanvasSessionView> {
   late Future<
     ({
       String quality,
@@ -111,9 +116,8 @@ class _CanvasRouteWrapperState extends State<_CanvasRouteWrapper> {
               )..add(CanvasInitializeCrdt(widget.boardId)),
             ),
             BlocProvider(
-              create: (_) => AiImageBloc(
-                aiImageService: context.read<AiImageService>(),
-              ),
+              create: (_) =>
+                  AiImageBloc(aiImageService: context.read<AiImageService>()),
             ),
           ],
           child: CanvasScreen(

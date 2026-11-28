@@ -5,11 +5,17 @@ import '../core/services/auth_service.dart';
 import '../core/services/cloud_functions_service.dart';
 import '../core/services/firestore_service.dart';
 import '../domain/services/board/board_service.dart';
+import '../domain/services/settings/settings_service.dart';
 import '../ui/theme/ink_theme.dart';
+import 'bloc/web_auth_cubit.dart';
+import 'bloc/web_boards_cubit.dart';
+import 'bloc/web_notifications_cubit.dart';
+import 'bloc/web_settings_cubit.dart';
+import 'bloc/web_social_cubit.dart';
+import 'bloc/web_workspaces_cubit.dart';
 import 'canvas/web_board_repository.dart';
 import 'canvas/web_canvas_support.dart';
 import 'data/firebase_web_companion_repository.dart';
-import 'data/web_account.dart';
 import 'data/web_companion_repository.dart';
 import 'domain/web_companion_service.dart';
 import 'screens/home_shell.dart';
@@ -18,12 +24,15 @@ import 'screens/web_shell_nav.dart';
 import 'web_theme.dart';
 import 'widgets/web_widgets.dart';
 
-/// Root of the web companion: theme, services and the sign-in gate. Uses the
-/// mobile app's Ink theme (light and dark) so both look the same.
+/// Root of the web companion: theme, domain services, BLoC/Cubit providers,
+/// and the sign-in gate. Uses the mobile app's Ink theme (light and dark).
 class WebCompanionApp extends StatefulWidget {
   /// Production web passes a pre-wired [WebCompanionService] from
   /// `WebDependencies.bootstrap()`.
   final WebCompanionService? service;
+
+  /// Optional pre-wired [SettingsService] for canvas/alert browser preferences.
+  final SettingsService? settingsService;
 
   /// Preview mode and widget tests may inject a sample-data
   /// [WebCompanionRepository], which is automatically wrapped in
@@ -44,6 +53,7 @@ class WebCompanionApp extends StatefulWidget {
   const WebCompanionApp({
     super.key,
     this.service,
+    this.settingsService,
     this.repository,
     this.themeMode = ThemeMode.system,
     this.initialSection = WebSection.boards,
@@ -61,6 +71,11 @@ class _WebCompanionAppState extends State<WebCompanionApp> {
     widget.themeMode,
     persist: widget.themeMode == ThemeMode.system,
   );
+
+  late final WebCompanionService _service = _resolveService();
+  late final SettingsService _settingsService =
+      widget.settingsService ??
+      SettingsServiceImpl(settingsRepository: WebSettingsRepository.lazy());
 
   WebCompanionService _resolveService() {
     if (widget.service != null) return widget.service!;
@@ -97,26 +112,61 @@ class _WebCompanionAppState extends State<WebCompanionApp> {
   Widget build(BuildContext context) {
     return MultiRepositoryProvider(
       providers: [
-        RepositoryProvider<WebCompanionService>(
-          create: (_) => _resolveService(),
-        ),
-        RepositoryProvider<WebAuthRefresh>(create: (_) => WebAuthRefresh()),
+        RepositoryProvider<WebCompanionService>.value(value: _service),
+        RepositoryProvider<SettingsService>.value(value: _settingsService),
         RepositoryProvider<WebBoardOpener>.value(
           value: widget.boardOpener ?? WebBoardOpener.appLinks,
         ),
         RepositoryProvider<WebThemeController>.value(value: _theme),
       ],
-      child: ValueListenableBuilder<ThemeMode>(
-        valueListenable: _theme.mode,
-        builder: (context, mode, _) => MaterialApp(
-          title: 'InkLink',
-          debugShowCheckedModeBanner: false,
-          theme: InkTheme.light(),
-          darkTheme: InkTheme.dark(),
-          themeMode: mode,
-          home: _WebAuthGate(
-            initialSection: widget.initialSection,
-            initialBoardId: widget.initialBoardId,
+      child: MultiBlocProvider(
+        providers: [
+          BlocProvider<WebAuthCubit>(
+            create: (_) => WebAuthCubit(service: _service),
+          ),
+          BlocProvider<WebBoardsCubit>(
+            create: (_) => WebBoardsCubit(service: _service),
+          ),
+          BlocProvider<WebWorkspacesCubit>(
+            create: (_) => WebWorkspacesCubit(service: _service),
+          ),
+          BlocProvider<WebSocialCubit>(
+            create: (_) => WebSocialCubit(service: _service),
+          ),
+          BlocProvider<WebNotificationsCubit>(
+            create: (_) => WebNotificationsCubit(service: _service),
+          ),
+          BlocProvider<WebSettingsCubit>(
+            create: (_) => WebSettingsCubit(
+              companionService: _service,
+              settingsService: _settingsService,
+            ),
+          ),
+        ],
+        child: BlocListener<WebAuthCubit, WebAuthState>(
+          listenWhen: (previous, current) =>
+              previous.user?.uid != current.user?.uid ||
+              previous.user?.emailVerified != current.user?.emailVerified,
+          listener: (context, _) {
+            context.read<WebBoardsCubit>().rebind();
+            context.read<WebWorkspacesCubit>().rebind();
+            context.read<WebSocialCubit>().rebind();
+            context.read<WebNotificationsCubit>().rebind();
+            context.read<WebSettingsCubit>().rebind();
+          },
+          child: ValueListenableBuilder<ThemeMode>(
+            valueListenable: _theme.mode,
+            builder: (context, mode, _) => MaterialApp(
+              title: 'InkLink',
+              debugShowCheckedModeBanner: false,
+              theme: InkTheme.light(),
+              darkTheme: InkTheme.dark(),
+              themeMode: mode,
+              home: _WebAuthGate(
+                initialSection: widget.initialSection,
+                initialBoardId: widget.initialBoardId,
+              ),
+            ),
           ),
         ),
       ),
@@ -133,27 +183,21 @@ class _WebAuthGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final service = context.read<WebCompanionService>();
-    return ListenableBuilder(
-      listenable: context.read<WebAuthRefresh>().listenable,
-      builder: (context, _) => StreamBuilder<WebAccount?>(
-        stream: service.authChanges,
-        initialData: service.currentUser,
-        builder: (context, snapshot) {
-          final user = service.currentUser ?? snapshot.data;
-          if (user == null) {
-            return WebSignInScreen(targetBoardId: initialBoardId);
-          }
-          if (user.usesPassword && !user.emailVerified) {
-            return WebVerifyEmailScreen(email: user.email ?? 'your email');
-          }
-          return WebHomeShell(
-            key: ValueKey(user.uid),
-            initialSection: initialSection,
-            initialBoardId: initialBoardId,
-          );
-        },
-      ),
+    return BlocBuilder<WebAuthCubit, WebAuthState>(
+      builder: (context, authState) {
+        final user = authState.user;
+        if (user == null) {
+          return WebSignInScreen(targetBoardId: initialBoardId);
+        }
+        if (user.usesPassword && !user.emailVerified) {
+          return WebVerifyEmailScreen(email: user.email ?? 'your email');
+        }
+        return WebHomeShell(
+          key: ValueKey(user.uid),
+          initialSection: initialSection,
+          initialBoardId: initialBoardId,
+        );
+      },
     );
   }
 }

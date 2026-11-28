@@ -14,72 +14,85 @@ import '../../domain/repositories/notification/notification_repository.dart';
 import '../../domain/repositories/settings/settings_repository.dart';
 import '../../domain/services/voice/voice_service.dart';
 
-/// Phone settings without the Isar cache: the same browser-stored
-/// (shared_preferences) toolbar, preview and alert preferences.
+/// Browser-stored (`shared_preferences`) toolbar, preview and alert preferences
+/// without mobile's Isar cache.
 class WebSettingsRepository implements SettingsRepository {
-  final TrayTipsPreferences _trayTips;
-  final BoardPreviewPreferences _preview;
-  final CanvasToolbarPreferences _toolbar;
-  final NotificationPreferences _notifications;
+  final Future<SharedPreferences> _prefsFuture;
 
   WebSettingsRepository(SharedPreferences prefs)
-    : _trayTips = TrayTipsPreferences(prefs: prefs),
-      _preview = BoardPreviewPreferences(prefs: prefs),
-      _toolbar = CanvasToolbarPreferences(prefs: prefs),
-      _notifications = NotificationPreferences(prefs: prefs);
+    : _prefsFuture = Future<SharedPreferences>.value(prefs);
+
+  /// Resolves `SharedPreferences` lazily on first access (used by preview/test
+  /// composition when a pre-loaded instance was not supplied).
+  WebSettingsRepository.lazy() : _prefsFuture = SharedPreferences.getInstance();
+
+  Future<TrayTipsPreferences> _trayTips() async =>
+      TrayTipsPreferences(prefs: await _prefsFuture);
+  Future<BoardPreviewPreferences> _preview() async =>
+      BoardPreviewPreferences(prefs: await _prefsFuture);
+  Future<CanvasToolbarPreferences> _toolbar() async =>
+      CanvasToolbarPreferences(prefs: await _prefsFuture);
+  Future<NotificationPreferences> _notifications() async =>
+      NotificationPreferences(prefs: await _prefsFuture);
 
   @override
-  Future<bool> getShowTrayTips() => _trayTips.getShowTrayTips();
+  Future<bool> getShowTrayTips() async => (await _trayTips()).getShowTrayTips();
 
   @override
-  Future<void> setShowTrayTips(bool value) => _trayTips.setShowTrayTips(value);
+  Future<void> setShowTrayTips(bool value) async =>
+      (await _trayTips()).setShowTrayTips(value);
 
   @override
-  Future<String> getBoardPreviewQuality() => _preview.getQuality();
+  Future<String> getBoardPreviewQuality() async =>
+      (await _preview()).getQuality();
 
   @override
-  Future<void> setBoardPreviewQuality(String quality) =>
-      _preview.setQuality(quality);
+  Future<void> setBoardPreviewQuality(String quality) async =>
+      (await _preview()).setQuality(quality);
 
   @override
-  Future<bool> getBoardPreviewCompressionEnabled() =>
-      _preview.getCompressionEnabled();
+  Future<bool> getBoardPreviewCompressionEnabled() async =>
+      (await _preview()).getCompressionEnabled();
 
   @override
-  Future<void> setBoardPreviewCompressionEnabled(bool enabled) =>
-      _preview.setCompressionEnabled(enabled);
+  Future<void> setBoardPreviewCompressionEnabled(bool enabled) async =>
+      (await _preview()).setCompressionEnabled(enabled);
 
   @override
-  Future<List<CanvasToolbarAction>> getBottomBarActions() =>
-      _toolbar.getBottomBarActions();
+  Future<List<CanvasToolbarAction>> getBottomBarActions() async =>
+      (await _toolbar()).getBottomBarActions();
 
   @override
-  Future<void> setBottomBarActions(List<CanvasToolbarAction> actions) =>
-      _toolbar.setBottomBarActions(actions);
+  Future<void> setBottomBarActions(List<CanvasToolbarAction> actions) async =>
+      (await _toolbar()).setBottomBarActions(actions);
 
   @override
   Future<bool> getPushNotificationsEnabled([String? userId]) async =>
-      await _notifications.getPushNotificationsEnabled(userId) ?? true;
+      await (await _notifications()).getPushNotificationsEnabled(userId) ??
+      true;
 
   @override
-  Future<void> setPushNotificationsEnabled(bool value, [String? userId]) =>
-      _notifications.setPushNotificationsEnabled(value, userId);
+  Future<void> setPushNotificationsEnabled(
+    bool value, [
+    String? userId,
+  ]) async =>
+      (await _notifications()).setPushNotificationsEnabled(value, userId);
 
   @override
   Future<bool> getInviteAlertsEnabled([String? userId]) async =>
-      await _notifications.getInviteAlertsEnabled(userId) ?? true;
+      await (await _notifications()).getInviteAlertsEnabled(userId) ?? true;
 
   @override
-  Future<void> setInviteAlertsEnabled(bool value, [String? userId]) =>
-      _notifications.setInviteAlertsEnabled(value, userId);
+  Future<void> setInviteAlertsEnabled(bool value, [String? userId]) async =>
+      (await _notifications()).setInviteAlertsEnabled(value, userId);
 
   @override
   Future<bool> getFriendAlertsEnabled([String? userId]) async =>
-      await _notifications.getFriendAlertsEnabled(userId) ?? true;
+      await (await _notifications()).getFriendAlertsEnabled(userId) ?? true;
 
   @override
-  Future<void> setFriendAlertsEnabled(bool value, [String? userId]) =>
-      _notifications.setFriendAlertsEnabled(value, userId);
+  Future<void> setFriendAlertsEnabled(bool value, [String? userId]) async =>
+      (await _notifications()).setFriendAlertsEnabled(value, userId);
 
   @override
   Future<void> clearLocalCache() async {}
