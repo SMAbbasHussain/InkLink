@@ -11,8 +11,8 @@ import '../../web/canvas/web_board_repository.dart';
 import '../../web/canvas/web_canvas.dart';
 import '../../web/canvas/web_canvas_support.dart';
 import '../../web/data/firebase_web_companion_repository.dart';
-import '../../web/data/web_companion_repository.dart';
 import '../../web/data/web_url.dart';
+import '../../web/domain/web_companion_service.dart';
 import '../../web/screens/web_shell_nav.dart';
 import '../bootstrap/firebase_bootstrap.dart';
 import 'shared_canvas_dependencies.dart';
@@ -21,20 +21,21 @@ import 'shared_canvas_dependencies.dart';
 ///
 /// Builds a single set of Firebase wrappers (`AuthService`, `FirestoreService`,
 /// `CloudFunctionsService`) and `SharedPreferences`, feeds web-safe repository
-/// implementations into [SharedCanvasDependencies], and shares those same
-/// wrappers with the web companion repository. Never imports Isar,
-/// `path_provider`, Agora, Crashlytics, or mobile notification plugins.
+/// implementations into [SharedCanvasDependencies], and constructs
+/// [WebCompanionService] reusing those exact same repositories and shared
+/// [BoardService]. Never imports Isar, `path_provider`, Agora, Crashlytics, or
+/// mobile notification plugins.
 class WebDependencies {
   final SharedCanvasDependencies shared;
   final WebCanvasServices canvasServices;
-  final WebCompanionRepository companionRepository;
+  final WebCompanionService companionService;
   final WebSection initialSection;
   final String? initialBoardId;
 
   const WebDependencies._({
     required this.shared,
     required this.canvasServices,
-    required this.companionRepository,
+    required this.companionService,
     required this.initialSection,
     required this.initialBoardId,
   });
@@ -55,6 +56,10 @@ class WebDependencies {
       authService: auth,
       firestoreService: firestore,
     );
+    final notificationRepository = WebNotificationRepository(
+      authService: auth,
+      firestoreService: firestore,
+    );
     final shared = SharedCanvasDependencies.create(
       prefs: prefs,
       authService: auth,
@@ -63,16 +68,19 @@ class WebDependencies {
       boardRepository: boardRepository,
       crdtLocalStore: MemoryCrdtLocalStore(),
       settingsRepository: WebSettingsRepository(prefs),
-      notificationRepository: WebNotificationRepository(
-        authService: auth,
-        firestoreService: firestore,
-      ),
+      notificationRepository: notificationRepository,
       voiceService: WebVoiceService(),
     );
 
-    final companionRepository = FirebaseWebCompanionRepository(
+    final companionData = FirebaseWebCompanionRepository(
       authService: auth,
       firestoreService: firestore,
+      boardRepository: boardRepository,
+      notificationRepository: notificationRepository,
+    );
+    final companionService = WebCompanionServiceImpl(
+      data: companionData,
+      boardService: shared.boardService,
       cloudFunctionsService: functions,
     );
 
@@ -86,7 +94,7 @@ class WebDependencies {
     return WebDependencies._(
       shared: shared,
       canvasServices: WebCanvasServices.fromShared(shared),
-      companionRepository: companionRepository,
+      companionService: companionService,
       initialSection: section ?? WebSection.boards,
       initialBoardId: location.boardId,
     );

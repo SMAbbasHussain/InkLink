@@ -12,7 +12,7 @@ import '../../ui/widgets/ink_avatar.dart';
 import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/paper_card.dart';
-import '../data/web_companion_repository.dart';
+import '../domain/web_companion_service.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
@@ -29,7 +29,7 @@ class WebProfilePage extends StatefulWidget {
 }
 
 class _WebProfilePageState extends State<WebProfilePage> {
-  late final _repo = context.read<WebCompanionRepository>();
+  late final _repo = context.read<WebCompanionService>();
   late final Stream<UserModel?> _profile = _repo.watchMyProfile();
   final _name = TextEditingController();
   final _bio = TextEditingController();

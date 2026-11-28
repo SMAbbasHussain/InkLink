@@ -10,7 +10,7 @@ import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../data/web_board_ops.dart';
-import '../data/web_companion_repository.dart';
+import '../domain/web_companion_service.dart';
 import '../widgets/web_widgets.dart';
 
 // Every dialog here owns its text controllers and notifiers in a State, so
@@ -59,7 +59,7 @@ class _CreateBoardDialogState extends State<_CreateBoardDialog> {
       _error = null;
     });
     try {
-      await context.read<WebCompanionRepository>().createBoard(
+      await context.read<WebCompanionService>().createBoard(
         name: _name.text,
         visibility: _visibility,
       );
@@ -169,7 +169,7 @@ class _RenameBoardDialogState extends State<_RenameBoardDialog> {
       _error = null;
     });
     try {
-      await context.read<WebCompanionRepository>().renameBoard(
+      await context.read<WebCompanionService>().renameBoard(
         widget.board.id,
         _name.text,
       );
@@ -251,7 +251,7 @@ class _BoardTagsDialogState extends State<_BoardTagsDialog> {
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      await context.read<WebCompanionRepository>().updateBoardTags(
+      await context.read<WebCompanionService>().updateBoardTags(
         widget.board.id,
         _tags.text.split(','),
       );
@@ -340,7 +340,7 @@ class _BoardSettingsDialogState extends State<_BoardSettingsDialog> {
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      await context.read<WebCompanionRepository>().updateBoardSettings(
+      await context.read<WebCompanionService>().updateBoardSettings(
         boardId: widget.board.id,
         visibility: _visibility,
         privateJoinPolicy: _joinPolicy,
@@ -489,7 +489,7 @@ class _JoinBoardDialogState extends State<_JoinBoardDialog> {
       _error = null;
     });
     try {
-      await context.read<WebCompanionRepository>().joinBoard(value);
+      await context.read<WebCompanionService>().joinBoard(value);
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {

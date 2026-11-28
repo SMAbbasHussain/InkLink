@@ -13,7 +13,7 @@ import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/paper_card.dart';
-import '../data/web_companion_repository.dart';
+import '../domain/web_companion_service.dart';
 import '../data/web_mappers.dart';
 import '../data/web_workspace_ops.dart';
 import '../widgets/web_widgets.dart';
@@ -44,7 +44,7 @@ class WorkspaceMembersSection extends StatefulWidget {
 }
 
 class _WorkspaceMembersSectionState extends State<WorkspaceMembersSection> {
-  late final _repo = context.read<WebCompanionRepository>();
+  late final _repo = context.read<WebCompanionService>();
   StreamSubscription<List<WorkspaceMember>>? _sub;
   List<WorkspaceMember> _members = const [];
   bool _loading = true;
@@ -403,7 +403,7 @@ class _WorkspaceSettingsDialogState extends State<_WorkspaceSettingsDialog> {
       _error = null;
     });
     try {
-      await context.read<WebCompanionRepository>().updateWorkspace(
+      await context.read<WebCompanionService>().updateWorkspace(
         workspaceId: widget.workspace.id,
         name: name,
         description: _description.text.trim(),
@@ -512,7 +512,7 @@ class _InviteWorkspaceDialogState extends State<_InviteWorkspaceDialog> {
       _error = null;
     });
     try {
-      final repo = context.read<WebCompanionRepository>();
+      final repo = context.read<WebCompanionService>();
       final users = await repo.searchUsersByEmail(email);
       if (users.isEmpty) throw 'No user found with that email.';
       await repo.inviteToWorkspace(

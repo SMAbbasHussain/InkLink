@@ -21,7 +21,7 @@ Future<void> main() async {
 
   runApp(
     WebCompanionApp(
-      repository: dependencies.companionRepository,
+      service: dependencies.companionService,
       initialSection: dependencies.initialSection,
       initialBoardId: dependencies.initialBoardId,
       boardOpener: WebBoardOpener(

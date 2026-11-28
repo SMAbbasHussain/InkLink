@@ -9,7 +9,7 @@ import '../../ui/theme/ink_tokens.dart';
 import '../../ui/theme/ink_type.dart';
 import '../../ui/widgets/ink_avatar.dart';
 import '../../ui/widgets/sticky_note.dart';
-import '../data/web_companion_repository.dart';
+import '../domain/web_companion_service.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
@@ -24,7 +24,7 @@ class WebInvitesPage extends StatefulWidget {
 }
 
 class _WebInvitesPageState extends State<WebInvitesPage> {
-  late final _repo = context.read<WebCompanionRepository>();
+  late final _repo = context.read<WebCompanionService>();
   late final Stream<List<BoardInvitation>> _boardInvites = _repo
       .watchBoardInvites();
   late final Stream<List<WorkspaceInvite>> _workspaceInvites = _repo

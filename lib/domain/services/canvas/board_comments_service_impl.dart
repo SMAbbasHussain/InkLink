@@ -5,7 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/cloud_functions_service.dart';
-import '../../../features/canvas/models/canvas_comment.dart';
+import '../../models/canvas/canvas_comment.dart';
 import '../../repositories/canvas/board_comments_repository.dart';
 import 'board_comments_service.dart';
 

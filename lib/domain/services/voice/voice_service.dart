@@ -1,4 +1,4 @@
-import '../../../features/canvas/models/voice_participant.dart';
+import '../../models/canvas/voice_participant.dart';
 
 abstract class VoiceService {
   Stream<List<VoiceParticipant>> watchParticipants(String boardId);

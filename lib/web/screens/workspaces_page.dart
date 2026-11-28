@@ -13,7 +13,7 @@ import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/ink_tilt.dart';
 import '../../ui/widgets/paper_card.dart';
-import '../data/web_companion_repository.dart';
+import '../domain/web_companion_service.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'boards_page.dart';
@@ -31,7 +31,7 @@ class WebWorkspacesPage extends StatefulWidget {
 }
 
 class _WebWorkspacesPageState extends State<WebWorkspacesPage> {
-  late final _repo = context.read<WebCompanionRepository>();
+  late final _repo = context.read<WebCompanionService>();
   // A live query can be listened to once, and the list is rebuilt when
   // you come back from a workspace, so each visit gets a fresh one.
   late Stream<List<Workspace>> _workspaces = _repo.watchMyWorkspaces();
@@ -175,7 +175,7 @@ class _WorkspaceCard extends StatefulWidget {
 
 class _WorkspaceCardState extends State<_WorkspaceCard> {
   late final Stream<List<Board>> _boards = context
-      .read<WebCompanionRepository>()
+      .read<WebCompanionService>()
       .watchWorkspaceBoards(widget.workspace.id);
 
   @override
@@ -374,7 +374,7 @@ class _WorkspaceBoardsView extends StatefulWidget {
 
 class _WorkspaceBoardsViewState extends State<_WorkspaceBoardsView> {
   late final Stream<List<Board>> _boards = context
-      .read<WebCompanionRepository>()
+      .read<WebCompanionService>()
       .watchWorkspaceBoards(widget.workspace.id);
   final _search = TextEditingController();
 
@@ -546,7 +546,7 @@ class _CreateWorkspaceDialogState extends State<_CreateWorkspaceDialog> {
       _error = null;
     });
     try {
-      await context.read<WebCompanionRepository>().createWorkspace(
+      await context.read<WebCompanionService>().createWorkspace(
         name: _name.text,
         description: _description.text,
       );
@@ -645,7 +645,7 @@ class _WorkspaceBoardsDialogState extends State<_WorkspaceBoardsDialog> {
   }
 
   Future<void> _load() async {
-    final repo = context.read<WebCompanionRepository>();
+    final repo = context.read<WebCompanionService>();
     try {
       final boards = await repo.watchMyBoards().first;
       final linked = await repo.watchWorkspaceBoards(widget.workspace.id).first;
@@ -667,7 +667,7 @@ class _WorkspaceBoardsDialogState extends State<_WorkspaceBoardsDialog> {
   }
 
   Future<void> _toggle(Board board) async {
-    final repo = context.read<WebCompanionRepository>();
+    final repo = context.read<WebCompanionService>();
     final adding = !_linked.contains(board.id);
     setState(() => _busy.add(board.id));
     try {

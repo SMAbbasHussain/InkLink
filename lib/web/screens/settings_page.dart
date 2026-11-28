@@ -16,7 +16,7 @@ import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/paper_card.dart';
 import '../canvas/web_canvas_support.dart';
 import '../data/web_account_settings.dart';
-import '../data/web_companion_repository.dart';
+import '../domain/web_companion_service.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
 
@@ -95,13 +95,13 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
   StreamSubscription<WebAccountSettings>? _accountSub;
   final _tagController = TextEditingController();
 
-  String? get _uid => context.read<WebCompanionRepository>().currentUser?.uid;
+  String? get _uid => context.read<WebCompanionService>().currentUser?.uid;
 
   @override
   void initState() {
     super.initState();
     _accountSub = context
-        .read<WebCompanionRepository>()
+        .read<WebCompanionService>()
         .watchAccountSettings()
         .listen((settings) {
           if (mounted) setState(() => _accountSettings = settings);
@@ -147,7 +147,7 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
   }
 
   Future<void> _signOut() async {
-    await context.read<WebCompanionRepository>().signOut();
+    await context.read<WebCompanionService>().signOut();
   }
 
   Future<void> _deleteAccount() async {
@@ -162,7 +162,7 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
-      await context.read<WebCompanionRepository>().deleteAccount();
+      await context.read<WebCompanionService>().deleteAccount();
     } catch (e) {
       if (mounted) {
         setState(() => _busy = false);
@@ -199,7 +199,7 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
     );
     setState(() => _accountSettings = next);
     try {
-      await context.read<WebCompanionRepository>().updatePrivacySettings(
+      await context.read<WebCompanionService>().updatePrivacySettings(
         isProfilePublic: next.isProfilePublic,
         showOnlineStatus: next.showOnlineStatus,
         showEmail: next.showEmail,
@@ -218,7 +218,7 @@ class _WebSettingsPageState extends State<WebSettingsPage> {
     );
     setState(() => _accountSettings = next);
     try {
-      await context.read<WebCompanionRepository>().updatePreferredTags(
+      await context.read<WebCompanionService>().updatePreferredTags(
         next.preferredTags,
       );
     } catch (e) {

@@ -7,7 +7,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../../../core/services/auth_service.dart';
 import '../../../core/utils/network_config.dart';
-import '../../../features/canvas/models/voice_participant.dart';
+import '../../models/canvas/voice_participant.dart';
 import 'rtc_media_client.dart';
 import 'voice_service.dart';
 
@@ -39,10 +39,8 @@ class VoiceServiceImpl implements VoiceService {
   bool _reconnectScheduled = false;
   bool _disposed = false;
 
-  VoiceServiceImpl({
-    required this._authService,
-    RtcMediaClient? rtcMediaClient,
-  }) : _rtcMediaClient = rtcMediaClient ?? DefaultRtcMediaClient() {
+  VoiceServiceImpl({required this._authService, RtcMediaClient? rtcMediaClient})
+    : _rtcMediaClient = rtcMediaClient ?? DefaultRtcMediaClient() {
     // Drive local speaking state from the RTC engine's volume indication.
     // The server broadcasts `voice_speaking_changed` to the whole voice room
     // (including the sender), but the socket handler below only refreshes the

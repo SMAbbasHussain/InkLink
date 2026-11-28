@@ -2,24 +2,23 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 
+import '../../core/constants/firestore_paths.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/firestore_service.dart';
 import '../../core/utils/firestore_batch_fetcher.dart';
 import '../../domain/models/board.dart';
 import '../../domain/repositories/board/board_repository.dart';
-import '../data/web_board_ops.dart';
+import '../../domain/services/board/board_rules.dart';
 import '../data/web_mappers.dart';
 
-/// Firestore-only [BoardRepository] for the web canvas (no Isar, no local
-/// files).
+/// Firestore-only [BoardRepository] for the web target (no Isar, no local
+/// files, and no Cloud Functions calls — callable orchestration stays in
+/// [BoardService]).
 ///
-/// Every member is implemented, so the canvas, the companion pages and the
-/// board dialogs all share this one class with no runtime "not available on
-/// the web" fallbacks. Writes mirror `FirestoreBoardRepository`, so a board
-/// created, copied or re-configured in a browser is the same document the
-/// phone reads.
+/// Shared by both the web canvas (`SharedCanvasDependencies`) and the web
+/// companion (`FirebaseWebCompanionRepository`) so board persistence logic
+/// lives in exactly one place on web.
 class WebBoardRepository implements BoardRepository {
   final FirestoreService _db;
   final AuthService _authService;
@@ -28,9 +27,6 @@ class WebBoardRepository implements BoardRepository {
     required this._authService,
     required FirestoreService firestoreService,
   }) : _db = firestoreService;
-
-  static const String _members = 'members';
-  static const String _boards = 'boards';
 
   @override
   String? get currentUserId => _authService.getCurrentUserId();
@@ -41,15 +37,15 @@ class WebBoardRepository implements BoardRepository {
     return uid;
   }
 
-  /// The board, with `currentUserRole` resolved like the phone repository:
+  /// The board, with `currentUserRole` resolved like the mobile repository:
   /// owner by `ownerId`, otherwise the member document's role (viewer by
-  /// default). Emits null when the board is gone or can't be read.
+  /// default). Emits null when the board is gone or unreadable.
   @override
   Stream<Board?> getBoardById(String boardId) {
     final id = boardId.trim();
     if (id.isEmpty) return Stream<Board?>.value(null);
     return _db
-        .collection(_boards)
+        .collection(FirestorePaths.boards)
         .doc(id)
         .snapshots()
         .asyncMap<Board?>((doc) async {
@@ -57,7 +53,7 @@ class WebBoardRepository implements BoardRepository {
           final data = Map<String, dynamic>.of(doc.data() ?? const {});
           data['currentUserRole'] = await _resolveRole(
             id,
-            (data['ownerId'] as String?) ?? '',
+            (data[FirestorePaths.ownerId] as String?) ?? '',
           );
           return Board.fromMap(data, doc.id);
         })
@@ -82,9 +78,9 @@ class WebBoardRepository implements BoardRepository {
     if (ownerId == uid) return Board.roleOwner;
     try {
       final member = await _db
-          .collection(_boards)
+          .collection(FirestorePaths.boards)
           .doc(boardId)
-          .collection(_members)
+          .collection(FirestorePaths.boardMembersSubcollection)
           .doc(uid)
           .get();
       final role = member.data()?['role'];
@@ -98,9 +94,9 @@ class WebBoardRepository implements BoardRepository {
   @override
   Stream<List<BoardMember>> getBoardMembers(String boardId) {
     return _db
-        .collection(_boards)
+        .collection(FirestorePaths.boards)
         .doc(boardId)
-        .collection(_members)
+        .collection(FirestorePaths.boardMembersSubcollection)
         .snapshots()
         .asyncMap((snapshot) async {
           final uids = [for (final d in snapshot.docs) d.id];
@@ -109,21 +105,21 @@ class WebBoardRepository implements BoardRepository {
             for (final d in snapshot.docs)
               BoardMember(
                 uid: d.id,
-                role: d.data()['role'] as String? ?? 'viewer',
-                status: d.data()['status'] as String? ?? 'active',
+                role: d.data()['role'] as String? ?? Board.roleViewer,
+                status: d.data()[FirestorePaths.status] as String? ?? 'active',
                 joinedAt: d.data()['joinedAt'] is Timestamp
                     ? (d.data()['joinedAt'] as Timestamp).toDate()
                     : null,
-                displayName: profiles[d.id]?['displayName'] as String?,
-                email: profiles[d.id]?['email'] as String?,
-                photoUrl: profiles[d.id]?['photoURL'] as String?,
+                displayName:
+                    profiles[d.id]?[FirestorePaths.displayName] as String?,
+                email: profiles[d.id]?[FirestorePaths.email] as String?,
+                photoUrl: profiles[d.id]?[FirestorePaths.photoURL] as String?,
               ),
           ];
         })
         .transform(
           StreamTransformer<List<BoardMember>, List<BoardMember>>.fromHandlers(
             handleError: (error, stack, sink) {
-              // As on phones: a deleted/unreadable board means "no members".
               if (error is FirebaseException &&
                   (error.code == 'permission-denied' ||
                       error.code == 'not-found')) {
@@ -142,7 +138,7 @@ class WebBoardRepository implements BoardRepository {
       final chunk = uids.sublist(i, (i + 30).clamp(0, uids.length));
       try {
         final snap = await _db
-            .collection('users')
+            .collection(FirestorePaths.users)
             .where(FieldPath.documentId, whereIn: chunk)
             .get();
         for (final doc in snap.docs) {
@@ -153,7 +149,7 @@ class WebBoardRepository implements BoardRepository {
     return out;
   }
 
-  // ── Local-only members (no cache, previews or live sync on the web) ──────
+  // ── Local-only members (no Isar cache or local preview files on web) ─────
 
   @override
   Future<void> activateBoard(String boardId) async {}
@@ -173,9 +169,6 @@ class WebBoardRepository implements BoardRepository {
   @override
   Future<void> stopBoardsSync() async {}
 
-  /// Board previews are local files on a phone; the web keeps none, so this is
-  /// a no-op and [watchBoardPreview] always emits null (documented on the
-  /// boards page, which uses the sticky-note cards instead of thumbnails).
   @override
   Future<void> saveBoardPreview(String boardId, Uint8List pngBytes) async {}
 
@@ -188,12 +181,12 @@ class WebBoardRepository implements BoardRepository {
   @override
   Future<int> countBoardsForUser(String userId) async {
     try {
-      final user = await _db.collection('users').doc(userId).get();
-      final count = user.data()?['boardCount'];
+      final user = await _db.collection(FirestorePaths.users).doc(userId).get();
+      final count = user.data()?[FirestorePaths.boardCount];
       if (count is num) return count.toInt();
       final aggregate = await _db
-          .collection(_boards)
-          .where('ownerId', isEqualTo: userId)
+          .collection(FirestorePaths.boards)
+          .where(FirestorePaths.ownerId, isEqualTo: userId)
           .count()
           .get();
       return aggregate.count ?? 0;
@@ -207,8 +200,8 @@ class WebBoardRepository implements BoardRepository {
     final uid = currentUserId;
     if (uid == null) return Stream.value(const []);
     return _db
-        .collection(_boards)
-        .where('ownerId', isEqualTo: uid)
+        .collection(FirestorePaths.boards)
+        .where(FirestorePaths.ownerId, isEqualTo: uid)
         .snapshots()
         .map(
           (snap) => [
@@ -226,9 +219,9 @@ class WebBoardRepository implements BoardRepository {
     final uid = currentUserId;
     if (uid == null) return Stream.value(const []);
     return _db
-        .collection('users')
+        .collection(FirestorePaths.users)
         .doc(uid)
-        .collection('boards')
+        .collection(FirestorePaths.userBoardsSubcollection)
         .snapshots()
         .asyncMap((snap) async {
           final index = UserBoardIndex.fromDocs(
@@ -258,7 +251,7 @@ class WebBoardRepository implements BoardRepository {
     final boards = <Board>[];
     for (final batch in chunked(ids, FirestoreBatchFetcher.chunkSize)) {
       final snap = await _db
-          .collection(_boards)
+          .collection(FirestorePaths.boards)
           .where(FieldPath.documentId, whereIn: batch)
           .get();
       for (final doc in snap.docs) {
@@ -268,7 +261,7 @@ class WebBoardRepository implements BoardRepository {
     return boards;
   }
 
-  // ── Board lifecycle ─────────────────────────────────────────────────────
+  // ── Board lifecycle (pure Firestore data access) ────────────────────────
 
   @override
   Future<String> createNewBoard({
@@ -284,8 +277,8 @@ class WebBoardRepository implements BoardRepository {
   }) async {
     final uid = _requireUid;
     final firestore = _db.getInstance();
-    final boardRef = _db.collection(_boards).doc();
-    final userRef = firestore.collection('users').doc(uid);
+    final boardRef = _db.collection(FirestorePaths.boards).doc();
+    final userRef = firestore.collection(FirestorePaths.users).doc(uid);
     final fields = newBoardFields(
       boardId: boardRef.id,
       uid: uid,
@@ -297,70 +290,128 @@ class WebBoardRepository implements BoardRepository {
       tags: tags,
       allowMembersToCopy: allowMembersToCopy,
     );
-    fields['createdAt'] = FieldValue.serverTimestamp();
-    fields['updatedAt'] = FieldValue.serverTimestamp();
+    fields[FirestorePaths.createdAt] = FieldValue.serverTimestamp();
+    fields[FirestorePaths.updatedAt] = FieldValue.serverTimestamp();
 
     await firestore.runTransaction((transaction) async {
       transaction.set(boardRef, fields);
-      transaction.set(boardRef.collection(_members).doc(uid), {
-        'uid': uid,
-        'role': Board.roleOwner,
-        'status': 'active',
-        'joinedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      transaction.set(
+        boardRef.collection(FirestorePaths.boardMembersSubcollection).doc(uid),
+        {
+          FirestorePaths.uid: uid,
+          'role': Board.roleOwner,
+          FirestorePaths.status: 'active',
+          'joinedAt': FieldValue.serverTimestamp(),
+          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+        },
+      );
       transaction.set(userRef, {
-        'boardCount': FieldValue.increment(1),
+        FirestorePaths.boardCount: FieldValue.increment(1),
       }, SetOptions(merge: true));
-      transaction.set(userRef.collection('boards').doc(boardRef.id), {
-        'boardId': boardRef.id,
-        'relation': 'owned',
-        'addedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      transaction.set(
+        userRef
+            .collection(FirestorePaths.userBoardsSubcollection)
+            .doc(boardRef.id),
+        {
+          FirestorePaths.boardId: boardRef.id,
+          'relation': 'owned',
+          'addedAt': FieldValue.serverTimestamp(),
+          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
     });
     return boardRef.id;
   }
 
+  /// Direct Firestore join path mirroring `FirestoreBoardRepository.joinBoard`.
+  /// Privileged join-by-code orchestration lives in `BoardService.joinBoard`
+  /// via the `joinBoardByCode` Cloud Function.
   @override
   Future<void> joinBoard(String boardId) async {
     final id = boardId.trim();
     if (id.isEmpty) throw 'Please enter a join code.';
-    try {
-      await _db.getHttpsCallable('joinBoardByCode').call({'joinCode': id});
-    } on FirebaseFunctionsException catch (e) {
-      final message = e.message?.trim();
-      if (message != null && message.isNotEmpty) throw message;
-      throw switch (e.code) {
-        'failed-precondition' || 'permission-denied' =>
-          'This board can only be joined by invitation from the owner.',
-        'not-found' => 'Board not found. Check the join code and try again.',
-        'invalid-argument' => 'Invalid join code.',
-        _ => 'Unable to join board right now. Please try again.',
-      };
-    }
+    final uid = _requireUid;
+    final firestore = _db.getInstance();
+    final boardRef = _db.collection(FirestorePaths.boards).doc(id);
+    final userRef = firestore.collection(FirestorePaths.users).doc(uid);
+
+    await firestore.runTransaction((transaction) async {
+      final boardDoc = await transaction.get(boardRef);
+      if (!boardDoc.exists) {
+        throw 'Board not found. Check the join code and try again.';
+      }
+      final data = boardDoc.data() ?? const <String, dynamic>{};
+      final members = List<String>.from(data['members'] ?? const []);
+      if (members.contains(uid)) return;
+
+      final visibility =
+          (data[FirestorePaths.visibility] as String?) ??
+          Board.visibilityPrivate;
+      final privateJoinPolicy =
+          (data[FirestorePaths.privateJoinPolicy] as String?) ??
+          Board.policyOwnerOnlyInvite;
+      if (!boardJoinViaCodeEnabled(
+        visibility: visibility,
+        privateJoinPolicy: privateJoinPolicy,
+      )) {
+        throw 'This board can only be joined by invitation from the owner.';
+      }
+
+      final invitePolicy =
+          data[FirestorePaths.invitePolicy] as Map<String, dynamic>?;
+      final defaultRole = normalizeLinkJoinRole(
+        (invitePolicy?[FirestorePaths.defaultLinkJoinRole] as String?) ??
+            Board.roleViewer,
+      );
+
+      transaction.update(boardRef, {
+        'members': FieldValue.arrayUnion([uid]),
+        FirestorePaths.memberCount: FieldValue.increment(1),
+        'membersCount': FieldValue.increment(1),
+        FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+      });
+      transaction.set(
+        boardRef.collection(FirestorePaths.boardMembersSubcollection).doc(uid),
+        {
+          FirestorePaths.uid: uid,
+          'role': defaultRole,
+          FirestorePaths.status: 'active',
+          'joinedAt': FieldValue.serverTimestamp(),
+          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+      transaction.set(
+        userRef.collection(FirestorePaths.userBoardsSubcollection).doc(id),
+        {
+          FirestorePaths.boardId: id,
+          'relation': 'joined',
+          'addedAt': FieldValue.serverTimestamp(),
+          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+    });
   }
 
   @override
   Future<void> renameBoard(String boardId, String newName) async {
     if (currentUserId == null) return;
     final title = normalizeBoardName(newName);
-    await _db.collection(_boards).doc(boardId).update({
-      'title': title,
-      'name': title,
-      'updatedAt': FieldValue.serverTimestamp(),
+    await _db.collection(FirestorePaths.boards).doc(boardId).update({
+      FirestorePaths.title: title,
+      FirestorePaths.name: title,
+      FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
     });
   }
 
+  /// Local cleanup hook called after `BoardService.deleteBoard` invokes the
+  /// `deleteBoard` Cloud Function. Web has no local Isar cache to purge.
   @override
   Future<void> deleteBoard(String boardId) async {
     final id = boardId.trim();
     if (id.isEmpty) return;
-    try {
-      await _db.getHttpsCallable('deleteBoard').call({'boardId': id});
-    } on FirebaseFunctionsException catch (e) {
-      if (e.code != 'not-found') rethrow;
-    }
   }
 
   @override
@@ -371,18 +422,11 @@ class WebBoardRepository implements BoardRepository {
   Future<void> unarchiveBoard(String boardId) =>
       _setBooleanFlag(boardId, field: 'isArchived', value: false);
 
+  /// Updates the Firestore pause flag only; `BoardService.setBoardPaused`
+  /// handles the Cloud Function broadcast so it is never called twice.
   @override
-  Future<void> setBoardPaused(String boardId, {required bool isPaused}) async {
-    await _setBooleanFlag(boardId, field: 'isPaused', value: isPaused);
-    try {
-      await _db.getHttpsCallable('setBoardPaused').call({
-        'boardId': boardId,
-        'isPaused': isPaused,
-      });
-    } on FirebaseFunctionsException {
-      // The document is already right; the call only broadcasts.
-    }
-  }
+  Future<void> setBoardPaused(String boardId, {required bool isPaused}) =>
+      _setBooleanFlag(boardId, field: 'isPaused', value: isPaused);
 
   Future<void> _setBooleanFlag(
     String boardId, {
@@ -390,9 +434,9 @@ class WebBoardRepository implements BoardRepository {
     required bool value,
   }) async {
     if (currentUserId == null) throw StateError('Please sign in again.');
-    await _db.collection(_boards).doc(boardId).update({
+    await _db.collection(FirestorePaths.boards).doc(boardId).update({
       field: value,
-      'updatedAt': FieldValue.serverTimestamp(),
+      FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
     });
   }
 
@@ -400,59 +444,71 @@ class WebBoardRepository implements BoardRepository {
   Future<String> duplicateBoard(String boardId, {String? customTitle}) async {
     final uid = _requireUid;
     final firestore = _db.getInstance();
-    final sourceRef = _db.collection(_boards).doc(boardId);
+    final sourceRef = _db.collection(FirestorePaths.boards).doc(boardId);
     final source = await sourceRef.get();
     if (!source.exists) throw 'Board not found.';
     final sourceData = source.data() ?? const <String, dynamic>{};
-    final isOwner = sourceData['ownerId'] == uid;
+    final isOwner = sourceData[FirestorePaths.ownerId] == uid;
     final allowCopy = (sourceData['allowMembersToCopy'] as bool?) ?? false;
     if (!isOwner && !allowCopy) {
       throw 'You do not have permission to copy this board.';
     }
 
-    final copyRef = _db.collection(_boards).doc();
-    final userRef = firestore.collection('users').doc(uid);
+    final copyRef = _db.collection(FirestorePaths.boards).doc();
+    final userRef = firestore.collection(FirestorePaths.users).doc(uid);
     final fields = duplicatedBoardFields(
       sourceData,
       newBoardId: copyRef.id,
       uid: uid,
       customTitle: customTitle,
     );
-    fields['createdAt'] = FieldValue.serverTimestamp();
-    fields['updatedAt'] = FieldValue.serverTimestamp();
+    fields[FirestorePaths.createdAt] = FieldValue.serverTimestamp();
+    fields[FirestorePaths.updatedAt] = FieldValue.serverTimestamp();
 
     await firestore.runTransaction((transaction) async {
       transaction.set(copyRef, fields);
-      transaction.set(copyRef.collection(_members).doc(uid), {
-        'uid': uid,
-        'role': Board.roleOwner,
-        'status': 'active',
-        'joinedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      transaction.set(
+        copyRef.collection(FirestorePaths.boardMembersSubcollection).doc(uid),
+        {
+          FirestorePaths.uid: uid,
+          'role': Board.roleOwner,
+          FirestorePaths.status: 'active',
+          'joinedAt': FieldValue.serverTimestamp(),
+          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+        },
+      );
       transaction.set(userRef, {
-        'boardCount': FieldValue.increment(1),
+        FirestorePaths.boardCount: FieldValue.increment(1),
       }, SetOptions(merge: true));
-      transaction.set(userRef.collection('boards').doc(copyRef.id), {
-        'boardId': copyRef.id,
-        'relation': 'owned',
-        'addedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      transaction.set(
+        userRef
+            .collection(FirestorePaths.userBoardsSubcollection)
+            .doc(copyRef.id),
+        {
+          FirestorePaths.boardId: copyRef.id,
+          'relation': 'owned',
+          'addedAt': FieldValue.serverTimestamp(),
+          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
     });
 
     // Written after the copy exists: the snapshot rule resolves the new board
     // with get() and cannot see a document created in the same transaction.
     try {
       final snapshot = await sourceRef
-          .collection('snapshot')
-          .doc('latest')
+          .collection(FirestorePaths.boardSnapshotSubcollection)
+          .doc(FirestorePaths.boardSnapshotLatestDoc)
           .get();
       if (snapshot.exists && snapshot.data() != null) {
         final data = Map<String, dynamic>.from(snapshot.data()!)
-          ..['boardId'] = copyRef.id
-          ..['updatedAt'] = FieldValue.serverTimestamp();
-        await copyRef.collection('snapshot').doc('latest').set(data);
+          ..[FirestorePaths.boardId] = copyRef.id
+          ..[FirestorePaths.updatedAt] = FieldValue.serverTimestamp();
+        await copyRef
+            .collection(FirestorePaths.boardSnapshotSubcollection)
+            .doc(FirestorePaths.boardSnapshotLatestDoc)
+            .set(data);
       }
     } catch (_) {}
 
@@ -462,9 +518,9 @@ class WebBoardRepository implements BoardRepository {
   @override
   Future<void> updateBoardTags(String boardId, List<String> tags) async {
     _requireUid;
-    await _db.collection(_boards).doc(boardId).update({
-      'tags': normalizeBoardTags(tags),
-      'updatedAt': FieldValue.serverTimestamp(),
+    await _db.collection(FirestorePaths.boards).doc(boardId).update({
+      FirestorePaths.tags: normalizeBoardTags(tags),
+      FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
     });
   }
 
@@ -485,8 +541,8 @@ class WebBoardRepository implements BoardRepository {
       defaultLinkJoinRole: defaultLinkJoinRole,
       allowMembersToCopy: allowMembersToCopy,
     );
-    fields['updatedAt'] = FieldValue.serverTimestamp();
-    await _db.collection(_boards).doc(boardId).update(fields);
+    fields[FirestorePaths.updatedAt] = FieldValue.serverTimestamp();
+    await _db.collection(FirestorePaths.boards).doc(boardId).update(fields);
   }
 
   // ── Discovery ───────────────────────────────────────────────────────────
@@ -499,20 +555,20 @@ class WebBoardRepository implements BoardRepository {
     int limit = 20,
   }) async {
     Query<Map<String, dynamic>> query = _db
-        .collection(_boards)
-        .where('visibility', isEqualTo: Board.visibilityPublic);
+        .collection(FirestorePaths.boards)
+        .where(FirestorePaths.visibility, isEqualTo: Board.visibilityPublic);
 
     final normalizedTag = tag?.trim().toLowerCase();
     if (normalizedTag != null && normalizedTag.isNotEmpty) {
-      query = query.where('tags', arrayContains: normalizedTag);
+      query = query.where(FirestorePaths.tags, arrayContains: normalizedTag);
     }
 
     if (sort == PublicBoardSort.popular) {
       query = query
           .orderBy('membersCount', descending: true)
-          .orderBy('createdAt', descending: true);
+          .orderBy(FirestorePaths.createdAt, descending: true);
     } else {
-      query = query.orderBy('createdAt', descending: true);
+      query = query.orderBy(FirestorePaths.createdAt, descending: true);
     }
 
     if (lastDocCursor is DocumentSnapshot<Map<String, dynamic>>) {
@@ -547,9 +603,9 @@ class WebBoardRepository implements BoardRepository {
     }
     try {
       final snapshot = await _db
-          .collection(_boards)
-          .where('visibility', isEqualTo: Board.visibilityPublic)
-          .where('tags', arrayContainsAny: cleaned)
+          .collection(FirestorePaths.boards)
+          .where(FirestorePaths.visibility, isEqualTo: Board.visibilityPublic)
+          .where(FirestorePaths.tags, arrayContainsAny: cleaned)
           .limit(limit * 2)
           .get();
       final boards = snapshot.docs

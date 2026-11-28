@@ -13,7 +13,7 @@ import '../../ui/widgets/glass_nav_bar.dart';
 import '../../ui/widgets/glass_panel.dart';
 import '../../ui/widgets/ink_avatar.dart';
 import '../../ui/widgets/ink_logo.dart';
-import '../data/web_companion_repository.dart';
+import '../domain/web_companion_service.dart';
 import '../data/web_mappers.dart';
 import '../web_theme.dart';
 import '../widgets/web_widgets.dart';
@@ -79,7 +79,7 @@ class _WebHomeShellState extends State<WebHomeShell> {
   @override
   void initState() {
     super.initState();
-    final repo = context.read<WebCompanionRepository>();
+    final repo = context.read<WebCompanionService>();
     void listen<T>(Stream<List<T>> stream, void Function(List<T>) onData) {
       _subs.add(
         stream.listen(
@@ -453,7 +453,7 @@ class _Header extends StatefulWidget {
 }
 
 class _HeaderState extends State<_Header> {
-  late final _repo = context.read<WebCompanionRepository>();
+  late final _repo = context.read<WebCompanionService>();
   late final Stream<UserModel?> _profile = _repo.watchMyProfile();
 
   @override

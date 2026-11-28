@@ -48,9 +48,6 @@ class _FakeFirestore implements FirestoreService {
   FirebaseFirestore getInstance() => throw UnimplementedError();
 
   @override
-  HttpsCallable getHttpsCallable(String name) => throw UnimplementedError();
-
-  @override
   Future<void> enableNetwork() async {}
 
   @override

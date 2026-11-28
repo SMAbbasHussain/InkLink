@@ -12,7 +12,7 @@ import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/paper_card.dart';
-import '../data/web_companion_repository.dart';
+import '../domain/web_companion_service.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
@@ -28,7 +28,7 @@ class WebFriendsPage extends StatefulWidget {
 }
 
 class _WebFriendsPageState extends State<WebFriendsPage> {
-  late final _repo = context.read<WebCompanionRepository>();
+  late final _repo = context.read<WebCompanionService>();
   late final Stream<List<FriendRequest>> _requests = _repo
       .watchIncomingFriendRequests();
   late final Stream<List<Friend>> _friends = _repo.watchFriends();
@@ -267,7 +267,7 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
     });
     try {
       final results = await context
-          .read<WebCompanionRepository>()
+          .read<WebCompanionService>()
           .searchUsersByEmail(query);
       if (mounted) {
         setState(() {
@@ -287,7 +287,7 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
 
   Future<void> _send(Friend user) async {
     try {
-      await context.read<WebCompanionRepository>().sendFriendRequest(user.uid);
+      await context.read<WebCompanionService>().sendFriendRequest(user.uid);
       if (!mounted) return;
       setState(() => _sent.add(user.uid));
       showWebMessage(context, 'Request sent to ${user.displayName}.');

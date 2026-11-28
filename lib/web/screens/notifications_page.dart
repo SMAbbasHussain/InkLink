@@ -9,7 +9,7 @@ import '../../ui/theme/ink_type.dart';
 import '../../ui/widgets/ink_avatar.dart';
 import '../../ui/widgets/paper_card.dart';
 import '../data/web_board_ops.dart';
-import '../data/web_companion_repository.dart';
+import '../domain/web_companion_service.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
@@ -29,7 +29,7 @@ class WebNotificationsPage extends StatefulWidget {
 }
 
 class _WebNotificationsPageState extends State<WebNotificationsPage> {
-  late final _repo = context.read<WebCompanionRepository>();
+  late final _repo = context.read<WebCompanionService>();
   late final Stream<List<InAppNotification>> _stream = _repo
       .watchNotificationsWithReadState();
   NotificationFilter _filter = NotificationFilter.all;

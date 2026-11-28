@@ -12,7 +12,7 @@ import '../../ui/widgets/desk_background.dart';
 import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/sticky_note.dart';
-import '../data/web_companion_repository.dart';
+import '../domain/web_companion_service.dart';
 import '../widgets/web_widgets.dart';
 
 /// Wide screens get a two-column layout from this width up.
@@ -55,7 +55,7 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
 
   bool get _creating => _mode == WebSignInMode.signUp;
 
-  WebCompanionRepository get _repo => context.read<WebCompanionRepository>();
+  WebCompanionService get _repo => context.read<WebCompanionService>();
 
   Future<void> _run(Future<void> Function() action) async {
     setState(() {
@@ -333,9 +333,7 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
               children: [
                 Flexible(
                   child: Text(
-                    _creating
-                        ? 'Already have an account?'
-                        : 'New to InkLink?',
+                    _creating ? 'Already have an account?' : 'New to InkLink?',
                     style: InkType.caption(ink.inkMuted),
                   ),
                 ),
@@ -556,7 +554,7 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
     setState(() => _busy = true);
     try {
       final verified = await context
-          .read<WebCompanionRepository>()
+          .read<WebCompanionService>()
           .reloadEmailVerified();
       if (!mounted) return;
       if (verified) {
@@ -579,7 +577,7 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await context.read<WebCompanionRepository>().resendVerificationEmail();
+      await context.read<WebCompanionService>().resendVerificationEmail();
       if (mounted) {
         showWebMessage(context, 'Verification email sent to ${widget.email}.');
       }
@@ -643,7 +641,7 @@ class _WebVerifyEmailScreenState extends State<WebVerifyEmailScreen> {
                     ),
                     TextButton(
                       onPressed: () =>
-                          context.read<WebCompanionRepository>().signOut(),
+                          context.read<WebCompanionService>().signOut(),
                       child: Text(
                         'Use a different account',
                         style: InkType.bodyStrong(ink.inkMuted),

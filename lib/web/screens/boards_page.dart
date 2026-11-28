@@ -12,7 +12,7 @@ import '../../ui/widgets/board_card_frame.dart';
 import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_segmented.dart';
-import '../data/web_companion_repository.dart';
+import '../domain/web_companion_service.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'board_dialogs.dart';
@@ -31,7 +31,7 @@ class WebBoardsPage extends StatefulWidget {
 }
 
 class _WebBoardsPageState extends State<WebBoardsPage> {
-  late final _repo = context.read<WebCompanionRepository>();
+  late final _repo = context.read<WebCompanionService>();
   late final Stream<List<Board>> _boards = _repo.watchMyBoards();
   late final _boardInvites = _repo.watchBoardInvites();
   final _search = TextEditingController();
@@ -291,12 +291,12 @@ class _BoardMenu extends StatelessWidget {
   const _BoardMenu({required this.board, this.showJoin = false});
 
   bool _isOwner(BuildContext context) =>
-      context.read<WebCompanionRepository>().currentUser?.uid == board.ownerId;
+      context.read<WebCompanionService>().currentUser?.uid == board.ownerId;
 
   bool _canJoin(BuildContext context) =>
       showJoin &&
       !board.members.contains(
-        context.read<WebCompanionRepository>().currentUser?.uid,
+        context.read<WebCompanionService>().currentUser?.uid,
       );
 
   Future<void> _run(
@@ -315,7 +315,7 @@ class _BoardMenu extends StatelessWidget {
   }
 
   Future<void> _onSelected(BuildContext context, String value) async {
-    final repo = context.read<WebCompanionRepository>();
+    final repo = context.read<WebCompanionService>();
     if (value == 'open') {
       context.read<WebBoardOpener>().open(context, board);
       return;
@@ -474,7 +474,7 @@ class WebDiscoverPage extends StatefulWidget {
 }
 
 class _WebDiscoverPageState extends State<WebDiscoverPage> {
-  late final _repo = context.read<WebCompanionRepository>();
+  late final _repo = context.read<WebCompanionService>();
   late Future<List<Board>> _future = _repo.loadPublicBoards();
   final _search = TextEditingController();
   String? _tag;

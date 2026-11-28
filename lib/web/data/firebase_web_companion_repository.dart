@@ -1,19 +1,15 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/constants/firestore_paths.dart';
-import '../../core/utils/notification_preferences.dart';
 import '../../core/services/auth_service.dart';
-import '../../core/services/cloud_functions_service.dart';
 import '../../core/services/firestore_service.dart';
 import '../../core/utils/firestore_batch_fetcher.dart';
 import '../../core/utils/helpers.dart';
+import '../../core/utils/notification_preferences.dart';
 import '../../domain/models/board.dart';
 import '../../domain/models/friends/friend.dart';
 import '../../domain/models/friends/friend_request.dart';
@@ -21,6 +17,10 @@ import '../../domain/models/invitation/board_invitation.dart';
 import '../../domain/models/notification/in_app_notification.dart';
 import '../../domain/models/user_model.dart';
 import '../../domain/models/workspace.dart';
+import '../../domain/repositories/board/board_repository.dart';
+import '../../domain/repositories/notification/notification_repository.dart';
+import '../canvas/web_board_repository.dart';
+import '../canvas/web_canvas_support.dart';
 import 'web_account.dart';
 import 'web_account_settings.dart';
 import 'web_board_ops.dart';
@@ -28,33 +28,46 @@ import 'web_companion_repository.dart';
 import 'web_mappers.dart';
 import 'web_workspace_ops.dart';
 
-/// Firebase implementation of [WebCompanionRepository].
+/// Pure Firebase + browser-preferences implementation of
+/// [WebCompanionDataRepository].
 ///
-/// Reads the same Firestore collections as the mobile app and performs every
-/// privileged action through the same Cloud Functions, so the companion
-/// follows the same rules. Online-only: there is no local database on web.
-class FirebaseWebCompanionRepository implements WebCompanionRepository {
+/// Delegates shared board persistence to [BoardRepository] (`WebBoardRepository`)
+/// and notification deletion to [NotificationRepository]
+/// (`WebNotificationRepository`), eliminating duplicated Firestore writes.
+/// Contains **no Cloud Functions calls**: privileged operations live in
+/// `WebCompanionServiceImpl` (and shared `BoardService`).
+class FirebaseWebCompanionRepository implements WebCompanionDataRepository {
   final AuthService _auth;
   final FirestoreService _firestore;
-  final CloudFunctionsService _functions;
+  final BoardRepository _boardRepository;
+  final NotificationRepository _notificationRepository;
+  final FirestoreBatchFetcher _batchFetcher;
 
   FirebaseWebCompanionRepository({
     required AuthService authService,
     required FirestoreService firestoreService,
-    required CloudFunctionsService cloudFunctionsService,
+    BoardRepository? boardRepository,
+    NotificationRepository? notificationRepository,
   }) : _auth = authService,
        _firestore = firestoreService,
-       _functions = cloudFunctionsService,
+       _boardRepository =
+           boardRepository ??
+           WebBoardRepository(
+             authService: authService,
+             firestoreService: firestoreService,
+           ),
+       _notificationRepository =
+           notificationRepository ??
+           WebNotificationRepository(
+             authService: authService,
+             firestoreService: firestoreService,
+           ),
        _batchFetcher = FirestoreBatchFetcher(
          firestoreService: firestoreService,
        );
 
-  // Reads documents by id in batches, falling back to single reads (the
-  // phone's helper; web-safe).
-  final FirestoreBatchFetcher _batchFetcher;
-
-  /// Read notification ids for this browser, mirrored from the phone's
-  /// shared_preferences approach (Firestore has no `read` write).
+  /// Read notification ids for this browser, mirrored from mobile's
+  /// `SharedPreferences` approach.
   NotificationPreferences? _notificationPrefs;
   Set<String>? _cachedReadIds;
   final _readIdsController = StreamController<Set<String>>.broadcast();
@@ -67,9 +80,8 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     if (!_readIdsController.isClosed) _readIdsController.add(ids);
   }
 
-  /// The user's board index (`users/{uid}/boards`), listened to once per
-  /// session and shared: the board list and every workspace card join this
-  /// stream instead of re-reading the index each time.
+  /// Shared `users/{uid}/boards` index stream reused by the boards list and
+  /// every workspace card.
   Stream<UserBoardIndex>? _boardIndexStream;
   String? _boardIndexUid;
 
@@ -79,7 +91,7 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
       _boardIndexStream = _firestore
           .collection(FirestorePaths.users)
           .doc(uid)
-          .collection('boards')
+          .collection(FirestorePaths.userBoardsSubcollection)
           .snapshots()
           .map(
             (snapshot) => UserBoardIndex.fromDocs(
@@ -127,8 +139,6 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     }
   }
 
-  /// Google sign-in through a browser popup (the mobile Google flow does not
-  /// run on the web). Only existing InkLink accounts may sign in here.
   @override
   Future<void> signInWithGoogle() async {
     try {
@@ -143,10 +153,6 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     }
   }
 
-  /// The account the phone would create on first sign-in, created here so a
-  /// person invited to a board can join without installing the mobile app.
-  /// The profile fields are the phone's (`upsertUserProfile`): the owner may
-  /// write their own `users/{uid}` document, so no Cloud Function is needed.
   @override
   Future<void> signUpWithEmail({
     required String name,
@@ -167,20 +173,18 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
       if (user == null) {
         throw 'Could not create your account. Please try again.';
       }
-      // Failures here must not lose the account that now exists: the profile
-      // can be written on the next sign-in and the verify screen can resend.
       try {
         await user.updateDisplayName(trimmedName);
       } catch (_) {}
       await _firestore.collection(FirestorePaths.users).doc(user.uid).set({
-        'uid': user.uid,
-        'email': normalizedEmail,
-        'displayName': trimmedName,
-        'photoURL': '',
-        'searchKeywords': generateSearchKeywords(trimmedName),
-        'friendCount': 0,
-        'boardCount': 0,
-        'createdAt': FieldValue.serverTimestamp(),
+        FirestorePaths.uid: user.uid,
+        FirestorePaths.email: normalizedEmail,
+        FirestorePaths.displayName: trimmedName,
+        FirestorePaths.photoURL: '',
+        FirestorePaths.searchKeywords: generateSearchKeywords(trimmedName),
+        FirestorePaths.friendCount: 0,
+        FirestorePaths.boardCount: 0,
+        FirestorePaths.createdAt: FieldValue.serverTimestamp(),
         'lastActive': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
       try {
@@ -191,8 +195,6 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     }
   }
 
-  /// New accounts are created in the mobile app, which also sets up the
-  /// user profile. Signing in here without one would leave a half-made account.
   Future<void> _requireExistingAccount() async {
     final uid = _uid;
     if (uid == null) return;
@@ -229,17 +231,7 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
   @override
   Future<void> signOut() => _auth.getInstance().signOut();
 
-  /// Deletes the account through the phone's `deleteUserAccount` function,
-  /// then signs out. Nothing is removed locally if the function refuses.
-  @override
-  Future<void> deleteAccount() async {
-    final uid = _uid;
-    if (uid == null) throw 'Please sign in again.';
-    await _callData('deleteUserAccount', const {});
-    await signOut();
-  }
-
-  // ── Profile ─────────────────────────────────────────────────────────────
+  // ── Profile & Account Settings ──────────────────────────────────────────
 
   @override
   Stream<UserModel?> watchMyProfile() {
@@ -255,7 +247,6 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
         );
   }
 
-  /// Same fields the mobile profile editor writes.
   @override
   Future<void> updateProfile({
     required String name,
@@ -265,14 +256,12 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     if (uid == null) throw 'Please sign in again.';
     final trimmedName = name.trim();
     await _firestore.collection(FirestorePaths.users).doc(uid).update({
-      'displayName': trimmedName,
-      'bio': bio.trim(),
-      'searchKeywords': generateSearchKeywords(trimmedName),
+      FirestorePaths.displayName: trimmedName,
+      FirestorePaths.bio: bio.trim(),
+      FirestorePaths.searchKeywords: generateSearchKeywords(trimmedName),
     });
   }
 
-  /// Settings → Privacy / Preferred Content Tags: live from the user document,
-  /// which is where the phone writes the same fields.
   @override
   Stream<WebAccountSettings> watchAccountSettings() {
     final uid = _uid;
@@ -315,13 +304,8 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     });
   }
 
-  // ── Boards ──────────────────────────────────────────────────────────────
+  // ── Boards (shared index + delegation to BoardRepository) ───────────────
 
-  /// The user's owned and joined boards, kept live.
-  ///
-  /// Owned boards are marked `owner` from the index; joined boards read their
-  /// own `members/{uid}` document so an editor does not show up as a viewer
-  /// on the card (the board document alone does not carry the role).
   @override
   Stream<List<Board>> watchMyBoards() {
     final uid = _uid;
@@ -346,7 +330,6 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     });
   }
 
-  /// Role from each joined board's member document, read in small batches.
   Future<Map<String, String>> _joinedRoles(
     String uid,
     List<String> boardIds,
@@ -360,14 +343,12 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
               final member = await _firestore
                   .collection(FirestorePaths.boards)
                   .doc(id)
-                  .collection('members')
+                  .collection(FirestorePaths.boardMembersSubcollection)
                   .doc(uid)
                   .get();
               final role = member.data()?['role'];
               if (role is String && role.isNotEmpty) roles[id] = role;
-            } catch (_) {
-              // Unreadable member doc: keep the board document's role.
-            }
+            } catch (_) {}
           }(),
       ]);
     }
@@ -376,10 +357,6 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
 
   Future<List<Board>> _fetchBoards(List<String> ids) async {
     final boards = <Board>[];
-    // Reading a board is rule-checked with a member `get()` per document and
-    // Firestore allows 10 document reads per query, so this must stay at
-    // FirestoreBatchFetcher.chunkSize (10) rather than the 30-value `whereIn`
-    // syntax limit.
     for (final batch in chunked(ids, FirestoreBatchFetcher.chunkSize)) {
       final snap = await _firestore
           .collection(FirestorePaths.boards)
@@ -392,23 +369,13 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     return boards;
   }
 
-  /// Public boards (newest first after loading), excluding archived ones.
   @override
   Future<List<Board>> loadPublicBoards({int limit = 40}) async {
-    final snap = await _firestore
-        .collection(FirestorePaths.boards)
-        .where('visibility', isEqualTo: 'public')
-        .limit(limit)
-        .get();
-    return snap.docs
-        .map((d) => Board.fromMap(d.data(), d.id))
-        .where((b) => !b.isArchived)
-        .toList()
+    final page = await _boardRepository.getPublicBoards(limit: limit);
+    return List<Board>.of(page.boards)
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
   }
 
-  /// Creates a board with the same document, owner member row, board index
-  /// row and counter the phone writes (`FirestoreBoardRepository`).
   @override
   Future<String> createBoard({
     required String name,
@@ -418,235 +385,37 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     String defaultLinkJoinRole = Board.roleViewer,
     List<String> tags = const [],
     bool allowMembersToCopy = false,
-  }) async {
-    final uid = _uid;
-    if (uid == null) throw 'Please sign in again.';
-    final boardRef = _firestore.collection(FirestorePaths.boards).doc();
-    final userRef = _firestore.collection(FirestorePaths.users).doc(uid);
-    final fields = newBoardFields(
-      boardId: boardRef.id,
-      uid: uid,
-      name: name,
-      visibility: visibility,
-      privateJoinPolicy: privateJoinPolicy,
-      whoCanInvite: whoCanInvite,
-      defaultLinkJoinRole: defaultLinkJoinRole,
-      tags: tags,
-      allowMembersToCopy: allowMembersToCopy,
-    );
-    fields['createdAt'] = FieldValue.serverTimestamp();
-    fields['updatedAt'] = FieldValue.serverTimestamp();
-
-    await _firestore.getInstance().runTransaction((transaction) async {
-      transaction.set(boardRef, fields);
-      transaction.set(boardRef.collection('members').doc(uid), {
-        'uid': uid,
-        'role': Board.roleOwner,
-        'status': 'active',
-        'joinedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      transaction.set(userRef, {
-        'boardCount': FieldValue.increment(1),
-      }, SetOptions(merge: true));
-      transaction.set(userRef.collection('boards').doc(boardRef.id), {
-        'boardId': boardRef.id,
-        'relation': 'owned',
-        'addedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    });
-
-    return boardRef.id;
-  }
-
-  /// Joins a board through the phone's `joinBoardByCode` function, so public
-  /// boards, link-joinable private boards and invite-only boards get the same
-  /// treatment (invite-only answers with a readable message).
-  @override
-  Future<void> joinBoard(String boardIdOrCode) async {
-    final code = boardIdOrCode.trim();
-    if (code.isEmpty) throw 'Please enter a join code.';
-    try {
-      await _functions.httpsCallable('joinBoardByCode').call({
-        'joinCode': code,
-      });
-    } on FirebaseFunctionsException catch (e) {
-      final message = e.message?.trim();
-      if (message != null && message.isNotEmpty) throw message;
-      switch (e.code) {
-        case 'failed-precondition':
-        case 'permission-denied':
-          throw 'This board can only be joined by invitation from the owner.';
-        case 'not-found':
-          throw 'Board not found. Check the join code and try again.';
-        case 'invalid-argument':
-          throw 'Invalid join code.';
-        case 'unauthenticated':
-          throw 'Please sign in and try again.';
-        default:
-          throw 'Unable to join board right now. Please try again.';
-      }
-    }
-  }
+  }) => _boardRepository.createNewBoard(
+    name: name,
+    visibility: visibility,
+    privateJoinPolicy: privateJoinPolicy,
+    whoCanInvite: whoCanInvite,
+    defaultLinkJoinRole: defaultLinkJoinRole,
+    tags: tags,
+    allowMembersToCopy: allowMembersToCopy,
+  );
 
   @override
-  Future<void> renameBoard(String boardId, String newName) async {
-    final title = normalizeBoardName(newName);
-    await _firestore.collection(FirestorePaths.boards).doc(boardId).update({
-      'title': title,
-      'name': title,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-  }
+  Future<void> renameBoard(String boardId, String newName) =>
+      _boardRepository.renameBoard(boardId, newName);
 
   @override
-  Future<void> setBoardArchived(
-    String boardId, {
-    required bool archived,
-  }) async {
-    await _firestore.collection(FirestorePaths.boards).doc(boardId).update({
-      'isArchived': archived,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-  }
-
-  @override
-  Future<void> setBoardPaused(String boardId, {required bool paused}) async {
-    await _firestore.collection(FirestorePaths.boards).doc(boardId).update({
-      'isPaused': paused,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-    // Best effort: the function broadcasts the state to collaborators, but the
-    // document is already right (same order as the phone's BoardService).
-    try {
-      await _functions.httpsCallable('setBoardPaused').call({
-        'boardId': boardId,
-        'isPaused': paused,
-      });
-    } catch (_) {}
-  }
-
-  @override
-  Future<void> deleteBoard(String boardId) async {
-    final id = boardId.trim();
-    if (id.isEmpty) return;
-    try {
-      await _functions.httpsCallable('deleteBoard').call({'boardId': id});
-    } on FirebaseFunctionsException catch (e) {
-      if (e.code != 'not-found') rethrow;
-    }
-  }
+  Future<void> setBoardArchived(String boardId, {required bool archived}) =>
+      archived
+      ? _boardRepository.archiveBoard(boardId)
+      : _boardRepository.unarchiveBoard(boardId);
 
   @override
   Future<void> duplicateBoard(String boardId, {String? customTitle}) async {
-    final uid = _uid;
-    if (uid == null) throw 'Please sign in again.';
-    final boardRef = _firestore.collection(FirestorePaths.boards).doc(boardId);
-    final source = await boardRef.get();
-    if (!source.exists) throw 'Board not found.';
-    final sourceData = source.data() ?? const <String, dynamic>{};
-    final isOwner = sourceData['ownerId'] == uid;
-    final allowCopy = (sourceData['allowMembersToCopy'] as bool?) ?? false;
-    if (!isOwner && !allowCopy) {
-      throw 'You do not have permission to copy this board.';
-    }
-
-    final copyRef = _firestore.collection(FirestorePaths.boards).doc();
-    final userRef = _firestore.collection(FirestorePaths.users).doc(uid);
-    final copy = duplicatedBoardFields(
-      sourceData,
-      newBoardId: copyRef.id,
-      uid: uid,
-      customTitle: customTitle,
-    );
-    copy['createdAt'] = FieldValue.serverTimestamp();
-    copy['updatedAt'] = FieldValue.serverTimestamp();
-
-    await _firestore.getInstance().runTransaction((transaction) async {
-      transaction.set(copyRef, copy);
-      transaction.set(copyRef.collection('members').doc(uid), {
-        'uid': uid,
-        'role': Board.roleOwner,
-        'status': 'active',
-        'joinedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      transaction.set(userRef, {
-        'boardCount': FieldValue.increment(1),
-      }, SetOptions(merge: true));
-      transaction.set(userRef.collection('boards').doc(copyRef.id), {
-        'boardId': copyRef.id,
-        'relation': 'owned',
-        'addedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    });
-
-    // The snapshot is written after the copy exists: its rule checks
-    // canEditBoard(newBoardId), which cannot see a document created in the
-    // same transaction (the phone hit the same limit).
-    try {
-      final snapshot = await boardRef
-          .collection('snapshot')
-          .doc('latest')
-          .get();
-      if (snapshot.exists && snapshot.data() != null) {
-        final data = Map<String, dynamic>.from(snapshot.data()!)
-          ..['boardId'] = copyRef.id
-          ..['updatedAt'] = FieldValue.serverTimestamp();
-        await copyRef.collection('snapshot').doc('latest').set(data);
-      }
-    } catch (_) {
-      // The copy is still usable; the canvas republishes its state.
-    }
+    await _boardRepository.duplicateBoard(boardId, customTitle: customTitle);
   }
 
   @override
-  Future<void> updateBoardTags(String boardId, List<String> tags) async {
-    await _firestore.collection(FirestorePaths.boards).doc(boardId).update({
-      'tags': normalizeBoardTags(tags),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-  }
-
-  @override
-  Future<void> updateBoardSettings({
-    required String boardId,
-    required String visibility,
-    required String privateJoinPolicy,
-    required String whoCanInvite,
-    required String defaultLinkJoinRole,
-    bool? allowMembersToCopy,
-  }) async {
-    final fields = boardSettingsFields(
-      visibility: visibility,
-      privateJoinPolicy: privateJoinPolicy,
-      whoCanInvite: whoCanInvite,
-      defaultLinkJoinRole: defaultLinkJoinRole,
-      allowMembersToCopy: allowMembersToCopy,
-    );
-    fields['updatedAt'] = FieldValue.serverTimestamp();
-    await _firestore
-        .collection(FirestorePaths.boards)
-        .doc(boardId)
-        .update(fields);
-    try {
-      await _functions.httpsCallable('updateBoardSettings').call({
-        'boardId': boardId,
-        'visibility': fields['visibility'],
-        'privateJoinPolicy': fields['privateJoinPolicy'],
-        'whoCanInvite': normalizeWhoCanInvite(whoCanInvite),
-        'defaultLinkJoinRole': normalizeLinkJoinRole(defaultLinkJoinRole),
-        'allowMembersToCopy': ?allowMembersToCopy,
-      });
-    } catch (_) {}
-  }
+  Future<void> updateBoardTags(String boardId, List<String> tags) =>
+      _boardRepository.updateBoardTags(boardId, tags);
 
   // ── Workspaces ──────────────────────────────────────────────────────────
 
-  /// The workspaces in the user's `workspaceIds` (owned and joined), kept
-  /// live, newest activity first. Same source as the phone's list.
   @override
   Stream<List<Workspace>> watchMyWorkspaces() {
     final uid = _uid;
@@ -690,12 +459,6 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     );
   }
 
-  /// The boards in a workspace that the user can open, kept live (the
-  /// phone's rules: hidden links skipped, only boards the user has).
-  ///
-  /// The user's board index is shared with [watchMyBoards] and every other
-  /// workspace card, so no card re-reads `users/{uid}/boards`: each one joins
-  /// the single shared index stream with its own links.
   @override
   Stream<List<Board>> watchWorkspaceBoards(String workspaceId) {
     final uid = _uid;
@@ -733,61 +496,15 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
           if (result.docsById[id] case final data?)
             Board.fromMap(data, id).copyWith(
               currentUserRole:
-                  index.owned.contains(id) || data['ownerId'] == uid
-                  ? 'owner'
+                  index.owned.contains(id) ||
+                      data[FirestorePaths.ownerId] == uid
+                  ? Board.roleOwner
                   : null,
             ),
       ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     });
   }
 
-  @override
-  Future<String> createWorkspace({
-    required String name,
-    required String description,
-  }) async {
-    final data = await _callData('createWorkspace', {
-      'name': name.trim(),
-      'description': description.trim(),
-    });
-    final id = data['workspaceId'];
-    if (id is! String || id.isEmpty) {
-      throw 'The workspace could not be created. Please try again.';
-    }
-    return id;
-  }
-
-  @override
-  Future<void> updateWorkspace({
-    required String workspaceId,
-    String? name,
-    String? description,
-  }) => _call('updateWorkspace', {
-    'workspaceId': workspaceId,
-    if (name != null) 'name': name.trim(),
-    if (description != null) 'description': description.trim(),
-  });
-
-  @override
-  Future<void> addBoardToWorkspace({
-    required String workspaceId,
-    required String boardId,
-  }) => _call('addBoardToWorkspace', {
-    'workspaceId': workspaceId,
-    'boardId': boardId,
-  });
-
-  @override
-  Future<void> removeBoardFromWorkspace({
-    required String workspaceId,
-    required String boardId,
-  }) => _call('removeBoardFromWorkspace', {
-    'workspaceId': workspaceId,
-    'boardId': boardId,
-  });
-
-  /// The workspace's member documents joined with each member's profile, the
-  /// same source the phone's settings screen reads.
   @override
   Stream<List<WorkspaceMember>> watchWorkspaceMembers(String workspaceId) {
     final uid = _uid;
@@ -824,8 +541,6 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
         });
   }
 
-  /// Each member's `users/{uid}` profile, read in parallel. A missing or
-  /// unreadable profile must not hide the membership.
   Future<Map<String, Map<String, dynamic>>> _workspaceMemberProfiles(
     List<String> uids,
   ) async {
@@ -923,32 +638,6 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     }
   }
 
-  @override
-  Future<void> inviteToWorkspace({
-    required String workspaceId,
-    required List<String> userIds,
-  }) async {
-    final ids = [
-      for (final id in userIds)
-        if (id.trim().isNotEmpty) id.trim(),
-    ];
-    if (ids.isEmpty) throw 'Choose someone to invite.';
-    await _callData('inviteToWorkspace', {
-      'workspaceId': workspaceId,
-      'invitedUserIds': ids,
-    });
-  }
-
-  @override
-  Future<void> leaveWorkspace(String workspaceId) => _call('leaveWorkspace', {
-    'workspaceId': workspaceId,
-    'importedBoardsToKeep': const <String>[],
-  });
-
-  @override
-  Future<void> deleteWorkspace(String workspaceId) =>
-      _call('deleteWorkspace', {'workspaceId': workspaceId});
-
   // ── Invites ─────────────────────────────────────────────────────────────
 
   @override
@@ -956,7 +645,7 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     final uid = _uid;
     if (uid == null) return Stream.value(const []);
     return _firestore
-        .collection('board_invites')
+        .collection(FirestorePaths.boardInvites)
         .where(FirestorePaths.toUid, isEqualTo: uid)
         .where(FirestorePaths.status, isEqualTo: 'pending')
         .snapshots()
@@ -1007,22 +696,6 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
         );
   }
 
-  @override
-  Future<void> acceptBoardInvite(String inviteId) =>
-      _call('acceptBoardInvite', {'inviteId': inviteId});
-
-  @override
-  Future<void> declineBoardInvite(String inviteId) =>
-      _call('declineBoardInvite', {'inviteId': inviteId});
-
-  @override
-  Future<void> acceptWorkspaceInvite(String inviteId) =>
-      _call('acceptWorkspaceInvite', {'inviteId': inviteId});
-
-  @override
-  Future<void> declineWorkspaceInvite(String inviteId) =>
-      _call('rejectWorkspaceInvite', {'inviteId': inviteId});
-
   // ── Friends ─────────────────────────────────────────────────────────────
 
   @override
@@ -1030,7 +703,7 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     final uid = _uid;
     if (uid == null) return Stream.value(const []);
     return _firestore
-        .collection('friend_requests')
+        .collection(FirestorePaths.friendRequests)
         .where(FirestorePaths.toUid, isEqualTo: uid)
         .where(FirestorePaths.status, isEqualTo: 'pending')
         .snapshots()
@@ -1048,7 +721,7 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     return _firestore
         .collection(FirestorePaths.users)
         .doc(uid)
-        .collection('friends')
+        .collection(FirestorePaths.friendsSubcollection)
         .snapshots()
         .asyncMap((snapshot) async {
           final ids = snapshot.docs
@@ -1075,21 +748,12 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
   }
 
   @override
-  Future<void> acceptFriendRequest(String requestId) =>
-      _call('acceptFriendRequest', {'requestId': requestId});
-
-  @override
-  Future<void> declineFriendRequest(String requestId) =>
-      _call('declineFriendRequest', {'requestId': requestId});
-
-  /// The phone's add-friend search: an exact email lookup, excluding yourself.
-  @override
   Future<List<Friend>> searchUsersByEmail(String email) async {
     final query = email.trim().toLowerCase();
     if (query.isEmpty) return const [];
     final snap = await _firestore
         .collection(FirestorePaths.users)
-        .where('email', isEqualTo: query)
+        .where(FirestorePaths.email, isEqualTo: query)
         .limit(5)
         .get();
     final uid = _uid;
@@ -1100,19 +764,11 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
   }
 
   @override
-  Future<void> sendFriendRequest(String targetUid) =>
-      _call('sendFriendRequest', {'targetUid': targetUid});
-
-  @override
-  Future<void> unfriend(String targetUid) =>
-      _call('unfriendUser', {'targetUid': targetUid});
-
-  @override
   Stream<List<Friend>> watchBlockedUsers() {
     final uid = _uid;
     if (uid == null) return Stream.value(const []);
     return _firestore
-        .collection('blocked_users')
+        .collection(FirestorePaths.blockedUsers)
         .where('blockerUid', isEqualTo: uid)
         .snapshots()
         .asyncMap((snapshot) async {
@@ -1130,7 +786,6 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
               friends.add(Friend.fromMap(doc.data(), doc.id));
             }
           }
-          // Keep blocks whose profile cannot be read, so they can be undone.
           for (final id in ids) {
             if (!friends.any((f) => f.uid == id)) {
               friends.add(Friend(uid: id, displayName: id));
@@ -1145,14 +800,6 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
         });
   }
 
-  @override
-  Future<void> blockUser(String targetUid) =>
-      _call('blockUser', {'targetUid': targetUid});
-
-  @override
-  Future<void> unblockUser(String targetUid) =>
-      _call('unblockUser', {'targetUid': targetUid});
-
   // ── Notifications ───────────────────────────────────────────────────────
 
   @override
@@ -1162,8 +809,8 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     return _firestore
         .collection(FirestorePaths.users)
         .doc(uid)
-        .collection('notifications')
-        .orderBy('timestamp', descending: true)
+        .collection(FirestorePaths.notificationsSubcollection)
+        .orderBy(FirestorePaths.timestamp, descending: true)
         .limit(100)
         .snapshots()
         .map(
@@ -1180,16 +827,8 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
   }
 
   @override
-  Future<void> deleteNotification(String notificationId) async {
-    final uid = _uid;
-    if (uid == null) return;
-    await _firestore
-        .collection(FirestorePaths.users)
-        .doc(uid)
-        .collection('notifications')
-        .doc(notificationId)
-        .delete();
-  }
+  Future<void> deleteNotification(String notificationId) =>
+      _notificationRepository.deleteNotification(notificationId);
 
   @override
   Stream<List<InAppNotification>> watchNotificationsWithReadState() =>
@@ -1236,42 +875,7 @@ class FirebaseWebCompanionRepository implements WebCompanionRepository {
     _emitReadIds(next);
   }
 
-  @override
-  Future<void> uploadProfilePhoto(
-    Uint8List bytes, {
-    required String filename,
-  }) async {
-    if (bytes.isEmpty) throw 'That image could not be read.';
-    await _call('uploadProfilePhoto', {
-      'imageData': base64Encode(bytes),
-      'filename': filename,
-    });
-  }
-
-  // ── Helpers ─────────────────────────────────────────────────────────────
-
-  Future<void> _call(String name, Map<String, dynamic> data) async {
-    await _callData(name, data);
-  }
-
-  /// Calls a Cloud Function and returns its response map (empty when the
-  /// function returns nothing).
-  Future<Map<String, dynamic>> _callData(
-    String name,
-    Map<String, dynamic> data,
-  ) async {
-    try {
-      final result = await _functions.httpsCallable(name).call(data);
-      final body = result.data;
-      if (body is Map && body['success'] == false) {
-        throw (body['message'] as String?) ??
-            'That did not work. Please try again.';
-      }
-      return body is Map ? Map<String, dynamic>.from(body) : const {};
-    } on FirebaseFunctionsException catch (e) {
-      throw e.message ?? 'That did not work. Please try again.';
-    }
-  }
+  // ── Error translation ───────────────────────────────────────────────────
 
   String _authMessage(FirebaseAuthException e) {
     switch (e.code) {

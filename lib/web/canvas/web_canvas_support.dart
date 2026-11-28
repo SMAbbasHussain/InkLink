@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/constants/firestore_paths.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/firestore_service.dart';
 import '../../core/utils/board_preview_preferences.dart';
@@ -8,10 +9,10 @@ import '../../core/utils/canvas_toolbar_preferences.dart';
 import '../../core/utils/notification_preferences.dart';
 import '../../core/utils/tray_tips_preferences.dart';
 import '../../domain/models/canvas/canvas_toolbar_action.dart';
+import '../../domain/models/canvas/voice_participant.dart';
 import '../../domain/repositories/notification/notification_repository.dart';
 import '../../domain/repositories/settings/settings_repository.dart';
 import '../../domain/services/voice/voice_service.dart';
-import '../../features/canvas/models/voice_participant.dart';
 
 /// Phone settings without the Isar cache: the same browser-stored
 /// (shared_preferences) toolbar, preview and alert preferences.
@@ -95,8 +96,10 @@ class WebNotificationRepository implements NotificationRepository {
     required FirestoreService firestoreService,
   }) : _db = firestoreService;
 
-  CollectionReference<Map<String, dynamic>> _feed(String uid) =>
-      _db.collection('users').doc(uid).collection('notifications');
+  CollectionReference<Map<String, dynamic>> _feed(String uid) => _db
+      .collection(FirestorePaths.users)
+      .doc(uid)
+      .collection(FirestorePaths.notificationsSubcollection);
 
   @override
   Stream<List<Map<String, dynamic>>> watchNotifications() {

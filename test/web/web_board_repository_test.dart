@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/core/services/auth_service.dart';
@@ -50,9 +49,6 @@ class _FakeFirestore implements FirestoreService {
   FirebaseFirestore getInstance() => throw UnimplementedError();
 
   @override
-  HttpsCallable getHttpsCallable(String name) => throw UnimplementedError();
-
-  @override
   Future<void> enableNetwork() async {}
 
   @override
@@ -85,15 +81,28 @@ void main() {
     await repository.stopBoardsSync();
   });
 
-  test('no BoardRepository member throws UnsupportedError any more', () {
-    final source = File(
-      'lib/web/canvas/web_board_repository.dart',
-    ).readAsStringSync();
-    expect(source, contains('implements BoardRepository'));
-    expect(source.contains('UnsupportedError'), isFalse);
-    expect(source.contains('_unsupported'), isFalse);
-    expect(RegExp(r'noSuchMethod\s*\(').hasMatch(source), isFalse);
-  });
+  test(
+    'no BoardRepository member throws UnsupportedError or calls Cloud Functions',
+    () {
+      final source = File(
+        'lib/web/canvas/web_board_repository.dart',
+      ).readAsStringSync();
+      expect(source, contains('implements BoardRepository'));
+      expect(source.contains('UnsupportedError'), isFalse);
+      expect(source.contains('_unsupported'), isFalse);
+      expect(RegExp(r'noSuchMethod\s*\(').hasMatch(source), isFalse);
+      expect(source.contains('package:cloud_functions'), isFalse);
+      expect(source.contains('httpsCallable'), isFalse);
+      expect(source.contains('getHttpsCallable'), isFalse);
+
+      final companionSource = File(
+        'lib/web/data/firebase_web_companion_repository.dart',
+      ).readAsStringSync();
+      expect(companionSource.contains('package:cloud_functions'), isFalse);
+      expect(companionSource.contains('CloudFunctionsService'), isFalse);
+      expect(companionSource.contains('httpsCallable'), isFalse);
+    },
+  );
 
   test(
     'board lifecycle calls reject empty ids before touching Firestore',
