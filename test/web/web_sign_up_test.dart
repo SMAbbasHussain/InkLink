@@ -2,10 +2,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:inklink/web/data/web_companion_repository.dart';
-import 'package:inklink/web/preview/sample_web_repository.dart';
+import 'package:inklink/web/domain/web_companion_service.dart';
 import 'package:inklink/web/web_companion_app.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'fakes/fake_web_companion_service.dart';
 
 /// Sign-up and the board-link sign-in note, plus the accessible name the
 /// boards grid exposes for each card and the share metadata the page ships.
@@ -14,18 +15,16 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  // The sample repository fakes its network delay (400 ms for sign-in), so
-  // give animations and futures a full second to land.
   Future<void> settle(WidgetTester tester) async {
-    for (var i = 0; i < 12; i++) {
-      await tester.pump(const Duration(milliseconds: 100));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
     }
   }
 
   Future<void> pumpSignedOut(
     WidgetTester tester, {
     String? initialBoardId,
-    WebCompanionRepository? repository,
+    WebCompanionService? service,
     Size size = const Size(1200, 900),
   }) async {
     tester.view.physicalSize = size;
@@ -33,7 +32,7 @@ void main() {
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       WebCompanionApp(
-        repository: repository ?? SampleWebCompanionRepository(signedIn: false),
+        service: service ?? FakeWebCompanionService(signedIn: false),
         themeMode: ThemeMode.light,
         initialBoardId: initialBoardId,
       ),
@@ -151,10 +150,7 @@ void main() {
 
     // The sample preview has no canvas route, so the deep link reports the
     // board id instead of opening it (the real app opens the canvas).
-    expect(
-      find.text('Open this board in the InkLink app: b5'),
-      findsOneWidget,
-    );
+    expect(find.text('Open this board in the InkLink app: b5'), findsOneWidget);
   });
 
   testWidgets('board cards have a descriptive accessible name', (tester) async {
@@ -164,7 +160,7 @@ void main() {
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       WebCompanionApp(
-        repository: SampleWebCompanionRepository(),
+        service: FakeWebCompanionService(),
         themeMode: ThemeMode.light,
       ),
     );

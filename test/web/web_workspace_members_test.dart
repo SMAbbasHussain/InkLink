@@ -1,14 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:inklink/web/preview/sample_web_repository.dart';
 
-/// The web repository's workspace rules mirror the phone's Firestore rules:
-/// only the owner manages members, the owner is never demoted or removed, and
-/// only the phone's role values are accepted.
+import 'fakes/fake_web_companion_service.dart';
+
+/// Workspace membership rules: only the owner manages members, the owner is
+/// never demoted or removed, and only the phone's role values are accepted.
 void main() {
-  late SampleWebCompanionRepository repo;
+  late FakeWebCompanionService repo;
 
   setUp(() {
-    repo = SampleWebCompanionRepository();
+    repo = FakeWebCompanionService();
   });
 
   Future<void> expectMessage(Future<void> call, String message) => expectLater(

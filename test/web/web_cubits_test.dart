@@ -7,9 +7,9 @@ import 'package:inklink/web/bloc/web_settings_cubit.dart';
 import 'package:inklink/web/bloc/web_social_cubit.dart';
 import 'package:inklink/web/bloc/web_workspaces_cubit.dart';
 import 'package:inklink/web/canvas/web_canvas_support.dart';
-import 'package:inklink/web/domain/web_companion_service.dart';
-import 'package:inklink/web/preview/sample_web_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'fakes/fake_web_companion_service.dart';
 
 void main() {
   test(
@@ -17,8 +17,7 @@ void main() {
     () async {
       SharedPreferences.setMockInitialValues({});
       final prefs = await SharedPreferences.getInstance();
-      final repo = SampleWebCompanionRepository();
-      final service = WebCompanionServiceImpl.fromRepository(repo);
+      final service = FakeWebCompanionService();
       final settingsService = SettingsServiceImpl(
         settingsRepository: WebSettingsRepository(prefs),
       );

@@ -29,14 +29,14 @@ import 'web_mappers.dart';
 import 'web_workspace_ops.dart';
 
 /// Pure Firebase + browser-preferences implementation of
-/// [WebCompanionDataRepository].
+/// [WebCompanionRepository].
 ///
 /// Delegates shared board persistence to [BoardRepository] (`WebBoardRepository`)
 /// and notification deletion to [NotificationRepository]
 /// (`WebNotificationRepository`), eliminating duplicated Firestore writes.
 /// Contains **no Cloud Functions calls**: privileged operations live in
 /// `WebCompanionServiceImpl` (and shared `BoardService`).
-class FirebaseWebCompanionRepository implements WebCompanionDataRepository {
+class FirebaseWebCompanionRepository implements WebCompanionRepository {
   final AuthService _auth;
   final FirestoreService _firestore;
   final BoardRepository _boardRepository;

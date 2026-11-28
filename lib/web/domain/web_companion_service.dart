@@ -21,7 +21,7 @@ import '../data/web_companion_repository.dart';
 ///
 /// Owns business validation and privileged Cloud Function orchestration
 /// (reusing the shared [BoardService] for board mutations) while delegating
-/// pure data access to [WebCompanionDataRepository].
+/// pure data access to [WebCompanionRepository].
 abstract class WebCompanionService {
   // Auth
   Stream<WebAccount?> get authChanges;
@@ -147,30 +147,19 @@ abstract class WebCompanionService {
 
 /// Default domain-service implementation for the web companion.
 ///
-/// - In production, delegates Firestore/Auth/SharedPreferences access to
-///   [WebCompanionDataRepository], board lifecycle orchestration to the shared
-///   [BoardService], and remaining privileged actions to
-///   [CloudFunctionsService].
-/// - In preview/test mode ([WebCompanionServiceImpl.fromRepository]), adapts an
-///   in-memory [WebCompanionRepository] cleanly with zero Firebase dependencies.
+/// Delegates Firestore/Auth/SharedPreferences access to
+/// [WebCompanionRepository], board lifecycle orchestration to the shared
+/// [BoardService], and remaining privileged actions to [CloudFunctionsService].
 class WebCompanionServiceImpl implements WebCompanionService {
-  final WebCompanionDataRepository _data;
-  final WebCompanionRepository? _sampleRepo;
-  final BoardService? _boardService;
-  final CloudFunctionsService? _functions;
+  final WebCompanionRepository _data;
+  final BoardService _boardService;
+  final CloudFunctionsService _functions;
 
   WebCompanionServiceImpl({
     required this._data,
     required this._boardService,
     required CloudFunctionsService cloudFunctionsService,
-  }) : _sampleRepo = null,
-       _functions = cloudFunctionsService;
-
-  WebCompanionServiceImpl.fromRepository(WebCompanionRepository repository)
-    : _data = repository,
-      _sampleRepo = repository,
-      _boardService = null,
-      _functions = null;
+  }) : _functions = cloudFunctionsService;
 
   // ── Auth ────────────────────────────────────────────────────────────────
 
@@ -209,10 +198,6 @@ class WebCompanionServiceImpl implements WebCompanionService {
 
   @override
   Future<void> deleteAccount() async {
-    if (_sampleRepo != null) {
-      await _sampleRepo.deleteAccount();
-      return;
-    }
     if (currentUser == null) throw 'Please sign in again.';
     await _callData('deleteUserAccount', const {});
     await _data.signOut();
@@ -233,10 +218,6 @@ class WebCompanionServiceImpl implements WebCompanionService {
     required String filename,
   }) async {
     if (bytes.isEmpty) throw 'That image could not be read.';
-    if (_sampleRepo != null) {
-      await _sampleRepo.uploadProfilePhoto(bytes, filename: filename);
-      return;
-    }
     await _call('uploadProfilePhoto', {
       'imageData': base64Encode(bytes),
       'filename': filename,
@@ -292,12 +273,8 @@ class WebCompanionServiceImpl implements WebCompanionService {
 
   @override
   Future<void> joinBoard(String boardIdOrCode) async {
-    if (_sampleRepo != null) {
-      await _sampleRepo.joinBoard(boardIdOrCode);
-      return;
-    }
     try {
-      await _boardService!.joinBoard(boardIdOrCode);
+      await _boardService.joinBoard(boardIdOrCode);
     } on BoardJoinApprovalRequiredException catch (e) {
       throw e.toString();
     } on Exception catch (e) {
@@ -314,22 +291,12 @@ class WebCompanionServiceImpl implements WebCompanionService {
       _data.setBoardArchived(boardId, archived: archived);
 
   @override
-  Future<void> setBoardPaused(String boardId, {required bool paused}) async {
-    if (_sampleRepo != null) {
-      await _sampleRepo.setBoardPaused(boardId, paused: paused);
-      return;
-    }
-    await _boardService!.setBoardPaused(boardId, isPaused: paused);
-  }
+  Future<void> setBoardPaused(String boardId, {required bool paused}) =>
+      _boardService.setBoardPaused(boardId, isPaused: paused);
 
   @override
-  Future<void> deleteBoard(String boardId) async {
-    if (_sampleRepo != null) {
-      await _sampleRepo.deleteBoard(boardId);
-      return;
-    }
-    await _boardService!.deleteBoard(boardId);
-  }
+  Future<void> deleteBoard(String boardId) =>
+      _boardService.deleteBoard(boardId);
 
   @override
   Future<void> duplicateBoard(String boardId, {String? customTitle}) =>
@@ -347,27 +314,14 @@ class WebCompanionServiceImpl implements WebCompanionService {
     required String whoCanInvite,
     required String defaultLinkJoinRole,
     bool? allowMembersToCopy,
-  }) async {
-    if (_sampleRepo != null) {
-      await _sampleRepo.updateBoardSettings(
-        boardId: boardId,
-        visibility: visibility,
-        privateJoinPolicy: privateJoinPolicy,
-        whoCanInvite: whoCanInvite,
-        defaultLinkJoinRole: defaultLinkJoinRole,
-        allowMembersToCopy: allowMembersToCopy,
-      );
-      return;
-    }
-    await _boardService!.updateBoardSettings(
-      boardId: boardId,
-      visibility: normalizeVisibility(visibility),
-      privateJoinPolicy: normalizePrivateJoinPolicy(privateJoinPolicy),
-      whoCanInvite: normalizeWhoCanInvite(whoCanInvite),
-      defaultLinkJoinRole: normalizeLinkJoinRole(defaultLinkJoinRole),
-      allowMembersToCopy: allowMembersToCopy,
-    );
-  }
+  }) => _boardService.updateBoardSettings(
+    boardId: boardId,
+    visibility: normalizeVisibility(visibility),
+    privateJoinPolicy: normalizePrivateJoinPolicy(privateJoinPolicy),
+    whoCanInvite: normalizeWhoCanInvite(whoCanInvite),
+    defaultLinkJoinRole: normalizeLinkJoinRole(defaultLinkJoinRole),
+    allowMembersToCopy: allowMembersToCopy,
+  );
 
   // ── Workspaces ──────────────────────────────────────────────────────────
 
@@ -383,9 +337,6 @@ class WebCompanionServiceImpl implements WebCompanionService {
     required String name,
     required String description,
   }) async {
-    if (_sampleRepo != null) {
-      return _sampleRepo.createWorkspace(name: name, description: description);
-    }
     final data = await _callData('createWorkspace', {
       'name': name.trim(),
       'description': description.trim(),
@@ -402,54 +353,29 @@ class WebCompanionServiceImpl implements WebCompanionService {
     required String workspaceId,
     String? name,
     String? description,
-  }) {
-    if (_sampleRepo != null) {
-      return _sampleRepo.updateWorkspace(
-        workspaceId: workspaceId,
-        name: name,
-        description: description,
-      );
-    }
-    return _call('updateWorkspace', {
-      'workspaceId': workspaceId,
-      if (name != null) 'name': name.trim(),
-      if (description != null) 'description': description.trim(),
-    });
-  }
+  }) => _call('updateWorkspace', {
+    'workspaceId': workspaceId,
+    if (name != null) 'name': name.trim(),
+    if (description != null) 'description': description.trim(),
+  });
 
   @override
   Future<void> addBoardToWorkspace({
     required String workspaceId,
     required String boardId,
-  }) {
-    if (_sampleRepo != null) {
-      return _sampleRepo.addBoardToWorkspace(
-        workspaceId: workspaceId,
-        boardId: boardId,
-      );
-    }
-    return _call('addBoardToWorkspace', {
-      'workspaceId': workspaceId,
-      'boardId': boardId,
-    });
-  }
+  }) => _call('addBoardToWorkspace', {
+    'workspaceId': workspaceId,
+    'boardId': boardId,
+  });
 
   @override
   Future<void> removeBoardFromWorkspace({
     required String workspaceId,
     required String boardId,
-  }) {
-    if (_sampleRepo != null) {
-      return _sampleRepo.removeBoardFromWorkspace(
-        workspaceId: workspaceId,
-        boardId: boardId,
-      );
-    }
-    return _call('removeBoardFromWorkspace', {
-      'workspaceId': workspaceId,
-      'boardId': boardId,
-    });
-  }
+  }) => _call('removeBoardFromWorkspace', {
+    'workspaceId': workspaceId,
+    'boardId': boardId,
+  });
 
   @override
   Stream<List<WorkspaceMember>> watchWorkspaceMembers(String workspaceId) =>
@@ -485,13 +411,6 @@ class WebCompanionServiceImpl implements WebCompanionService {
         if (id.trim().isNotEmpty) id.trim(),
     ];
     if (ids.isEmpty) throw 'Choose someone to invite.';
-    if (_sampleRepo != null) {
-      await _sampleRepo.inviteToWorkspace(
-        workspaceId: workspaceId,
-        userIds: ids,
-      );
-      return;
-    }
     await _callData('inviteToWorkspace', {
       'workspaceId': workspaceId,
       'invitedUserIds': ids,
@@ -499,23 +418,14 @@ class WebCompanionServiceImpl implements WebCompanionService {
   }
 
   @override
-  Future<void> leaveWorkspace(String workspaceId) {
-    if (_sampleRepo != null) {
-      return _sampleRepo.leaveWorkspace(workspaceId);
-    }
-    return _call('leaveWorkspace', {
-      'workspaceId': workspaceId,
-      'importedBoardsToKeep': const <String>[],
-    });
-  }
+  Future<void> leaveWorkspace(String workspaceId) => _call('leaveWorkspace', {
+    'workspaceId': workspaceId,
+    'importedBoardsToKeep': const <String>[],
+  });
 
   @override
-  Future<void> deleteWorkspace(String workspaceId) {
-    if (_sampleRepo != null) {
-      return _sampleRepo.deleteWorkspace(workspaceId);
-    }
-    return _call('deleteWorkspace', {'workspaceId': workspaceId});
-  }
+  Future<void> deleteWorkspace(String workspaceId) =>
+      _call('deleteWorkspace', {'workspaceId': workspaceId});
 
   // ── Invites ─────────────────────────────────────────────────────────────
 
@@ -528,24 +438,20 @@ class WebCompanionServiceImpl implements WebCompanionService {
       _data.watchWorkspaceInvites();
 
   @override
-  Future<void> acceptBoardInvite(String inviteId) => _sampleRepo != null
-      ? _sampleRepo.acceptBoardInvite(inviteId)
-      : _call('acceptBoardInvite', {'inviteId': inviteId});
+  Future<void> acceptBoardInvite(String inviteId) =>
+      _call('acceptBoardInvite', {'inviteId': inviteId});
 
   @override
-  Future<void> declineBoardInvite(String inviteId) => _sampleRepo != null
-      ? _sampleRepo.declineBoardInvite(inviteId)
-      : _call('declineBoardInvite', {'inviteId': inviteId});
+  Future<void> declineBoardInvite(String inviteId) =>
+      _call('declineBoardInvite', {'inviteId': inviteId});
 
   @override
-  Future<void> acceptWorkspaceInvite(String inviteId) => _sampleRepo != null
-      ? _sampleRepo.acceptWorkspaceInvite(inviteId)
-      : _call('acceptWorkspaceInvite', {'inviteId': inviteId});
+  Future<void> acceptWorkspaceInvite(String inviteId) =>
+      _call('acceptWorkspaceInvite', {'inviteId': inviteId});
 
   @override
-  Future<void> declineWorkspaceInvite(String inviteId) => _sampleRepo != null
-      ? _sampleRepo.declineWorkspaceInvite(inviteId)
-      : _call('rejectWorkspaceInvite', {'inviteId': inviteId});
+  Future<void> declineWorkspaceInvite(String inviteId) =>
+      _call('rejectWorkspaceInvite', {'inviteId': inviteId});
 
   // ── Friends ─────────────────────────────────────────────────────────────
 
@@ -557,41 +463,35 @@ class WebCompanionServiceImpl implements WebCompanionService {
   Stream<List<Friend>> watchFriends() => _data.watchFriends();
 
   @override
-  Future<void> acceptFriendRequest(String requestId) => _sampleRepo != null
-      ? _sampleRepo.acceptFriendRequest(requestId)
-      : _call('acceptFriendRequest', {'requestId': requestId});
+  Future<void> acceptFriendRequest(String requestId) =>
+      _call('acceptFriendRequest', {'requestId': requestId});
 
   @override
-  Future<void> declineFriendRequest(String requestId) => _sampleRepo != null
-      ? _sampleRepo.declineFriendRequest(requestId)
-      : _call('declineFriendRequest', {'requestId': requestId});
+  Future<void> declineFriendRequest(String requestId) =>
+      _call('declineFriendRequest', {'requestId': requestId});
 
   @override
   Future<List<Friend>> searchUsersByEmail(String email) =>
       _data.searchUsersByEmail(email);
 
   @override
-  Future<void> sendFriendRequest(String targetUid) => _sampleRepo != null
-      ? _sampleRepo.sendFriendRequest(targetUid)
-      : _call('sendFriendRequest', {'targetUid': targetUid});
+  Future<void> sendFriendRequest(String targetUid) =>
+      _call('sendFriendRequest', {'targetUid': targetUid});
 
   @override
-  Future<void> unfriend(String targetUid) => _sampleRepo != null
-      ? _sampleRepo.unfriend(targetUid)
-      : _call('unfriendUser', {'targetUid': targetUid});
+  Future<void> unfriend(String targetUid) =>
+      _call('unfriendUser', {'targetUid': targetUid});
 
   @override
   Stream<List<Friend>> watchBlockedUsers() => _data.watchBlockedUsers();
 
   @override
-  Future<void> blockUser(String targetUid) => _sampleRepo != null
-      ? _sampleRepo.blockUser(targetUid)
-      : _call('blockUser', {'targetUid': targetUid});
+  Future<void> blockUser(String targetUid) =>
+      _call('blockUser', {'targetUid': targetUid});
 
   @override
-  Future<void> unblockUser(String targetUid) => _sampleRepo != null
-      ? _sampleRepo.unblockUser(targetUid)
-      : _call('unblockUser', {'targetUid': targetUid});
+  Future<void> unblockUser(String targetUid) =>
+      _call('unblockUser', {'targetUid': targetUid});
 
   // ── Notifications ───────────────────────────────────────────────────────
 
@@ -630,7 +530,7 @@ class WebCompanionServiceImpl implements WebCompanionService {
     Map<String, dynamic> data,
   ) async {
     try {
-      final result = await _functions!.httpsCallable(name).call(data);
+      final result = await _functions.httpsCallable(name).call(data);
       final body = result.data;
       if (body is Map && body['success'] == false) {
         throw (body['message'] as String?) ??

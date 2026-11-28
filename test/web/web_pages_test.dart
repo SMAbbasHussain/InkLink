@@ -2,15 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/ui/widgets/ink_button.dart';
 import 'package:inklink/ui/widgets/ink_chip.dart';
-import 'package:inklink/web/data/web_companion_repository.dart';
-import 'package:inklink/web/preview/sample_web_repository.dart';
+import 'package:inklink/web/domain/web_companion_service.dart';
 import 'package:inklink/web/web_companion_app.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Renders the web companion's signed-in pages from sample data (no
-/// Firebase) on a desktop-sized screen and checks the main content. The
-/// pages use the mobile app's design (Ink theme, desk background, cards) in
-/// a desktop layout: top bar and labelled sidebar.
+import 'fakes/fake_web_companion_service.dart';
+
+/// Renders the web companion's signed-in pages with an in-memory test service
+/// on a desktop-sized screen and checks the main content. The pages use the
+/// mobile app's design (Ink theme, desk background, cards) in a desktop
+/// layout: top bar and labelled sidebar.
 void main() {
   setUp(() {
     // The settings page reads and writes browser-stored preferences.
@@ -21,15 +22,14 @@ void main() {
     WidgetTester tester, {
     bool signedIn = true,
     Size size = const Size(1440, 900),
-    WebCompanionRepository? repository,
+    WebCompanionService? service,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       WebCompanionApp(
-        repository:
-            repository ?? SampleWebCompanionRepository(signedIn: signedIn),
+        service: service ?? FakeWebCompanionService(signedIn: signedIn),
         themeMode: ThemeMode.light,
       ),
     );
@@ -186,7 +186,7 @@ void main() {
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       WebCompanionApp(
-        repository: SampleWebCompanionRepository(),
+        service: FakeWebCompanionService(),
         themeMode: ThemeMode.light,
       ),
     );
@@ -484,7 +484,7 @@ void main() {
     await pumpApp(
       tester,
       size: const Size(1440, 1600),
-      repository: _RefusingWorkspaceRepository(),
+      service: _RefusingWorkspaceService(),
     );
     await openWorkspace(tester, 'Product Team');
 
@@ -590,8 +590,8 @@ Future<void> settle(WidgetTester tester) async {
   }
 }
 
-/// The sample repository with member writes refused, for the rollback test.
-class _RefusingWorkspaceRepository extends SampleWebCompanionRepository {
+/// In-memory test service with member writes refused, for the rollback test.
+class _RefusingWorkspaceService extends FakeWebCompanionService {
   @override
   Future<void> updateWorkspaceMemberRole({
     required String workspaceId,

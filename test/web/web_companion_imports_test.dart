@@ -82,12 +82,21 @@ void main() {
     );
   });
 
-  test('the preview and test app does not pull in the canvas', () {
+  test('WebCompanionApp stays decoupled from canvas_screen', () {
     final reach = reachableFrom(['lib/web/web_companion_app.dart']);
     expect(
       reach,
       isNot(contains('lib/features/canvas/view/canvas_screen.dart')),
     );
+  });
+
+  test('lib/web ships no preview entry points or sample repositories', () {
+    final dummyFiles = imports.keys.where(
+      (p) =>
+          p.startsWith('lib/web/') &&
+          (p.contains('/preview/') || p.contains('sample_')),
+    );
+    expect(dummyFiles, isEmpty);
   });
 }
 

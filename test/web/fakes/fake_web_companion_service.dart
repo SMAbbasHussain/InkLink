@@ -1,31 +1,26 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import '../../domain/models/board.dart';
-import '../../domain/models/friends/friend.dart';
-import '../../domain/models/friends/friend_request.dart';
-import '../../domain/models/invitation/board_invitation.dart';
-import '../../domain/models/notification/in_app_notification.dart';
-import '../../domain/models/user_model.dart';
-import '../../domain/models/workspace.dart';
-import '../data/web_account.dart';
-import '../data/web_account_settings.dart';
-import '../data/web_board_ops.dart';
-import '../data/web_companion_repository.dart';
-import '../data/web_mappers.dart';
-import '../data/web_workspace_ops.dart';
+import 'package:inklink/domain/models/board.dart';
+import 'package:inklink/domain/models/friends/friend.dart';
+import 'package:inklink/domain/models/friends/friend_request.dart';
+import 'package:inklink/domain/models/invitation/board_invitation.dart';
+import 'package:inklink/domain/models/notification/in_app_notification.dart';
+import 'package:inklink/domain/models/user_model.dart';
+import 'package:inklink/domain/models/workspace.dart';
+import 'package:inklink/web/data/web_account.dart';
+import 'package:inklink/web/data/web_account_settings.dart';
+import 'package:inklink/web/data/web_board_ops.dart';
+import 'package:inklink/web/data/web_mappers.dart';
+import 'package:inklink/web/data/web_workspace_ops.dart';
+import 'package:inklink/web/domain/web_companion_service.dart';
 
-/// Sample data for the design preview (lib/web/preview/main_web_preview.dart)
-/// and the page tests. No Firebase, no network, no real accounts.
-///
-/// Every mutating call changes the in-memory lists (and emits on the matching
-/// stream), so the whole companion can be clicked through: creating, renaming,
-/// copying, archiving and deleting boards, marking notifications read, adding
-/// or blocking friends, and creating/editing workspaces.
-class SampleWebCompanionRepository implements WebCompanionRepository {
-  SampleWebCompanionRepository({bool signedIn = true, DateTime? now})
+/// Test-only in-memory implementation of [WebCompanionService] for widget and
+/// Cubit tests without live Firebase backends.
+class FakeWebCompanionService implements WebCompanionService {
+  FakeWebCompanionService({bool signedIn = true, DateTime? now})
     : _now = now ?? DateTime.now() {
-    if (signedIn) _account = _sampleAccount;
+    if (signedIn) _account = _defaultAccount;
     _seed();
   }
 
@@ -33,7 +28,7 @@ class SampleWebCompanionRepository implements WebCompanionRepository {
   WebAccount? _account;
   final _authController = StreamController<WebAccount?>.broadcast();
 
-  static const _sampleAccount = WebAccount(
+  static const _defaultAccount = WebAccount(
     uid: 'me',
     email: 'sam.rivera@example.com',
     displayName: 'Sam Rivera',
@@ -433,25 +428,20 @@ class SampleWebCompanionRepository implements WebCompanionRepository {
 
   @override
   Future<void> signInWithEmail(String email, String password) async {
-    await Future<void>.delayed(const Duration(milliseconds: 400));
     if (password.length < 6) throw 'Incorrect email or password.';
-    _account = _sampleAccount;
+    _account = _defaultAccount;
     _authController.add(_account);
   }
 
   @override
-  Future<void> signInWithGoogle() => signInWithEmail('', 'preview');
+  Future<void> signInWithGoogle() => signInWithEmail('', 'secret12');
 
-  /// Same rules as the Firebase path: a name, a real-looking address and a
-  /// password Firebase would accept; the new account starts unverified so the
-  /// preview shows the verification screen before the app.
   @override
   Future<void> signUpWithEmail({
     required String name,
     required String email,
     required String password,
   }) async {
-    await Future<void>.delayed(const Duration(milliseconds: 200));
     final trimmedName = name.trim();
     if (trimmedName.isEmpty) throw 'Please enter your name.';
     final normalizedEmail = email.trim().toLowerCase();
@@ -461,7 +451,7 @@ class SampleWebCompanionRepository implements WebCompanionRepository {
     if (password.length < 6) {
       throw 'Use at least 6 characters for your password.';
     }
-    if (normalizedEmail == _sampleAccount.email) {
+    if (normalizedEmail == _defaultAccount.email) {
       throw 'An account already exists for that email. Sign in instead.';
     }
     _account = WebAccount(
@@ -480,8 +470,6 @@ class SampleWebCompanionRepository implements WebCompanionRepository {
   @override
   Future<void> resendVerificationEmail() async {}
 
-  /// Marks the account verified, as `user.reload()` would after the browser
-  /// follows the verification link, and emits it so the gate moves on.
   @override
   Future<bool> reloadEmailVerified() async {
     final account = _account;
@@ -510,7 +498,7 @@ class SampleWebCompanionRepository implements WebCompanionRepository {
     await signOut();
   }
 
-  // ── Data ────────────────────────────────────────────────────────────────
+  // ── Profile & Account Settings ──────────────────────────────────────────
 
   @override
   Stream<UserModel?> watchMyProfile() => _live(_profileCtl, () => _profile);
@@ -564,6 +552,8 @@ class SampleWebCompanionRepository implements WebCompanionRepository {
     _accountSettings = _accountSettings.copyWith(preferredTags: List.of(tags));
     _accountSettingsCtl.add(_accountSettings);
   }
+
+  // ── Boards ──────────────────────────────────────────────────────────────
 
   @override
   Stream<List<Board>> watchMyBoards() =>
@@ -700,7 +690,7 @@ class SampleWebCompanionRepository implements WebCompanionRepository {
     required String whoCanInvite,
     required String defaultLinkJoinRole,
     bool? allowMembersToCopy,
-  }) {
+  }) async {
     final fields = boardSettingsFields(
       visibility: visibility,
       privateJoinPolicy: privateJoinPolicy,
@@ -719,7 +709,6 @@ class SampleWebCompanionRepository implements WebCompanionRepository {
         allowMembersToCopy: allowMembersToCopy,
       ),
     );
-    return Future.value();
   }
 
   // ── Workspaces ──────────────────────────────────────────────────────────
@@ -833,7 +822,6 @@ class SampleWebCompanionRepository implements WebCompanionRepository {
   Workspace? _workspaceById(String id) =>
       _workspaces.where((entry) => entry.$1.id == id).firstOrNull?.$1;
 
-  /// Mirrors the Firestore rules: only the workspace owner manages members.
   void _requireWorkspaceOwner(String workspaceId, String action) {
     final workspace = _workspaceById(workspaceId);
     if (workspace == null) throw 'Workspace not found.';
@@ -894,8 +882,6 @@ class SampleWebCompanionRepository implements WebCompanionRepository {
     _workspaceMembersCtl.add(null);
   }
 
-  /// Mirrors the invite function: the owner may invite someone who exists, is
-  /// not already a member and has not been invited yet.
   @override
   Future<void> inviteToWorkspace({
     required String workspaceId,

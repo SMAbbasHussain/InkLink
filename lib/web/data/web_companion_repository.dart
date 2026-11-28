@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import '../../domain/models/board.dart';
 import '../../domain/models/friends/friend.dart';
 import '../../domain/models/friends/friend_request.dart';
@@ -12,13 +10,13 @@ import 'web_account_settings.dart';
 import 'web_board_ops.dart';
 import 'web_mappers.dart';
 
-/// Pure data-access contract for the web companion (Auth, Firestore, and
-/// browser `SharedPreferences`).
+/// Pure data-access contract for the web companion (Firebase Auth, Firestore,
+/// and browser `SharedPreferences`).
 ///
 /// Contains **no Cloud Function callables**: privileged mutations are
-/// orchestrated by [WebCompanionService] (domain service layer) so
+/// orchestrated by `WebCompanionService` (domain service layer) so
 /// repositories stay strictly data-access only.
-abstract class WebCompanionDataRepository {
+abstract class WebCompanionRepository {
   // Auth
   Stream<WebAccount?> get authChanges;
   WebAccount? get currentUser;
@@ -100,59 +98,4 @@ abstract class WebCompanionDataRepository {
         watchReadNotificationIds(),
         applyReadState,
       );
-}
-
-/// Full offline/in-memory contract implemented by `SampleWebCompanionRepository`
-/// for design previews and widget tests without Firebase Cloud Functions.
-abstract class WebCompanionRepository extends WebCompanionDataRepository {
-  Future<void> deleteAccount();
-  Future<void> uploadProfilePhoto(Uint8List bytes, {required String filename});
-
-  Future<void> joinBoard(String boardIdOrCode);
-  Future<void> setBoardPaused(String boardId, {required bool paused});
-  Future<void> deleteBoard(String boardId);
-  Future<void> updateBoardSettings({
-    required String boardId,
-    required String visibility,
-    required String privateJoinPolicy,
-    required String whoCanInvite,
-    required String defaultLinkJoinRole,
-    bool? allowMembersToCopy,
-  });
-
-  Future<String> createWorkspace({
-    required String name,
-    required String description,
-  });
-  Future<void> updateWorkspace({
-    required String workspaceId,
-    String? name,
-    String? description,
-  });
-  Future<void> addBoardToWorkspace({
-    required String workspaceId,
-    required String boardId,
-  });
-  Future<void> removeBoardFromWorkspace({
-    required String workspaceId,
-    required String boardId,
-  });
-  Future<void> inviteToWorkspace({
-    required String workspaceId,
-    required List<String> userIds,
-  });
-  Future<void> leaveWorkspace(String workspaceId);
-  Future<void> deleteWorkspace(String workspaceId);
-
-  Future<void> acceptBoardInvite(String inviteId);
-  Future<void> declineBoardInvite(String inviteId);
-  Future<void> acceptWorkspaceInvite(String inviteId);
-  Future<void> declineWorkspaceInvite(String inviteId);
-
-  Future<void> acceptFriendRequest(String requestId);
-  Future<void> declineFriendRequest(String requestId);
-  Future<void> sendFriendRequest(String targetUid);
-  Future<void> unfriend(String targetUid);
-  Future<void> blockUser(String targetUid);
-  Future<void> unblockUser(String targetUid);
 }

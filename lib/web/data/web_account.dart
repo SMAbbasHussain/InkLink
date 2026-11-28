@@ -1,5 +1,5 @@
-/// The signed-in user as the web companion needs it (no Firebase types, so
-/// pages can run on sample data in preview mode and tests).
+/// Signed-in user identity exposed to the web companion without leaking
+/// Firebase Auth SDK types into UI or Cubit layers.
 class WebAccount {
   final String uid;
   final String? email;

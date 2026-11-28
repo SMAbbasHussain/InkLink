@@ -16,7 +16,6 @@ import 'bloc/web_workspaces_cubit.dart';
 import 'canvas/web_board_repository.dart';
 import 'canvas/web_canvas_support.dart';
 import 'data/firebase_web_companion_repository.dart';
-import 'data/web_companion_repository.dart';
 import 'domain/web_companion_service.dart';
 import 'screens/home_shell.dart';
 import 'screens/sign_in_screen.dart';
@@ -27,20 +26,15 @@ import 'widgets/web_widgets.dart';
 /// Root of the web companion: theme, domain services, BLoC/Cubit providers,
 /// and the sign-in gate. Uses the mobile app's Ink theme (light and dark).
 class WebCompanionApp extends StatefulWidget {
-  /// Production web passes a pre-wired [WebCompanionService] from
-  /// `WebDependencies.bootstrap()`.
+  /// Pre-wired [WebCompanionService] from `WebDependencies.bootstrap()`.
   final WebCompanionService? service;
 
   /// Optional pre-wired [SettingsService] for canvas/alert browser preferences.
   final SettingsService? settingsService;
 
-  /// Preview mode and widget tests may inject a sample-data
-  /// [WebCompanionRepository], which is automatically wrapped in
-  /// [WebCompanionServiceImpl.fromRepository].
-  final WebCompanionRepository? repository;
   final ThemeMode themeMode;
 
-  /// Section shown first after sign-in (Boards unless the preview asks).
+  /// Section shown first after sign-in.
   final WebSection initialSection;
 
   /// Board from a `/board/<id>` deep link, opened after the first frame.
@@ -54,7 +48,6 @@ class WebCompanionApp extends StatefulWidget {
     super.key,
     this.service,
     this.settingsService,
-    this.repository,
     this.themeMode = ThemeMode.system,
     this.initialSection = WebSection.boards,
     this.initialBoardId,
@@ -66,7 +59,7 @@ class WebCompanionApp extends StatefulWidget {
 }
 
 class _WebCompanionAppState extends State<WebCompanionApp> {
-  // A fixed mode (preview URLs, tests) is not overridden by a saved choice.
+  // An explicitly fixed theme mode overrides browser-stored preference.
   late final WebThemeController _theme = WebThemeController(
     widget.themeMode,
     persist: widget.themeMode == ThemeMode.system,
@@ -79,9 +72,6 @@ class _WebCompanionAppState extends State<WebCompanionApp> {
 
   WebCompanionService _resolveService() {
     if (widget.service != null) return widget.service!;
-    if (widget.repository != null) {
-      return WebCompanionServiceImpl.fromRepository(widget.repository!);
-    }
     final auth = AuthServiceImpl();
     final firestore = FirestoreServiceImpl();
     final functions = CloudFunctionsServiceImpl();
