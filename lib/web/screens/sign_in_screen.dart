@@ -18,29 +18,42 @@ import '../widgets/web_widgets.dart';
 /// Wide screens get a two-column layout from this width up.
 const double _wideLayoutWidth = 900;
 
-/// Email/password and Google sign-in for existing InkLink accounts, styled
-/// like the mobile login ("Desk" design: dot grid, live-board hero, paper
-/// sheet) without changing any mobile file.
+/// The two form modes: signing in to an existing account, or creating one in
+/// the browser.
+enum WebSignInMode { signIn, signUp }
+
+/// Email/password sign-in and sign-up, plus Google sign-in, styled like the
+/// mobile login ("Desk" design: dot grid, live-board hero, paper sheet)
+/// without changing any mobile file.
 class WebSignInScreen extends StatefulWidget {
-  const WebSignInScreen({super.key});
+  /// The board a link pointed at. When set, the form says a board is waiting
+  /// and the app opens it once this screen succeeds.
+  final String? targetBoardId;
+
+  const WebSignInScreen({super.key, this.targetBoardId});
 
   @override
   State<WebSignInScreen> createState() => _WebSignInScreenState();
 }
 
 class _WebSignInScreenState extends State<WebSignInScreen> {
+  final _name = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
+  WebSignInMode _mode = WebSignInMode.signIn;
   bool _busy = false;
   bool _showPassword = false;
   String? _error;
 
   @override
   void dispose() {
+    _name.dispose();
     _email.dispose();
     _password.dispose();
     super.dispose();
   }
+
+  bool get _creating => _mode == WebSignInMode.signUp;
 
   WebCompanionRepository get _repo => context.read<WebCompanionRepository>();
 
@@ -64,6 +77,36 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
       return;
     }
     await _run(() => _repo.signInWithEmail(_email.text, _password.text));
+  }
+
+  Future<void> _signUp() async {
+    if (_name.text.trim().isEmpty) {
+      setState(() => _error = 'Please enter your name.');
+      return;
+    }
+    if (_email.text.trim().isEmpty) {
+      setState(() => _error = 'Please enter your email address.');
+      return;
+    }
+    if (_password.text.length < 6) {
+      setState(() => _error = 'Use at least 6 characters for your password.');
+      return;
+    }
+    await _run(
+      () => _repo.signUpWithEmail(
+        name: _name.text,
+        email: _email.text,
+        password: _password.text,
+      ),
+    );
+  }
+
+  void _switchMode() {
+    if (_busy) return;
+    setState(() {
+      _mode = _creating ? WebSignInMode.signIn : WebSignInMode.signUp;
+      _error = null;
+    });
   }
 
   Future<void> _forgotPassword() async {
@@ -160,28 +203,46 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
           children: [
             const Center(child: WebLogoTile()),
             const SizedBox(height: InkSpacing.s16),
+            if (widget.targetBoardId != null) ...[
+              _TargetBoardNote(),
+              const SizedBox(height: InkSpacing.s16),
+            ],
             Semantics(
               header: true,
               child: Text(
-                'Welcome back',
+                _creating ? 'Create your account' : 'Welcome back',
                 textAlign: TextAlign.center,
                 style: InkType.display(ink.ink),
               ),
             ),
             const SizedBox(height: InkSpacing.s8),
             Text(
-              'Sign in to manage your boards, invites and friends.',
+              _creating
+                  ? 'Free, in the browser. No phone needed.'
+                  : 'Sign in to manage your boards, invites and friends.',
               textAlign: TextAlign.center,
               style: InkType.body(ink.inkSecondary),
             ),
             const SizedBox(height: InkSpacing.s24),
+            if (_creating) ...[
+              InkTextField(
+                controller: _name,
+                hintText: 'Your name',
+                leadingIcon: LucideIcons.user,
+                keyboardType: TextInputType.name,
+                textInputAction: TextInputAction.next,
+                autofocus: true,
+                enabled: !_busy,
+              ),
+              const SizedBox(height: InkSpacing.s12),
+            ],
             InkTextField(
               controller: _email,
               hintText: 'Email address',
               leadingIcon: LucideIcons.mail,
               keyboardType: TextInputType.emailAddress,
               textInputAction: TextInputAction.next,
-              autofocus: true,
+              autofocus: !_creating,
               enabled: !_busy,
             ),
             const SizedBox(height: InkSpacing.s12),
@@ -192,7 +253,7 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
               obscureText: !_showPassword,
               textInputAction: TextInputAction.done,
               enabled: !_busy,
-              onSubmitted: (_) => _signIn(),
+              onSubmitted: (_) => _creating ? _signUp() : _signIn(),
               suffixIcon: IconButton(
                 tooltip: _showPassword ? 'Hide password' : 'Show password',
                 icon: Icon(
@@ -203,17 +264,18 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
                 onPressed: () => setState(() => _showPassword = !_showPassword),
               ),
             ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: _busy ? null : _forgotPassword,
-                style: TextButton.styleFrom(minimumSize: const Size(48, 44)),
-                child: Text(
-                  'Forgot password?',
-                  style: InkType.bodyStrong(ink.accentText),
+            if (!_creating)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _busy ? null : _forgotPassword,
+                  style: TextButton.styleFrom(minimumSize: const Size(48, 44)),
+                  child: Text(
+                    'Forgot password?',
+                    style: InkType.bodyStrong(ink.accentText),
+                  ),
                 ),
               ),
-            ),
             if (_error != null) ...[
               Semantics(
                 liveRegion: true,
@@ -244,30 +306,51 @@ class _WebSignInScreenState extends State<WebSignInScreen> {
               const SizedBox(height: InkSpacing.s12),
             ],
             InkButton.hero(
-              label: 'Sign in',
+              label: _creating ? 'Create account' : 'Sign in',
               isLoading: _busy,
-              onPressed: _busy ? null : _signIn,
+              onPressed: _busy ? null : (_creating ? _signUp : _signIn),
             ),
-            const SizedBox(height: InkSpacing.s20),
-            _OrDivider(color: ink.glassStroke, textColor: ink.inkMuted),
-            const SizedBox(height: InkSpacing.s20),
-            IgnorePointer(
-              ignoring: _busy,
-              child: AnimatedOpacity(
-                duration: const Duration(milliseconds: 150),
-                opacity: _busy ? 0.5 : 1,
-                child: SocialAuthButton(
-                  text: 'Continue with Google',
-                  assetPath: 'images/google-logo.png',
-                  onTap: () => _run(_repo.signInWithGoogle),
+            if (!_creating) ...[
+              const SizedBox(height: InkSpacing.s20),
+              _OrDivider(color: ink.glassStroke, textColor: ink.inkMuted),
+              const SizedBox(height: InkSpacing.s20),
+              IgnorePointer(
+                ignoring: _busy,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 150),
+                  opacity: _busy ? 0.5 : 1,
+                  child: SocialAuthButton(
+                    text: 'Continue with Google',
+                    assetPath: 'images/google-logo.png',
+                    onTap: () => _run(_repo.signInWithGoogle),
+                  ),
                 ),
               ),
-            ),
+            ],
             const SizedBox(height: InkSpacing.s20),
-            Text(
-              'New to InkLink? Create your account in the mobile app, then sign in here.',
-              textAlign: TextAlign.center,
-              style: InkType.caption(ink.inkMuted),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(
+                  child: Text(
+                    _creating
+                        ? 'Already have an account?'
+                        : 'New to InkLink?',
+                    style: InkType.caption(ink.inkMuted),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _busy ? null : _switchMode,
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(48, 44),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  child: Text(
+                    _creating ? 'Sign in' : 'Create an account',
+                    style: InkType.bodyStrong(ink.accentText),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -387,6 +470,39 @@ class _OrDivider extends StatelessWidget {
       Expanded(child: Divider(color: color)),
     ],
   );
+}
+
+/// "A board is waiting" note for visitors who arrived from a board link and
+/// are not signed in yet. The board itself opens after sign-in.
+class _TargetBoardNote extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final ink = context.ink;
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        padding: const EdgeInsets.all(InkSpacing.s12),
+        decoration: BoxDecoration(
+          color: ink.accentSoft,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: ink.glassStroke),
+        ),
+        child: Row(
+          children: [
+            Icon(LucideIcons.layoutGrid, size: 18, color: ink.accentText),
+            const SizedBox(width: InkSpacing.s8),
+            Expanded(
+              child: Text(
+                'A board is waiting for you. Sign in or create an account to '
+                'open it.',
+                style: InkType.caption(ink.accentText),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// The app-icon tile used on the mobile login, rebuilt for the web.

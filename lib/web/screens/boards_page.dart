@@ -9,10 +9,13 @@ import '../../ui/theme/ink_theme.dart';
 import '../../ui/theme/ink_tokens.dart';
 import '../../ui/theme/ink_type.dart';
 import '../../ui/widgets/board_card_frame.dart';
+import '../../ui/widgets/ink_button.dart';
+import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_segmented.dart';
 import '../data/web_companion_repository.dart';
 import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
+import 'board_dialogs.dart';
 import 'web_shell_nav.dart';
 
 enum _BoardTab { mine, joined, archived }
@@ -71,13 +74,37 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
         WebPageHeader(
           title: 'Ready to bring your ideas to life?',
           subtitle: 'Your boards and the boards you joined.',
-          trailing: SizedBox(
-            width: 300,
-            child: WebSearchField(
-              controller: _search,
-              hintText: 'Search boards...',
-              onChanged: (_) => setState(() {}),
-            ),
+          trailing: Wrap(
+            spacing: InkSpacing.s8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: 260,
+                child: WebSearchField(
+                  controller: _search,
+                  hintText: 'Search boards...',
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              InkButton.secondary(
+                label: 'Join',
+                compact: true,
+                expand: false,
+                icon: Icon(
+                  LucideIcons.doorOpen,
+                  size: 16,
+                  color: context.ink.ink,
+                ),
+                onPressed: () => showJoinBoardDialog(context),
+              ),
+              InkButton.primary(
+                label: 'New board',
+                compact: true,
+                expand: false,
+                icon: const Icon(LucideIcons.plus, size: 16),
+                onPressed: () => showCreateBoardDialog(context),
+              ),
+            ],
           ),
         ),
         StreamBuilder(
@@ -113,7 +140,7 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
           compactEmpty: false,
           emptyIcon: LucideIcons.layoutGrid,
           emptyText: 'No boards created yet.',
-          emptySubtitle: 'Create a board in the InkLink mobile app.',
+          emptySubtitle: 'Create your first board to get started.',
           builder: (context, boards) {
             final visible = _apply(boards, uid);
             if (visible.isEmpty) {
@@ -133,6 +160,9 @@ class _WebBoardsPageState extends State<WebBoardsPage> {
                   _BoardTab.joined => 'No boards joined yet.',
                   _BoardTab.archived => 'No archived boards.',
                 },
+                subtitle: _tab == _BoardTab.mine
+                    ? 'Use New board above to start one.'
+                    : null,
               );
             }
             return WebBoardCardGrid(
@@ -200,10 +230,15 @@ class WebBoardCardGrid extends StatelessWidget {
   final List<Board> boards;
   final String Function(Board board) captionFor;
 
+  /// Public discovery: cards offer "Join board" when the reader is not a
+  /// member yet.
+  final bool showJoin;
+
   const WebBoardCardGrid({
     super.key,
     required this.boards,
     required this.captionFor,
+    this.showJoin = false,
   });
 
   @override
@@ -223,15 +258,19 @@ class WebBoardCardGrid extends StatelessWidget {
                 key: ValueKey(board.id),
                 width: width,
                 child: Semantics(
+                  // A named node per card: the grid reads as a list of boards
+                  // instead of unnamed groups, and the menu button keeps its
+                  // own "Board options" name.
+                  container: true,
                   button: true,
-                  label: board.title,
+                  label: 'Board ${board.title}. ${captionFor(board)}',
                   child: BoardCardFrame(
                     // The web has no local preview images.
                     previewPath: null,
                     title: board.title,
                     caption: captionFor(board),
                     onTap: () => opener.open(context, board),
-                    menuButton: _BoardMenu(board: board),
+                    menuButton: _BoardMenu(board: board, showJoin: showJoin),
                   ),
                 ),
               ),
@@ -242,42 +281,185 @@ class WebBoardCardGrid extends StatelessWidget {
   }
 }
 
+/// The card's options menu: open, rename, tags, settings, copy, archive,
+/// pause and delete for the owner; join for public boards the reader is not
+/// in. Every action goes through the same repository the phone uses.
 class _BoardMenu extends StatelessWidget {
   final Board board;
-  const _BoardMenu({required this.board});
+  final bool showJoin;
+
+  const _BoardMenu({required this.board, this.showJoin = false});
+
+  bool _isOwner(BuildContext context) =>
+      context.read<WebCompanionRepository>().currentUser?.uid == board.ownerId;
+
+  bool _canJoin(BuildContext context) =>
+      showJoin &&
+      !board.members.contains(
+        context.read<WebCompanionRepository>().currentUser?.uid,
+      );
+
+  Future<void> _run(
+    BuildContext context,
+    Future<void> Function() action,
+    String doneMessage,
+  ) async {
+    try {
+      await action();
+      if (context.mounted) showWebMessage(context, doneMessage);
+    } catch (e) {
+      if (context.mounted) {
+        showWebMessage(context, webErrorText(e), isError: true);
+      }
+    }
+  }
+
+  Future<void> _onSelected(BuildContext context, String value) async {
+    final repo = context.read<WebCompanionRepository>();
+    if (value == 'open') {
+      context.read<WebBoardOpener>().open(context, board);
+      return;
+    }
+    if (value == 'copy') {
+      await Clipboard.setData(ClipboardData(text: board.id));
+      if (context.mounted) {
+        showWebMessage(context, 'Join Code (Board ID) copied to clipboard!');
+      }
+      return;
+    }
+    if (value == 'rename') return showRenameBoardDialog(context, board);
+    if (value == 'tags') return showBoardTagsDialog(context, board);
+    if (value == 'settings') return showBoardSettingsDialog(context, board);
+    if (value == 'join') {
+      return _run(
+        context,
+        () => repo.joinBoard(board.id),
+        'You joined "${board.title}".',
+      );
+    }
+    if (value == 'duplicate') {
+      return _run(
+        context,
+        () => repo.duplicateBoard(board.id),
+        'Board copied.',
+      );
+    }
+    if (value == 'archive' || value == 'unarchive') {
+      final archived = value == 'archive';
+      return _run(
+        context,
+        () => repo.setBoardArchived(board.id, archived: archived),
+        archived ? 'Board archived.' : 'Board restored.',
+      );
+    }
+    if (value == 'pause' || value == 'resume') {
+      final paused = value == 'pause';
+      return _run(
+        context,
+        () => repo.setBoardPaused(board.id, paused: paused),
+        paused
+            ? 'Board paused. Editing is disabled until you resume it.'
+            : 'Board resumed.',
+      );
+    }
+    if (value == 'delete') {
+      final confirmed = await showInkConfirmDialog(
+        context,
+        title: 'Delete "${board.title}"?',
+        message:
+            'The board and everything on it are removed for every member. '
+            'This cannot be undone.',
+      );
+      if (confirmed && context.mounted) {
+        await _run(context, () => repo.deleteBoard(board.id), 'Board deleted.');
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final owner = _isOwner(context);
+    final canJoin = _canJoin(context);
     return PopupMenuButton<String>(
       tooltip: 'Board options',
       icon: Icon(LucideIcons.ellipsisVertical, size: 18, color: tokens.ink),
-      onSelected: (value) {
-        if (value == 'open') {
-          context.read<WebBoardOpener>().open(context, board);
-        } else if (value == 'copy') {
-          Clipboard.setData(ClipboardData(text: board.id));
-          showWebMessage(context, 'Join Code (Board ID) copied to clipboard!');
-        }
-      },
+      onSelected: (value) => _onSelected(context, value),
       itemBuilder: (_) => [
+        if (canJoin)
+          PopupMenuItem(
+            value: 'join',
+            child: _row(LucideIcons.doorOpen, 'Join board', tokens),
+          ),
         PopupMenuItem(
           value: 'open',
           child: _row(LucideIcons.squareArrowOutUpRight, 'Open board', tokens),
+        ),
+        if (owner) ...[
+          PopupMenuItem(
+            value: 'rename',
+            child: _row(LucideIcons.pencil, 'Rename', tokens),
+          ),
+          PopupMenuItem(
+            value: 'tags',
+            child: _row(LucideIcons.tag, 'Tags', tokens),
+          ),
+          PopupMenuItem(
+            value: 'settings',
+            child: _row(LucideIcons.settings, 'Board settings', tokens),
+          ),
+        ],
+        PopupMenuItem(
+          value: 'duplicate',
+          child: _row(LucideIcons.copyPlus, 'Duplicate', tokens),
         ),
         PopupMenuItem(
           value: 'copy',
           child: _row(LucideIcons.copy, 'Copy Join Code', tokens),
         ),
+        if (owner && !board.isArchived) ...[
+          PopupMenuItem(
+            value: board.isPaused ? 'resume' : 'pause',
+            child: _row(
+              board.isPaused ? LucideIcons.play : LucideIcons.pause,
+              board.isPaused ? 'Resume editing' : 'Pause editing',
+              tokens,
+            ),
+          ),
+          PopupMenuItem(
+            value: 'archive',
+            child: _row(LucideIcons.archive, 'Archive', tokens),
+          ),
+        ],
+        if (owner && board.isArchived)
+          PopupMenuItem(
+            value: 'unarchive',
+            child: _row(LucideIcons.archiveRestore, 'Unarchive', tokens),
+          ),
+        if (owner)
+          PopupMenuItem(
+            value: 'delete',
+            child: _row(
+              LucideIcons.trash2,
+              'Delete board',
+              tokens,
+              danger: true,
+            ),
+          ),
       ],
     );
   }
 
-  Widget _row(IconData icon, String label, InkTokens tokens) => Row(
+  Widget _row(
+    IconData icon,
+    String label,
+    InkTokens tokens, {
+    bool danger = false,
+  }) => Row(
     children: [
-      Icon(icon, size: 18, color: tokens.ink),
+      Icon(icon, size: 18, color: danger ? tokens.danger : tokens.ink),
       const SizedBox(width: 10),
-      Text(label, style: InkType.body(tokens.ink)),
+      Text(label, style: InkType.body(danger ? tokens.danger : tokens.ink)),
     ],
   );
 }
@@ -361,7 +543,6 @@ class _WebDiscoverPageState extends State<WebDiscoverPage> {
   }
 
   Widget _buildResults(List<Board> boards) {
-    final tokens = context.ink;
     final tags = topTags(boards.map((b) => b.tags));
     final query = _search.text.trim().toLowerCase();
     final visible = boards.where((b) {
@@ -371,19 +552,8 @@ class _WebDiscoverPageState extends State<WebDiscoverPage> {
           b.tags.any((t) => t.toLowerCase().contains(query));
     }).toList();
 
-    Widget chip(String label, bool selected, VoidCallback onTap) => ChoiceChip(
-      label: Text(label),
-      selected: selected,
-      showCheckmark: false,
-      onSelected: (_) => onTap(),
-      selectedColor: tokens.accent,
-      backgroundColor: tokens.paper,
-      labelStyle: InkType.caption(
-        selected ? Colors.white : tokens.inkSecondary,
-      ),
-      side: BorderSide(color: selected ? tokens.accent : tokens.glassStroke),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-    );
+    Widget chip(String label, bool selected, VoidCallback onTap) =>
+        WebChoiceChip(label: label, selected: selected, onSelected: onTap);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -415,6 +585,7 @@ class _WebDiscoverPageState extends State<WebDiscoverPage> {
         else
           WebBoardCardGrid(
             boards: visible,
+            showJoin: true,
             captionFor: (b) => b.tags.isNotEmpty
                 ? b.tags.take(3).map((t) => '#$t').join(' ')
                 : (b.membersCount == 1

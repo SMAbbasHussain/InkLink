@@ -8,6 +8,9 @@ import '../../ui/theme/ink_colors.dart';
 import '../../ui/theme/ink_theme.dart';
 import '../../ui/theme/ink_tokens.dart';
 import '../../ui/theme/ink_type.dart';
+import '../../ui/widgets/ink_button.dart';
+import '../../ui/widgets/ink_dialog.dart';
+import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/ink_tilt.dart';
 import '../../ui/widgets/paper_card.dart';
 import '../data/web_companion_repository.dart';
@@ -15,6 +18,7 @@ import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'boards_page.dart';
 import 'web_shell_nav.dart';
+import 'workspace_members.dart';
 
 /// The user's workspaces, like the phone's Workspaces tab: stacked paper
 /// cards with the first boards on top. Clicking one shows its boards, which
@@ -72,13 +76,27 @@ class _WebWorkspacesPageState extends State<WebWorkspacesPage> {
         WebPageHeader(
           title: 'Workspaces',
           subtitle: 'Team spaces you own or joined, with their boards.',
-          trailing: SizedBox(
-            width: 300,
-            child: WebSearchField(
-              controller: _search,
-              hintText: 'Search workspaces...',
-              onChanged: (_) => setState(() {}),
-            ),
+          trailing: Wrap(
+            spacing: InkSpacing.s8,
+            runSpacing: InkSpacing.s8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: 240,
+                child: WebSearchField(
+                  controller: _search,
+                  hintText: 'Search workspaces...',
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              InkButton.primary(
+                label: 'New workspace',
+                compact: true,
+                expand: false,
+                icon: const Icon(LucideIcons.plus, size: 16),
+                onPressed: () => showCreateWorkspaceDialog(context),
+              ),
+            ],
           ),
         ),
         WebStreamList<Workspace>(
@@ -86,7 +104,7 @@ class _WebWorkspacesPageState extends State<WebWorkspacesPage> {
           compactEmpty: false,
           emptyIcon: LucideIcons.briefcase,
           emptyText: 'No workspaces yet',
-          emptySubtitle: 'Create a workspace in the InkLink mobile app.',
+          emptySubtitle: 'Create one to group boards for your team.',
           builder: (context, workspaces) {
             final query = _search.text.trim().toLowerCase();
             final visible = query.isEmpty
@@ -360,6 +378,26 @@ class _WorkspaceBoardsViewState extends State<_WorkspaceBoardsView> {
       .watchWorkspaceBoards(widget.workspace.id);
   final _search = TextEditingController();
 
+  /// The workspace as last saved here, so an owner's name/description edit
+  /// shows immediately (the list stream does not re-read the document).
+  late Workspace _workspace = widget.workspace;
+
+  /// Owner-only details editor, using the phone's `updateWorkspace` fields.
+  Future<void> _editSettings() async {
+    final saved = await showWorkspaceSettingsDialog(
+      context,
+      workspace: _workspace,
+    );
+    if (saved == null || !mounted) return;
+    setState(() {
+      _workspace = _workspace.copyWith(
+        name: saved.name,
+        description: saved.description,
+      );
+    });
+    showWebMessage(context, 'Workspace settings saved.');
+  }
+
   @override
   void dispose() {
     _search.dispose();
@@ -369,7 +407,7 @@ class _WorkspaceBoardsViewState extends State<_WorkspaceBoardsView> {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
-    final w = widget.workspace;
+    final w = _workspace;
     return ListView(
       padding: EdgeInsets.fromLTRB(
         InkSpacing.s24,
@@ -394,21 +432,54 @@ class _WorkspaceBoardsViewState extends State<_WorkspaceBoardsView> {
             _workspaceCounts(w),
             w.currentUserRole == 'owner' ? 'You own it' : 'You are a member',
           ].join(' • '),
-          trailing: SizedBox(
-            width: 300,
-            child: WebSearchField(
-              controller: _search,
-              hintText: 'Search boards...',
-              onChanged: (_) => setState(() {}),
-            ),
+          trailing: Wrap(
+            spacing: InkSpacing.s8,
+            runSpacing: InkSpacing.s8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: 240,
+                child: WebSearchField(
+                  controller: _search,
+                  hintText: 'Search boards...',
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              if (w.currentUserRole == 'owner')
+                InkButton.secondary(
+                  label: 'Workspace settings',
+                  compact: true,
+                  expand: false,
+                  icon: Icon(
+                    LucideIcons.settings2,
+                    size: 16,
+                    color: context.ink.ink,
+                  ),
+                  onPressed: _editSettings,
+                ),
+              InkButton.secondary(
+                label: 'Manage boards',
+                compact: true,
+                expand: false,
+                icon: Icon(
+                  LucideIcons.folderCog,
+                  size: 16,
+                  color: context.ink.ink,
+                ),
+                onPressed: () => showWorkspaceBoardsDialog(context, w),
+              ),
+            ],
           ),
         ),
+        const SizedBox(height: InkSpacing.s16),
+        WorkspaceMembersSection(workspace: w, onExited: widget.onBack),
+        const SizedBox(height: InkSpacing.s16),
         WebStreamList<Board>(
           stream: _boards,
           compactEmpty: false,
           emptyIcon: LucideIcons.layoutGrid,
           emptyText: 'No boards in this workspace yet',
-          emptySubtitle: 'Add boards to it in the InkLink mobile app.',
+          emptySubtitle: 'Use Manage boards to add some.',
           builder: (context, boards) {
             final query = _search.text.trim().toLowerCase();
             final visible = boards
@@ -433,6 +504,272 @@ class _WorkspaceBoardsViewState extends State<_WorkspaceBoardsView> {
               captionFor: (b) => 'Edited ${timeAgo(b.updatedAt)}',
             );
           },
+        ),
+      ],
+    );
+  }
+}
+
+/// Creates a workspace with the phone's `createWorkspace` function.
+Future<void> showCreateWorkspaceDialog(BuildContext context) => showDialog(
+  context: context,
+  builder: (_) => const _CreateWorkspaceDialog(),
+);
+
+class _CreateWorkspaceDialog extends StatefulWidget {
+  const _CreateWorkspaceDialog();
+
+  @override
+  State<_CreateWorkspaceDialog> createState() => _CreateWorkspaceDialogState();
+}
+
+class _CreateWorkspaceDialogState extends State<_CreateWorkspaceDialog> {
+  final _name = TextEditingController();
+  final _description = TextEditingController();
+  String? _error;
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  Future<void> _create() async {
+    if (_name.text.trim().isEmpty) {
+      setState(() => _error = 'Please enter a workspace name.');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await context.read<WebCompanionRepository>().createWorkspace(
+        name: _name.text,
+        description: _description.text,
+      );
+      if (!mounted) return;
+      showWebMessage(context, 'Workspace created.');
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = webErrorText(e);
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkDialog(
+      title: 'New workspace',
+      icon: LucideIcons.briefcase,
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkTextField(
+              controller: _name,
+              labelText: 'Name',
+              hintText: 'e.g. Design team',
+              errorText: _error,
+              autofocus: true,
+              enabled: !_saving,
+              onSubmitted: (_) => _create(),
+            ),
+            const SizedBox(height: InkSpacing.s12),
+            InkTextField(
+              controller: _description,
+              labelText: 'Description (optional)',
+              enabled: !_saving,
+              maxLines: 2,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        InkButton.secondary(
+          label: 'Cancel',
+          compact: true,
+          expand: false,
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+        ),
+        InkButton.primary(
+          label: 'Create',
+          compact: true,
+          expand: false,
+          isLoading: _saving,
+          onPressed: _saving ? null : _create,
+        ),
+      ],
+    );
+  }
+}
+
+/// Adds the reader's boards to a workspace and removes them again, through
+/// the same `addBoardToWorkspace` / `removeBoardFromWorkspace` functions the
+/// phone's workspace screen uses.
+Future<void> showWorkspaceBoardsDialog(
+  BuildContext context,
+  Workspace workspace,
+) => showDialog(
+  context: context,
+  builder: (_) => _WorkspaceBoardsDialog(workspace: workspace),
+);
+
+class _WorkspaceBoardsDialog extends StatefulWidget {
+  final Workspace workspace;
+  const _WorkspaceBoardsDialog({required this.workspace});
+
+  @override
+  State<_WorkspaceBoardsDialog> createState() => _WorkspaceBoardsDialogState();
+}
+
+class _WorkspaceBoardsDialogState extends State<_WorkspaceBoardsDialog> {
+  List<Board> _boards = const [];
+  final Set<String> _linked = <String>{};
+  bool _loading = true;
+  String? _error;
+  final Set<String> _busy = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final repo = context.read<WebCompanionRepository>();
+    try {
+      final boards = await repo.watchMyBoards().first;
+      final linked = await repo.watchWorkspaceBoards(widget.workspace.id).first;
+      if (!mounted) return;
+      setState(() {
+        _boards = boards.where((b) => !b.isArchived).toList();
+        _linked
+          ..clear()
+          ..addAll(linked.map((b) => b.id));
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = webErrorText(e);
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _toggle(Board board) async {
+    final repo = context.read<WebCompanionRepository>();
+    final adding = !_linked.contains(board.id);
+    setState(() => _busy.add(board.id));
+    try {
+      if (adding) {
+        await repo.addBoardToWorkspace(
+          workspaceId: widget.workspace.id,
+          boardId: board.id,
+        );
+      } else {
+        await repo.removeBoardFromWorkspace(
+          workspaceId: widget.workspace.id,
+          boardId: board.id,
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        if (adding) {
+          _linked.add(board.id);
+        } else {
+          _linked.remove(board.id);
+        }
+        _busy.remove(board.id);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy.remove(board.id));
+      showWebMessage(context, webErrorText(e), isError: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return InkDialog(
+      title: 'Boards in ${widget.workspace.name}',
+      icon: LucideIcons.briefcase,
+      content: SizedBox(
+        width: 440,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 380),
+          child: _loading
+              ? const WebLoading()
+              : _error != null
+              ? Text(_error!, style: InkType.body(tokens.danger))
+              : _boards.isEmpty
+              ? Text(
+                  'You have no boards to add yet.',
+                  style: InkType.body(tokens.inkSecondary),
+                )
+              : SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      for (final board in _boards)
+                        ListTile(
+                          key: ValueKey(board.id),
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            board.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: InkType.bodyStrong(tokens.ink),
+                          ),
+                          subtitle: Text(
+                            board.tags.isEmpty
+                                ? 'Edited ${timeAgo(board.updatedAt)}'
+                                : board.tags
+                                      .take(3)
+                                      .map((t) => '#$t')
+                                      .join(' '),
+                            style: InkType.caption(tokens.inkMuted),
+                          ),
+                          trailing: _linked.contains(board.id)
+                              ? InkButton.secondary(
+                                  label: 'Remove',
+                                  compact: true,
+                                  expand: false,
+                                  isLoading: _busy.contains(board.id),
+                                  onPressed: _busy.contains(board.id)
+                                      ? null
+                                      : () => _toggle(board),
+                                )
+                              : InkButton.primary(
+                                  label: 'Add',
+                                  compact: true,
+                                  expand: false,
+                                  isLoading: _busy.contains(board.id),
+                                  onPressed: _busy.contains(board.id)
+                                      ? null
+                                      : () => _toggle(board),
+                                ),
+                        ),
+                    ],
+                  ),
+                ),
+        ),
+      ),
+      actions: [
+        InkButton.secondary(
+          label: 'Done',
+          compact: true,
+          expand: false,
+          onPressed: () => Navigator.of(context).pop(),
         ),
       ],
     );

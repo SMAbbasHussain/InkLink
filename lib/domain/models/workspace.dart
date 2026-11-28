@@ -187,6 +187,23 @@ class WorkspaceMember {
     this.photoUrl,
   });
 
+  WorkspaceMember copyWith({
+    String? role,
+    String? status,
+    DateTime? joinedAt,
+    String? displayName,
+    String? email,
+    String? photoUrl,
+  }) => WorkspaceMember(
+    uid: uid,
+    role: role ?? this.role,
+    status: status ?? this.status,
+    joinedAt: joinedAt ?? this.joinedAt,
+    displayName: displayName ?? this.displayName,
+    email: email ?? this.email,
+    photoUrl: photoUrl ?? this.photoUrl,
+  );
+
   String get label {
     if (displayName != null && displayName!.trim().isNotEmpty) {
       return displayName!;

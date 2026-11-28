@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/crdt/canvas_crdt_adapter.dart';
@@ -7465,8 +7466,9 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
       final options =
           event.options ?? CanvasExportOptions(format: event.format);
 
-      // Web: no files or share sheet; the export becomes a browser
-      // download (sharing included). Phones continue below, unchanged.
+      // Web: the export is bytes, so "share" uses the browser's share sheet
+      // (Web Share API, through share_plus) and falls back to a download when
+      // the browser has no share support. Phones continue below, unchanged.
       if (kIsWeb) {
         final exported = await _boardExportService.renderCanvasExport(
           boardTitle: boardTitle,
@@ -7475,14 +7477,47 @@ class CanvasBloc extends Bloc<CanvasEvent, CanvasState> {
           settings: state.boardSettings,
           selectedIds: state.selectedIds,
         );
-        await _boardExportService.saveExportAsDownload(exported);
+        var shareOutcome = BoardShareOutcome.dismissed;
+        if (event.shareAfterExport) {
+          try {
+            final result = await SharePlus.instance.share(
+              ShareParams(
+                files: [
+                  XFile.fromData(
+                    exported.bytes,
+                    mimeType: exported.mimeType,
+                    name: exported.fileName,
+                  ),
+                ],
+                subject: boardTitle,
+                title: boardTitle,
+              ),
+            );
+            shareOutcome = switch (result.status) {
+              ShareResultStatus.success => BoardShareOutcome.shared,
+              ShareResultStatus.dismissed => BoardShareOutcome.dismissed,
+              ShareResultStatus.unavailable => BoardShareOutcome.unavailable,
+            };
+          } catch (_) {
+            shareOutcome = BoardShareOutcome.unavailable;
+          }
+        }
+        if (shareOutcome != BoardShareOutcome.shared &&
+            shareOutcome != BoardShareOutcome.dismissed) {
+          await _boardExportService.saveExportAsDownload(exported);
+        }
         _activeExportCount = math.max(0, _activeExportCount - 1);
+        final extension = options.format.name.toUpperCase();
         emit(
           state.copyWith(
             isExporting: _activeExportCount > 0,
-            exportSuccessMessage:
-                'Board downloaded as ${options.format.name.toUpperCase()} '
-                '(${exported.fileName}).',
+            exportSuccessMessage: switch (shareOutcome) {
+              BoardShareOutcome.shared =>
+                'Board shared as $extension (${exported.fileName}).',
+              BoardShareOutcome.dismissed => 'Sharing cancelled.',
+              BoardShareOutcome.unavailable =>
+                'Board downloaded as $extension (${exported.fileName}).',
+            },
           ),
         );
         return;

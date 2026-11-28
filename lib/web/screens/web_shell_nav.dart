@@ -9,6 +9,7 @@ enum WebSection {
   friends,
   notifications,
   profile,
+  settings,
 }
 
 /// Lets a page jump to another section (e.g. the "2 invites waiting" chip).

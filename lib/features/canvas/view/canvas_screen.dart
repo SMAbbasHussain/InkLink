@@ -1861,13 +1861,17 @@ class _CanvasScreenState extends State<CanvasScreen>
                   children: [
                     Text('Insert Image', style: InkType.title(tokens.ink)),
                     const SizedBox(height: InkSpacing.s16),
-                    option(
-                      LucideIcons.camera,
-                      'Take Photo with Camera',
-                      'Capture a picture and place onto canvas',
-                      ImageSource.camera,
-                    ),
-                    const SizedBox(height: InkSpacing.s8),
+                    // Browsers open a file chooser for `camera` (or ignore
+                    // it on desktop), so the web only offers the gallery.
+                    if (!kIsWeb) ...[
+                      option(
+                        LucideIcons.camera,
+                        'Take Photo with Camera',
+                        'Capture a picture and place onto canvas',
+                        ImageSource.camera,
+                      ),
+                      const SizedBox(height: InkSpacing.s8),
+                    ],
                     option(
                       LucideIcons.image,
                       'Choose from Gallery',
@@ -5998,7 +6002,9 @@ class _CanvasScreenState extends State<CanvasScreen>
                             ),
                           const BoardChatDrawer(),
                           const CommentsTray(),
-                          const VoiceCallHud(),
+                          // Voice calls are mobile-only: the web service never
+                          // joins, so the HUD must not even mount there.
+                          if (!kIsWeb) const VoiceCallHud(),
                           Positioned.fill(
                             child: Offstage(
                               offstage: _isEditingShape,
@@ -9604,13 +9610,19 @@ class _CanvasScreenState extends State<CanvasScreen>
 
   Widget _buildArchivedBanner(CanvasState state) {
     final isOwner = state.currentUserRole == Board.roleOwner;
+    // The in-canvas settings sheet is mobile-only, so on the web the owner is
+    // pointed at the board menu on Home, which has Unarchive.
+    final canOpenSettings = isOwner && !kIsWeb;
     return _buildReadOnlyStatusBanner(
       icon: LucideIcons.archive,
       message: isOwner
-          ? 'This board is archived. Unarchive it from Settings to edit.'
+          ? kIsWeb
+                ? 'This board is archived. Unarchive it from the board menu on '
+                      'Home to edit.'
+                : 'This board is archived. Unarchive it from Settings to edit.'
           : 'This board was archived by the owner (Read-only).',
-      actionLabel: isOwner ? 'Settings' : 'Exit',
-      onAction: isOwner
+      actionLabel: canOpenSettings ? 'Settings' : 'Exit',
+      onAction: canOpenSettings
           ? () => _openSettings(state.boardTitle ?? 'Board')
           : _exitCanvas,
     );

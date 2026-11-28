@@ -5,7 +5,8 @@
 //
 // Add  ?signedOut  to the URL to start on the sign-in screen (any password of
 // 6+ characters signs in), ?dark or ?light to force a theme, and
-// ?section=discover|invites|friends|notifications|profile to open a page.
+// ?section=discover|invites|friends|notifications|profile to open a page,
+// and ?board=b1 to open that board.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -21,15 +22,19 @@ void main() {
   final section = WebSection.values
       .where((s) => s.name == query['section'])
       .firstOrNull;
-  runApp(WebCompanionApp(
-    initialSection: section ?? WebSection.boards,
-    repository: SampleWebCompanionRepository(
-      signedIn: !query.containsKey('signedOut'),
+  final boardId = query['board']?.trim();
+  runApp(
+    WebCompanionApp(
+      initialSection: section ?? WebSection.boards,
+      initialBoardId: boardId == null || boardId.isEmpty ? null : boardId,
+      repository: SampleWebCompanionRepository(
+        signedIn: !query.containsKey('signedOut'),
+      ),
+      themeMode: query.containsKey('dark')
+          ? ThemeMode.dark
+          : query.containsKey('light')
+          ? ThemeMode.light
+          : ThemeMode.system,
     ),
-    themeMode: query.containsKey('dark')
-        ? ThemeMode.dark
-        : query.containsKey('light')
-            ? ThemeMode.light
-            : ThemeMode.system,
-  ));
+  );
 }

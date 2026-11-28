@@ -62,28 +62,43 @@ class WebPageHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.ink;
+    final titleBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          header: true,
+          child: Text(title, style: InkType.headline(tokens.ink)),
+        ),
+        if (subtitle != null) ...[
+          const SizedBox(height: InkSpacing.s4),
+          Text(subtitle!, style: InkType.body(tokens.inkSecondary)),
+        ],
+      ],
+    );
     return Padding(
       padding: const EdgeInsets.only(bottom: InkSpacing.s20),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Expanded(
-            child: Column(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Small windows: stack the actions under the title instead of
+          // squeezing both into one row (search box + buttons are wide).
+          if (trailing != null && constraints.maxWidth < 720) {
+            return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Semantics(
-                  header: true,
-                  child: Text(title, style: InkType.headline(tokens.ink)),
-                ),
-                if (subtitle != null) ...[
-                  const SizedBox(height: InkSpacing.s4),
-                  Text(subtitle!, style: InkType.body(tokens.inkSecondary)),
-                ],
+                titleBlock,
+                const SizedBox(height: InkSpacing.s12),
+                Align(alignment: Alignment.centerLeft, child: trailing!),
               ],
-            ),
-          ),
-          if (trailing != null) trailing!,
-        ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(child: titleBlock),
+              if (trailing != null) trailing!,
+            ],
+          );
+        },
       ),
     );
   }
@@ -123,6 +138,39 @@ class WebEmptyHint extends StatelessWidget {
     padding: const EdgeInsets.symmetric(vertical: InkSpacing.s16),
     child: EmptyState(icon: icon, text: text, subtitle: subtitle),
   );
+}
+
+/// A selectable chip (accent-filled when selected) for filters, dialogs and
+/// settings.
+class WebChoiceChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onSelected;
+
+  const WebChoiceChip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = context.ink;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      showCheckmark: false,
+      onSelected: (_) => onSelected(),
+      selectedColor: tokens.accent,
+      backgroundColor: tokens.paper,
+      labelStyle: InkType.caption(
+        selected ? Colors.white : tokens.inkSecondary,
+      ),
+      side: BorderSide(color: selected ? tokens.accent : tokens.glassStroke),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    );
+  }
 }
 
 /// Small section label above a group of items.
@@ -370,7 +418,11 @@ class _WebAcceptDeclineState extends State<WebAcceptDecline> {
 class WebBoardOpener {
   final void Function(BuildContext context, Board board) open;
 
-  const WebBoardOpener(this.open);
+  /// Opens a board from its id alone (deep links, where no `Board` object has
+  /// been loaded yet). Null when the host cannot open one.
+  final void Function(BuildContext context, String boardId)? openId;
+
+  const WebBoardOpener(this.open, {this.openId});
 
   /// The details dialog with links to the phone app.
   static final WebBoardOpener appLinks = WebBoardOpener(

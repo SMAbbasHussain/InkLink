@@ -16,11 +16,13 @@ import '../../ui/widgets/ink_logo.dart';
 import '../data/web_companion_repository.dart';
 import '../data/web_mappers.dart';
 import '../web_theme.dart';
+import '../widgets/web_widgets.dart';
 import 'boards_page.dart';
 import 'friends_page.dart';
 import 'invites_page.dart';
 import 'notifications_page.dart';
 import 'profile_page.dart';
+import 'settings_page.dart';
 import 'workspaces_page.dart';
 import 'web_shell_nav.dart';
 
@@ -42,6 +44,7 @@ Widget _pageFor(WebSection section) => switch (section) {
   WebSection.friends => const WebFriendsPage(),
   WebSection.notifications => const WebNotificationsPage(),
   WebSection.profile => const WebProfilePage(),
+  WebSection.settings => const WebSettingsPage(),
 };
 
 /// Signed-in layout, styled like the mobile app: the desk background, a
@@ -52,7 +55,14 @@ class WebHomeShell extends StatefulWidget {
   /// Section shown first (the preview opens any section from the URL).
   final WebSection initialSection;
 
-  const WebHomeShell({super.key, this.initialSection = WebSection.boards});
+  /// Board from a `/board/<id>` deep link, opened once after the first frame.
+  final String? initialBoardId;
+
+  const WebHomeShell({
+    super.key,
+    this.initialSection = WebSection.boards,
+    this.initialBoardId,
+  });
 
   @override
   State<WebHomeShell> createState() => _WebHomeShellState();
@@ -88,9 +98,25 @@ class _WebHomeShellState extends State<WebHomeShell> {
       (l) => _friendRequests = l.length,
     );
     listen(
-      repo.watchNotifications(),
+      repo.watchNotificationsWithReadState(),
       (l) => _unread = l.where((n) => !n.read).length,
     );
+
+    final boardId = widget.initialBoardId?.trim();
+    if (boardId != null && boardId.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final opener = context.read<WebBoardOpener>();
+        if (opener.openId != null) {
+          opener.openId!(context, boardId);
+        } else {
+          showWebMessage(
+            context,
+            'Open this board in the InkLink app: $boardId',
+          );
+        }
+      });
+    }
   }
 
   @override
@@ -149,6 +175,7 @@ class _WebHomeShellState extends State<WebHomeShell> {
             showName: true,
             onNotifications: () => _goTo(WebSection.notifications),
             onProfile: () => _goTo(WebSection.profile),
+            onSettings: () => _goTo(WebSection.settings),
           ),
         ),
         Expanded(
@@ -211,6 +238,7 @@ class _WebHomeShellState extends State<WebHomeShell> {
                     unread: _unread,
                     onNotifications: () => _goTo(WebSection.notifications),
                     onProfile: () => _goTo(WebSection.profile),
+                    onSettings: () => _goTo(WebSection.settings),
                   ),
                 ),
               ),
@@ -297,6 +325,7 @@ class _SideNav extends StatelessWidget {
     (WebSection.friends, LucideIcons.users, 'Friends'),
     (WebSection.notifications, LucideIcons.bell, 'Notifications'),
     (WebSection.profile, LucideIcons.user, 'Profile'),
+    (WebSection.settings, LucideIcons.settings, 'Settings'),
   ];
 
   @override
@@ -406,6 +435,7 @@ class _Header extends StatefulWidget {
   final int unread;
   final VoidCallback onNotifications;
   final VoidCallback onProfile;
+  final VoidCallback onSettings;
 
   /// Desktop: show the name next to the avatar.
   final bool showName;
@@ -414,6 +444,7 @@ class _Header extends StatefulWidget {
     required this.unread,
     required this.onNotifications,
     required this.onProfile,
+    required this.onSettings,
     this.showName = false,
   });
 
@@ -489,6 +520,7 @@ class _HeaderState extends State<_Header> {
                   offset: const Offset(0, 8),
                   onSelected: (value) {
                     if (value == 'profile') widget.onProfile();
+                    if (value == 'settings') widget.onSettings();
                     if (value == 'signout') _repo.signOut();
                   },
                   itemBuilder: (_) => [
@@ -512,6 +544,14 @@ class _HeaderState extends State<_Header> {
                       child: _menuRow(
                         LucideIcons.user,
                         'Your profile',
+                        tokens.ink,
+                      ),
+                    ),
+                    PopupMenuItem<String>(
+                      value: 'settings',
+                      child: _menuRow(
+                        LucideIcons.settings,
+                        'Settings',
                         tokens.ink,
                       ),
                     ),

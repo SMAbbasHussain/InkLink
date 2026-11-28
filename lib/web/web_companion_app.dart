@@ -25,6 +25,9 @@ class WebCompanionApp extends StatefulWidget {
   /// Section shown first after sign-in (Boards unless the preview asks).
   final WebSection initialSection;
 
+  /// Board from a `/board/<id>` deep link, opened after the first frame.
+  final String? initialBoardId;
+
   /// What a board card does. The web app (main_web.dart) opens the canvas;
   /// without one, cards show the "open in the app" details.
   final WebBoardOpener? boardOpener;
@@ -34,6 +37,7 @@ class WebCompanionApp extends StatefulWidget {
     this.repository,
     this.themeMode = ThemeMode.system,
     this.initialSection = WebSection.boards,
+    this.initialBoardId,
     this.boardOpener,
   });
 
@@ -75,7 +79,10 @@ class _WebCompanionAppState extends State<WebCompanionApp> {
           theme: InkTheme.light(),
           darkTheme: InkTheme.dark(),
           themeMode: mode,
-          home: _WebAuthGate(initialSection: widget.initialSection),
+          home: _WebAuthGate(
+            initialSection: widget.initialSection,
+            initialBoardId: widget.initialBoardId,
+          ),
         ),
       ),
     );
@@ -85,7 +92,9 @@ class _WebCompanionAppState extends State<WebCompanionApp> {
 /// Signed out → sign-in; unverified email → verify; otherwise the app.
 class _WebAuthGate extends StatelessWidget {
   final WebSection initialSection;
-  const _WebAuthGate({required this.initialSection});
+  final String? initialBoardId;
+
+  const _WebAuthGate({required this.initialSection, this.initialBoardId});
 
   @override
   Widget build(BuildContext context) {
@@ -97,13 +106,18 @@ class _WebAuthGate extends StatelessWidget {
         initialData: repo.currentUser,
         builder: (context, snapshot) {
           final user = repo.currentUser ?? snapshot.data;
-          if (user == null) return const WebSignInScreen();
+          if (user == null) {
+            // A board link signed out: say a board is waiting; it opens after
+            // this screen succeeds (the shell below handles initialBoardId).
+            return WebSignInScreen(targetBoardId: initialBoardId);
+          }
           if (user.usesPassword && !user.emailVerified) {
             return WebVerifyEmailScreen(email: user.email ?? 'your email');
           }
           return WebHomeShell(
             key: ValueKey(user.uid),
             initialSection: initialSection,
+            initialBoardId: initialBoardId,
           );
         },
       ),

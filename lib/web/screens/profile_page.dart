@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../domain/models/user_model.dart';
@@ -16,9 +17,10 @@ import '../data/web_mappers.dart';
 import '../widgets/web_widgets.dart';
 import 'web_shell_nav.dart';
 
-/// View and edit the display name and bio, laid out like the phone's
-/// profile: centred avatar over the desk, name, stat cards and the bio.
-/// The profile photo is changed in the mobile app.
+/// View and edit the display name, bio and profile photo, laid out like the
+/// phone's profile: centred avatar over the desk, name, stat cards and the
+/// bio. The photo goes through the same `uploadProfilePhoto` function as the
+/// phone (base64 payload).
 class WebProfilePage extends StatefulWidget {
   const WebProfilePage({super.key});
 
@@ -33,6 +35,7 @@ class _WebProfilePageState extends State<WebProfilePage> {
   final _bio = TextEditingController();
   bool _editing = false;
   bool _saving = false;
+  bool _uploading = false;
   String? _nameError;
   String? _bioError;
 
@@ -51,6 +54,30 @@ class _WebProfilePageState extends State<WebProfilePage> {
       _nameError = null;
       _bioError = null;
     });
+  }
+
+  Future<void> _changePhoto() async {
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      if (bytes.isEmpty) throw 'That image could not be read.';
+      final filename = picked.name.toLowerCase().endsWith('.png')
+          ? 'avatar.png'
+          : 'avatar.jpg';
+      setState(() => _uploading = true);
+      await _repo.uploadProfilePhoto(bytes, filename: filename);
+      if (mounted) showWebMessage(context, 'Profile photo updated.');
+    } catch (e) {
+      if (mounted) showWebMessage(context, webErrorText(e), isError: true);
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
   }
 
   Future<void> _save() async {
@@ -266,18 +293,11 @@ class _WebProfilePageState extends State<WebProfilePage> {
           ),
         ],
         const SizedBox(height: InkSpacing.s16),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(LucideIcons.smartphone, size: 14, color: tokens.inkMuted),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                'To change your photo, use the InkLink mobile app.',
-                style: InkType.caption(tokens.inkMuted),
-              ),
-            ),
-          ],
+        InkButton.secondary(
+          label: 'Change photo',
+          icon: Icon(LucideIcons.camera, size: 16, color: tokens.ink),
+          isLoading: _uploading,
+          onPressed: _uploading ? null : _changePhoto,
         ),
       ],
     );
