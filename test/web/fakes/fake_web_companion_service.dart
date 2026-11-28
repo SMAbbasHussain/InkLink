@@ -8,12 +8,13 @@ import 'package:inklink/domain/models/invitation/board_invitation.dart';
 import 'package:inklink/domain/models/notification/in_app_notification.dart';
 import 'package:inklink/domain/models/user_model.dart';
 import 'package:inklink/domain/models/workspace.dart';
-import 'package:inklink/web/data/web_account.dart';
-import 'package:inklink/web/data/web_account_settings.dart';
-import 'package:inklink/web/data/web_board_ops.dart';
-import 'package:inklink/web/data/web_mappers.dart';
-import 'package:inklink/web/data/web_workspace_ops.dart';
-import 'package:inklink/web/domain/web_companion_service.dart';
+import 'package:inklink/domain/services/board/board_rules.dart';
+import 'package:inklink/web/core/web_stream_utils.dart';
+import 'package:inklink/web/domain/models/web_account.dart';
+import 'package:inklink/web/domain/models/web_account_settings.dart';
+import 'package:inklink/web/domain/models/web_notification_rules.dart';
+import 'package:inklink/web/domain/models/web_workspace_rules.dart';
+import 'package:inklink/web/domain/services/web_companion_service.dart';
 
 /// Test-only in-memory implementation of [WebCompanionService] for widget and
 /// Cubit tests without live Firebase backends.

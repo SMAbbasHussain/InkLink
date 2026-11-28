@@ -14,9 +14,9 @@ import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/paper_card.dart';
 import '../bloc/web_workspaces_cubit.dart';
-import '../data/web_mappers.dart';
-import '../data/web_workspace_ops.dart';
-import '../widgets/web_widgets.dart';
+import '../core/web_formatters.dart';
+import '../domain/models/web_workspace_rules.dart';
+import '../ui/widgets/web_feedback_widgets.dart';
 
 /// The phone's Workspace Settings → Members list, live: every member with
 /// their role, and — for the owner — a menu to change the role or remove them.

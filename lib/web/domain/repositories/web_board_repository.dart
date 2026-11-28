@@ -3,30 +3,35 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import '../../core/constants/firestore_paths.dart';
-import '../../core/services/auth_service.dart';
-import '../../core/services/firestore_service.dart';
-import '../../core/utils/firestore_batch_fetcher.dart';
-import '../../domain/models/board.dart';
-import '../../domain/repositories/board/board_repository.dart';
-import '../../domain/services/board/board_rules.dart';
-import '../data/web_mappers.dart';
+import '../../../core/constants/firestore_paths.dart';
+import '../../../core/services/auth_service.dart';
+import '../../../core/services/firestore_service.dart';
+import '../../../core/utils/firestore_batch_fetcher.dart';
+import '../../../domain/models/board.dart';
+import '../../../domain/repositories/board/board_repository.dart';
+import '../../../domain/services/board/board_rules.dart';
+import '../../core/web_stream_utils.dart';
+import '../models/user_board_index.dart';
+import 'web_board_discovery_data_source.dart';
 
 /// Firestore-only [BoardRepository] for the web target (no Isar, no local
 /// files, and no Cloud Functions calls — callable orchestration stays in
 /// [BoardService]).
 ///
 /// Shared by both the web canvas (`SharedCanvasDependencies`) and the web
-/// companion (`FirebaseWebCompanionRepository`) so board persistence logic
-/// lives in exactly one place on web.
+/// companion (`FirebaseWebCompanionRepository`).
 class WebBoardRepository implements BoardRepository {
   final FirestoreService _db;
   final AuthService _authService;
+  final WebBoardDiscoveryDataSource _discovery;
 
   WebBoardRepository({
     required this._authService,
     required FirestoreService firestoreService,
-  }) : _db = firestoreService;
+  }) : _db = firestoreService,
+       _discovery = WebBoardDiscoveryDataSource(
+         firestoreService: firestoreService,
+       );
 
   @override
   String? get currentUserId => _authService.getCurrentUserId();
@@ -37,9 +42,6 @@ class WebBoardRepository implements BoardRepository {
     return uid;
   }
 
-  /// The board, with `currentUserRole` resolved like the mobile repository:
-  /// owner by `ownerId`, otherwise the member document's role (viewer by
-  /// default). Emits null when the board is gone or unreadable.
   @override
   Stream<Board?> getBoardById(String boardId) {
     final id = boardId.trim();
@@ -276,9 +278,7 @@ class WebBoardRepository implements BoardRepository {
     int inviteExpiryHours = 72,
   }) async {
     final uid = _requireUid;
-    final firestore = _db.getInstance();
     final boardRef = _db.collection(FirestorePaths.boards).doc();
-    final userRef = firestore.collection(FirestorePaths.users).doc(uid);
     final fields = newBoardFields(
       boardId: boardRef.id,
       uid: uid,
@@ -290,9 +290,19 @@ class WebBoardRepository implements BoardRepository {
       tags: tags,
       allowMembersToCopy: allowMembersToCopy,
     );
+    await _writeOwnedBoard(boardRef, uid, fields);
+    return boardRef.id;
+  }
+
+  Future<void> _writeOwnedBoard(
+    DocumentReference<Map<String, dynamic>> boardRef,
+    String uid,
+    Map<String, dynamic> fields,
+  ) async {
+    final firestore = _db.getInstance();
+    final userRef = firestore.collection(FirestorePaths.users).doc(uid);
     fields[FirestorePaths.createdAt] = FieldValue.serverTimestamp();
     fields[FirestorePaths.updatedAt] = FieldValue.serverTimestamp();
-
     await firestore.runTransaction((transaction) async {
       transaction.set(boardRef, fields);
       transaction.set(
@@ -321,12 +331,8 @@ class WebBoardRepository implements BoardRepository {
         SetOptions(merge: true),
       );
     });
-    return boardRef.id;
   }
 
-  /// Direct Firestore join path mirroring `FirestoreBoardRepository.joinBoard`.
-  /// Privileged join-by-code orchestration lives in `BoardService.joinBoard`
-  /// via the `joinBoardByCode` Cloud Function.
   @override
   Future<void> joinBoard(String boardId) async {
     final id = boardId.trim();
@@ -406,8 +412,6 @@ class WebBoardRepository implements BoardRepository {
     });
   }
 
-  /// Local cleanup hook called after `BoardService.deleteBoard` invokes the
-  /// `deleteBoard` Cloud Function. Web has no local Isar cache to purge.
   @override
   Future<void> deleteBoard(String boardId) async {
     final id = boardId.trim();
@@ -422,8 +426,6 @@ class WebBoardRepository implements BoardRepository {
   Future<void> unarchiveBoard(String boardId) =>
       _setBooleanFlag(boardId, field: 'isArchived', value: false);
 
-  /// Updates the Firestore pause flag only; `BoardService.setBoardPaused`
-  /// handles the Cloud Function broadcast so it is never called twice.
   @override
   Future<void> setBoardPaused(String boardId, {required bool isPaused}) =>
       _setBooleanFlag(boardId, field: 'isPaused', value: isPaused);
@@ -443,7 +445,6 @@ class WebBoardRepository implements BoardRepository {
   @override
   Future<String> duplicateBoard(String boardId, {String? customTitle}) async {
     final uid = _requireUid;
-    final firestore = _db.getInstance();
     final sourceRef = _db.collection(FirestorePaths.boards).doc(boardId);
     final source = await sourceRef.get();
     if (!source.exists) throw 'Board not found.';
@@ -455,47 +456,14 @@ class WebBoardRepository implements BoardRepository {
     }
 
     final copyRef = _db.collection(FirestorePaths.boards).doc();
-    final userRef = firestore.collection(FirestorePaths.users).doc(uid);
     final fields = duplicatedBoardFields(
       sourceData,
       newBoardId: copyRef.id,
       uid: uid,
       customTitle: customTitle,
     );
-    fields[FirestorePaths.createdAt] = FieldValue.serverTimestamp();
-    fields[FirestorePaths.updatedAt] = FieldValue.serverTimestamp();
+    await _writeOwnedBoard(copyRef, uid, fields);
 
-    await firestore.runTransaction((transaction) async {
-      transaction.set(copyRef, fields);
-      transaction.set(
-        copyRef.collection(FirestorePaths.boardMembersSubcollection).doc(uid),
-        {
-          FirestorePaths.uid: uid,
-          'role': Board.roleOwner,
-          FirestorePaths.status: 'active',
-          'joinedAt': FieldValue.serverTimestamp(),
-          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
-        },
-      );
-      transaction.set(userRef, {
-        FirestorePaths.boardCount: FieldValue.increment(1),
-      }, SetOptions(merge: true));
-      transaction.set(
-        userRef
-            .collection(FirestorePaths.userBoardsSubcollection)
-            .doc(copyRef.id),
-        {
-          FirestorePaths.boardId: copyRef.id,
-          'relation': 'owned',
-          'addedAt': FieldValue.serverTimestamp(),
-          FirestorePaths.updatedAt: FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-    });
-
-    // Written after the copy exists: the snapshot rule resolves the new board
-    // with get() and cannot see a document created in the same transaction.
     try {
       final snapshot = await sourceRef
           .collection(FirestorePaths.boardSnapshotSubcollection)
@@ -545,7 +513,7 @@ class WebBoardRepository implements BoardRepository {
     await _db.collection(FirestorePaths.boards).doc(boardId).update(fields);
   }
 
-  // ── Discovery ───────────────────────────────────────────────────────────
+  // ── Discovery (delegated) ───────────────────────────────────────────────
 
   @override
   Future<PublicBoardsPage> getPublicBoards({
@@ -553,81 +521,19 @@ class WebBoardRepository implements BoardRepository {
     PublicBoardSort sort = PublicBoardSort.recent,
     dynamic lastDocCursor,
     int limit = 20,
-  }) async {
-    Query<Map<String, dynamic>> query = _db
-        .collection(FirestorePaths.boards)
-        .where(FirestorePaths.visibility, isEqualTo: Board.visibilityPublic);
-
-    final normalizedTag = tag?.trim().toLowerCase();
-    if (normalizedTag != null && normalizedTag.isNotEmpty) {
-      query = query.where(FirestorePaths.tags, arrayContains: normalizedTag);
-    }
-
-    if (sort == PublicBoardSort.popular) {
-      query = query
-          .orderBy('membersCount', descending: true)
-          .orderBy(FirestorePaths.createdAt, descending: true);
-    } else {
-      query = query.orderBy(FirestorePaths.createdAt, descending: true);
-    }
-
-    if (lastDocCursor is DocumentSnapshot<Map<String, dynamic>>) {
-      query = query.startAfterDocument(lastDocCursor);
-    }
-
-    final snapshot = await query.limit(limit).get();
-    final boards = snapshot.docs
-        .map((doc) => Board.fromMap(doc.data(), doc.id))
-        .where((b) => !b.isArchived)
-        .toList();
-
-    return PublicBoardsPage(
-      boards: boards,
-      lastDocCursor: snapshot.docs.isNotEmpty ? snapshot.docs.last : null,
-      hasMore: snapshot.docs.length >= limit,
-    );
-  }
+  }) => _discovery.getPublicBoards(
+    tag: tag,
+    sort: sort,
+    lastDocCursor: lastDocCursor,
+    limit: limit,
+  );
 
   @override
   Future<List<Board>> getRecommendedPublicBoards({
     required List<String> preferredTags,
     int limit = 10,
-  }) async {
-    final cleaned = preferredTags
-        .map((t) => t.trim().toLowerCase())
-        .where((t) => t.isNotEmpty)
-        .take(10)
-        .toList();
-    if (cleaned.isEmpty) {
-      return (await getPublicBoards(limit: limit)).boards;
-    }
-    try {
-      final snapshot = await _db
-          .collection(FirestorePaths.boards)
-          .where(FirestorePaths.visibility, isEqualTo: Board.visibilityPublic)
-          .where(FirestorePaths.tags, arrayContainsAny: cleaned)
-          .limit(limit * 2)
-          .get();
-      final boards = snapshot.docs
-          .map((doc) => Board.fromMap(doc.data(), doc.id))
-          .where((b) => !b.isArchived)
-          .toList();
-      final preferred = preferredTags
-          .map((t) => t.trim().toLowerCase())
-          .toSet();
-      boards.sort((a, b) {
-        final aMatches = a.tags
-            .where((t) => preferred.contains(t.toLowerCase()))
-            .length;
-        final bMatches = b.tags
-            .where((t) => preferred.contains(t.toLowerCase()))
-            .length;
-        if (bMatches != aMatches) return bMatches.compareTo(aMatches);
-        return b.membersCount.compareTo(a.membersCount);
-      });
-      return boards.take(limit).toList();
-    } catch (_) {
-      return (await getPublicBoards(limit: limit)).boards;
-    }
-  }
+  }) => _discovery.getRecommendedPublicBoards(
+    preferredTags: preferredTags,
+    limit: limit,
+  );
 }

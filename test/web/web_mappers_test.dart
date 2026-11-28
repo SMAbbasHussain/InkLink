@@ -1,7 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:inklink/web/data/web_mappers.dart';
+import 'package:inklink/web/core/web_formatters.dart';
+import 'package:inklink/web/core/web_stream_utils.dart';
+import 'package:inklink/web/domain/models/user_board_index.dart';
+import 'package:inklink/web/domain/models/web_notification_rules.dart';
 
 void main() {
   group('UserBoardIndex', () {

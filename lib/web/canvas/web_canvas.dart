@@ -23,8 +23,10 @@ import '../../domain/services/voice/voice_service.dart';
 import '../../features/canvas/view/canvas_route.dart';
 import '../../features/notifications/bloc/notifications_bloc.dart';
 import '../../ui/theme/ink_theme.dart';
-import 'web_board_repository.dart';
-import 'web_canvas_support.dart';
+import '../domain/repositories/web_board_repository.dart';
+import '../domain/repositories/web_notification_repository.dart';
+import '../domain/repositories/web_settings_repository.dart';
+import '../domain/services/web_voice_service.dart';
 
 /// Web canvas service holder backed by [SharedCanvasDependencies] so mobile
 /// and web construct the exact same shared canvas services from

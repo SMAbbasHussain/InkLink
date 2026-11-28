@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:inklink/web/data/web_account_settings.dart';
+import 'package:inklink/web/domain/models/web_account_settings.dart';
 
 void main() {
   group('WebAccountSettings.fromMap', () {

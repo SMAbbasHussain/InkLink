@@ -13,7 +13,7 @@ import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/sticky_note.dart';
 import '../bloc/web_auth_cubit.dart';
-import '../widgets/web_widgets.dart';
+import '../ui/widgets/web_feedback_widgets.dart';
 
 /// Wide screens get a two-column layout from this width up.
 const double _wideLayoutWidth = 900;

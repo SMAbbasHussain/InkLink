@@ -121,7 +121,10 @@ void _checkFirebaseSingletonUsage(_ParsedFile file, List<String> violations) {
 }
 
 void _checkDomainModelPurity(_ParsedFile file, List<String> violations) {
-  if (!file.path.startsWith('lib/domain/models/')) return;
+  final isDomainModel =
+      file.path.startsWith('lib/domain/models/') ||
+      file.path.startsWith('lib/web/domain/models/');
+  if (!isDomainModel) return;
   if (_allowedDomainCanvasGeometryShims.contains(file.path)) return;
 
   for (final uri in file.allTargetUris) {
@@ -134,10 +137,18 @@ void _checkDomainModelPurity(_ParsedFile file, List<String> violations) {
         '${file.path} leaks backend/SDK package ($uri) into domain models.',
       );
     }
-    if (uri.startsWith('lib/features/') ||
-        uri.startsWith('lib/web/') ||
-        uri.startsWith('lib/ui/') ||
-        uri.startsWith('lib/app/')) {
+    final isOuter = file.path.startsWith('lib/domain/')
+        ? (uri.startsWith('lib/features/') ||
+              uri.startsWith('lib/web/') ||
+              uri.startsWith('lib/ui/') ||
+              uri.startsWith('lib/app/'))
+        : (uri.startsWith('lib/features/') ||
+              uri.startsWith('lib/ui/') ||
+              uri.startsWith('lib/app/') ||
+              uri.startsWith('lib/web/screens/') ||
+              uri.startsWith('lib/web/features/') ||
+              uri.startsWith('lib/web/ui/'));
+    if (isOuter) {
       violations.add(
         '${file.path} imports outer layer ($uri) into domain models.',
       );
@@ -170,7 +181,7 @@ void _checkServiceDataAccessBoundaries(
 ) {
   final isServiceFile =
       file.path.startsWith('lib/domain/services/') ||
-      file.path.startsWith('lib/web/domain/');
+      file.path.startsWith('lib/web/domain/services/');
   if (!isServiceFile) return;
 
   for (final uri in file.allTargetUris) {
@@ -185,9 +196,11 @@ void _checkServiceDataAccessBoundaries(
         uri == 'lib/core/database/local_database_service.dart';
     final forbiddenConcreteRepo =
         (uri.startsWith('lib/domain/repositories/') ||
-            uri.startsWith('lib/web/data/')) &&
+            uri.startsWith('lib/web/domain/repositories/')) &&
         (uri.endsWith('_impl.dart') ||
-            uri == 'lib/web/data/firebase_web_companion_repository.dart');
+            uri.endsWith('_data_source.dart') ||
+            uri ==
+                'lib/web/domain/repositories/firebase_web_companion_repository.dart');
 
     if (forbiddenPackage || forbiddenFirestoreWrapper || forbiddenLocalDb) {
       violations.add(
@@ -223,17 +236,16 @@ void _checkBlocLayerBoundaries(_ParsedFile file, List<String> violations) {
   final isFeatureBloc =
       file.path.startsWith('lib/features/') && file.path.endsWith('_bloc.dart');
   final isWebBloc =
-      file.path.startsWith('lib/web/bloc/') &&
+      (file.path.startsWith('lib/web/bloc/') ||
+          (file.path.startsWith('lib/web/features/') &&
+              file.path.contains('/bloc/'))) &&
       (file.path.endsWith('_cubit.dart') || file.path.endsWith('_bloc.dart'));
   if (!isFeatureBloc && !isWebBloc) return;
 
   for (final uri in file.allTargetUris) {
     final forbiddenRepo =
         uri.startsWith('lib/domain/repositories/') ||
-        uri == 'lib/web/data/web_companion_repository.dart' ||
-        uri == 'lib/web/data/firebase_web_companion_repository.dart' ||
-        uri == 'lib/web/canvas/web_board_repository.dart' ||
-        uri == 'lib/web/canvas/web_canvas_support.dart';
+        uri.startsWith('lib/web/domain/repositories/');
     final forbiddenSdk =
         uri.startsWith('package:isar_community/') ||
         uri.startsWith('package:cloud_firestore/') ||
@@ -260,10 +272,7 @@ void _checkRepositoryLayerBoundaries(
   List<String> violations,
 ) {
   final isDomainRepo = file.path.startsWith('lib/domain/repositories/');
-  final isWebRepo =
-      file.path == 'lib/web/canvas/web_board_repository.dart' ||
-      file.path == 'lib/web/data/firebase_web_companion_repository.dart' ||
-      file.path == 'lib/web/data/web_companion_repository.dart';
+  final isWebRepo = file.path.startsWith('lib/web/domain/repositories/');
   if (!isDomainRepo && !isWebRepo) return;
 
   for (final uri in file.allTargetUris) {
@@ -274,7 +283,7 @@ void _checkRepositoryLayerBoundaries(
     final forbiddenService =
         (uri.startsWith('lib/domain/services/') &&
             uri != 'lib/domain/services/board/board_rules.dart') ||
-        uri.startsWith('lib/web/domain/');
+        uri.startsWith('lib/web/domain/services/');
 
     if (forbiddenFunctions || forbiddenService) {
       violations.add(
@@ -352,21 +361,26 @@ void _checkScreenLayerBoundaries(_ParsedFile file, List<String> violations) {
 }
 
 void _checkWebScreenBoundaries(_ParsedFile file, List<String> violations) {
-  if (!file.path.startsWith('lib/web/screens/')) return;
+  final isWebView =
+      file.path.startsWith('lib/web/screens/') ||
+      (file.path.startsWith('lib/web/features/') &&
+          file.path.contains('/view/') &&
+          file.path != 'lib/web/features/canvas/view/web_canvas_route.dart');
+  if (!isWebView) return;
 
   for (final uri in file.allTargetUris) {
+    final forbiddenDomainService =
+        uri.startsWith('lib/domain/services/') &&
+        uri != 'lib/domain/services/board/board_rules.dart';
     if (uri.startsWith('lib/domain/repositories/') ||
-        uri.startsWith('lib/domain/services/') ||
-        uri.startsWith('lib/web/domain/') ||
-        uri == 'lib/web/data/web_companion_repository.dart' ||
-        uri == 'lib/web/data/firebase_web_companion_repository.dart' ||
-        uri == 'lib/web/canvas/web_board_repository.dart' ||
-        uri == 'lib/web/canvas/web_canvas_support.dart' ||
+        forbiddenDomainService ||
+        uri.startsWith('lib/web/domain/services/') ||
+        uri.startsWith('lib/web/domain/repositories/') ||
         uri.startsWith('package:cloud_firestore/') ||
         uri.startsWith('package:firebase_') ||
         uri.startsWith('package:shared_preferences/')) {
       violations.add(
-        '${file.path} bypasses web BLoC/Cubit layer by importing $uri. Communicate through lib/web/bloc/*_cubit.dart.',
+        '${file.path} bypasses web BLoC/Cubit layer by importing $uri. Communicate through web Cubits.',
       );
       break;
     }

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:inklink/web/data/web_url.dart';
+import 'package:inklink/web/core/web_location_parser.dart';
 
 void main() {
   group('parseWebLocation', () {

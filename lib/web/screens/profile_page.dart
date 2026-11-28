@@ -13,8 +13,8 @@ import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/paper_card.dart';
 import '../bloc/web_social_cubit.dart';
-import '../data/web_mappers.dart';
-import '../widgets/web_widgets.dart';
+import '../core/web_formatters.dart';
+import '../ui/widgets/web_feedback_widgets.dart';
 import 'web_shell_nav.dart';
 
 /// View and edit the display name, bio and profile photo, laid out like the

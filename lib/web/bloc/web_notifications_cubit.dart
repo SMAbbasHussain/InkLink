@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../domain/models/notification/in_app_notification.dart';
-import '../data/web_board_ops.dart';
-import '../domain/web_companion_service.dart';
+import '../domain/models/web_notification_rules.dart';
+import '../domain/services/web_companion_service.dart';
 
 class WebNotificationsState {
   final List<InAppNotification> notifications;

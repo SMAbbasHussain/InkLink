@@ -13,8 +13,9 @@ import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/paper_card.dart';
 import '../bloc/web_auth_cubit.dart';
 import '../bloc/web_settings_cubit.dart';
-import '../data/web_account_settings.dart';
-import '../widgets/web_widgets.dart';
+import '../domain/models/web_account_settings.dart';
+import '../ui/widgets/web_feedback_widgets.dart';
+import '../ui/widgets/web_page_layout.dart';
 import 'web_shell_nav.dart';
 
 class _SwitchTile extends StatelessWidget {

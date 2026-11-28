@@ -12,8 +12,9 @@ import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_text_field.dart';
 import '../../ui/widgets/paper_card.dart';
 import '../bloc/web_social_cubit.dart';
-import '../data/web_mappers.dart';
-import '../widgets/web_widgets.dart';
+import '../core/web_formatters.dart';
+import '../ui/widgets/web_feedback_widgets.dart';
+import '../ui/widgets/web_page_layout.dart';
 import 'web_shell_nav.dart';
 
 /// Incoming friend requests (accept/decline), the friends list with block and

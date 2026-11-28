@@ -8,8 +8,9 @@ import '../../ui/theme/ink_type.dart';
 import '../../ui/widgets/ink_avatar.dart';
 import '../../ui/widgets/sticky_note.dart';
 import '../bloc/web_social_cubit.dart';
-import '../data/web_mappers.dart';
-import '../widgets/web_widgets.dart';
+import '../core/web_formatters.dart';
+import '../ui/widgets/web_feedback_widgets.dart';
+import '../ui/widgets/web_page_layout.dart';
 import 'web_shell_nav.dart';
 
 /// Pending board and workspace invites as the phone shows them: tilted

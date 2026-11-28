@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Light/dark switch for the web companion (the header's sun/moon button,
-/// like the phone's). The choice is remembered in the browser.
+/// Light/dark theme controller for the web companion, persisted in browser
+/// `SharedPreferences`.
 class WebThemeController {
   static const _key = 'web_theme_mode';
 

@@ -3,19 +3,19 @@ import 'dart:typed_data';
 
 import 'package:cloud_functions/cloud_functions.dart';
 
-import '../../core/services/cloud_functions_service.dart';
-import '../../domain/models/board.dart';
-import '../../domain/models/friends/friend.dart';
-import '../../domain/models/friends/friend_request.dart';
-import '../../domain/models/invitation/board_invitation.dart';
-import '../../domain/models/notification/in_app_notification.dart';
-import '../../domain/models/user_model.dart';
-import '../../domain/models/workspace.dart';
-import '../../domain/services/board/board_rules.dart';
-import '../../domain/services/board/board_service.dart';
-import '../data/web_account.dart';
-import '../data/web_account_settings.dart';
-import '../data/web_companion_repository.dart';
+import '../../../core/services/cloud_functions_service.dart';
+import '../../../domain/models/board.dart';
+import '../../../domain/models/friends/friend.dart';
+import '../../../domain/models/friends/friend_request.dart';
+import '../../../domain/models/invitation/board_invitation.dart';
+import '../../../domain/models/notification/in_app_notification.dart';
+import '../../../domain/models/user_model.dart';
+import '../../../domain/models/workspace.dart';
+import '../../../domain/services/board/board_rules.dart';
+import '../../../domain/services/board/board_service.dart';
+import '../models/web_account.dart';
+import '../models/web_account_settings.dart';
+import '../repositories/web_companion_repository.dart';
 
 /// Domain service contract for the web companion.
 ///

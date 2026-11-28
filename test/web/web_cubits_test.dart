@@ -6,7 +6,7 @@ import 'package:inklink/web/bloc/web_notifications_cubit.dart';
 import 'package:inklink/web/bloc/web_settings_cubit.dart';
 import 'package:inklink/web/bloc/web_social_cubit.dart';
 import 'package:inklink/web/bloc/web_workspaces_cubit.dart';
-import 'package:inklink/web/canvas/web_canvas_support.dart';
+import 'package:inklink/web/domain/repositories/web_settings_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'fakes/fake_web_companion_service.dart';

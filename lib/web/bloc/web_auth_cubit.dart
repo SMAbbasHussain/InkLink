@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../data/web_account.dart';
-import '../domain/web_companion_service.dart';
+import '../domain/models/web_account.dart';
+import '../domain/services/web_companion_service.dart';
 
 class WebAuthState {
   final WebAccount? user;

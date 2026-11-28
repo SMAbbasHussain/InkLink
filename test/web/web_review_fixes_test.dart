@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/domain/models/notification/in_app_notification.dart';
-import 'package:inklink/web/data/web_mappers.dart';
+import 'package:inklink/web/core/web_formatters.dart';
+import 'package:inklink/web/domain/models/web_notification_rules.dart';
 
 /// Fixes found while reviewing the web companion with a real account.
 void main() {

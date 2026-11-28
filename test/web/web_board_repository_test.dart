@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/services/firestore_service.dart';
 import 'package:inklink/domain/models/board.dart';
-import 'package:inklink/web/canvas/web_board_repository.dart';
+import 'package:inklink/web/domain/repositories/web_board_repository.dart';
 
 class _FakeAuth implements AuthService {
   _FakeAuth({this.uid = 'web-user'});
@@ -85,7 +85,7 @@ void main() {
     'no BoardRepository member throws UnsupportedError or calls Cloud Functions',
     () {
       final source = File(
-        'lib/web/canvas/web_board_repository.dart',
+        'lib/web/domain/repositories/web_board_repository.dart',
       ).readAsStringSync();
       expect(source, contains('implements BoardRepository'));
       expect(source.contains('UnsupportedError'), isFalse);
@@ -96,7 +96,7 @@ void main() {
       expect(source.contains('getHttpsCallable'), isFalse);
 
       final companionSource = File(
-        'lib/web/data/firebase_web_companion_repository.dart',
+        'lib/web/domain/repositories/firebase_web_companion_repository.dart',
       ).readAsStringSync();
       expect(companionSource.contains('package:cloud_functions'), isFalse);
       expect(companionSource.contains('CloudFunctionsService'), isFalse);

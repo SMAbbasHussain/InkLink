@@ -12,8 +12,8 @@ import 'package:flutter/material.dart';
 
 import '../app/composition/web_dependencies.dart';
 import 'canvas/web_canvas.dart';
+import 'ui/widgets/web_board_opener.dart';
 import 'web_companion_app.dart';
-import 'widgets/web_widgets.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

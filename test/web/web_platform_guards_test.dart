@@ -51,7 +51,9 @@ void main() {
   });
 
   test('WebBoardRepository implements every member', () {
-    final source = read('lib/web/canvas/web_board_repository.dart');
+    final source = read(
+      'lib/web/domain/repositories/web_board_repository.dart',
+    );
     expect(source, contains('implements BoardRepository'));
     expect(RegExp(r'noSuchMethod\s*\(').hasMatch(source), isFalse);
     // The web now implements the whole interface, so nothing may fall back to

@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:inklink/web/domain/web_companion_service.dart';
+import 'package:inklink/web/domain/services/web_companion_service.dart';
 import 'package:inklink/web/web_companion_app.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

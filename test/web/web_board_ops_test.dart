@@ -1,7 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/domain/models/board.dart';
 import 'package:inklink/domain/models/notification/in_app_notification.dart';
-import 'package:inklink/web/data/web_board_ops.dart';
+import 'package:inklink/domain/services/board/board_rules.dart';
+import 'package:inklink/web/domain/models/web_notification_rules.dart';
 
 InAppNotification _notification(
   String id, {

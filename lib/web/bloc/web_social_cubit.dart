@@ -8,7 +8,7 @@ import '../../domain/models/friends/friend_request.dart';
 import '../../domain/models/invitation/board_invitation.dart';
 import '../../domain/models/user_model.dart';
 import '../../domain/models/workspace.dart';
-import '../domain/web_companion_service.dart';
+import '../domain/services/web_companion_service.dart';
 
 class WebSocialState {
   final UserModel? profile;

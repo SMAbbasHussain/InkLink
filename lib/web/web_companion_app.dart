@@ -13,15 +13,16 @@ import 'bloc/web_notifications_cubit.dart';
 import 'bloc/web_settings_cubit.dart';
 import 'bloc/web_social_cubit.dart';
 import 'bloc/web_workspaces_cubit.dart';
-import 'canvas/web_board_repository.dart';
-import 'canvas/web_canvas_support.dart';
-import 'data/firebase_web_companion_repository.dart';
-import 'domain/web_companion_service.dart';
+import 'domain/repositories/firebase_web_companion_repository.dart';
+import 'domain/repositories/web_board_repository.dart';
+import 'domain/repositories/web_notification_repository.dart';
+import 'domain/repositories/web_settings_repository.dart';
+import 'domain/services/web_companion_service.dart';
 import 'screens/home_shell.dart';
 import 'screens/sign_in_screen.dart';
 import 'screens/web_shell_nav.dart';
-import 'web_theme.dart';
-import 'widgets/web_widgets.dart';
+import 'ui/theme/web_theme_controller.dart';
+import 'ui/widgets/web_board_opener.dart';
 
 /// Root of the web companion: theme, domain services, BLoC/Cubit providers,
 /// and the sign-in gate. Uses the mobile app's Ink theme (light and dark).

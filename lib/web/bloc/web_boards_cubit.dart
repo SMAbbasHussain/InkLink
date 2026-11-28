@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../domain/models/board.dart';
-import '../domain/web_companion_service.dart';
+import '../domain/services/web_companion_service.dart';
 
 class WebBoardsState {
   final List<Board> myBoards;

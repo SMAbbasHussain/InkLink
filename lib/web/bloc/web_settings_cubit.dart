@@ -4,8 +4,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/utils/board_preview_preferences.dart';
 import '../../domain/services/settings/settings_service.dart';
-import '../data/web_account_settings.dart';
-import '../domain/web_companion_service.dart';
+import '../domain/models/web_account_settings.dart';
+import '../domain/services/web_companion_service.dart';
 
 class WebSettingsState {
   final bool loading;

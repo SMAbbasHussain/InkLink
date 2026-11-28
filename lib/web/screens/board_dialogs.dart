@@ -3,15 +3,16 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../domain/models/board.dart';
+import '../../domain/services/board/board_rules.dart';
 import '../../ui/theme/ink_theme.dart';
 import '../../ui/theme/ink_tokens.dart';
 import '../../ui/theme/ink_type.dart';
 import '../../ui/widgets/ink_button.dart';
 import '../../ui/widgets/ink_dialog.dart';
 import '../../ui/widgets/ink_text_field.dart';
-import '../data/web_board_ops.dart';
 import '../bloc/web_boards_cubit.dart';
-import '../widgets/web_widgets.dart';
+import '../ui/widgets/web_feedback_widgets.dart';
+import '../ui/widgets/web_page_layout.dart';
 
 // Every dialog here owns its text controllers and notifiers in a State, so
 // they live exactly as long as the dialog's widgets (including the closing

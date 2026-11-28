@@ -7,9 +7,11 @@ import 'package:inklink/core/services/auth_service.dart';
 import 'package:inklink/core/services/cloud_functions_service.dart';
 import 'package:inklink/core/services/firestore_service.dart';
 import 'package:inklink/domain/repositories/canvas/memory_crdt_local_store.dart';
-import 'package:inklink/web/canvas/web_board_repository.dart';
 import 'package:inklink/web/canvas/web_canvas.dart';
-import 'package:inklink/web/canvas/web_canvas_support.dart';
+import 'package:inklink/web/domain/repositories/web_board_repository.dart';
+import 'package:inklink/web/domain/repositories/web_notification_repository.dart';
+import 'package:inklink/web/domain/repositories/web_settings_repository.dart';
+import 'package:inklink/web/domain/services/web_voice_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeAuth implements AuthService {

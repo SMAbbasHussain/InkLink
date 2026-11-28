@@ -15,8 +15,10 @@ import '../../ui/widgets/ink_segmented.dart';
 import '../bloc/web_auth_cubit.dart';
 import '../bloc/web_boards_cubit.dart';
 import '../bloc/web_social_cubit.dart';
-import '../data/web_mappers.dart';
-import '../widgets/web_widgets.dart';
+import '../core/web_formatters.dart';
+import '../ui/widgets/web_board_opener.dart';
+import '../ui/widgets/web_feedback_widgets.dart';
+import '../ui/widgets/web_page_layout.dart';
 import 'board_dialogs.dart';
 import 'web_shell_nav.dart';
 

@@ -5,9 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:inklink/core/services/cloud_functions_service.dart';
 import 'package:inklink/domain/models/board.dart';
 import 'package:inklink/domain/services/board/board_service.dart';
-import 'package:inklink/web/data/web_account.dart';
-import 'package:inklink/web/data/web_companion_repository.dart';
-import 'package:inklink/web/domain/web_companion_service.dart';
+import 'package:inklink/web/domain/models/web_account.dart';
+import 'package:inklink/web/domain/repositories/web_companion_repository.dart';
+import 'package:inklink/web/domain/services/web_companion_service.dart';
 
 class _StubRepository implements WebCompanionRepository {
   String? lastRenamedId;

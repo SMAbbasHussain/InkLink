@@ -9,9 +9,10 @@ import '../../ui/theme/ink_type.dart';
 import '../../ui/widgets/ink_avatar.dart';
 import '../../ui/widgets/paper_card.dart';
 import '../bloc/web_notifications_cubit.dart';
-import '../data/web_board_ops.dart';
-import '../data/web_mappers.dart';
-import '../widgets/web_widgets.dart';
+import '../core/web_formatters.dart';
+import '../domain/models/web_notification_rules.dart';
+import '../ui/widgets/web_feedback_widgets.dart';
+import '../ui/widgets/web_page_layout.dart';
 import 'web_shell_nav.dart';
 
 /// The in-app notification feed (newest 100, chat messages excluded, as on
