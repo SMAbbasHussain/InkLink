@@ -141,6 +141,9 @@ MEGALENS_CODE_REVIEW.md
 server/node_modules
 server/service-account.json
 server/.env
+load-test/node_modules/
+load-test/reports/
+load-test/.stress-state.json
 websocket_migration_plan.md
 optimizations_plan.md
 plan.md

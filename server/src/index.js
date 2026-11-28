@@ -8,6 +8,7 @@ const { getAuth } = require('firebase-admin/auth');
 const cors = require('cors');
 const Y = require('yjs');
 const crypto = require('crypto');
+const { monitorEventLoopDelay } = require('perf_hooks');
 const historyR2 = require('./history/r2');
 const { getProfile } = require('./history/profiles');
 const { reconstruct } = require('./history/reconstruct');
@@ -20,6 +21,11 @@ const { describeChange, summarizeOperation } = require('./history/describe');
 // Python Agora token packages use that name).
 const { RtcTokenBuilder, RtcRole, ChatTokenBuilder } = require('agora-token');
 require('dotenv').config();
+
+const VERBOSE_WS_LOGS = process.env.VERBOSE_WS_LOGS === 'true';
+
+const loopDelay = monitorEventLoopDelay({ resolution: 20 });
+loopDelay.enable();
 
 // ============================================================
 // CORS & ORIGIN VALIDATION (Comments 2 & 3)
@@ -64,10 +70,21 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 app.get('/health', (req, res) => {
-  console.log("Ping Test");
+  if (VERBOSE_WS_LOGS) console.log("Ping Test");
+  const mem = process.memoryUsage();
+  const p95Ns = loopDelay.percentile(95);
+  const maxNs = loopDelay.max;
   res.status(200).json({
     status: 'ok',
     time: new Date(),
+    metrics: {
+      uptimeSec: Math.round(process.uptime()),
+      activeSockets: io?.engine?.clientsCount ?? 0,
+      rssMB: Math.round((mem.rss / 1048576) * 10) / 10,
+      heapUsedMB: Math.round((mem.heapUsed / 1048576) * 10) / 10,
+      eventLoopLagP95Ms: Number.isFinite(p95Ns) ? Math.round((p95Ns / 1e6) * 100) / 100 : 0,
+      eventLoopLagMaxMs: Number.isFinite(maxNs) ? Math.round((maxNs / 1e6) * 100) / 100 : 0,
+    },
   });
 });
 
@@ -176,8 +193,8 @@ app.post('/api/agora/rtc/token', async (req, res) => {
     const appCertificate = process.env.AGORA_APP_CERTIFICATE;
     if (!appId || !appCertificate) {
       const missing = [
-        !appId ? 'AGORA_APP_ID' : null,
-        !appCertificate ? 'AGORA_APP_CERTIFICATE' : null,
+        appId ? null : 'AGORA_APP_ID',
+        appCertificate ? null : 'AGORA_APP_CERTIFICATE',
       ].filter(Boolean).join(', ');
       console.warn(`[agora-rtc] /api/agora/rtc/token → 503 (${missing} not configured)`);
       return res.status(503).json({ error: 'agora certificate not configured' });
@@ -200,7 +217,7 @@ const io = new Server(server, {
   cors: corsOptions,
   maxHttpBufferSize: 5 * 1024 * 1024,
   allowRequest: (req, callback) => {
-    const origin = req.headers.origin;
+    const {origin} = req.headers;
     if (isOriginAllowed(origin)) {
       return callback(null, true);
     }
@@ -394,6 +411,8 @@ redisSub.on('error', (error) => {
 const ACCESS_CACHE_TTL_MS = 10 * 60 * 1000;
 const EDITORS_REDIS_TTL_SEC = 600; // 10 minutes for Redis board_editors set
 const boardAccessCache = new Map(); // key: `${boardId}:${uid}` -> { canView, canEdit, expiresAt }
+// Owner check with a short-lived cache (history is owner-only, D3).
+const boardOwnerCache = new Map(); // `${boardId}:${uid}` -> { isOwner, expiresAt }
 const seededBoards = new Set();
 
 function setCachedBoardAccess(boardId, uid, canView, canEdit) {
@@ -417,11 +436,29 @@ function invalidateCachedBoardAccess(boardId, uid = null) {
   }
 }
 
+function invalidateCachedBoardOwner(boardId, uid = null) {
+  if (uid) {
+    boardOwnerCache.delete(`${boardId}:${uid}`);
+    return;
+  }
+  const prefix = `${boardId}:`;
+  for (const key of boardOwnerCache.keys()) {
+    if (key.startsWith(prefix)) {
+      boardOwnerCache.delete(key);
+    }
+  }
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of boardAccessCache.entries()) {
     if (now > entry.expiresAt) {
       boardAccessCache.delete(key);
+    }
+  }
+  for (const [key, entry] of boardOwnerCache.entries()) {
+    if (now > entry.expiresAt) {
+      boardOwnerCache.delete(key);
     }
   }
 }, 30000);
@@ -468,6 +505,7 @@ redisSub.on('message', async (channel, message) => {
         });
       } else if (data.type === 'board_deleted' && data.boardId) {
         invalidateCachedBoardAccess(data.boardId);
+        invalidateCachedBoardOwner(data.boardId);
         seededBoards.delete(data.boardId);
         if (redisAvailable) {
           redis.del(`board_members:${data.boardId}`, `board_editors:${data.boardId}`).catch(() => { });
@@ -912,17 +950,20 @@ function buildAgoraRtcToken(appId, appCertificate, channelName) {
 // ARGV[7] = userDisplayName
 // ARGV[8] = action (client hint; truth is derived by the archiver)
 // ARGV[9] = restoredFromVersion (empty unless a restore op)
-// Returns: version number, or -1 if duplicate
+// Returns: {version, lastSnap}, {-1, 0} if duplicate, or {-2, 0} if version key needs seeding
 //
 // NOTE: no MAXLEN here (fixes B2). Trimming happens ONLY in the archive worker
 // after a durable archive; the stream is bounded by the archive cadence.
 // The two-slot dedup set is bounded to ~2 hours, so it cannot grow forever.
 // ============================================================
 const APPEND_UPDATE_LUA = `
-if redis.call('SISMEMBER', KEYS[4], ARGV[1]) == 1 then return -1 end
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return {-2, 0}
+end
+if redis.call('SISMEMBER', KEYS[4], ARGV[1]) == 1 then return {-1, 0} end
 local seen = redis.call('SADD', KEYS[3], ARGV[1])
 if seen == 0 then
-  return -1
+  return {-1, 0}
 end
 redis.call('EXPIRE', KEYS[3], 7200)
 local version = redis.call('INCR', KEYS[1])
@@ -941,7 +982,9 @@ redis.call('XADD', KEYS[2], '*',
   'action', ARGV[8],
   'restoredFromVersion', ARGV[9]
 )
-return version
+redis.call('SET', KEYS[5], ARGV[10], 'EX', 604800)
+local lastSnap = tonumber(redis.call('GET', KEYS[6]) or '0') or 0
+return {version, lastSnap}
 `;
 
 let appendUpdateSha = null;
@@ -991,22 +1034,39 @@ async function appendToStream(boardId, {
     userDisplayName || 'InkLink User',
     action || 'upsert',
     restoredFromVersion == null ? '' : String(restoredFromVersion),
+    String(Date.now()),
   ];
   const keys = [
     `board:${boardId}:version`,
     `board_updates:${boardId}`,
     dedup.current,
     dedup.previous,
+    `board:lastActivity:${boardId}`,
+    `board:lastSnapshotVersion:${boardId}`,
   ];
 
+  let rawResult;
   if (appendUpdateSha) {
     try {
-      return await redis.evalsha(appendUpdateSha, 4, ...keys, ...args);
+      rawResult = await redis.evalsha(appendUpdateSha, 6, ...keys, ...args);
     } catch (shaError) {
       if (!(shaError.message && shaError.message.includes('NOSCRIPT'))) throw shaError;
+      rawResult = await redis.eval(APPEND_UPDATE_LUA, 6, ...keys, ...args);
     }
+  } else {
+    rawResult = await redis.eval(APPEND_UPDATE_LUA, 6, ...keys, ...args);
   }
-  return redis.eval(APPEND_UPDATE_LUA, 4, ...keys, ...args);
+
+  const code = Array.isArray(rawResult) ? Number(rawResult[0]) : Number(rawResult);
+  const lastSnapshotVersion = Array.isArray(rawResult) ? (Number(rawResult[1]) || 0) : 0;
+
+  if (code === -2) {
+    return { status: 'needs_seed', version: null, lastSnapshotVersion: 0 };
+  }
+  if (code === -1) {
+    return { status: 'duplicate', version: null, lastSnapshotVersion: 0 };
+  }
+  return { status: 'ok', version: code, lastSnapshotVersion };
 }
 
 // Element ids present in the current materialized snapshot (used to tell
@@ -1017,7 +1077,7 @@ async function readCurrentElementIds(boardId) {
     const snap = await db.collection('boards').doc(boardId)
       .collection('snapshot').doc('latest').get();
     if (!snap.exists) return [];
-    const stateUpdate = (snap.data() || {}).stateUpdate;
+    const {stateUpdate} = snap.data() || {};
     if (!stateUpdate) return [];
     const doc = new Y.Doc();
     Y.applyUpdate(doc, Buffer.from(stateUpdate, 'base64'));
@@ -1026,9 +1086,6 @@ async function readCurrentElementIds(boardId) {
     return [];
   }
 }
-
-// Owner check with a short-lived cache (history is owner-only, D3).
-const boardOwnerCache = new Map(); // `${boardId}:${uid}` -> { isOwner, expiresAt }
 
 async function isBoardOwner(boardId, uid) {
   if (!uid || !boardId || !db) return false;
@@ -1065,8 +1122,7 @@ async function appendAndBroadcast(boardId, {
     await triggerSnapshot(boardId, { force: true });
   }
 
-  await seedRedisFromFirestore(boardId);
-  const version = await appendToStream(boardId, {
+  const appendArgs = {
     updateId,
     payloadBase64,
     elementId,
@@ -1076,12 +1132,16 @@ async function appendAndBroadcast(boardId, {
     userDisplayName: displayName,
     action,
     restoredFromVersion,
-  });
-  if (version === -1 || version === null || version === undefined) {
+  };
+  let appendResult = await appendToStream(boardId, appendArgs);
+  if (appendResult.status === 'needs_seed') {
+    await seedRedisFromFirestore(boardId);
+    appendResult = await appendToStream(boardId, appendArgs);
+  }
+  if (appendResult.status !== 'ok' || appendResult.version === null || appendResult.version === undefined) {
     throw new Error('append failed');
   }
-
-  redis.set(`board:lastActivity:${boardId}`, Date.now().toString(), 'EX', 604800).catch(() => { });
+  const { version, lastSnapshotVersion } = appendResult;
 
   io.to(`board_room:${boardId}`).emit('crdt_update', {
     boardId,
@@ -1097,7 +1157,7 @@ async function appendAndBroadcast(boardId, {
     },
   });
 
-  maybeTriggerArchive(boardId, version);
+  maybeTriggerArchive(boardId, version, lastSnapshotVersion);
   return version;
 }
 
@@ -1118,10 +1178,15 @@ function parseStreamEntry(fields) {
 // SEED Redis version from Firestore snapshot (recovery)
 // ============================================================
 async function seedRedisFromFirestore(boardId) {
-  if (!redisAvailable || !db) return;
+  if (!redisAvailable) return;
   const versionKey = `board:${boardId}:version`;
   const exists = await redis.exists(versionKey);
   if (exists) {
+    seededBoards.add(boardId);
+    return;
+  }
+  if (!db) {
+    await redis.set(versionKey, '0', 'EX', 604800, 'NX');
     seededBoards.add(boardId);
     return;
   }
@@ -1142,6 +1207,8 @@ async function seedRedisFromFirestore(boardId) {
         p.set(versionKey, data.lastAppliedVersion.toString(), 'EX', 604800);
         p.set(`board:lastSnapshotVersion:${boardId}`, data.lastAppliedVersion.toString(), 'EX', 604800);
         console.log(`[seed] Board ${boardId}: version seeded to ${data.lastAppliedVersion} from Firestore`);
+      } else {
+        p.set(versionKey, '0', 'EX', 604800);
       }
       if (data.lastAppliedStreamId) {
         p.set(`board:lastSnapshotCursor:${boardId}`, data.lastAppliedStreamId, 'EX', 604800);
@@ -1170,11 +1237,16 @@ async function seedRedisFromFirestore(boardId) {
 const snapshotInFlight = new Map(); // boardId -> Promise<void>
 const ARCHIVE_BLOCK_OPS = 100;
 
-async function maybeTriggerArchive(boardId, version) {
+async function maybeTriggerArchive(boardId, version, knownLastSnapshotVersion = null) {
   if (!redisAvailable || version === null || version === undefined || version <= 0) return;
   try {
-    const lastVerStr = await redis.get(`board:lastSnapshotVersion:${boardId}`);
-    const lastSnapshotVersion = parseInt(lastVerStr || '0', 10) || 0;
+    let lastSnapshotVersion;
+    if (typeof knownLastSnapshotVersion === 'number' && Number.isFinite(knownLastSnapshotVersion)) {
+      lastSnapshotVersion = knownLastSnapshotVersion;
+    } else {
+      const lastVerStr = await redis.get(`board:lastSnapshotVersion:${boardId}`);
+      lastSnapshotVersion = parseInt(lastVerStr || '0', 10) || 0;
+    }
     if (version - lastSnapshotVersion >= ARCHIVE_BLOCK_OPS) {
       await triggerSnapshot(boardId);
     }
@@ -1270,71 +1342,101 @@ async function runSnapshot(boardId) {
     }
   }));
 
-  for (const entry of entries) {
-    // Single-user updates are persisted to the stream too — they must be
-    // included in the snapshot or solo-board content would be lost.
-    if (!entry.payloadBase64) continue;
-    const before = elementsMap.toJSON();
-    try {
-      const buffer = Buffer.from(entry.payloadBase64, 'base64');
-      Y.applyUpdate(doc, buffer);
-    } catch (e) {
-      console.warn(`[snapshot] Skipping corrupt update ${entry.updateId}: ${e.message}`);
-      continue;
-    }
-    const after = elementsMap.toJSON();
-
-    // Authoritative per-element diff — never the client hint (§5.6).
-    // Only the one-line `detail` is archived; the field-level diff table is
-    // rebuilt live by buildPlan, so blocks do not carry per-field rows.
-    const changes = [];
-    for (const key of Object.keys(after)) {
-      if (!(key in before)) {
-        changes.push({ elementId: key, kind: 'add', detail: describeChange(undefined, after[key]).detail });
-      } else if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
-        changes.push({ elementId: key, kind: 'update', detail: describeChange(before[key], after[key]).detail });
+  const currentState = elementsMap.toJSON();
+  const touchedKeys = new Set();
+  const elementsObserver = (events) => {
+    for (const event of events) {
+      if (event.target === elementsMap) {
+        for (const key of event.keysChanged) {
+          touchedKeys.add(String(key));
+        }
+      } else if (Array.isArray(event.path) && event.path.length > 0) {
+        touchedKeys.add(String(event.path[0]));
       }
     }
-    for (const key of Object.keys(before)) {
-      if (!(key in after)) {
-        changes.push({ elementId: key, kind: 'delete', detail: describeChange(before[key], undefined).detail });
+  };
+  elementsMap.observeDeep(elementsObserver);
+
+  try {
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      // Single-user updates are persisted to the stream too — they must be
+      // included in the snapshot or solo-board content would be lost.
+      if (!entry.payloadBase64) continue;
+      touchedKeys.clear();
+      try {
+        const buffer = Buffer.from(entry.payloadBase64, 'base64');
+        Y.applyUpdate(doc, buffer);
+      } catch (e) {
+        console.warn(`[snapshot] Skipping corrupt update ${entry.updateId}: ${e.message}`);
+        continue;
+      }
+
+      // Authoritative per-element diff — never the client hint (§5.6).
+      // Only the one-line `detail` is archived; the field-level diff table is
+      // rebuilt live by buildPlan, so blocks do not carry per-field rows.
+      const changes = [];
+      for (const key of touchedKeys) {
+        const hasPrev = Object.prototype.hasOwnProperty.call(currentState, key);
+        const prevVal = hasPrev ? currentState[key] : undefined;
+        const hasNext = elementsMap.has(key);
+        const rawNext = hasNext ? elementsMap.get(key) : undefined;
+        const nextVal = rawNext && typeof rawNext.toJSON === 'function' ? rawNext.toJSON() : rawNext;
+
+        if (!hasPrev && hasNext) {
+          currentState[key] = nextVal;
+          changes.push({ elementId: key, kind: 'add', detail: describeChange(undefined, nextVal).detail });
+        } else if (hasPrev && !hasNext) {
+          delete currentState[key];
+          changes.push({ elementId: key, kind: 'delete', detail: describeChange(prevVal, undefined).detail });
+        } else if (hasPrev && hasNext && JSON.stringify(prevVal) !== JSON.stringify(nextVal)) {
+                     currentState[key] = nextVal;
+                     changes.push({ elementId: key, kind: 'update', detail: describeChange(prevVal, nextVal).detail });
+               }
+      }
+
+      let {action} = entry;
+      if (action !== 'restore' && action !== 'revert') {
+        if (changes.length > 0 && changes.every(c => c.kind === 'delete')) {
+          action = elementsMap.size === 0 ? 'clear' : 'delete';
+        } else {
+          action = 'upsert';
+        }
+      }
+
+      const authorUid = entry.sourceClientId || '';
+      const profile = profileCache.get(authorUid)
+        || { displayName: 'InkLink User', photoURL: null };
+      const opRecord = {
+        version: entry.version,
+        updateId: entry.updateId,
+        userId: authorUid,
+        userDisplayName: profile.displayName,
+        userPhotoUrl: profile.photoURL || null,
+        elementId: entry.elementId || null,
+        action,
+        changes,
+        payloadBase64: entry.payloadBase64,
+        timestamp: entry.timestamp,
+        ...(entry.restoredFromVersion
+          ? { restoredFromVersion: parseInt(entry.restoredFromVersion, 10) }
+          : {}),
+      };
+      opRecord.summary = summarizeOperation(opRecord, changes);
+      rawOps.push(opRecord);
+
+      if ((i + 1) % 10 === 0) {
+        await new Promise(resolve => setImmediate(resolve));
       }
     }
-
-    let action = entry.action;
-    if (action !== 'restore' && action !== 'revert') {
-      if (changes.length > 0 && changes.every(c => c.kind === 'delete')) {
-        action = Object.keys(after).length === 0 ? 'clear' : 'delete';
-      } else {
-        action = 'upsert';
-      }
-    }
-
-    const authorUid = entry.sourceClientId || '';
-    const profile = profileCache.get(authorUid)
-      || { displayName: 'InkLink User', photoURL: null };
-    const opRecord = {
-      version: entry.version,
-      updateId: entry.updateId,
-      userId: authorUid,
-      userDisplayName: profile.displayName,
-      userPhotoUrl: profile.photoURL || null,
-      elementId: entry.elementId || null,
-      action,
-      changes,
-      payloadBase64: entry.payloadBase64,
-      timestamp: entry.timestamp,
-      ...(entry.restoredFromVersion
-        ? { restoredFromVersion: parseInt(entry.restoredFromVersion, 10) }
-        : {}),
-    };
-    opRecord.summary = summarizeOperation(opRecord, changes);
-    rawOps.push(opRecord);
+  } finally {
+    elementsMap.unobserveDeep(elementsObserver);
   }
 
-  const stateUpdate = Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64');
+  const encodedStateBytes = Buffer.from(Y.encodeStateAsUpdate(doc));
+  const stateUpdate = encodedStateBytes.toString('base64');
   const stateVector = Buffer.from(Y.encodeStateVector(doc)).toString('base64');
-  const elementCount = doc.getMap('elements').size;
+  const elementCount = elementsMap.size;
 
   // 5. Find the stream ID of the LAST entry where version <= snapshotTargetVersion
   const lastIncluded = entries.filter(e => e.version <= snapshotTargetVersion).pop();
@@ -1401,7 +1503,7 @@ async function runSnapshot(boardId) {
     // Exactly ONE checkpoint per block, at the block-end version (D8).
     await historyR2.putBytesGzip(
       milestoneKey,
-      Buffer.from(Y.encodeStateAsUpdate(doc)),
+      encodedStateBytes,
     );
   } catch (e) {
     console.warn(`[archive] R2 write FAILED for board ${boardId} (${blockId}): ${e.message} — will retry`);
@@ -1645,7 +1747,7 @@ setInterval(async () => {
 io.use(async (socket, next) => {
   try {
     // Comment 3: Validate origin during Socket.IO connection initialization
-    const origin = socket.handshake.headers.origin;
+    const {origin} = socket.handshake.headers;
     if (origin && !isOriginAllowed(origin)) {
       console.warn(`[Socket.IO auth] Rejected unlisted origin: ${origin}`);
       return next(new Error('CORS error: Origin not allowed'));
@@ -1760,14 +1862,16 @@ io.on('connection', (socket) => {
       return;
     }
 
-    logWsEvent('UPDATE RECEIVED', [
-      `[event] crdt_update`,
-      `[direction] client -> server`,
-      `[user] ${uid}`,
-      `[board] ${boardId}`,
-      `[updateId] ${update.updateId}`,
-      `[elementId] ${update.elementId ?? 'n/a'}`,
-    ]);
+    if (VERBOSE_WS_LOGS) {
+      logWsEvent('UPDATE RECEIVED', [
+        `[event] crdt_update`,
+        `[direction] client -> server`,
+        `[user] ${uid}`,
+        `[board] ${boardId}`,
+        `[updateId] ${update.updateId}`,
+        `[elementId] ${update.elementId ?? 'n/a'}`,
+      ]);
+    }
 
     const isSingleUser = update._singleUser === true;
     if (isSingleUser) {
@@ -1790,6 +1894,7 @@ io.on('connection', (socket) => {
       // persisting would lose work.
       // -------------------------------------------------------
       let version = null;
+      let lastSnapshotVersion = null;
       let isDuplicate = false;
       let clearedElementIds = [];
 
@@ -1807,29 +1912,30 @@ io.on('connection', (socket) => {
       }
 
       if (redisAvailable) {
-        // Seed Redis version from Firestore if missing (handles Redis loss recovery)
-        await seedRedisFromFirestore(boardId);
+        const appendArgs = {
+          updateId: update.updateId,
+          payloadBase64: update.payloadBase64,
+          elementId: update.elementId,
+          uid,
+          timestamp: new Date().toISOString(),
+          singleUser: isSingleUser,
+          userDisplayName: displayName,
+          action: actionHint,
+        };
 
         try {
-          const result = await appendToStream(boardId, {
-            updateId: update.updateId,
-            payloadBase64: update.payloadBase64,
-            elementId: update.elementId,
-            uid,
-            timestamp: new Date().toISOString(),
-            singleUser: isSingleUser,
-            userDisplayName: displayName,
-            action: actionHint,
-          });
+          let result = await appendToStream(boardId, appendArgs);
+          if (result.status === 'needs_seed') {
+            await seedRedisFromFirestore(boardId);
+            result = await appendToStream(boardId, appendArgs);
+          }
 
-          if (result === -1) {
+          if (result.status === 'duplicate') {
             isDuplicate = true;
             console.log(`[crdt_update] Duplicate updateId ${update.updateId} — acking success, skipping storage`);
-          } else {
-            version = result;
-
-            // Update last activity timestamp (best-effort)
-            redis.set(`board:lastActivity:${boardId}`, Date.now().toString(), 'EX', 604800).catch(() => { });
+          } else if (result.status === 'ok') {
+            version = result.version;
+            lastSnapshotVersion = result.lastSnapshotVersion;
           }
         } catch (luaError) {
           console.warn(`[crdt_update] Lua script failed: ${luaError.message}`);
@@ -1873,13 +1979,15 @@ io.on('connection', (socket) => {
         },
       };
       socket.to(`board_room:${boardId}`).emit('crdt_update', broadcastPayload);
-      console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId} version=${version}`);
+      if (VERBOSE_WS_LOGS) {
+        console.log(`[WS UPDATE SENT] board_room:${boardId} updateId=${update.updateId} version=${version}`);
+      }
 
       // -------------------------------------------------------
       // Trigger an archive every ARCHIVE_BLOCK_OPS updates (fire-and-forget)
       // -------------------------------------------------------
       if (redisAvailable && version !== null) {
-        maybeTriggerArchive(boardId, version);
+        maybeTriggerArchive(boardId, version, lastSnapshotVersion);
       }
 
       if (typeof ack === 'function') {
@@ -2454,7 +2562,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    if (process.env.VERBOSE_WS_LOGS === 'true') {
+    if (VERBOSE_WS_LOGS) {
       logWsEvent('PREVIEW RECEIVED', [
         `[event] crdt_preview`,
         `[direction] client -> server`,
@@ -2529,14 +2637,16 @@ io.on('connection', (socket) => {
       filtered.sort((a, b) => a.version - b.version);
       const currentVersion = parseInt(await redis.get(`board:${boardId}:version`) || '0', 10);
 
-      logWsEvent('GAP UPDATES SERVED', [
-        `[user] ${uid}`,
-        `[board] ${boardId}`,
-        `[minVer] ${minVer ?? 'n/a'}`,
-        `[maxVer] ${maxVer ?? 'n/a'}`,
-        `[count] ${filtered.length}`,
-        `[currentVersion] ${currentVersion}`,
-      ]);
+      if (VERBOSE_WS_LOGS) {
+        logWsEvent('GAP UPDATES SERVED', [
+          `[user] ${uid}`,
+          `[board] ${boardId}`,
+          `[minVer] ${minVer ?? 'n/a'}`,
+          `[maxVer] ${maxVer ?? 'n/a'}`,
+          `[count] ${filtered.length}`,
+          `[currentVersion] ${currentVersion}`,
+        ]);
+      }
 
       if (typeof callback === 'function') {
         callback({
@@ -2605,13 +2715,15 @@ io.on('connection', (socket) => {
       return;
     }
 
-    logWsEvent('SYNC REQUEST RECEIVED', [
-      `[event] sync_offline`,
-      `[direction] client -> server`,
-      `[user] ${uid}`,
-      `[board] ${boardId}`,
-      `[cursor] ${lastSeenCursor || sinceVersion || 'none'}`,
-    ]);
+    if (VERBOSE_WS_LOGS) {
+      logWsEvent('SYNC REQUEST RECEIVED', [
+        `[event] sync_offline`,
+        `[direction] client -> server`,
+        `[user] ${uid}`,
+        `[board] ${boardId}`,
+        `[cursor] ${lastSeenCursor || sinceVersion || 'none'}`,
+      ]);
+    }
 
     try {
       // ============================================================
@@ -2651,13 +2763,15 @@ io.on('connection', (socket) => {
             // Store cursor for this user
             await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => { });
 
-            logWsEvent('SYNC RESPONSE (cursor)', [
-              `[user] ${uid}`,
-              `[board] ${boardId}`,
-              `[updates] ${updates.length}`,
-              `[cursor] ${newCursor}`,
-              `[hasMore] ${hasMore}`,
-            ]);
+            if (VERBOSE_WS_LOGS) {
+              logWsEvent('SYNC RESPONSE (cursor)', [
+                `[user] ${uid}`,
+                `[board] ${boardId}`,
+                `[updates] ${updates.length}`,
+                `[cursor] ${newCursor}`,
+                `[hasMore] ${hasMore}`,
+              ]);
+            }
 
             if (typeof callback === 'function') {
               callback({ status: 'success', updates, cursor: newCursor, hasMore, source: 'cursor' });
@@ -2715,13 +2829,15 @@ io.on('connection', (socket) => {
             const newCursor = `${lastEntryId}:${lastVer}`;
             await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => { });
 
-            logWsEvent('SYNC RESPONSE (snapshot+delta)', [
-              `[user] ${uid}`,
-              `[board] ${boardId}`,
-              `[snapshotVersion] ${snapshotData.lastAppliedVersion}`,
-              `[deltas] ${updates.length}`,
-              `[cursor] ${newCursor}`,
-            ]);
+            if (VERBOSE_WS_LOGS) {
+              logWsEvent('SYNC RESPONSE (snapshot+delta)', [
+                `[user] ${uid}`,
+                `[board] ${boardId}`,
+                `[snapshotVersion] ${snapshotData.lastAppliedVersion}`,
+                `[deltas] ${updates.length}`,
+                `[cursor] ${newCursor}`,
+              ]);
+            }
 
             if (typeof callback === 'function') {
               callback({
@@ -2770,13 +2886,15 @@ io.on('connection', (socket) => {
           const newCursor = `${lastEntryId}:${lastVer}`;
           await redis.set(`user:lastSeenCursor:${uid}:${boardId}`, newCursor, 'EX', 604800).catch(() => { });
 
-          logWsEvent('SYNC RESPONSE (stream catch-up)', [
-            `[user] ${uid}`,
-            `[board] ${boardId}`,
-            `[updates] ${paged.length}`,
-            `[cursor] ${newCursor}`,
-            `[effectiveServerVersion] ${effectiveServerVersion}`,
-          ]);
+          if (VERBOSE_WS_LOGS) {
+            logWsEvent('SYNC RESPONSE (stream catch-up)', [
+              `[user] ${uid}`,
+              `[board] ${boardId}`,
+              `[updates] ${paged.length}`,
+              `[cursor] ${newCursor}`,
+              `[effectiveServerVersion] ${effectiveServerVersion}`,
+            ]);
+          }
 
           if (typeof callback === 'function') {
             callback({
@@ -2809,11 +2927,13 @@ io.on('connection', (socket) => {
           .collection('snapshot').doc('latest').get();
         if (snapDoc.exists) {
           const snapshotData = snapDoc.data();
-          logWsEvent('SYNC RESPONSE (snapshot only)', [
-            `[user] ${uid}`,
-            `[board] ${boardId}`,
-            `[snapshotVersion] ${snapshotData.lastAppliedVersion}`,
-          ]);
+          if (VERBOSE_WS_LOGS) {
+            logWsEvent('SYNC RESPONSE (snapshot only)', [
+              `[user] ${uid}`,
+              `[board] ${boardId}`,
+              `[snapshotVersion] ${snapshotData.lastAppliedVersion}`,
+            ]);
+          }
           if (typeof callback === 'function') {
             callback({
               status: 'success',
@@ -3146,14 +3266,26 @@ io.on('connection', (socket) => {
       `[user] ${uid}`,
     ]);
     try {
-      // Clear cursor tracking for this user
+      // Clear cursor tracking for this user (non-blocking SCAN + UNLINK)
       if (redisAvailable) {
-        const keys = await redis.keys(`user:lastSeenCursor:${uid}:*`);
-        if (keys && keys.length > 0) {
-          for (const key of keys) {
-            await redis.del(key);
-          }
-        }
+        await new Promise((resolve, reject) => {
+          const stream = redis.scanStream({
+            match: `user:lastSeenCursor:${uid}:*`,
+            count: 100,
+          });
+          const pendingUnlinks = [];
+          stream.on('data', (keys) => {
+            if (Array.isArray(keys) && keys.length > 0) {
+              pendingUnlinks.push(redis.unlink(...keys));
+            }
+          });
+          stream.on('end', () => {
+            Promise.all(pendingUnlinks).then(resolve, reject);
+          });
+          stream.on('error', (err) => {
+            reject(err);
+          });
+        });
       }
 
       console.log(`[logout] Cleared cursors for ${uid}`);
@@ -3200,6 +3332,7 @@ server.listen(PORT, () => {
 // Graceful shutdown
 async function gracefulShutdown(signal) {
   console.log(`\nReceived ${signal}, shutting down gracefully...`);
+  loopDelay.disable();
 
   // Snapshot boards that still have unsnapshotted updates so acknowledged
   // CRDT ops aren't lost between the last %100 snapshot and shutdown.

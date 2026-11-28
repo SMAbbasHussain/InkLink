@@ -1,0 +1,22 @@
+{
+  "name": "inklink-load-test",
+  "version": "1.0.0",
+  "private": true,
+  "description": "InkLink Socket.IO + Yjs stress and load testing harness",
+  "main": "stress-test.js",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "baseline": "node stress-test.js --mode=baseline",
+    "fanout": "node stress-test.js --mode=fanout",
+    "multiboard": "node stress-test.js --mode=multiboard",
+    "offline": "node stress-test.js --mode=offline",
+    "previewonly": "node stress-test.js --mode=previewonly"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.5.1",
+    "socket.io-client": "^4.8.3",
+    "yjs": "^13.6.0"
+  }
+}
